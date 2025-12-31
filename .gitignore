@@ -1,6 +1,8 @@
 # Secrets - JAMAIS dans Git
 secrets/jwt_private_key.pem
 secrets/*.key
+secrets/sa_*.env
+secrets/service_accounts/*.env
 .env.prod
 
 # Python

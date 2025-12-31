@@ -4,9 +4,11 @@
 
 let currentUser = null;
 let allApps = [];
+let allServiceAccounts = [];
+let hubHost = null;  // IP/hostname du Hub (chargé depuis l'API)
 
 // Bootstrap instances
-let adminModal, appFormModal, userFormModal, toast;
+let adminModal, appFormModal, userFormModal, serviceAccountFormModal, saCredentialsModal, toast;
 
 // Initialize on DOM load
 document.addEventListener('DOMContentLoaded', () => {
@@ -14,6 +16,8 @@ document.addEventListener('DOMContentLoaded', () => {
     adminModal = new bootstrap.Modal(document.getElementById('adminModal'));
     appFormModal = new bootstrap.Modal(document.getElementById('appFormModal'));
     userFormModal = new bootstrap.Modal(document.getElementById('userFormModal'));
+    serviceAccountFormModal = new bootstrap.Modal(document.getElementById('serviceAccountFormModal'));
+    saCredentialsModal = new bootstrap.Modal(document.getElementById('saCredentialsModal'));
     toast = new bootstrap.Toast(document.getElementById('toast'));
 
     // Check if already logged in
@@ -31,6 +35,11 @@ document.addEventListener('DOMContentLoaded', () => {
                 .replace(/(^-|-$)/g, '');
         }
     });
+    
+    // Update URL preview when ports change
+    document.getElementById('appApiPort').addEventListener('input', updateUrlPreview);
+    document.getElementById('appFrontendPort').addEventListener('input', updateUrlPreview);
+    document.getElementById('appCustomHostValue').addEventListener('input', updateUrlPreview);
 });
 
 // ===== Authentication =====
@@ -157,14 +166,17 @@ async function showAdminPanel() {
 }
 
 async function loadAdminData() {
-    const [apps, users] = await Promise.all([
+    const [apps, users, serviceAccounts] = await Promise.all([
         api.getAllApps(),
-        api.getUsers()
+        api.getUsers(),
+        api.getServiceAccounts()
     ]);
     
     allApps = apps;
+    allServiceAccounts = serviceAccounts;
     renderAppsTable(apps);
     renderUsersTable(users);
+    renderServiceAccountsTable(serviceAccounts);
 }
 
 function renderAppsTable(apps) {
@@ -230,8 +242,8 @@ function renderUsersTable(users) {
                 <tr>
                     <th>Utilisateur</th>
                     <th>Email</th>
-                    <th>Rôle</th>
-                    <th>Applications</th>
+                    <th>Rôle Hub</th>
+                    <th>Applications (Rôle)</th>
                     <th>Statut</th>
                     <th class="text-end">Actions</th>
                 </tr>
@@ -247,7 +259,12 @@ function renderUsersTable(users) {
                                 : '<span class="badge bg-info">User</span>'}
                         </td>
                         <td>
-                            ${user.applications?.map(a => `<span class="badge bg-light text-dark me-1">${escapeHtml(a.name)}</span>`).join('') || '-'}
+                            ${user.app_roles?.map(ar => `
+                                <span class="badge me-1" style="background-color: ${getRoleBadgeColor(ar.role)}">
+                                    ${escapeHtml(ar.app_name)} 
+                                    <small>(${ar.role})</small>
+                                </span>
+                            `).join('') || '<span class="text-muted">-</span>'}
                         </td>
                         <td>
                             ${user.is_active 
@@ -270,17 +287,51 @@ function renderUsersTable(users) {
     `;
 }
 
+// Couleurs des badges selon le rôle
+function getRoleBadgeColor(role) {
+    const colors = {
+        'admin': '#dc3545',     // Rouge
+        'manager': '#fd7e14',   // Orange
+        'user': '#0d6efd',      // Bleu
+        'viewer': '#6c757d',    // Gris
+        'service': '#6f42c1'    // Violet
+    };
+    return colors[role] || '#0d6efd';
+}
+
 // ===== App CRUD =====
 
-function showAddAppForm() {
+async function showAddAppForm() {
+    // Charger le host du Hub si pas encore fait
+    if (!hubHost) {
+        try {
+            const config = await api.getHubHost();
+            hubHost = config.host;
+        } catch (e) {
+            console.error('Impossible de récupérer le host du Hub:', e);
+            hubHost = window.location.hostname;  // Fallback
+        }
+    }
+    
     document.getElementById('appFormTitle').textContent = 'Nouvelle Application';
     document.getElementById('appForm').reset();
     document.getElementById('appId').value = '';
+    document.getElementById('appMode').value = 'create';
     document.getElementById('appIcon').value = 'bi-app';
     document.getElementById('appColor').value = '#0d6efd';
     document.getElementById('appActive').checked = true;
     document.getElementById('appRequiresAuth').checked = true;
+    document.getElementById('appCustomHost').checked = false;
+    document.getElementById('customHostGroup').classList.add('d-none');
+    
+    // Afficher mode simplifié (ports), masquer mode avancé (URLs)
+    document.getElementById('simplePortsSection').classList.remove('d-none');
+    document.getElementById('advancedUrlsSection').classList.add('d-none');
+    document.getElementById('appApiPort').required = true;
+    document.getElementById('appApiUrl').required = false;
+    
     updateIconPreview();
+    updateUrlPreview();
     adminModal.hide();
     appFormModal.show();
 }
@@ -291,6 +342,7 @@ async function editApp(id) {
 
     document.getElementById('appFormTitle').textContent = 'Modifier l\'Application';
     document.getElementById('appId').value = app.id;
+    document.getElementById('appMode').value = 'edit';
     document.getElementById('appName').value = app.name;
     document.getElementById('appSlug').value = app.slug;
     document.getElementById('appDescription').value = app.description || '';
@@ -301,40 +353,108 @@ async function editApp(id) {
     document.getElementById('appCallbackUrl').value = app.callback_url || '';
     document.getElementById('appActive').checked = app.is_active;
     document.getElementById('appRequiresAuth').checked = app.requires_auth;
+    
+    // En mode édition, afficher les URLs directes
+    document.getElementById('simplePortsSection').classList.add('d-none');
+    document.getElementById('advancedUrlsSection').classList.remove('d-none');
+    document.getElementById('appApiPort').required = false;
+    document.getElementById('appApiUrl').required = true;
+    
     updateIconPreview();
     
     adminModal.hide();
     appFormModal.show();
 }
 
+function toggleCustomHost() {
+    const checked = document.getElementById('appCustomHost').checked;
+    document.getElementById('customHostGroup').classList.toggle('d-none', !checked);
+    updateUrlPreview();
+}
+
+function updateUrlPreview() {
+    const apiPort = document.getElementById('appApiPort').value;
+    const frontendPort = document.getElementById('appFrontendPort').value;
+    const customHost = document.getElementById('appCustomHost').checked;
+    const customHostValue = document.getElementById('appCustomHostValue').value;
+    
+    // Utiliser le hub host (chargé depuis l'API) ou le custom host
+    const host = customHost && customHostValue ? customHostValue : (hubHost || 'chargement...');
+    
+    const previewApi = document.getElementById('previewApiUrl');
+    const previewFrontend = document.getElementById('previewFrontendUrl');
+    
+    if (apiPort) {
+        previewApi.innerHTML = `<i class="bi bi-hdd-rack me-1"></i>API: <code>http://${host}:${apiPort}</code>`;
+    } else {
+        previewApi.innerHTML = '<i class="bi bi-hdd-rack me-1"></i>API: <span class="text-danger">Port requis</span>';
+    }
+    
+    if (frontendPort) {
+        previewFrontend.innerHTML = `<i class="bi bi-window me-1"></i>Frontend: <code>http://${host}:${frontendPort}</code>`;
+    } else {
+        previewFrontend.innerHTML = '<i class="bi bi-window me-1"></i>Frontend: <span class="text-muted">Non défini</span>';
+    }
+}
+
 async function handleSaveApp(event) {
     event.preventDefault();
     
     const id = document.getElementById('appId').value;
-    const data = {
-        name: document.getElementById('appName').value,
-        slug: document.getElementById('appSlug').value,
-        description: document.getElementById('appDescription').value || null,
-        icon: document.getElementById('appIcon').value,
-        color: document.getElementById('appColor').value,
-        api_url: document.getElementById('appApiUrl').value,
-        frontend_url: document.getElementById('appFrontendUrl').value || null,
-        callback_url: document.getElementById('appCallbackUrl').value || null,
-        is_active: document.getElementById('appActive').checked,
-        requires_auth: document.getElementById('appRequiresAuth').checked
-    };
-
+    const mode = document.getElementById('appMode').value;
+    
     try {
-        if (id) {
+        if (id && mode === 'edit') {
+            // Mode édition - utiliser les URLs directes
+            const data = {
+                name: document.getElementById('appName').value,
+                description: document.getElementById('appDescription').value || null,
+                icon: document.getElementById('appIcon').value,
+                color: document.getElementById('appColor').value,
+                api_url: document.getElementById('appApiUrl').value,
+                frontend_url: document.getElementById('appFrontendUrl').value || null,
+                callback_url: document.getElementById('appCallbackUrl').value || null,
+                is_active: document.getElementById('appActive').checked,
+                requires_auth: document.getElementById('appRequiresAuth').checked
+            };
+            
             await api.updateApp(id, data);
             showToast('Succès', 'Application modifiée', 'success');
+            appFormModal.hide();
+            await loadAdminData();
+            adminModal.show();
         } else {
-            await api.createApp(data);
-            showToast('Succès', 'Application créée', 'success');
+            // Mode création - utiliser les ports (schéma simplifié)
+            const customHost = document.getElementById('appCustomHost').checked;
+            const data = {
+                name: document.getElementById('appName').value,
+                slug: document.getElementById('appSlug').value,
+                description: document.getElementById('appDescription').value || null,
+                icon: document.getElementById('appIcon').value,
+                color: document.getElementById('appColor').value,
+                api_port: parseInt(document.getElementById('appApiPort').value),
+                frontend_port: document.getElementById('appFrontendPort').value ? 
+                    parseInt(document.getElementById('appFrontendPort').value) : null,
+                custom_host: customHost ? document.getElementById('appCustomHostValue').value : null,
+                requires_auth: document.getElementById('appRequiresAuth').checked
+            };
+            
+            const result = await api.createApp(data);
+            appFormModal.hide();
+            
+            // Afficher les credentials du service account créé
+            if (result.service_account) {
+                showServiceAccountCredentials(
+                    result.service_account.client_id,
+                    result.service_account.client_secret
+                );
+                showToast('Succès', 'Application et Service Account créés', 'success');
+            } else {
+                showToast('Succès', 'Application créée', 'success');
+                adminModal.show();
+            }
+            await loadAdminData();
         }
-        appFormModal.hide();
-        await loadAdminData();
-        adminModal.show();
         loadApps(); // Refresh dashboard
     } catch (error) {
         showToast('Erreur', error.message, 'danger');
@@ -391,14 +511,18 @@ async function editUser(id) {
     document.getElementById('userActive').checked = user.is_active;
     document.getElementById('userAdmin').checked = user.is_admin;
     
-    const userAppIds = user.applications?.map(a => a.id) || [];
-    loadUserAppsCheckboxes(userAppIds);
+    // Charger les apps avec leurs rôles
+    const userAppRoles = user.app_roles || [];
+    loadUserAppsWithRoles(userAppRoles);
     
     adminModal.hide();
     userFormModal.show();
 }
 
-function loadUserAppsCheckboxes(selectedIds) {
+// Rôles disponibles
+const AVAILABLE_ROLES = ['admin', 'manager', 'user', 'viewer'];
+
+function loadUserAppsWithRoles(userAppRoles) {
     const container = document.getElementById('userAppsCheckboxes');
     
     if (allApps.length === 0) {
@@ -406,16 +530,61 @@ function loadUserAppsCheckboxes(selectedIds) {
         return;
     }
 
-    container.innerHTML = allApps.map(app => `
-        <div class="form-check">
-            <input class="form-check-input" type="checkbox" value="${app.id}" 
-                id="userApp${app.id}" ${selectedIds.includes(app.id) ? 'checked' : ''}>
-            <label class="form-check-label" for="userApp${app.id}">
-                <i class="${app.icon} me-1" style="color: ${app.color}"></i>
-                ${escapeHtml(app.name)}
-            </label>
-        </div>
-    `).join('');
+    // Créer un map des rôles par app_id
+    const rolesByAppId = {};
+    userAppRoles.forEach(ar => {
+        rolesByAppId[ar.app_id] = ar.role;
+    });
+
+    container.innerHTML = allApps.map(app => {
+        const currentRole = rolesByAppId[app.id] || '';
+        const isChecked = currentRole !== '';
+        
+        return `
+            <div class="d-flex align-items-center mb-2 app-role-row">
+                <div class="form-check me-3" style="min-width: 200px;">
+                    <input class="form-check-input app-checkbox" type="checkbox" value="${app.id}" 
+                        id="userApp${app.id}" ${isChecked ? 'checked' : ''}
+                        onchange="toggleRoleSelect(${app.id})">
+                    <label class="form-check-label" for="userApp${app.id}">
+                        <i class="${app.icon} me-1" style="color: ${app.color}"></i>
+                        ${escapeHtml(app.name)}
+                    </label>
+                </div>
+                <select class="form-select form-select-sm role-select" id="userAppRole${app.id}" 
+                    style="width: 120px;" ${isChecked ? '' : 'disabled'}>
+                    <option value="">-- Rôle --</option>
+                    ${AVAILABLE_ROLES.map(role => `
+                        <option value="${role}" ${currentRole === role ? 'selected' : ''}>
+                            ${role.charAt(0).toUpperCase() + role.slice(1)}
+                        </option>
+                    `).join('')}
+                </select>
+            </div>
+        `;
+    }).join('');
+}
+
+function toggleRoleSelect(appId) {
+    const checkbox = document.getElementById(`userApp${appId}`);
+    const roleSelect = document.getElementById(`userAppRole${appId}`);
+    
+    if (checkbox.checked) {
+        roleSelect.disabled = false;
+        if (!roleSelect.value) {
+            roleSelect.value = 'user';  // Rôle par défaut
+        }
+    } else {
+        roleSelect.disabled = true;
+        roleSelect.value = '';
+    }
+}
+
+// Ancienne fonction pour compatibilité (utilisée dans showAddUserForm)
+function loadUserAppsCheckboxes(selectedIds) {
+    // Convertir en format app_roles
+    const appRoles = selectedIds.map(id => ({ app_id: id, role: 'user' }));
+    loadUserAppsWithRoles(appRoles);
 }
 
 async function handleSaveUser(event) {
@@ -434,11 +603,17 @@ async function handleSaveUser(event) {
         data.password = password;
     }
 
-    // Get selected apps
-    const selectedAppIds = [];
+    // Récupérer les apps et leurs rôles
+    const assignments = [];
     allApps.forEach(app => {
-        if (document.getElementById(`userApp${app.id}`)?.checked) {
-            selectedAppIds.push(app.id);
+        const checkbox = document.getElementById(`userApp${app.id}`);
+        const roleSelect = document.getElementById(`userAppRole${app.id}`);
+        
+        if (checkbox?.checked && roleSelect?.value) {
+            assignments.push({
+                app_id: app.id,
+                role: roleSelect.value
+            });
         }
     });
 
@@ -451,8 +626,8 @@ async function handleSaveUser(event) {
             userId = newUser.id;
         }
         
-        // Update apps access
-        await api.setUserApps(userId, selectedAppIds);
+        // Mettre à jour les accès et rôles
+        await api.setUserApps(userId, assignments);
         
         showToast('Succès', id ? 'Utilisateur modifié' : 'Utilisateur créé', 'success');
         userFormModal.hide();
@@ -501,4 +676,210 @@ function escapeHtml(text) {
     const div = document.createElement('div');
     div.textContent = text;
     return div.innerHTML;
+}
+
+// ===== Service Accounts CRUD =====
+
+function renderServiceAccountsTable(serviceAccounts) {
+    const container = document.getElementById('serviceAccountsTable');
+    
+    if (serviceAccounts.length === 0) {
+        container.innerHTML = `
+            <div class="text-center py-4">
+                <i class="bi bi-robot display-4 text-muted"></i>
+                <p class="text-muted mt-2">Aucun service account configuré</p>
+                <p class="small text-muted">Les service accounts permettent aux applications de communiquer entre elles sans intervention utilisateur.</p>
+            </div>
+        `;
+        return;
+    }
+
+    container.innerHTML = `
+        <table class="table table-hover align-middle">
+            <thead>
+                <tr>
+                    <th>Nom</th>
+                    <th>Client ID</th>
+                    <th>Applications</th>
+                    <th>Dernière utilisation</th>
+                    <th>Statut</th>
+                    <th class="text-end">Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                ${serviceAccounts.map(sa => `
+                    <tr>
+                        <td>
+                            <div>
+                                <strong>${escapeHtml(sa.name)}</strong>
+                                ${sa.description ? `<br><small class="text-muted">${escapeHtml(sa.description)}</small>` : ''}
+                            </div>
+                        </td>
+                        <td><code class="small">${sa.client_id}</code></td>
+                        <td>
+                            ${sa.applications?.map(a => `<span class="badge bg-light text-dark me-1">${escapeHtml(a.name)}</span>`).join('') || '<span class="text-muted">-</span>'}
+                        </td>
+                        <td>
+                            ${sa.last_used_at 
+                                ? `<small class="text-muted">${new Date(sa.last_used_at).toLocaleString('fr-FR')}</small>`
+                                : '<small class="text-muted">Jamais</small>'}
+                        </td>
+                        <td>
+                            ${sa.is_active 
+                                ? '<span class="badge bg-success">Actif</span>' 
+                                : '<span class="badge bg-danger">Inactif</span>'}
+                        </td>
+                        <td class="text-end">
+                            <div class="btn-group btn-group-sm">
+                                <button class="btn btn-outline-warning" onclick="regenerateServiceAccountSecret(${sa.id}, '${escapeHtml(sa.name)}')" title="Régénérer le secret">
+                                    <i class="bi bi-key"></i>
+                                </button>
+                                <button class="btn btn-outline-primary" onclick="editServiceAccount(${sa.id})" title="Modifier">
+                                    <i class="bi bi-pencil"></i>
+                                </button>
+                                <button class="btn btn-outline-danger" onclick="deleteServiceAccount(${sa.id}, '${escapeHtml(sa.name)}')" title="Supprimer">
+                                    <i class="bi bi-trash"></i>
+                                </button>
+                            </div>
+                        </td>
+                    </tr>
+                `).join('')}
+            </tbody>
+        </table>
+    `;
+}
+
+function showAddServiceAccountForm() {
+    document.getElementById('saFormTitle').textContent = 'Nouveau Service Account';
+    document.getElementById('serviceAccountForm').reset();
+    document.getElementById('saId').value = '';
+    document.getElementById('saActive').checked = true;
+    loadSaAppsCheckboxes([]);
+    adminModal.hide();
+    serviceAccountFormModal.show();
+}
+
+async function editServiceAccount(id) {
+    const sa = allServiceAccounts.find(s => s.id === id);
+    if (!sa) return;
+
+    document.getElementById('saFormTitle').textContent = 'Modifier le Service Account';
+    document.getElementById('saId').value = sa.id;
+    document.getElementById('saName').value = sa.name;
+    document.getElementById('saDescription').value = sa.description || '';
+    document.getElementById('saActive').checked = sa.is_active;
+    
+    const saAppIds = sa.applications?.map(a => a.id) || [];
+    loadSaAppsCheckboxes(saAppIds);
+    
+    adminModal.hide();
+    serviceAccountFormModal.show();
+}
+
+function loadSaAppsCheckboxes(selectedIds) {
+    const container = document.getElementById('saAppsCheckboxes');
+    
+    if (allApps.length === 0) {
+        container.innerHTML = '<small class="text-muted">Aucune application disponible</small>';
+        return;
+    }
+
+    container.innerHTML = allApps.map(app => `
+        <div class="form-check">
+            <input class="form-check-input" type="checkbox" value="${app.id}" 
+                id="saApp${app.id}" ${selectedIds.includes(app.id) ? 'checked' : ''}>
+            <label class="form-check-label" for="saApp${app.id}">
+                <i class="${app.icon} me-1" style="color: ${app.color}"></i>
+                ${escapeHtml(app.name)}
+            </label>
+        </div>
+    `).join('');
+}
+
+async function handleSaveServiceAccount(event) {
+    event.preventDefault();
+    
+    const id = document.getElementById('saId').value;
+    
+    // Get selected apps
+    const selectedAppIds = [];
+    allApps.forEach(app => {
+        if (document.getElementById(`saApp${app.id}`)?.checked) {
+            selectedAppIds.push(app.id);
+        }
+    });
+
+    try {
+        if (id) {
+            // Update existing
+            const data = {
+                name: document.getElementById('saName').value,
+                description: document.getElementById('saDescription').value || null,
+                is_active: document.getElementById('saActive').checked
+            };
+            await api.updateServiceAccount(id, data);
+            await api.setServiceAccountApps(id, selectedAppIds);
+            showToast('Succès', 'Service Account modifié', 'success');
+        } else {
+            // Create new
+            const data = {
+                name: document.getElementById('saName').value,
+                description: document.getElementById('saDescription').value || null,
+                app_ids: selectedAppIds
+            };
+            const result = await api.createServiceAccount(data);
+            
+            // Show credentials modal
+            showServiceAccountCredentials(result.client_id, result.client_secret);
+            showToast('Succès', 'Service Account créé', 'success');
+        }
+        
+        serviceAccountFormModal.hide();
+        await loadAdminData();
+        if (id) {
+            adminModal.show();
+        }
+    } catch (error) {
+        showToast('Erreur', error.message, 'danger');
+    }
+}
+
+function showServiceAccountCredentials(clientId, clientSecret) {
+    document.getElementById('saClientId').value = clientId;
+    document.getElementById('saClientSecret').value = clientSecret;
+    document.getElementById('exampleClientId').textContent = clientId;
+    document.getElementById('exampleClientSecret').textContent = clientSecret;
+    saCredentialsModal.show();
+}
+
+async function regenerateServiceAccountSecret(id, name) {
+    if (!confirm(`Régénérer le secret pour "${name}" ?\n\n⚠️ L'ancien secret sera immédiatement invalidé !`)) return;
+    
+    try {
+        const result = await api.regenerateServiceAccountSecret(id);
+        showServiceAccountCredentials(result.client_id, result.client_secret);
+        showToast('Succès', 'Secret régénéré', 'success');
+        await loadAdminData();
+    } catch (error) {
+        showToast('Erreur', error.message, 'danger');
+    }
+}
+
+async function deleteServiceAccount(id, name) {
+    if (!confirm(`Supprimer le service account "${name}" ?\n\nLes applications utilisant ce compte ne pourront plus s'authentifier.`)) return;
+    
+    try {
+        await api.deleteServiceAccount(id);
+        showToast('Succès', 'Service Account supprimé', 'success');
+        await loadAdminData();
+    } catch (error) {
+        showToast('Erreur', error.message, 'danger');
+    }
+}
+
+function copyToClipboard(elementId) {
+    const input = document.getElementById(elementId);
+    input.select();
+    document.execCommand('copy');
+    showToast('Copié', 'Valeur copiée dans le presse-papier', 'success');
 }

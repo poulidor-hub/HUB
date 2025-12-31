@@ -1,5 +1,6 @@
 /**
  * API Client for Hub Authentication
+ * Supporte les refresh tokens pour maintenir les sessions
  */
 
 // L'API est maintenant proxifiée via Nginx sur le même hôte/port
@@ -8,6 +9,8 @@ const API_BASE = '/api';
 class HubAPI {
     constructor() {
         this.token = localStorage.getItem('hub_token');
+        this.refreshToken = localStorage.getItem('hub_refresh_token');
+        this._refreshPromise = null; // Pour éviter les appels concurrents
     }
 
     setToken(token) {
@@ -15,9 +18,20 @@ class HubAPI {
         localStorage.setItem('hub_token', token);
     }
 
+    setRefreshToken(token) {
+        this.refreshToken = token;
+        if (token) {
+            localStorage.setItem('hub_refresh_token', token);
+        } else {
+            localStorage.removeItem('hub_refresh_token');
+        }
+    }
+
     clearToken() {
         this.token = null;
+        this.refreshToken = null;
         localStorage.removeItem('hub_token');
+        localStorage.removeItem('hub_refresh_token');
     }
 
     getHeaders() {
@@ -28,6 +42,52 @@ class HubAPI {
             headers['Authorization'] = `Bearer ${this.token}`;
         }
         return headers;
+    }
+
+    /**
+     * Tente de rafraîchir le token d'accès
+     * @returns {Promise<boolean>} true si le refresh a réussi
+     */
+    async tryRefreshToken() {
+        // Éviter les appels concurrents
+        if (this._refreshPromise) {
+            return this._refreshPromise;
+        }
+
+        if (!this.refreshToken) {
+            return false;
+        }
+
+        this._refreshPromise = (async () => {
+            try {
+                const response = await fetch(`${API_BASE}/auth/token/refresh`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ refresh_token: this.refreshToken })
+                });
+
+                if (!response.ok) {
+                    // Refresh token expiré ou invalide
+                    this.clearToken();
+                    return false;
+                }
+
+                const data = await response.json();
+                this.setToken(data.access_token);
+                if (data.refresh_token) {
+                    this.setRefreshToken(data.refresh_token);
+                }
+                return true;
+            } catch (error) {
+                console.error('Refresh token failed:', error);
+                this.clearToken();
+                return false;
+            } finally {
+                this._refreshPromise = null;
+            }
+        })();
+
+        return this._refreshPromise;
     }
 
     async request(endpoint, options = {}) {
@@ -41,8 +101,22 @@ class HubAPI {
         };
 
         try {
-            const response = await fetch(url, config);
+            let response = await fetch(url, config);
             
+            // Si 401, tenter un refresh puis réessayer
+            if (response.status === 401 && this.refreshToken) {
+                const refreshed = await this.tryRefreshToken();
+                if (refreshed) {
+                    // Réessayer avec le nouveau token
+                    config.headers['Authorization'] = `Bearer ${this.token}`;
+                    response = await fetch(url, config);
+                } else {
+                    // Refresh échoué - rediriger vers login
+                    window.location.reload();
+                    throw new Error('Session expirée');
+                }
+            }
+
             if (response.status === 401) {
                 this.clearToken();
                 window.location.reload();
@@ -91,6 +165,9 @@ class HubAPI {
 
         const data = await response.json();
         this.setToken(data.access_token);
+        if (data.refresh_token) {
+            this.setRefreshToken(data.refresh_token);
+        }
         return data;
     }
 
@@ -100,10 +177,15 @@ class HubAPI {
 
     async logout() {
         try {
-            await this.request('/auth/logout', { method: 'POST' });
+            await this.request('/auth/logout?revoke_all=true', { method: 'POST' });
         } finally {
             this.clearToken();
         }
+    }
+
+    // Config
+    async getHubHost() {
+        return this.request('/config/hub-host');
     }
 
     // Apps
@@ -160,9 +242,48 @@ class HubAPI {
         });
     }
 
-    async setUserApps(userId, appIds) {
+    async setUserApps(userId, assignments) {
+        // assignments = [{ app_id: 1, role: "admin" }, ...]
         return this.request(`/users/${userId}/apps`, {
             method: 'POST',
+            body: JSON.stringify({ assignments: assignments })
+        });
+    }
+
+    // Service Accounts (M2M)
+    async getServiceAccounts() {
+        return this.request('/service-accounts/');
+    }
+
+    async createServiceAccount(saData) {
+        return this.request('/service-accounts/', {
+            method: 'POST',
+            body: JSON.stringify(saData)
+        });
+    }
+
+    async updateServiceAccount(id, saData) {
+        return this.request(`/service-accounts/${id}`, {
+            method: 'PUT',
+            body: JSON.stringify(saData)
+        });
+    }
+
+    async deleteServiceAccount(id) {
+        return this.request(`/service-accounts/${id}`, {
+            method: 'DELETE'
+        });
+    }
+
+    async regenerateServiceAccountSecret(id) {
+        return this.request(`/service-accounts/${id}/regenerate-secret`, {
+            method: 'POST'
+        });
+    }
+
+    async setServiceAccountApps(saId, appIds) {
+        return this.request(`/service-accounts/${saId}/apps`, {
+            method: 'PUT',
             body: JSON.stringify(appIds)
         });
     }

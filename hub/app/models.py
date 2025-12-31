@@ -1,16 +1,56 @@
 from sqlalchemy import Column, Integer, String, Boolean, DateTime, ForeignKey, Text, Table
 from sqlalchemy.orm import relationship
 from datetime import datetime
+from typing import Optional
+import secrets
 from app.database import Base
 
 
-# Table d'association User <-> Application
-user_app_access = Table(
-    'user_app_access',
+# Rôles par défaut disponibles
+DEFAULT_ROLES = ["admin", "manager", "user", "viewer"]
+
+
+# Table d'association ServiceAccount <-> Application (simple)
+service_account_app_access = Table(
+    'service_account_app_access',
     Base.metadata,
-    Column('user_id', Integer, ForeignKey('users.id', ondelete='CASCADE')),
+    Column('service_account_id', Integer, ForeignKey('service_accounts.id', ondelete='CASCADE')),
     Column('app_id', Integer, ForeignKey('applications.id', ondelete='CASCADE'))
 )
+
+
+class UserAppRole(Base):
+    """Table d'association User <-> Application avec rôle"""
+    __tablename__ = "user_app_roles"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
+    app_id = Column(Integer, ForeignKey('applications.id', ondelete='CASCADE'), nullable=False)
+    role = Column(String(50), default="user", nullable=False)  # admin, manager, user, viewer, etc.
+    created_at = Column(DateTime, default=datetime.utcnow)
+    
+    # Relations
+    user = relationship("User", back_populates="app_roles")
+    application = relationship("Application", back_populates="user_roles")
+    
+    def __repr__(self):
+        return f"<UserAppRole user={self.user_id} app={self.app_id} role={self.role}>"
+
+
+class AppRole(Base):
+    """Rôles disponibles pour une application"""
+    __tablename__ = "app_roles"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    app_id = Column(Integer, ForeignKey('applications.id', ondelete='CASCADE'), nullable=False)
+    name = Column(String(50), nullable=False)  # Nom du rôle
+    description = Column(String(255))
+    
+    # Relation
+    application = relationship("Application", back_populates="available_roles")
+    
+    def __repr__(self):
+        return f"<AppRole {self.name} for app={self.app_id}>"
 
 
 class User(Base):
@@ -21,12 +61,28 @@ class User(Base):
     email = Column(String(100), unique=True, index=True)
     hashed_password = Column(String(255), nullable=False)
     is_active = Column(Boolean, default=True)
-    is_admin = Column(Boolean, default=False)
+    is_admin = Column(Boolean, default=False)  # Admin du Hub (pas des apps)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
     # Relations
-    applications = relationship("Application", secondary=user_app_access, back_populates="users")
+    app_roles = relationship("UserAppRole", back_populates="user", cascade="all, delete-orphan")
+    
+    @property
+    def applications(self):
+        """Retourne les applications de l'utilisateur (compatibilité)"""
+        return [ar.application for ar in self.app_roles]
+    
+    def get_role_for_app(self, app_slug: str) -> Optional[str]:
+        """Retourne le rôle de l'utilisateur pour une application"""
+        for ar in self.app_roles:
+            if ar.application.slug == app_slug:
+                return ar.role
+        return None
+    
+    def get_apps_with_roles(self) -> dict:
+        """Retourne un dict {app_slug: role}"""
+        return {ar.application.slug: ar.role for ar in self.app_roles}
     
     def __repr__(self):
         return f"<User {self.username}>"
@@ -50,7 +106,14 @@ class Application(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
     # Relations
-    users = relationship("User", secondary=user_app_access, back_populates="applications")
+    user_roles = relationship("UserAppRole", back_populates="application", cascade="all, delete-orphan")
+    available_roles = relationship("AppRole", back_populates="application", cascade="all, delete-orphan")
+    service_accounts = relationship("ServiceAccount", secondary=service_account_app_access, back_populates="applications")
+    
+    @property
+    def users(self):
+        """Retourne les utilisateurs ayant accès (compatibilité)"""
+        return [ur.user for ur in self.user_roles]
     
     def __repr__(self):
         return f"<Application {self.name}>"
@@ -70,3 +133,74 @@ class AuditLog(Base):
     
     def __repr__(self):
         return f"<AuditLog {self.action} by user {self.user_id}>"
+
+
+class ServiceAccount(Base):
+    """Compte de service pour l'authentification Machine-to-Machine (M2M)"""
+    __tablename__ = "service_accounts"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(100), nullable=False)
+    client_id = Column(String(64), unique=True, index=True, nullable=False)
+    client_secret_hash = Column(String(255), nullable=False)
+    description = Column(Text)
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    last_used_at = Column(DateTime, nullable=True)
+    
+    # Relations
+    applications = relationship("Application", secondary=service_account_app_access, back_populates="service_accounts")
+    
+    @staticmethod
+    def generate_client_id() -> str:
+        """Génère un client_id unique"""
+        return f"sa_{secrets.token_hex(16)}"
+    
+    @staticmethod
+    def generate_client_secret() -> str:
+        """Génère un client_secret sécurisé"""
+        return secrets.token_urlsafe(32)
+    
+    def __repr__(self):
+        return f"<ServiceAccount {self.name}>"
+
+
+class RefreshToken(Base):
+    """Token de rafraîchissement pour les sessions longues"""
+    __tablename__ = "refresh_tokens"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    token_hash = Column(String(255), unique=True, index=True, nullable=False)
+    user_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), nullable=True)
+    service_account_id = Column(Integer, ForeignKey('service_accounts.id', ondelete='CASCADE'), nullable=True)
+    expires_at = Column(DateTime, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    revoked_at = Column(DateTime, nullable=True)
+    ip_address = Column(String(45))
+    user_agent = Column(String(255))
+    
+    # Relations
+    user = relationship("User", backref="refresh_tokens")
+    service_account = relationship("ServiceAccount", backref="refresh_tokens")
+    
+    @property
+    def is_valid(self) -> bool:
+        return self.revoked_at is None and self.expires_at > datetime.utcnow()
+    
+    def __repr__(self):
+        return f"<RefreshToken for user_id={self.user_id}>"
+
+
+class RevokedToken(Base):
+    """Liste noire des tokens JWT révoqués (avant expiration naturelle)"""
+    __tablename__ = "revoked_tokens"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    jti = Column(String(64), unique=True, index=True, nullable=False)  # JWT ID
+    expires_at = Column(DateTime, nullable=False)  # Pour nettoyage automatique
+    revoked_at = Column(DateTime, default=datetime.utcnow)
+    reason = Column(String(100))  # logout, password_change, admin_revoke, etc.
+    
+    def __repr__(self):
+        return f"<RevokedToken {self.jti}>"

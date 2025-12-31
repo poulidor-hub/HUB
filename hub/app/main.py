@@ -1,16 +1,20 @@
 from contextlib import asynccontextmanager
+import asyncio
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from app.database import init_db, async_session_maker
-from app.models import User, Application
-from app.auth import get_password_hash
+from app.models import User, Application, UserAppRole
+from app.auth import get_password_hash, cleanup_expired_tokens
 from app.config import get_settings
-from app.routes import auth, users, apps
+from app.routes import auth, users, apps, service_accounts
 
 settings = get_settings()
+
+# Variable globale pour contrôler la tâche de nettoyage
+_cleanup_task = None
 
 
 async def create_default_admin():
@@ -48,34 +52,64 @@ async def create_default_app():
             )
             db.add(app)
             await db.commit()
+            await db.refresh(app)
             
-            # Associer l'admin à cette app
+            # Associer l'admin à cette app avec le rôle admin
             admin_result = await db.execute(select(User).where(User.is_admin == True))
             admin = admin_result.scalar_one_or_none()
             if admin:
-                app_result = await db.execute(
-                    select(Application)
-                    .options(selectinload(Application.users))
-                    .where(Application.slug == "salarie")
+                user_app_role = UserAppRole(
+                    user_id=admin.id,
+                    app_id=app.id,
+                    role="admin"
                 )
-                app_obj = app_result.scalar_one()
-                app_obj.users.append(admin)
+                db.add(user_app_role)
                 await db.commit()
             
             print("✅ Application 'API Salariés' créée")
 
 
+async def periodic_token_cleanup():
+    """Tâche périodique pour nettoyer les tokens expirés (toutes les heures)"""
+    while True:
+        try:
+            await asyncio.sleep(3600)  # Attendre 1 heure
+            async with async_session_maker() as db:
+                deleted_count = await cleanup_expired_tokens(db)
+                if deleted_count > 0:
+                    print(f"🧹 Nettoyage: {deleted_count} tokens expirés supprimés")
+        except asyncio.CancelledError:
+            print("🛑 Tâche de nettoyage arrêtée")
+            break
+        except Exception as e:
+            print(f"⚠️ Erreur lors du nettoyage des tokens: {e}")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    global _cleanup_task
+    
     # Startup
     print("🚀 Démarrage du Hub d'Authentification...")
     await init_db()
     await create_default_admin()
     await create_default_app()
+    
+    # Démarrer la tâche de nettoyage périodique
+    _cleanup_task = asyncio.create_task(periodic_token_cleanup())
+    print("🧹 Tâche de nettoyage des tokens démarrée")
+    
     print("✅ Hub prêt !")
     yield
+    
     # Shutdown
     print("👋 Arrêt du Hub...")
+    if _cleanup_task:
+        _cleanup_task.cancel()
+        try:
+            await _cleanup_task
+        except asyncio.CancelledError:
+            pass
 
 
 app = FastAPI(
@@ -99,11 +133,22 @@ app.add_middleware(
 app.include_router(auth.router)
 app.include_router(users.router)
 app.include_router(apps.router)
+app.include_router(service_accounts.router)
 
 
 @app.get("/health")
 async def health_check():
     return {"status": "healthy", "service": "hub-auth"}
+
+
+@app.get("/api/config/hub-host")
+async def get_hub_host():
+    """Retourne l'IP/hostname du Hub pour la configuration des applications"""
+    return {
+        "host": settings.get_hub_host(),
+        "configured": bool(settings.hub_host),
+        "message": "IP auto-détectée" if not settings.hub_host else "IP configurée"
+    }
 
 
 @app.get("/")

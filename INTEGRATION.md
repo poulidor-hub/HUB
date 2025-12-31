@@ -1,124 +1,298 @@
 # Guide d'Intégration - Hub d'Authentification
 
-Ce document décrit comment intégrer la validation des tokens JWT du Hub dans une API FastAPI existante.
+Ce document décrit comment intégrer vos applications avec le Hub d'authentification centralisé.
+
+## Table des matières
+
+1. [Principes fondamentaux](#principes-fondamentaux)
+2. [Configuration de l'application](#configuration-de-lapplication)
+3. [Intégration Backend (FastAPI)](#intégration-backend-fastapi)
+4. [Intégration Frontend](#intégration-frontend)
+5. [Communication Machine-to-Machine (M2M)](#communication-machine-to-machine-m2m)
+6. [Communication inter-API](#communication-inter-api)
+7. [Gestion des rôles](#gestion-des-rôles)
+8. [Endpoints du Hub](#endpoints-du-hub)
 
 ---
 
-## Prérequis
+## Principes fondamentaux
 
-- API FastAPI existante
-- Python 3.10+
-- Accès au Hub d'Authentification
+### 🔐 Le Hub gère TOUTE l'authentification
+
+| Responsabilité | Hub | Application |
+|----------------|-----|-------------|
+| Connexion utilisateur | ✅ | ❌ |
+| Création des tokens | ✅ | ❌ |
+| Renouvellement des tokens | ✅ | ❌ |
+| Durée de vie des tokens | ✅ | ❌ |
+| Révocation des tokens | ✅ | ❌ |
+| Gestion des utilisateurs | ✅ | ❌ |
+| Validation des tokens | ❌ | ✅ |
+| Préférences UI utilisateur | ❌ | ✅ |
+| Données métier | ❌ | ✅ |
+
+### 🌐 Adresses IP, pas localhost !
+
+> ⚠️ **CRITIQUE** : Les applications et le Hub doivent utiliser des **adresses IP** (ou noms DNS), **JAMAIS \`localhost\`**.
+> 
+> Quand un utilisateur est redirigé vers votre application depuis le Hub, il ne peut pas accéder à \`localhost\` car cela pointe vers sa propre machine !
+
+**❌ INCORRECT :**
+\`\`\`
+http://localhost:8000/api/auth/token
+http://localhost:4178/callback
+\`\`\`
+
+**✅ CORRECT :**
+\`\`\`
+http://192.0.2.12:8000/api/auth/token
+http://192.0.2.12:4178/callback
+\`\`\`
+
+### 📍 Localisation du Hub
+
+Par défaut, le Hub est accessible sur **la même IP que votre application**. Si le Hub est sur une machine différente, configurez l'IP dans le fichier \`.env\` de votre application.
 
 ---
 
-## Étape 1 : Installer les dépendances
+## Configuration de l'application
 
-Ajouter ces dépendances au fichier `requirements.txt` du projet :
+### Fichier \`.env\`
 
-```
+Créez un fichier \`.env\` à la racine de votre application :
+
+\`\`\`env
+# Adresse du Hub d'authentification
+# Par défaut: même IP que l'application
+# Décommentez et modifiez si le Hub est sur une autre machine
+# HUB_HOST=192.168.1.100
+
+# Port de l'API Hub (par défaut: 8000)
+HUB_API_PORT=8000
+
+# Port du Frontend Hub (par défaut: 80)
+HUB_FRONTEND_PORT=80
+
+# Slug de votre application (défini dans le Hub)
+APP_SLUG=mon-app
+
+# Port de votre API
+API_PORT=18087
+
+# Port de votre frontend (optionnel)
+FRONTEND_PORT=4178
+\`\`\`
+
+### Fichier \`config.py\`
+
+\`\`\`python
+"""
+Configuration de l'application avec détection automatique de l'IP
+"""
+import os
+import socket
+from functools import lru_cache
+from pydantic_settings import BaseSettings
+
+
+def get_server_ip() -> str:
+    """Détecte automatiquement l'IP du serveur (jamais localhost)"""
+    try:
+        # Crée une connexion UDP factice pour obtenir l'IP locale
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+        s.close()
+        return ip
+    except Exception:
+        # Fallback : essayer de récupérer l'IP depuis les interfaces
+        import subprocess
+        try:
+            result = subprocess.run(['hostname', '-I'], capture_output=True, text=True)
+            ip = result.stdout.strip().split()[0]
+            return ip
+        except Exception:
+            raise RuntimeError("Impossible de détecter l'IP. Définissez HUB_HOST dans .env")
+
+
+class Settings(BaseSettings):
+    # Hub - utilise l'IP locale par défaut
+    hub_host: str = ""  # Sera rempli automatiquement si vide
+    hub_api_port: int = 8000
+    hub_frontend_port: int = 80
+    
+    # Application
+    app_slug: str = "mon-app"
+    api_port: int = 18087
+    frontend_port: int = 4178
+    
+    class Config:
+        env_file = ".env"
+        extra = "ignore"
+    
+    @property
+    def hub_ip(self) -> str:
+        """Retourne l'IP du Hub (configurée ou détectée automatiquement)"""
+        if self.hub_host:
+            return self.hub_host
+        return get_server_ip()
+    
+    @property
+    def hub_api_url(self) -> str:
+        """URL de l'API du Hub"""
+        return f"http://{self.hub_ip}:{self.hub_api_port}"
+    
+    @property
+    def hub_frontend_url(self) -> str:
+        """URL du frontend du Hub"""
+        return f"http://{self.hub_ip}:{self.hub_frontend_port}"
+    
+    @property
+    def app_api_url(self) -> str:
+        """URL de l'API de cette application"""
+        return f"http://{self.hub_ip}:{self.api_port}"
+    
+    @property
+    def app_frontend_url(self) -> str:
+        """URL du frontend de cette application"""
+        return f"http://{self.hub_ip}:{self.frontend_port}"
+    
+    @property
+    def app_callback_url(self) -> str:
+        """URL de callback pour le SSO"""
+        return f"{self.app_frontend_url}/callback"
+
+
+@lru_cache()
+def get_settings() -> Settings:
+    return Settings()
+\`\`\`
+
+---
+
+## Intégration Backend (FastAPI)
+
+### Étape 1 : Dépendances
+
+Ajouter au \`requirements.txt\` :
+
+\`\`\`
 pyjwt[crypto]>=2.8.0
 cryptography>=42.0.0
-```
+httpx>=0.25.0
+\`\`\`
 
-Ou installer via pip :
+### Étape 2 : Récupérer la clé publique du Hub
 
-```bash
-pip install "pyjwt[crypto]>=2.8.0" "cryptography>=42.0.0"
-```
+La clé publique peut être :
+- Copiée manuellement dans un fichier \`jwt_public_key.pem\`
+- Récupérée dynamiquement depuis le Hub
 
----
+**Option A : Fichier statique** (recommandé en production)
 
-## Étape 2 : Copier la clé publique
+Créez \`jwt_public_key.pem\` en récupérant la clé depuis :
+\`\`\`
+GET http://[IP_HUB]:8000/api/auth/public-key
+\`\`\`
 
-Créer un fichier `jwt_public_key.pem` à la racine du projet (ou dans un dossier `secrets/`) avec le contenu suivant :
+**Option B : Récupération dynamique** (pour développement)
 
-```
------BEGIN PUBLIC KEY-----
-MIICIjANBgkqhkiG9w0BAQEFAAOCAg8AMIICCgKCAgEAo5T9ZVFK9SOyEuUKnwo+
-HrzpYAFJb2KiVqU/MO3J5XVmB5tuIgWXjud6GnImgCklt1p2rQ/66OXkW414GwXJ
-+euzOaJvXwSOjG3byjVerXKh3VBIR6wjUrK6BE02Z7t0ZC/t+aVUp0Bxv9h15OtE
-aLGc5zdmnVLu2bi+tgQbUIFkd+ncXn4/+1MuHtNHo+NYHgVx8sUPY2yDBx/ue5jr
-BezHl9S4Zvu7yePzHCUz2yY9lZ3NTcuO6iYUTfefVSvP/NM5p+f1sDTpIIkGiF1A
-CTcwWYLkoAuvWm2cxRF2TbmtrCTeNJL2AMPQQugVTIYu5DIfROEuG0rghZjl3hhs
-ZPAo4MlO4089uHq7yTmbD8kQ6oiscFgwaCF5sCUWpq1jNpVthKIetnTl4t4Sv/mW
-+A6kXWQ7IMWZQ3/8It1cVhBSDzBqD3zDjPZu7VXaWFTHw0CIIC06ToARhPR2kJ7c
-J1zyKzFm8PfVS7Ujv3gwOn40URt8u/MurPZDcUmzCHtdD9wxCkxg5q0P67lOGLRX
-sCbgLU1/gBfmvdhF2faHihv5WPCp1gro+YJXeLec3lFXQmkhOASbmOA4luyi6AcJ
-HBVOVoqweV0iHI9sAftWrHjnt9Io3nTklGoi4cUU5fobYwCoun8h8JZuEyvl0p40
-tPxUKpsU7DYLoXf33iBqDScCAwEAAQ==
------END PUBLIC KEY-----
-```
+\`\`\`python
+import httpx
+from config import get_settings
 
-> **Note** : Cette clé publique est spécifique à cette instance du Hub. Elle peut aussi être récupérée via `GET http://[HUB_URL]:8000/api/auth/public-key`.
+async def fetch_public_key() -> str:
+    settings = get_settings()
+    async with httpx.AsyncClient() as client:
+        response = await client.get(f"{settings.hub_api_url}/api/auth/public-key")
+        data = response.json()
+        return data["public_key"]
+\`\`\`
 
----
+### Étape 3 : Module d'authentification \`hub_auth.py\`
 
-## Étape 3 : Créer le module de validation JWT
-
-Créer un fichier `hub_auth.py` dans le projet :
-
-```python
+\`\`\`python
 """
 Module d'authentification Hub
-Valide les tokens JWT émis par le Hub central d'authentification.
+=============================
+Valide les tokens JWT émis par le Hub central.
+
+⚠️ IMPORTANT :
+- Ne JAMAIS créer de tokens dans l'application
+- Ne JAMAIS gérer le renouvellement des tokens
+- Seul le Hub gère le cycle de vie des tokens
 """
 
 import jwt
 from pathlib import Path
-from typing import Optional, List
+from typing import Optional, Dict
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 
+from config import get_settings
+
+settings = get_settings()
+
 # Configuration
 JWT_ALGORITHM = "RS256"
-JWT_PUBLIC_KEY_PATH = "jwt_public_key.pem"  # Adapter le chemin si nécessaire
+JWT_PUBLIC_KEY_PATH = "jwt_public_key.pem"
 
 # Charger la clé publique
 def load_public_key() -> str:
     """Charge la clé publique RSA pour vérifier les tokens du Hub."""
     key_path = Path(JWT_PUBLIC_KEY_PATH)
     if not key_path.exists():
-        # Essayer dans le dossier secrets/
         key_path = Path("secrets/jwt_public_key.pem")
     if not key_path.exists():
         raise FileNotFoundError(
             f"Clé publique JWT non trouvée. "
-            f"Placer le fichier jwt_public_key.pem à la racine du projet."
+            f"Récupérez-la depuis {settings.hub_api_url}/api/auth/public-key"
         )
     return key_path.read_text().strip()
 
 PUBLIC_KEY = load_public_key()
 
-# OAuth2 scheme - pointe vers le Hub pour la documentation OpenAPI
+# OAuth2 scheme - pointe vers le Hub (pas localhost !)
 oauth2_scheme = OAuth2PasswordBearer(
-    tokenUrl="http://localhost:8000/api/auth/token",  # URL du Hub
+    tokenUrl=f"{settings.hub_api_url}/api/auth/token",
     auto_error=True
 )
 
 
 class TokenPayload:
     """Représente le contenu d'un token JWT validé."""
+    
     def __init__(self, payload: dict):
-        self.sub: str = payload.get("sub", "")  # Username
-        self.roles: List[str] = payload.get("roles", [])  # ["admin"] ou ["user"]
-        self.apps: List[str] = payload.get("apps", [])  # Slugs des apps autorisées
-        self.exp: int = payload.get("exp", 0)  # Timestamp d'expiration
-        self.raw: dict = payload  # Payload complet
+        self.sub: str = payload.get("sub", "")           # Username
+        self.roles: list = payload.get("roles", [])       # ["admin"] ou ["user"]
+        self.apps: dict = payload.get("apps", {})         # {"app-slug": "role"}
+        self.exp: int = payload.get("exp", 0)             # Expiration
+        self.token_type: str = payload.get("type", "user")  # "user" ou "service_account"
+        self.raw: dict = payload
+    
+    def get_role_for_app(self, app_slug: str) -> Optional[str]:
+        """Retourne le rôle de l'utilisateur pour une application donnée"""
+        return self.apps.get(app_slug)
+    
+    def has_app_access(self, app_slug: str) -> bool:
+        """Vérifie si l'utilisateur a accès à une application"""
+        return app_slug in self.apps
+    
+    def is_admin(self) -> bool:
+        """Vérifie si l'utilisateur est admin du Hub"""
+        return "admin" in self.roles
+    
+    def is_service_account(self) -> bool:
+        """Vérifie si c'est un service account (M2M)"""
+        return self.token_type == "service_account"
 
 
 def verify_hub_token(token: str) -> TokenPayload:
     """
     Vérifie un token JWT émis par le Hub.
     
-    Args:
-        token: Le token JWT à vérifier
-        
-    Returns:
-        TokenPayload: Les informations contenues dans le token
-        
-    Raises:
-        HTTPException: Si le token est invalide ou expiré
+    ⚠️ Cette fonction ne gère PAS l'expiration/renouvellement !
+    Si le token est expiré, l'utilisateur doit être redirigé vers le Hub.
     """
     try:
         payload = jwt.decode(
@@ -130,8 +304,11 @@ def verify_hub_token(token: str) -> TokenPayload:
     except jwt.ExpiredSignatureError:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Token expiré - Veuillez vous reconnecter via le Hub",
-            headers={"WWW-Authenticate": "Bearer"}
+            detail="Token expiré - Reconnectez-vous via le Hub",
+            headers={
+                "WWW-Authenticate": "Bearer",
+                "X-Hub-Login-URL": settings.hub_frontend_url
+            }
         )
     except jwt.InvalidTokenError as e:
         raise HTTPException(
@@ -142,27 +319,13 @@ def verify_hub_token(token: str) -> TokenPayload:
 
 
 async def get_current_user(token: str = Depends(oauth2_scheme)) -> TokenPayload:
-    """
-    Dépendance FastAPI pour récupérer l'utilisateur courant.
-    
-    Usage:
-        @app.get("/protected")
-        async def protected_route(user: TokenPayload = Depends(get_current_user)):
-            return {"user": user.sub}
-    """
+    """Dépendance pour récupérer l'utilisateur courant"""
     return verify_hub_token(token)
 
 
 async def get_current_admin(user: TokenPayload = Depends(get_current_user)) -> TokenPayload:
-    """
-    Dépendance FastAPI pour vérifier que l'utilisateur est admin.
-    
-    Usage:
-        @app.get("/admin-only")
-        async def admin_route(user: TokenPayload = Depends(get_current_admin)):
-            return {"admin": user.sub}
-    """
-    if "admin" not in user.roles:
+    """Dépendance pour vérifier que l'utilisateur est admin du Hub"""
+    if not user.is_admin():
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Accès réservé aux administrateurs"
@@ -170,220 +333,943 @@ async def get_current_admin(user: TokenPayload = Depends(get_current_user)) -> T
     return user
 
 
-def require_app_access(app_slug: str):
+def require_app_access(app_slug: str, min_role: str = None):
     """
-    Crée une dépendance pour vérifier l'accès à une application spécifique.
+    Crée une dépendance pour vérifier l'accès à une application.
+    
+    Args:
+        app_slug: Slug de l'application
+        min_role: Rôle minimum requis (optionnel)
     
     Usage:
         @app.get("/data")
         async def get_data(user: TokenPayload = Depends(require_app_access("mon-app"))):
-            return {"data": "..."}
+            ...
+        
+        @app.delete("/data/{id}")
+        async def delete_data(id: int, user: TokenPayload = Depends(require_app_access("mon-app", "admin"))):
+            ...
     """
+    # Hiérarchie des rôles
+    ROLE_HIERARCHY = {"admin": 4, "manager": 3, "user": 2, "viewer": 1, "service": 3}
+    
     async def check_access(user: TokenPayload = Depends(get_current_user)) -> TokenPayload:
-        if "admin" in user.roles:
-            return user  # Les admins ont accès à tout
-        if app_slug not in user.apps:
+        # Les admins du Hub ont accès à tout
+        if user.is_admin():
+            return user
+        
+        # Vérifier l'accès à l'app
+        if not user.has_app_access(app_slug):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=f"Accès non autorisé à l'application '{app_slug}'"
             )
+        
+        # Vérifier le rôle minimum si spécifié
+        if min_role:
+            user_role = user.get_role_for_app(app_slug)
+            user_level = ROLE_HIERARCHY.get(user_role, 0)
+            required_level = ROLE_HIERARCHY.get(min_role, 0)
+            
+            if user_level < required_level:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail=f"Rôle '{min_role}' requis (vous avez '{user_role}')"
+                )
+        
         return user
+    
     return check_access
-```
+\`\`\`
 
----
+### Étape 4 : Utilisation dans les routes
 
-## Étape 4 : Intégrer dans les routes existantes
-
-### Option A : Remplacer l'authentification existante
-
-Si le projet a déjà un système d'authentification avec `Depends(get_current_user)`, remplacer l'import :
-
-```python
-# AVANT
-from app.auth import get_current_user
-
-# APRÈS
-from hub_auth import get_current_user, get_current_admin, TokenPayload
-```
-
-### Option B : Ajouter l'authentification Hub à des routes existantes
-
-```python
+\`\`\`python
 from fastapi import FastAPI, Depends
-from hub_auth import get_current_user, get_current_admin, require_app_access, TokenPayload
+from hub_auth import (
+    get_current_user, 
+    get_current_admin, 
+    require_app_access, 
+    TokenPayload
+)
+from config import get_settings
 
+settings = get_settings()
 app = FastAPI()
 
 # Route protégée - tout utilisateur authentifié
-@app.get("/employees")
-async def list_employees(user: TokenPayload = Depends(get_current_user)):
-    # user.sub contient le username
-    # user.roles contient ["admin"] ou ["user"]
-    return {"message": f"Bienvenue {user.sub}"}
+@app.get("/api/profile")
+async def get_profile(user: TokenPayload = Depends(get_current_user)):
+    role = user.get_role_for_app(settings.app_slug)
+    return {
+        "username": user.sub,
+        "role": role,
+        "is_service": user.is_service_account()
+    }
 
-# Route admin uniquement
-@app.delete("/employees/{id}")
-async def delete_employee(id: int, user: TokenPayload = Depends(get_current_admin)):
+# Route avec vérification d'accès à cette app
+@app.get("/api/employees")
+async def list_employees(user: TokenPayload = Depends(require_app_access("salarie"))):
+    return {"employees": [...]}
+
+# Route admin de l'app uniquement
+@app.delete("/api/employees/{id}")
+async def delete_employee(
+    id: int, 
+    user: TokenPayload = Depends(require_app_access("salarie", "admin"))
+):
     return {"deleted": id}
 
-# Route avec vérification d'accès à l'app
-@app.get("/sensitive-data")
-async def get_sensitive_data(user: TokenPayload = Depends(require_app_access("salarie"))):
-    return {"data": "..."}
-```
+# Route manager ou admin
+@app.post("/api/employees")
+async def create_employee(
+    data: dict,
+    user: TokenPayload = Depends(require_app_access("salarie", "manager"))
+):
+    return {"created": data}
+\`\`\`
 
 ---
 
-## Étape 5 : Configurer CORS (si frontend séparé)
+## Intégration Frontend
 
-Si l'API est appelée depuis un frontend, configurer CORS pour accepter le header Authorization :
+### Principes
 
-```python
-from fastapi.middleware.cors import CORSMiddleware
+1. **Connexion** : Rediriger vers le Hub
+2. **Callback** : Récupérer le token depuis l'URL
+3. **Stockage** : Garder le token en localStorage
+4. **Requêtes** : Envoyer le token dans le header \`Authorization\`
+5. **Expiration** : Rediriger vers le Hub si 401
+6. **Préférences** : L'app peut stocker des préférences UI localement
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # En production, spécifier les domaines autorisés
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],  # Inclut Authorization
-)
-```
+### Configuration JavaScript
 
----
+\`\`\`javascript
+// config.js
+const CONFIG = {
+    // Détection automatique de l'IP (jamais localhost pour la prod)
+    get serverIP() {
+        // En développement, vous pouvez forcer une IP
+        // return '192.0.2.12';
+        return window.location.hostname;
+    },
+    
+    // URLs du Hub
+    get HUB_API_URL() {
+        const hubHost = localStorage.getItem('hub_host') || this.serverIP;
+        return \`http://\${hubHost}:8000\`;
+    },
+    
+    get HUB_FRONTEND_URL() {
+        const hubHost = localStorage.getItem('hub_host') || this.serverIP;
+        return \`http://\${hubHost}:80\`;
+    },
+    
+    // URL de votre API
+    get API_URL() {
+        return \`http://\${this.serverIP}:18087\`;
+    },
+    
+    // Slug de l'application
+    APP_SLUG: 'salarie'
+};
+\`\`\`
 
-## Étape 6 : Supprimer l'ancien système d'authentification (optionnel)
+### Module d'authentification
 
-Si le projet avait son propre système de login (`/token`, `/login`), vous pouvez :
-
-1. **Supprimer** les routes de login locales
-2. **Supprimer** la gestion des utilisateurs locale (si tout est centralisé dans le Hub)
-3. **Garder** les routes de login si vous voulez un mode hybride (Hub + auth locale)
-
----
-
-## Structure finale du projet
-
-```
-mon-api/
-├── main.py                 # Point d'entrée FastAPI
-├── hub_auth.py             # Module d'authentification Hub (nouveau)
-├── jwt_public_key.pem      # Clé publique du Hub (nouveau)
-├── requirements.txt        # Avec pyjwt et cryptography
-└── ...                     # Reste du projet
-```
-
----
-
-## Test de l'intégration
-
-### 1. Obtenir un token depuis le Hub
-
-```bash
-curl -X POST "http://localhost:8000/api/auth/token" \
-  -H "Content-Type: application/x-www-form-urlencoded" \
-  -d "username=admin&password=admin123"
-```
-
-Réponse :
-```json
-{
-  "access_token": "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9...",
-  "token_type": "bearer",
-  "expires_at": "2025-12-31T20:00:00"
-}
-```
-
-### 2. Appeler l'API protégée avec le token
-
-```bash
-curl "http://localhost:18087/employees" \
-  -H "Authorization: Bearer eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9..."
-```
-
----
-
-## Récupération du token via le frontend
-
-Quand l'utilisateur est redirigé depuis le Hub vers votre application, le token est passé dans l'URL :
-
-```
-http://votre-app.local/callback?access_token=eyJhbG...
-```
-
-Le frontend doit :
-1. Extraire le token de l'URL
-2. Le stocker (localStorage ou sessionStorage)
-3. L'envoyer dans le header `Authorization: Bearer <token>` à chaque requête API
-
-Exemple JavaScript :
-```javascript
-// Récupérer le token de l'URL
-const params = new URLSearchParams(window.location.search);
-const token = params.get('access_token');
-if (token) {
-    localStorage.setItem('hub_token', token);
-    // Nettoyer l'URL
-    window.history.replaceState({}, '', window.location.pathname);
-}
-
-// Utiliser le token pour les appels API
-async function fetchAPI(endpoint) {
-    const token = localStorage.getItem('hub_token');
-    const response = await fetch(`http://localhost:18087${endpoint}`, {
-        headers: {
-            'Authorization': `Bearer ${token}`
+\`\`\`javascript
+// auth.js
+class HubAuth {
+    constructor() {
+        this.token = localStorage.getItem('hub_token');
+        this.refreshToken = localStorage.getItem('hub_refresh_token');
+    }
+    
+    /**
+     * Redirige vers le Hub pour la connexion
+     */
+    login() {
+        // Sauvegarder l'URL actuelle pour y revenir après
+        localStorage.setItem('redirect_after_login', window.location.href);
+        
+        // Rediriger vers le Hub avec l'URL de callback
+        const callbackUrl = \`\${window.location.origin}/callback\`;
+        window.location.href = \`\${CONFIG.HUB_FRONTEND_URL}?callback=\${encodeURIComponent(callbackUrl)}\`;
+    }
+    
+    /**
+     * Traite le callback après connexion sur le Hub
+     */
+    handleCallback() {
+        const params = new URLSearchParams(window.location.search);
+        const accessToken = params.get('access_token');
+        const refreshToken = params.get('refresh_token');
+        
+        if (accessToken) {
+            this.setTokens(accessToken, refreshToken);
+            
+            // Nettoyer l'URL
+            window.history.replaceState({}, '', window.location.pathname);
+            
+            // Rediriger vers la page d'origine
+            const redirect = localStorage.getItem('redirect_after_login') || '/';
+            localStorage.removeItem('redirect_after_login');
+            window.location.href = redirect;
+            
+            return true;
         }
-    });
-    return response.json();
+        return false;
+    }
+    
+    /**
+     * Stocke les tokens
+     */
+    setTokens(accessToken, refreshToken = null) {
+        this.token = accessToken;
+        localStorage.setItem('hub_token', accessToken);
+        
+        if (refreshToken) {
+            this.refreshToken = refreshToken;
+            localStorage.setItem('hub_refresh_token', refreshToken);
+        }
+    }
+    
+    /**
+     * Tente de rafraîchir le token via le Hub
+     * ⚠️ Le renouvellement est géré par le HUB, pas par l'application !
+     */
+    async refreshAccessToken() {
+        if (!this.refreshToken) {
+            throw new Error('Pas de refresh token');
+        }
+        
+        try {
+            const response = await fetch(\`\${CONFIG.HUB_API_URL}/api/auth/token\`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                body: new URLSearchParams({
+                    grant_type: 'refresh_token',
+                    refresh_token: this.refreshToken
+                })
+            });
+            
+            if (!response.ok) {
+                throw new Error('Refresh failed');
+            }
+            
+            const data = await response.json();
+            this.setTokens(data.access_token, data.refresh_token);
+            return data.access_token;
+            
+        } catch (error) {
+            // Refresh échoué - déconnecter et rediriger vers le Hub
+            this.logout();
+            throw error;
+        }
+    }
+    
+    /**
+     * Effectue une requête API avec gestion automatique du token
+     */
+    async request(url, options = {}) {
+        if (!this.token) {
+            this.login();
+            return;
+        }
+        
+        // Première tentative
+        let response = await fetch(url, {
+            ...options,
+            headers: {
+                ...options.headers,
+                'Authorization': \`Bearer \${this.token}\`
+            }
+        });
+        
+        // Si 401 et qu'on a un refresh token, tenter le refresh
+        if (response.status === 401 && this.refreshToken) {
+            try {
+                await this.refreshAccessToken();
+                
+                // Réessayer avec le nouveau token
+                response = await fetch(url, {
+                    ...options,
+                    headers: {
+                        ...options.headers,
+                        'Authorization': \`Bearer \${this.token}\`
+                    }
+                });
+            } catch (e) {
+                // Refresh échoué, l'utilisateur a été déconnecté
+                return;
+            }
+        }
+        
+        // Si toujours 401, rediriger vers le Hub
+        if (response.status === 401) {
+            this.login();
+            return;
+        }
+        
+        return response;
+    }
+    
+    /**
+     * Déconnexion - révoque le token sur le Hub
+     */
+    async logout() {
+        if (this.token) {
+            try {
+                await fetch(\`\${CONFIG.HUB_API_URL}/api/auth/logout\`, {
+                    method: 'POST',
+                    headers: { 'Authorization': \`Bearer \${this.token}\` }
+                });
+            } catch (e) {
+                // Ignorer les erreurs de logout
+            }
+        }
+        
+        this.token = null;
+        this.refreshToken = null;
+        localStorage.removeItem('hub_token');
+        localStorage.removeItem('hub_refresh_token');
+        
+        // Rediriger vers le Hub
+        this.login();
+    }
+    
+    /**
+     * Vérifie si l'utilisateur est connecté
+     */
+    isLoggedIn() {
+        return !!this.token;
+    }
+    
+    /**
+     * Décode le token pour obtenir les infos utilisateur
+     * (sans validation - pour affichage UI uniquement)
+     */
+    getTokenPayload() {
+        if (!this.token) return null;
+        
+        try {
+            const parts = this.token.split('.');
+            const payload = JSON.parse(atob(parts[1]));
+            return payload;
+        } catch (e) {
+            return null;
+        }
+    }
+    
+    /**
+     * Récupère le rôle de l'utilisateur pour cette application
+     */
+    getAppRole() {
+        const payload = this.getTokenPayload();
+        if (!payload || !payload.apps) return null;
+        return payload.apps[CONFIG.APP_SLUG] || null;
+    }
 }
+
+// Instance globale
+const auth = new HubAuth();
+\`\`\`
+
+### Gestion des préférences UI locales
+
+L'application peut stocker des préférences utilisateur localement (thème, langue, etc.) :
+
+\`\`\`javascript
+// preferences.js
+class UserPreferences {
+    constructor() {
+        this.storageKey = 'app_preferences';
+    }
+    
+    /**
+     * Récupère les préférences de l'utilisateur courant
+     */
+    get() {
+        const payload = auth.getTokenPayload();
+        if (!payload) return {};
+        
+        const allPrefs = JSON.parse(localStorage.getItem(this.storageKey) || '{}');
+        return allPrefs[payload.sub] || {};
+    }
+    
+    /**
+     * Sauvegarde une préférence
+     */
+    set(key, value) {
+        const payload = auth.getTokenPayload();
+        if (!payload) return;
+        
+        const allPrefs = JSON.parse(localStorage.getItem(this.storageKey) || '{}');
+        if (!allPrefs[payload.sub]) {
+            allPrefs[payload.sub] = {};
+        }
+        allPrefs[payload.sub][key] = value;
+        localStorage.setItem(this.storageKey, JSON.stringify(allPrefs));
+    }
+    
+    /**
+     * Applique les préférences sauvegardées
+     */
+    apply() {
+        const prefs = this.get();
+        
+        // Thème
+        if (prefs.theme === 'dark') {
+            document.body.classList.add('dark-theme');
+        }
+        
+        // Langue
+        if (prefs.language) {
+            document.documentElement.lang = prefs.language;
+        }
+        
+        // Sidebar collapse
+        if (prefs.sidebarCollapsed) {
+            document.getElementById('sidebar')?.classList.add('collapsed');
+        }
+    }
+}
+
+const userPrefs = new UserPreferences();
+\`\`\`
+
+---
+
+## Communication Machine-to-Machine (M2M)
+
+### Création automatique du Service Account
+
+Quand une application est créée dans le Hub, un **Service Account** est automatiquement créé avec ses credentials.
+
+### Exemple Python - Client M2M
+
+\`\`\`python
+"""
+Client M2M pour communication entre services
+Le renouvellement des tokens est géré par le Hub !
+"""
+import httpx
+from datetime import datetime, timedelta
+from config import get_settings
+
+settings = get_settings()
+
+
+class M2MClient:
+    def __init__(self, client_id: str, client_secret: str):
+        self.hub_url = settings.hub_api_url
+        self.client_id = client_id
+        self.client_secret = client_secret
+        self._token = None
+        self._token_expires = None
+    
+    async def get_token(self) -> str:
+        """
+        Obtient un token M2M depuis le Hub.
+        Le token est mis en cache localement pour éviter les appels répétés.
+        """
+        # Vérifier si le token est encore valide (marge de 5 min)
+        if self._token and self._token_expires:
+            if datetime.utcnow() < self._token_expires - timedelta(minutes=5):
+                return self._token
+        
+        # Demander un nouveau token au Hub
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                f"{self.hub_url}/api/auth/token",
+                data={
+                    "grant_type": "client_credentials",
+                    "client_id": self.client_id,
+                    "client_secret": self.client_secret
+                }
+            )
+            response.raise_for_status()
+            data = response.json()
+            
+            self._token = data["access_token"]
+            expires_str = data["expires_at"].replace("Z", "+00:00")
+            self._token_expires = datetime.fromisoformat(expires_str).replace(tzinfo=None)
+            
+            return self._token
+    
+    async def call_api(self, url: str, method: str = "GET", **kwargs) -> dict:
+        """Appelle une API avec authentification M2M"""
+        token = await self.get_token()
+        
+        async with httpx.AsyncClient() as client:
+            headers = kwargs.pop("headers", {})
+            headers["Authorization"] = f"Bearer {token}"
+            
+            response = await client.request(method, url, headers=headers, **kwargs)
+            response.raise_for_status()
+            return response.json()
+
+
+# Utilisation
+m2m = M2MClient(
+    client_id="sa_xxx",
+    client_secret="secret_xxx"
+)
+
+# Appeler une autre API
+employees = await m2m.call_api(f"http://{settings.hub_ip}:18087/api/employees")
+\`\`\`
+
+---
+
+## Communication inter-API
+
+Cette section détaille comment vos applications peuvent communiquer entre elles via le Hub.
+
+### Architecture
+
+```
+┌─────────────────┐         ┌─────────────────┐         ┌─────────────────┐
+│   API Salarié   │◄───────►│      HUB        │◄───────►│  Autre API      │
+│  (client M2M)   │         │ (Auth centrale) │         │  (client M2M)   │
+└─────────────────┘         └─────────────────┘         └─────────────────┘
+        │                           │                           │
+        │    1. Demande token       │                           │
+        │   (client_credentials)    │                           │
+        │──────────────────────────►│                           │
+        │                           │                           │
+        │    2. Token JWT           │                           │
+        │◄──────────────────────────│                           │
+        │                           │                           │
+        │    3. Appel API avec token│                           │
+        │───────────────────────────────────────────────────────►
+        │                           │                           │
+        │                           │    4. Valide token        │
+        │                           │◄──────────────────────────│
+        │                           │                           │
 ```
 
+### Configurer l'IP du Hub
+
+Dans le fichier `.env` du Hub :
+
+```env
+# Host du Hub (IP ou hostname accessible par les clients)
+# Exemples: 192.168.1.100, monserveur.local, hub.mondomaine.fr
+HUB_HOST=192.0.2.11
+```
+
+### Créer un Service Account
+
+```bash
+# 1. Obtenir un token admin
+TOKEN=$(curl -s -X POST "http://192.0.2.11:8000/api/auth/token" \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "grant_type=password&username=admin&password=admin123" | jq -r '.access_token')
+
+# 2. Créer le service account
+curl -X POST "http://192.0.2.11:8000/api/service-accounts/" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "api_salarie",
+    "description": "Service account pour API Salarié",
+    "app_ids": [1]
+  }'
+```
+
+### 📁 Sauvegarde automatique des credentials
+
+Les credentials sont automatiquement sauvegardés dans :
+```
+secrets/service_accounts/sa_<nom>.env
+```
+
+Contenu du fichier :
+```env
+# Service Account: api_salarie
+# Généré automatiquement - NE PAS COMMITER CE FICHIER !
+
+CLIENT_ID=<VOTRE_CLIENT_ID>
+CLIENT_SECRET=<VOTRE_CLIENT_SECRET>
+```
+
+### Client M2M complet (`hub_client.py`)
+
+Créez ce fichier dans votre application :
+
+\`\`\`python
+"""
+Client pour communiquer avec le Hub d'authentification (M2M)
+"""
+import httpx
+from datetime import datetime, timedelta
+from typing import Optional
+import logging
+import os
+
+logger = logging.getLogger(__name__)
+
+
+class HubClient:
+    """Client pour l'authentification M2M avec le Hub"""
+    
+    def __init__(self):
+        self.hub_host = os.getenv("HUB_HOST", "192.0.2.11")
+        self.hub_port = os.getenv("HUB_API_PORT", "8000")
+        self.client_id = os.getenv("CLIENT_ID")
+        self.client_secret = os.getenv("CLIENT_SECRET")
+        self._token: Optional[str] = None
+        self._token_expires_at: Optional[datetime] = None
+    
+    @property
+    def hub_url(self) -> str:
+        return f"http://{self.hub_host}:{self.hub_port}"
+    
+    async def get_token(self) -> str:
+        """
+        Obtient un token M2M, avec cache automatique.
+        Renouvelle le token 5 minutes avant expiration.
+        """
+        if self._token and self._token_expires_at:
+            if datetime.utcnow() < self._token_expires_at - timedelta(minutes=5):
+                return self._token
+        
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                f"{self.hub_url}/api/auth/token",
+                data={
+                    "grant_type": "client_credentials",
+                    "client_id": self.client_id,
+                    "client_secret": self.client_secret,
+                }
+            )
+            
+            if response.status_code != 200:
+                logger.error(f"Erreur auth Hub: {response.text}")
+                raise Exception(f"Impossible d'obtenir un token: {response.status_code}")
+            
+            data = response.json()
+            self._token = data["access_token"]
+            expires_in = data.get("expires_in", 1800)
+            self._token_expires_at = datetime.utcnow() + timedelta(seconds=expires_in)
+            
+            logger.info("✅ Token M2M obtenu avec succès")
+            return self._token
+    
+    async def call_api(self, method: str, url: str, **kwargs) -> httpx.Response:
+        """
+        Appelle une API externe avec le token M2M.
+        """
+        token = await self.get_token()
+        headers = kwargs.pop("headers", {})
+        headers["Authorization"] = f"Bearer {token}"
+        
+        async with httpx.AsyncClient() as client:
+            return await client.request(method, url, headers=headers, **kwargs)
+    
+    async def validate_token(self, token: str) -> dict:
+        """Valide un token utilisateur auprès du Hub."""
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                f"{self.hub_url}/api/auth/me",
+                headers={"Authorization": f"Bearer {token}"}
+            )
+            if response.status_code != 200:
+                raise Exception("Token invalide")
+            return response.json()
+
+
+# Instance singleton
+hub_client = HubClient()
+\`\`\`
+
+### Configuration `.env` de votre API
+
+```env
+# === Configuration Hub ===
+HUB_HOST=192.0.2.11
+HUB_API_PORT=8000
+
+# === Credentials Service Account ===
+# Copiés depuis secrets/service_accounts/sa_api_salarie.env
+CLIENT_ID=<VOTRE_CLIENT_ID>
+CLIENT_SECRET=<VOTRE_CLIENT_SECRET>
+
+# === Votre API ===
+APP_SLUG=salarie
+API_PORT=18087
+```
+
+### Exemple d'utilisation
+
+\`\`\`python
+from fastapi import APIRouter, HTTPException
+from hub_client import hub_client
+
+router = APIRouter()
+
+
+@router.get("/data-from-other-api")
+async def get_external_data():
+    """Appeler une autre API via le Hub"""
+    response = await hub_client.call_api(
+        "GET",
+        "http://192.0.2.11:18088/api/other-service/data"
+    )
+    
+    if response.status_code != 200:
+        raise HTTPException(status_code=502, detail="Erreur API externe")
+    
+    return response.json()
+\`\`\`
+
+### Docker Compose - Réseau partagé
+
+```yaml
+services:
+  api-salarie:
+    build: .
+    ports:
+      - "18087:18087"
+    environment:
+      - HUB_HOST=${HUB_HOST:-192.0.2.11}
+      - HUB_API_PORT=${HUB_API_PORT:-8000}
+      - CLIENT_ID=${CLIENT_ID}
+      - CLIENT_SECRET=${CLIENT_SECRET}
+    networks:
+      - hub-network
+
+networks:
+  hub-network:
+    external: true
+    name: hub_hub-network
+```
+
+### Checklist d'intégration inter-API
+
+- [ ] Configurer `HUB_HOST` dans le `.env` du Hub
+- [ ] Créer un service account pour votre API
+- [ ] Copier les credentials dans votre application
+- [ ] Implémenter le `HubClient` dans votre API
+- [ ] Copier `hub_auth.py` et `jwt_public_key.pem` (voir section Dockerfile)
+- [ ] Configurer le réseau Docker partagé
+- [ ] Tester la communication M2M
+
 ---
 
-## Informations disponibles dans le token
+## Gestion des rôles
 
-| Champ | Type | Description |
-|-------|------|-------------|
-| `sub` | string | Nom d'utilisateur |
-| `roles` | array | `["admin"]` ou `["user"]` |
-| `apps` | array | Liste des slugs d'applications autorisées |
-| `exp` | int | Timestamp d'expiration (Unix) |
-| `iat` | int | Timestamp de création (Unix) |
+### Structure du token JWT
+
+\`\`\`json
+{
+  "sub": "jean.dupont",
+  "roles": ["user"],
+  "apps": {
+    "salarie": "admin",
+    "compta": "viewer",
+    "rh": "manager"
+  },
+  "type": "user",
+  "exp": 1735650600,
+  "iat": 1735648800,
+  "jti": "abc123"
+}
+\`\`\`
+
+### Rôles disponibles
+
+| Rôle | Niveau | Description |
+|------|--------|-------------|
+| \`admin\` | 4 | Tous les droits sur l'application |
+| \`manager\` | 3 | Gestion des données, création/modification |
+| \`user\` | 2 | Accès standard lecture/écriture |
+| \`viewer\` | 1 | Lecture seule |
+| \`service\` | 3 | Service Account (M2M) |
+
+### Vérification des rôles côté backend
+
+\`\`\`python
+from hub_auth import require_app_access
+
+# Accès lecture seule (viewer+)
+@app.get("/api/data")
+async def read_data(user: TokenPayload = Depends(require_app_access("mon-app", "viewer"))):
+    ...
+
+# Accès écriture (user+)
+@app.post("/api/data")
+async def create_data(user: TokenPayload = Depends(require_app_access("mon-app", "user"))):
+    ...
+
+# Accès gestion (manager+)
+@app.put("/api/settings")
+async def update_settings(user: TokenPayload = Depends(require_app_access("mon-app", "manager"))):
+    ...
+
+# Accès admin uniquement
+@app.delete("/api/data/{id}")
+async def delete_data(user: TokenPayload = Depends(require_app_access("mon-app", "admin"))):
+    ...
+\`\`\`
+
+### Vérification des rôles côté frontend
+
+\`\`\`javascript
+// Vérifier le rôle
+const role = auth.getAppRole();
+
+if (role === 'admin') {
+    // Afficher les boutons admin
+    document.getElementById('adminPanel').style.display = 'block';
+}
+
+if (['admin', 'manager'].includes(role)) {
+    // Afficher les boutons de gestion
+    document.getElementById('manageBtn').style.display = 'inline';
+}
+
+if (role === 'viewer') {
+    // Masquer les boutons d'édition
+    document.querySelectorAll('.edit-btn').forEach(btn => btn.style.display = 'none');
+}
+\`\`\`
 
 ---
 
-## Dépannage
+## Endpoints du Hub
 
-### Erreur "Token invalide"
-- Vérifier que la clé publique est bien celle du Hub
-- Vérifier que le token n'a pas été modifié
+### Authentification
 
-### Erreur "Token expiré"
-- Les tokens expirent après 8 heures par défaut
-- L'utilisateur doit se reconnecter via le Hub
+| Endpoint | Méthode | Description |
+|----------|---------|-------------|
+| \`/api/auth/token\` | POST | Login (password), refresh, ou M2M (client_credentials) |
+| \`/api/auth/token/refresh\` | POST | Rafraîchir un token (JSON body) |
+| \`/api/auth/token/introspect\` | POST | Vérifier si un token est valide |
+| \`/api/auth/logout\` | POST | Déconnecter et révoquer le token |
+| \`/api/auth/me\` | GET | Infos utilisateur connecté |
+| \`/api/auth/public-key\` | GET | Clé publique RSA |
+| \`/api/auth/hub-host\` | GET | IP/hostname du Hub |
 
-### Erreur "Clé publique non trouvée"
-- Vérifier que `jwt_public_key.pem` existe à la racine ou dans `secrets/`
-- Vérifier les permissions de lecture du fichier
+### Durée des tokens (géré par le Hub uniquement)
+
+| Type de token | Durée | Configurable par |
+|---------------|-------|------------------|
+| Access Token | 30 minutes | Hub uniquement |
+| Refresh Token | 7 jours | Hub uniquement |
+| Token M2M | 30 minutes | Hub uniquement |
+
+> ⚠️ **Rappel** : La durée des tokens est gérée **exclusivement** par le Hub. Les applications ne doivent pas modifier ou prolonger la durée des tokens.
+
+### Format des réponses
+
+**Login réussi :**
+\`\`\`json
+{
+  "access_token": "eyJhbG...",
+  "token_type": "bearer",
+  "expires_at": "2025-12-31T12:30:00",
+  "refresh_token": "xYz123..."
+}
+\`\`\`
+
+**Erreur 401 :**
+\`\`\`json
+{
+  "detail": "Token expiré - Reconnectez-vous via le Hub"
+}
+\`\`\`
 
 ---
 
-## Résumé des modifications requises
+## Résumé
 
-1. ✅ Ajouter `pyjwt[crypto]` et `cryptography` aux dépendances
-2. ✅ Copier `jwt_public_key.pem` du Hub vers le projet
-3. ✅ Créer le fichier `hub_auth.py` avec le code fourni
-4. ✅ Remplacer/ajouter `Depends(get_current_user)` dans les routes protégées
-5. ✅ Configurer CORS si nécessaire
-6. ✅ Tester avec un token obtenu du Hub
+### Ce que l'application DOIT faire
+
+✅ Valider les tokens JWT avec la clé publique du Hub  
+✅ Vérifier les rôles et accès dans le token  
+✅ Rediriger vers le Hub si token expiré (401)  
+✅ Utiliser des IP (pas localhost) pour les URLs  
+✅ Stocker les préférences UI localement si besoin  
+
+### Ce que l'application NE DOIT PAS faire
+
+❌ Créer des tokens JWT  
+❌ Définir la durée des tokens  
+❌ Gérer les utilisateurs (création, modification)  
+❌ Stocker des mots de passe  
+❌ Implémenter son propre système de login  
+❌ Utiliser \`localhost\` dans les URLs de redirection  
+
+---
+
+## ⚠️ Configuration du Dockerfile
+
+> **IMPORTANT** : Le Dockerfile de votre application doit copier les fichiers nécessaires à l'authentification !
+
+### Fichiers requis
+
+Votre application a besoin de ces fichiers pour valider les tokens JWT :
+
+| Fichier | Description | Source |
+|---------|-------------|--------|
+| `hub_auth.py` | Module d'authentification | Fourni par le Hub |
+| `jwt_public_key.pem` | Clé publique RSA | `secrets/jwt_public_key.pem` |
+
+### Exemple de Dockerfile
+
+```dockerfile
+FROM python:3.12-slim
+
+WORKDIR /app
+
+# Dépendances
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Code de l'application
+COPY ./app /app/app
+
+# ⚠️ IMPORTANT : Copier les fichiers d'authentification Hub
+COPY ./hub_auth.py /app/hub_auth.py
+COPY ./secrets/jwt_public_key.pem /app/secrets/jwt_public_key.pem
+
+# Utilisateur non-root
+RUN adduser --disabled-password --gecos '' appuser
+USER appuser
+
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "18087"]
+```
+
+### Avec Docker Compose (volumes)
+
+Alternativement, montez les fichiers via `docker-compose.yml` :
+
+```yaml
+services:
+  api-salarie:
+    build: .
+    volumes:
+      # Monter les fichiers d'auth depuis le Hub
+      - ../HUB/secrets/jwt_public_key.pem:/app/secrets/jwt_public_key.pem:ro
+      - ./hub_auth.py:/app/hub_auth.py:ro
+```
+
+### Où trouver ces fichiers ?
+
+1. **`hub_auth.py`** : Généré à partir du template dans ce guide (section [Intégration Backend](#intégration-backend-fastapi))
+2. **`jwt_public_key.pem`** : Dans le dossier `secrets/` du projet Hub
+
+```bash
+# Copier la clé publique depuis le Hub
+cp /chemin/vers/HUB/secrets/jwt_public_key.pem ./secrets/
+```
 
 ---
 
 ## Contact Hub
 
-- **URL Hub API** : http://localhost:8000
-- **URL Hub Frontend** : http://localhost:80
-- **Documentation API** : http://localhost:8000/docs
-- **Endpoint clé publique** : GET http://localhost:8000/api/auth/public-key
+- **URL Hub API** : \`http://[IP_SERVEUR]:8000\`
+- **URL Hub Frontend** : \`http://[IP_SERVEUR]:80\`
+- **Documentation API** : \`http://[IP_SERVEUR]:8000/docs\`
