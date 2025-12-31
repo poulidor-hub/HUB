@@ -278,6 +278,107 @@ class UserAppAccess(BaseModel):
     app_ids: List[int]
 
 
+# ===== Backup/Export/Import Schemas =====
+class ImportMode(str, Enum):
+    """Mode d'import pour gérer les conflits"""
+    skip = "skip"        # Ignorer les entités existantes
+    update = "update"    # Mettre à jour les entités existantes
+    error = "error"      # Échouer si une entité existe
+
+
+class AppRoleExport(BaseModel):
+    """Rôle d'application pour l'export"""
+    name: str
+    description: Optional[str] = None
+
+
+class UserExport(BaseModel):
+    """Utilisateur pour l'export (avec hash du mot de passe)"""
+    username: str
+    email: Optional[str] = None
+    hashed_password: str
+    is_active: bool = True
+    is_admin: bool = False
+    created_at: Optional[datetime] = None
+
+
+class AppExport(BaseModel):
+    """Application pour l'export"""
+    name: str
+    slug: str
+    description: Optional[str] = None
+    icon: str = "bi-app"
+    color: str = "#0d6efd"
+    api_url: str
+    frontend_url: Optional[str] = None
+    callback_url: Optional[str] = None
+    is_active: bool = True
+    requires_auth: bool = True
+    created_at: Optional[datetime] = None
+    available_roles: List[AppRoleExport] = []
+
+
+class UserAppRoleExport(BaseModel):
+    """Association user-app-role pour l'export"""
+    username: str
+    app_slug: str
+    role: str
+
+
+class ServiceAccountExport(BaseModel):
+    """Service Account pour l'export"""
+    name: str
+    client_id: str
+    client_secret_hash: str
+    client_secret_plain: Optional[str] = None  # Secret en clair si disponible
+    description: Optional[str] = None
+    is_active: bool = True
+    created_at: Optional[datetime] = None
+    app_slugs: List[str] = []
+
+
+class BackupExport(BaseModel):
+    """Structure complète d'export de l'environnement"""
+    version: str = "1.0"
+    exported_at: datetime
+    exported_by: str
+    users: List[UserExport] = []
+    applications: List[AppExport] = []
+    user_app_roles: List[UserAppRoleExport] = []
+    service_accounts: List[ServiceAccountExport] = []
+    jwt_private_key_b64: Optional[str] = None  # Clé privée encodée base64
+    jwt_public_key_b64: Optional[str] = None   # Clé publique encodée base64
+
+
+class BackupImport(BaseModel):
+    """Structure d'import avec options"""
+    import_mode: ImportMode = ImportMode.skip
+    restore_jwt_keys: bool = False
+    users: List[UserExport] = []
+    applications: List[AppExport] = []
+    user_app_roles: List[UserAppRoleExport] = []
+    service_accounts: List[ServiceAccountExport] = []
+    jwt_private_key_b64: Optional[str] = None
+    jwt_public_key_b64: Optional[str] = None
+
+
+class ImportResult(BaseModel):
+    """Résultat de l'import"""
+    success: bool
+    users_created: int = 0
+    users_updated: int = 0
+    users_skipped: int = 0
+    apps_created: int = 0
+    apps_updated: int = 0
+    apps_skipped: int = 0
+    service_accounts_created: int = 0
+    service_accounts_updated: int = 0
+    service_accounts_skipped: int = 0
+    user_app_roles_created: int = 0
+    errors: List[str] = []
+    warnings: List[str] = []
+
+
 # Forward references
 UserResponse.model_rebuild()
 ServiceAccountResponse.model_rebuild()

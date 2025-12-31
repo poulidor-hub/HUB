@@ -14,6 +14,8 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir --upgrade -r requirements.txt
 
 COPY ./app /code/app
+COPY ./export_env.py /code/export_env.py
+COPY ./import_env.py /code/import_env.py
 
 RUN adduser --disabled-password --gecos '' appuser
 USER appuser

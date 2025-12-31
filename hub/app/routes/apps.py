@@ -36,14 +36,14 @@ async def list_apps(
         result = await db.execute(select(Application))
         return result.scalars().all()
     else:
-        # Retourne uniquement les apps de l'utilisateur
+        # Retourne uniquement les apps de l'utilisateur via app_roles
         result = await db.execute(
             select(User)
-            .options(selectinload(User.applications))
+            .options(selectinload(User.app_roles).selectinload(UserAppRole.application))
             .where(User.id == current_user.id)
         )
         user = result.scalar_one()
-        return user.applications
+        return [ar.application for ar in user.app_roles]
 
 
 @router.get("/all")
