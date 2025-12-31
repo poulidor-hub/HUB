@@ -1,0 +1,69 @@
+services:
+  # ===== BASE DE DONNÉES PostgreSQL =====
+  db:
+    image: postgres:16-alpine
+    container_name: hub-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-hubadmin}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-hub_secure_password_2025}
+      POSTGRES_DB: ${POSTGRES_DB:-hub_auth}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    expose:
+      - 5432
+    networks:
+      - hub-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-hubadmin} -d ${POSTGRES_DB:-hub_auth}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ===== HUB API (FastAPI) =====
+  hub-api:
+    build: ./hub
+    container_name: hub-api
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-hubadmin}:${POSTGRES_PASSWORD:-hub_secure_password_2025}@db:5432/${POSTGRES_DB:-hub_auth}
+      - JWT_ALGORITHM=RS256
+      - ACCESS_TOKEN_EXPIRE_MINUTES=${ACCESS_TOKEN_EXPIRE_MINUTES:-480}
+      - ADMIN_USERNAME=${ADMIN_USERNAME:-admin}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-admin123}
+      - ADMIN_EMAIL=${ADMIN_EMAIL:-admin@local.lan}
+    volumes:
+      - ./hub/app:/code/app
+      - ./secrets:/code/secrets:ro
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - hub-network
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+  # ===== FRONTEND (Nginx) =====
+  hub-frontend:
+    build: ./frontend
+    container_name: hub-frontend
+    restart: unless-stopped
+    ports:
+      - "${HUB_FRONTEND_PORT:-80}:80"
+    depends_on:
+      - hub-api
+    networks:
+      - hub-network
+
+# ===== VOLUMES =====
+volumes:
+  postgres_data:
+    driver: local
+
+# ===== RÉSEAUX =====
+networks:
+  hub-network:
+    driver: bridge
