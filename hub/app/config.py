@@ -20,8 +20,9 @@ def get_server_ip() -> str:
 class Settings(BaseSettings):
     database_url: str = "postgresql+asyncpg://hubadmin:hub_secure_password_2025@db:5432/hub_auth"
     jwt_algorithm: str = "RS256"
-    access_token_expire_minutes: int = 30  # Réduit à 30 min (refresh token gère les sessions longues)
+    access_token_expire_minutes: int = 15  # Token court (15 min) - refresh fréquent = meilleur tracking sessions
     refresh_token_expire_days: int = 7  # 7 jours pour le refresh token
+    session_timeout_minutes: int = 20  # Seuil pour considérer une session comme terminée (sans logout explicite)
     admin_username: str = "admin"
     admin_password: str = "admin123"
     admin_email: str = "admin@local.lan"

@@ -204,3 +204,39 @@ class RevokedToken(Base):
     
     def __repr__(self):
         return f"<RevokedToken {self.jti}>"
+
+
+class UserSession(Base):
+    """
+    Suivi des sessions utilisateurs (connexions/déconnexions).
+    Ne stocke que les changements d'état = très léger en données.
+    ~100 bytes par événement → 100 users × 2 events/jour = ~7 KB/jour
+    """
+    __tablename__ = "user_sessions"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), nullable=False, index=True)
+    login_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    logout_at = Column(DateTime, nullable=True)  # NULL = session active
+    logout_reason = Column(String(50))  # explicit, timeout, token_revoked
+    ip_address = Column(String(45))
+    user_agent = Column(String(255))
+    
+    # Relations
+    user = relationship("User", backref="sessions")
+    
+    @property
+    def duration_seconds(self) -> Optional[int]:
+        """Durée de la session en secondes"""
+        if self.logout_at:
+            return int((self.logout_at - self.login_at).total_seconds())
+        return None
+    
+    @property
+    def is_active(self) -> bool:
+        """Session considérée active si pas de logout"""
+        return self.logout_at is None
+    
+    def __repr__(self):
+        status = "active" if self.is_active else f"closed ({self.duration_seconds}s)"
+        return f"<UserSession user={self.user_id} {status}>"

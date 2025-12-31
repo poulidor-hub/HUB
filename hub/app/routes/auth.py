@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 from typing import Optional
 
 from app.database import get_db
-from app.models import User, AuditLog, ServiceAccount, UserAppRole
+from app.models import User, AuditLog, ServiceAccount, UserAppRole, UserSession
 from app.schemas import Token, LoginRequest, TokenIntrospection, RefreshTokenRequest
 from app.auth import (
     verify_password,
@@ -22,6 +22,7 @@ from app.auth import (
     get_password_hash,
     get_settings
 )
+from app.routes.audit import start_session, end_session
 
 router = APIRouter(prefix="/api/auth", tags=["Authentication"])
 settings = get_settings()
@@ -192,6 +193,14 @@ async def login_for_token(
         user_agent=request.headers.get("user-agent", "")
     )
     
+    # Démarrer une session utilisateur (audit)
+    await start_session(
+        db,
+        user_id=user.id,
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent", "")
+    )
+    
     # Log de l'action
     audit = AuditLog(
         user_id=user.id,
@@ -246,6 +255,14 @@ async def login_with_redirect(
     
     # Créer un refresh token
     new_refresh_token = await create_refresh_token(
+        db,
+        user_id=user.id,
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent", "")
+    )
+    
+    # Démarrer une session utilisateur (audit)
+    await start_session(
         db,
         user_id=user.id,
         ip_address=request.client.host if request.client else None,
@@ -334,6 +351,9 @@ async def logout(
     # Révoquer tous les refresh tokens si demandé
     if revoke_all:
         await revoke_all_user_tokens(db, current_user.id)
+    
+    # Terminer la session utilisateur (audit)
+    await end_session(db, current_user.id, reason="explicit")
     
     audit = AuditLog(
         user_id=current_user.id,
