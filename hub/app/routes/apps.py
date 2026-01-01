@@ -250,7 +250,7 @@ async def get_app(
     """Récupère une application par ID (admin uniquement)"""
     result = await db.execute(
         select(Application)
-        .options(selectinload(Application.users))
+        .options(selectinload(Application.user_roles).selectinload(UserAppRole.user))
         .where(Application.id == app_id)
     )
     app = result.scalar_one_or_none()
@@ -261,7 +261,7 @@ async def get_app(
             detail="Application non trouvée"
         )
     
-    return app
+    return AppWithUsers.from_orm_model(app)
 
 
 @router.patch("/{app_id}", response_model=AppResponse)
