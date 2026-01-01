@@ -111,15 +111,15 @@ class HubAPI {
                     config.headers['Authorization'] = `Bearer ${this.token}`;
                     response = await fetch(url, config);
                 } else {
-                    // Refresh échoué - rediriger vers login
-                    window.location.reload();
+                    // Refresh échoué - nettoyer et laisser l'appelant gérer
+                    this.clearToken();
                     throw new Error('Session expirée');
                 }
             }
 
             if (response.status === 401) {
+                // Token invalide - nettoyer et laisser l'appelant gérer
                 this.clearToken();
-                window.location.reload();
                 throw new Error('Session expirée');
             }
 
@@ -322,6 +322,85 @@ class HubAPI {
 
     async getUserStats(userId, days = 30) {
         return this.request(`/audit/stats/user/${userId}?days=${days}`);
+    }
+
+    // Audit Logs détaillés
+    async getAuditLogs(params = {}) {
+        const { days = 30, action = null, target = null, userId = null, page = 1, pageSize = 50 } = params;
+        let url = `/audit/logs?days=${days}&page=${page}&page_size=${pageSize}`;
+        if (action) url += `&action=${encodeURIComponent(action)}`;
+        if (target) url += `&target=${encodeURIComponent(target)}`;
+        if (userId) url += `&user_id=${userId}`;
+        return this.request(url);
+    }
+
+    async getAppAuditSummary(days = 30) {
+        return this.request(`/audit/logs/apps?days=${days}`);
+    }
+
+    async getAppAuditDetail(appSlug, params = {}) {
+        const { days = 30, page = 1, pageSize = 50 } = params;
+        return this.request(`/audit/logs/apps/${encodeURIComponent(appSlug)}?days=${days}&page=${page}&page_size=${pageSize}`);
+    }
+
+    async getAvailableActions() {
+        return this.request('/audit/logs/actions');
+    }
+
+    // Export CSV
+    async exportAuditLogs(params = {}) {
+        const { days = 30, action = null, target = null } = params;
+        let url = `/audit/export/logs?days=${days}`;
+        if (action) url += `&action=${encodeURIComponent(action)}`;
+        if (target) url += `&target=${encodeURIComponent(target)}`;
+        
+        // Téléchargement direct du fichier CSV
+        const response = await fetch(`${API_BASE}${url}`, {
+            headers: this.getHeaders()
+        });
+        
+        if (!response.ok) {
+            throw new Error('Erreur lors de l\'export');
+        }
+        
+        const blob = await response.blob();
+        const downloadUrl = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = downloadUrl;
+        a.download = `audit_logs_${new Date().toISOString().split('T')[0]}.csv`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        window.URL.revokeObjectURL(downloadUrl);
+    }
+
+    async exportSessions(days = 30) {
+        const url = `/audit/export/sessions?days=${days}`;
+        
+        const response = await fetch(`${API_BASE}${url}`, {
+            headers: this.getHeaders()
+        });
+        
+        if (!response.ok) {
+            throw new Error('Erreur lors de l\'export');
+        }
+        
+        const blob = await response.blob();
+        const downloadUrl = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = downloadUrl;
+        a.download = `sessions_${new Date().toISOString().split('T')[0]}.csv`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        window.URL.revokeObjectURL(downloadUrl);
+    }
+
+    // Log accès application
+    async logAppAccess(appSlug) {
+        return this.request(`/apps/access/${encodeURIComponent(appSlug)}`, {
+            method: 'POST'
+        });
     }
 }
 

@@ -13,6 +13,7 @@ from app.models import Application, User, ServiceAccount, UserAppRole
 from app.schemas import AppCreate, AppCreateSimplified, AppUpdate, AppResponse, AppWithUsers
 from app.auth import get_current_admin, get_current_user, get_password_hash, get_settings
 from app.routes.service_accounts import save_service_account_credentials
+from app.routes.audit import log_action
 
 router = APIRouter(prefix="/api/apps", tags=["Applications"])
 settings = get_settings()
@@ -44,6 +45,56 @@ async def list_apps(
         )
         user = result.scalar_one()
         return [ar.application for ar in user.app_roles]
+
+
+@router.post("/access/{app_slug}")
+async def log_app_access(
+    app_slug: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Enregistre l'accès d'un utilisateur à une application.
+    Appelé par le frontend avant de rediriger vers l'application.
+    """
+    # Vérifier que l'app existe
+    result = await db.execute(select(Application).where(Application.slug == app_slug))
+    app = result.scalar_one_or_none()
+    
+    if not app:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Application non trouvée"
+        )
+    
+    # Vérifier que l'utilisateur a accès à cette app
+    user_role = current_user.get_role_for_app(app_slug)
+    if not current_user.is_admin and not user_role:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Accès non autorisé à cette application"
+        )
+    
+    # Logger l'accès
+    await log_action(
+        db=db,
+        user_id=current_user.id,
+        action="access_app",
+        target=app_slug,
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent", ""),
+        details=f"Accès à {app.name} avec rôle: {user_role or 'admin'}"
+    )
+    
+    await db.commit()
+    
+    return {
+        "message": "Accès enregistré",
+        "app_slug": app_slug,
+        "app_name": app.name,
+        "user_role": user_role or "admin"
+    }
 
 
 @router.get("/all")
