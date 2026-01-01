@@ -120,6 +120,7 @@ class AppCreateSimplified(BaseModel):
     color: str = "#0d6efd"
     api_port: int = Field(..., ge=1, le=65535, description="Port de l'API backend")
     frontend_port: Optional[int] = Field(None, ge=1, le=65535, description="Port du frontend")
+    frontend_https: bool = Field(False, description="Activer https:// pour le frontend")
     custom_host: Optional[str] = Field(None, description="Host personnalisé si différent du Hub")
     requires_auth: bool = True
     create_service_account: bool = Field(False, description="Créer un service account M2M pour cette application")

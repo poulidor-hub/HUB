@@ -151,8 +151,13 @@ async def create_app(
     
     # Construire les URLs à partir des ports
     api_url = f"http://{host}:{app_data.api_port}"
-    frontend_url = f"http://{host}:{app_data.frontend_port}" if app_data.frontend_port else None
-    callback_url = f"{frontend_url}/callback" if frontend_url else None
+    frontend_url = None
+    callback_url = None
+
+    if app_data.frontend_port:
+        frontend_protocol = "https" if app_data.frontend_https else "http"
+        frontend_url = f"{frontend_protocol}://{host}:{app_data.frontend_port}"
+        callback_url = f"{frontend_url}/callback"
     
     # Créer l'application avec les URLs construites
     app = Application(
@@ -392,6 +397,17 @@ async def scan_docker_containers(
             )
         
         containers = docker_scanner.scan_containers(include_stopped=include_stopped)
+
+        # Exclure les conteneurs déjà associés à une application existante
+        filtered_containers = []
+        for container in containers:
+            container_slug = container.labels.get("hub.app_slug") or container.suggested_slug
+            if container_slug in existing_slugs:
+                logger.debug("Conteneur ignoré car déjà lié à une app existante: %s", container_slug)
+                continue
+            filtered_containers.append(container)
+
+        containers = filtered_containers
         
         # Convertir en schémas Pydantic
         discovered = []

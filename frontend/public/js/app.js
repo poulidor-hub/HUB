@@ -84,6 +84,8 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('appApiPort').addEventListener('input', updateUrlPreview);
     document.getElementById('appFrontendPort').addEventListener('input', updateUrlPreview);
     document.getElementById('appCustomHostValue').addEventListener('input', updateUrlPreview);
+    const httpsEl = document.getElementById('appFrontendHttps');
+    if (httpsEl) httpsEl.addEventListener('change', updateUrlPreview);
 });
 
 // ===== Authentication =====
@@ -462,6 +464,8 @@ async function showAddAppForm() {
     document.getElementById('appCustomHost').checked = false;
     document.getElementById('customHostGroup').classList.add('d-none');
     document.getElementById('appCreateM2M').checked = false;
+    const httpsCheckboxAdd = document.getElementById('appFrontendHttps');
+    if (httpsCheckboxAdd) httpsCheckboxAdd.checked = false;
     document.getElementById('createM2MSection').classList.remove('d-none');
     
     // Afficher mode simplifié (ports), masquer mode avancé (URLs)
@@ -521,6 +525,8 @@ function updateUrlPreview() {
     const frontendPort = document.getElementById('appFrontendPort').value;
     const customHost = document.getElementById('appCustomHost').checked;
     const customHostValue = document.getElementById('appCustomHostValue').value;
+    const frontendHttpsEl = document.getElementById('appFrontendHttps');
+    const frontendHttps = frontendHttpsEl ? frontendHttpsEl.checked : false;
     
     // Utiliser le hub host (chargé depuis l'API) ou le custom host
     const host = customHost && customHostValue ? customHostValue : (hubHost || 'chargement...');
@@ -535,7 +541,8 @@ function updateUrlPreview() {
     }
     
     if (frontendPort) {
-        previewFrontend.innerHTML = `<i class="bi bi-window me-1"></i>Frontend: <code>http://${host}:${frontendPort}</code>`;
+        const frontendProtocol = frontendHttps ? 'https' : 'http';
+        previewFrontend.innerHTML = `<i class="bi bi-window me-1"></i>Frontend: <code>${frontendProtocol}://${host}:${frontendPort}</code>`;
     } else {
         previewFrontend.innerHTML = '<i class="bi bi-window me-1"></i>Frontend: <span class="text-muted">Non défini</span>';
     }
@@ -589,6 +596,7 @@ async function handleSaveApp(event) {
                 api_port: parseInt(document.getElementById('appApiPort').value),
                 frontend_port: document.getElementById('appFrontendPort').value ? 
                     parseInt(document.getElementById('appFrontendPort').value) : null,
+                frontend_https: document.getElementById('appFrontendHttps')?.checked || false,
                 custom_host: customHost ? document.getElementById('appCustomHostValue').value : null,
                 requires_auth: document.getElementById('appRequiresAuth').checked,
                 create_service_account: createM2M
@@ -1960,6 +1968,8 @@ function importDockerSelection() {
     document.getElementById('appColor').value = '#0db7ed';     // Couleur Docker
     document.getElementById('appApiPort').value = apiPort || '';
     document.getElementById('appFrontendPort').value = frontendPort || '';
+    const httpsCheckbox = document.getElementById('appFrontendHttps');
+    if (httpsCheckbox) httpsCheckbox.checked = frontendPort === 443;
     document.getElementById('appActive').checked = apiContainer.status === 'running';
     document.getElementById('appRequiresAuth').checked = true;
     document.getElementById('appCustomHost').checked = false;
