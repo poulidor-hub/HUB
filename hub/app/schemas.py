@@ -241,7 +241,7 @@ class TokenIntrospection(BaseModel):
     sub: Optional[str] = None
     client_id: Optional[str] = None
     roles: Optional[List[str]] = None
-    apps: Optional[List[str]] = None
+    apps: Optional[dict] = None  # Dict avec {app_slug: role}
     exp: Optional[int] = None
     iat: Optional[int] = None
     jti: Optional[str] = None

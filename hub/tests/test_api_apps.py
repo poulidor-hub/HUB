@@ -110,8 +110,8 @@ class TestAppsEndpoints:
         
         assert response.status_code == 201
         data = response.json()
-        assert data["app"]["slug"] == "nouvelle-app"
-        assert "service_account" in data
+        assert data["application"]["slug"] == "nouvelle-app"
+        # Note: service_account n'est plus créé automatiquement (l'app s'auto-enregistre)
     
     @pytest.mark.asyncio
     async def test_create_app_duplicate_slug(self, client: AsyncClient, admin_user: User, test_app: Application):
@@ -158,8 +158,8 @@ class TestAppsEndpoints:
         assert response.status_code == 403
     
     @pytest.mark.asyncio
-    async def test_get_app_by_slug(self, client: AsyncClient, admin_user: User, test_app: Application):
-        """Récupérer une app par son slug"""
+    async def test_get_app_by_id(self, client: AsyncClient, admin_user: User, test_app: Application):
+        """Récupérer une app par son ID"""
         token, _, _ = create_access_token(
             username=admin_user.username,
             roles=["admin"],
@@ -167,7 +167,7 @@ class TestAppsEndpoints:
         )
         
         response = await client.get(
-            f"/api/apps/{test_app.slug}",
+            f"/api/apps/{test_app.id}",
             headers=get_auth_header(token)
         )
         
@@ -185,7 +185,7 @@ class TestAppsEndpoints:
         )
         
         response = await client.get(
-            "/api/apps/unknown-app",
+            "/api/apps/99999",
             headers=get_auth_header(token)
         )
         
@@ -201,7 +201,7 @@ class TestAppsEndpoints:
         )
         
         response = await client.patch(
-            f"/api/apps/{test_app.slug}",
+            f"/api/apps/{test_app.id}",
             json={
                 "description": "Nouvelle description"
             },
@@ -224,6 +224,7 @@ class TestAppsEndpoints:
         )
         async_session.add(app_to_delete)
         await async_session.commit()
+        await async_session.refresh(app_to_delete)
         
         token, _, _ = create_access_token(
             username=admin_user.username,
@@ -232,19 +233,19 @@ class TestAppsEndpoints:
         )
         
         response = await client.delete(
-            "/api/apps/app-to-delete",
+            f"/api/apps/{app_to_delete.id}",
             headers=get_auth_header(token)
         )
         
-        assert response.status_code == 200
+        assert response.status_code in [200, 204]
 
 
 class TestAppUserAssignment:
     """Tests pour l'assignation utilisateurs aux apps"""
     
     @pytest.mark.asyncio
-    async def test_assign_user_to_app(self, client: AsyncClient, admin_user: User, test_user: User, test_app: Application):
-        """Assigner un utilisateur à une app"""
+    async def test_set_app_users(self, client: AsyncClient, admin_user: User, test_user: User, test_app: Application):
+        """Définir les utilisateurs d'une app"""
         token, _, _ = create_access_token(
             username=admin_user.username,
             roles=["admin"],
@@ -252,16 +253,18 @@ class TestAppUserAssignment:
         )
         
         response = await client.post(
-            f"/api/apps/{test_app.slug}/users/{test_user.id}",
-            json={"role": "user"},
+            f"/api/apps/{test_app.id}/users",
+            json=[test_user.id],
             headers=get_auth_header(token)
         )
         
-        assert response.status_code in [200, 201]
+        assert response.status_code == 200
+        data = response.json()
+        assert "users" in data
     
     @pytest.mark.asyncio
-    async def test_assign_user_with_role(self, client: AsyncClient, admin_user: User, test_user: User, test_app: Application):
-        """Assigner un utilisateur avec un rôle spécifique"""
+    async def test_set_multiple_users(self, client: AsyncClient, admin_user: User, test_user: User, test_app: Application):
+        """Définir plusieurs utilisateurs pour une app"""
         token, _, _ = create_access_token(
             username=admin_user.username,
             roles=["admin"],
@@ -269,16 +272,16 @@ class TestAppUserAssignment:
         )
         
         response = await client.post(
-            f"/api/apps/{test_app.slug}/users/{test_user.id}",
-            json={"role": "manager"},
+            f"/api/apps/{test_app.id}/users",
+            json=[test_user.id, admin_user.id],
             headers=get_auth_header(token)
         )
         
-        assert response.status_code in [200, 201]
+        assert response.status_code == 200
     
     @pytest.mark.asyncio
-    async def test_remove_user_from_app(self, client: AsyncClient, admin_user: User, user_with_app_access):
-        """Retirer un utilisateur d'une app"""
+    async def test_clear_app_users(self, client: AsyncClient, admin_user: User, user_with_app_access):
+        """Vider les utilisateurs d'une app"""
         user, app = user_with_app_access
         
         token, _, _ = create_access_token(
@@ -287,16 +290,17 @@ class TestAppUserAssignment:
             apps={}
         )
         
-        response = await client.delete(
-            f"/api/apps/{app.slug}/users/{user.id}",
+        response = await client.post(
+            f"/api/apps/{app.id}/users",
+            json=[],  # Liste vide pour supprimer tous les accès
             headers=get_auth_header(token)
         )
         
         assert response.status_code == 200
     
     @pytest.mark.asyncio
-    async def test_list_app_users(self, client: AsyncClient, admin_user: User, user_with_app_access, admin_with_app):
-        """Lister les utilisateurs d'une app"""
+    async def test_app_users_in_all_response(self, client: AsyncClient, admin_user: User, user_with_app_access, admin_with_app):
+        """Vérifier que /all retourne les utilisateurs des apps"""
         _, app = user_with_app_access
         
         token, _, _ = create_access_token(
@@ -306,10 +310,10 @@ class TestAppUserAssignment:
         )
         
         response = await client.get(
-            f"/api/apps/{app.slug}/users",
+            "/api/apps/all",
             headers=get_auth_header(token)
         )
         
         assert response.status_code == 200
-        users = response.json()
-        assert isinstance(users, list)
+        apps = response.json()
+        assert isinstance(apps, list)

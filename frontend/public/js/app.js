@@ -502,22 +502,31 @@ async function showAddAppForm() {
     document.getElementById('appForm').reset();
     document.getElementById('appId').value = '';
     document.getElementById('appMode').value = 'create';
+    document.getElementById('appName').required = true;
     document.getElementById('appIcon').value = 'bi-app';
     document.getElementById('appColor').value = '#0d6efd';
     document.getElementById('appActive').checked = true;
     document.getElementById('appRequiresAuth').checked = true;
     document.getElementById('appCustomHost').checked = false;
     document.getElementById('customHostGroup').classList.add('d-none');
-    document.getElementById('appCreateM2M').checked = false;
+    document.getElementById('appSlug').readOnly = true;
+    document.getElementById('slugHint').textContent = 'Généré automatiquement';
     const httpsCheckboxAdd = document.getElementById('appFrontendHttps');
     if (httpsCheckboxAdd) httpsCheckboxAdd.checked = false;
-    document.getElementById('createM2MSection').classList.remove('d-none');
+    
+    // Afficher les champs de création
+    document.getElementById('optionalFieldsSection').classList.remove('d-none');
+    document.getElementById('advancedOptionsSection').classList.remove('d-none');
+    document.getElementById('m2mInfoSection').classList.remove('d-none');
     
     // Afficher mode simplifié (ports), masquer mode avancé (URLs)
     document.getElementById('simplePortsSection').classList.remove('d-none');
     document.getElementById('advancedUrlsSection').classList.add('d-none');
     document.getElementById('appApiPort').required = true;
     document.getElementById('appApiUrl').required = false;
+    
+    // Bouton
+    document.getElementById('appSubmitBtn').innerHTML = '<i class="bi bi-check-lg me-1"></i>Enregistrer';
     
     updateIconPreview();
     updateUrlPreview();
@@ -535,8 +544,17 @@ async function editApp(id) {
     document.getElementById('appFormTitle').textContent = 'Modifier l\'Application';
     document.getElementById('appId').value = app.id;
     document.getElementById('appMode').value = 'edit';
+    
+    // Afficher les champs d'édition
+    document.getElementById('optionalFieldsSection').classList.remove('d-none');
+    document.getElementById('advancedOptionsSection').classList.remove('d-none');
+    document.getElementById('m2mInfoSection').classList.add('d-none');  // Masquer l'info M2M en édition
+    
     document.getElementById('appName').value = app.name;
+    document.getElementById('appName').required = true;
     document.getElementById('appSlug').value = app.slug;
+    document.getElementById('appSlug').readOnly = true;
+    document.getElementById('slugHint').textContent = 'Non modifiable';
     document.getElementById('appDescription').value = app.description || '';
     document.getElementById('appIcon').value = app.icon;
     document.getElementById('appColor').value = app.color;
@@ -546,12 +564,14 @@ async function editApp(id) {
     document.getElementById('appActive').checked = app.is_active;
     document.getElementById('appRequiresAuth').checked = app.requires_auth;
     
-    // En mode édition, afficher les URLs directes et masquer l'option M2M
+    // En mode édition, afficher les URLs directes
     document.getElementById('simplePortsSection').classList.add('d-none');
     document.getElementById('advancedUrlsSection').classList.remove('d-none');
-    document.getElementById('createM2MSection').classList.add('d-none');
     document.getElementById('appApiPort').required = false;
     document.getElementById('appApiUrl').required = true;
+    
+    // Bouton en mode édition
+    document.getElementById('appSubmitBtn').innerHTML = '<i class="bi bi-check-lg me-1"></i>Enregistrer';
     
     updateIconPreview();
     
@@ -630,8 +650,8 @@ async function handleSaveApp(event) {
             adminModal.show();
         } else {
             // Mode création - utiliser les ports (schéma simplifié)
+            // Le M2M sera créé automatiquement quand l'app s'auto-enregistre
             const customHost = document.getElementById('appCustomHost').checked;
-            const createM2M = document.getElementById('appCreateM2M').checked;
             const data = {
                 name: document.getElementById('appName').value,
                 slug: document.getElementById('appSlug').value,
@@ -644,24 +664,14 @@ async function handleSaveApp(event) {
                 frontend_https: document.getElementById('appFrontendHttps')?.checked || false,
                 custom_host: customHost ? document.getElementById('appCustomHostValue').value : null,
                 requires_auth: document.getElementById('appRequiresAuth').checked,
-                create_service_account: createM2M
+                create_service_account: false  // L'app créera son M2M en s'auto-enregistrant
             };
             
-            const result = await api.createApp(data);
+            await api.createApp(data);
             appFormModal.hide();
-            
-            // Afficher les credentials du service account créé
-            if (result.service_account) {
-                showServiceAccountCredentials(
-                    result.service_account.client_id,
-                    result.service_account.client_secret
-                );
-                showToast('Succès', 'Application et Service Account créés', 'success');
-            } else {
-                showToast('Succès', 'Application créée', 'success');
-                adminModal.show();
-            }
+            showToast('Succès', 'Application créée - le M2M sera créé au démarrage de l\'app', 'success');
             await loadAdminData();
+            adminModal.show();
         }
         loadApps(); // Refresh dashboard
     } catch (error) {
@@ -1055,11 +1065,26 @@ async function handleSaveServiceAccount(event) {
     }
 }
 
-function showServiceAccountCredentials(clientId, clientSecret) {
+function showServiceAccountCredentials(clientId, clientSecret, secretsFile = null) {
     document.getElementById('saClientId').value = clientId;
     document.getElementById('saClientSecret').value = clientSecret;
     document.getElementById('exampleClientId').textContent = clientId;
     document.getElementById('exampleClientSecret').textContent = clientSecret;
+    
+    // Afficher le fichier secrets si disponible
+    const secretsFileInfo = document.getElementById('secretsFileInfo');
+    if (secretsFileInfo) {
+        if (secretsFile) {
+            secretsFileInfo.innerHTML = `<div class="alert alert-success mt-3 mb-0">
+                <i class="bi bi-check-circle me-2"></i>
+                <strong>Sauvegardé :</strong> <code>${secretsFile}</code>
+            </div>`;
+            secretsFileInfo.classList.remove('d-none');
+        } else {
+            secretsFileInfo.classList.add('d-none');
+        }
+    }
+    
     saCredentialsModal.show();
 }
 
@@ -2032,8 +2057,8 @@ function importDockerSelection() {
     document.getElementById('appRequiresAuth').checked = true;
     document.getElementById('appCustomHost').checked = false;
     document.getElementById('customHostGroup').classList.add('d-none');
-    document.getElementById('appCreateM2M').checked = false;
-    document.getElementById('createM2MSection').classList.remove('d-none');
+    
+    // Note: M2M est créé automatiquement lors de l'auto-enregistrement
     
     // Afficher mode simplifié (ports)
     document.getElementById('simplePortsSection').classList.remove('d-none');

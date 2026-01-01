@@ -498,30 +498,39 @@
                     <div class="modal-body">
                         <input type="hidden" id="appId">
                         <input type="hidden" id="appMode" value="create">
+                        
                         <div class="row g-3">
+                            <!-- Nom et Slug (slug auto-généré) -->
                             <div class="col-md-8">
                                 <label class="form-label">Nom *</label>
                                 <input type="text" class="form-control" id="appName" required>
                             </div>
                             <div class="col-md-4">
-                                <label class="form-label">Slug *</label>
-                                <input type="text" class="form-control" id="appSlug" required pattern="[a-z0-9\-]+">
+                                <label class="form-label">Slug</label>
+                                <input type="text" class="form-control" id="appSlug" pattern="[a-z0-9\-]+" readonly>
+                                <small class="text-muted" id="slugHint">Généré automatiquement</small>
                             </div>
-                            <div class="col-12">
-                                <label class="form-label">Description</label>
-                                <textarea class="form-control" id="appDescription" rows="2"></textarea>
-                            </div>
-                            <div class="col-md-6">
-                                <label class="form-label">Icône Bootstrap</label>
-                                <div class="input-group">
-                                    <span class="input-group-text"><i id="iconPreview" class="bi bi-app"></i></span>
-                                    <input type="text" class="form-control" id="appIcon" value="bi-app" onchange="updateIconPreview()">
+                            
+                            <!-- Champs optionnels -->
+                            <div class="col-12" id="optionalFieldsSection">
+                                <div class="row g-3">
+                                    <div class="col-12">
+                                        <label class="form-label">Description</label>
+                                        <textarea class="form-control" id="appDescription" rows="2"></textarea>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <label class="form-label">Icône Bootstrap</label>
+                                        <div class="input-group">
+                                            <span class="input-group-text"><i id="iconPreview" class="bi bi-app"></i></span>
+                                            <input type="text" class="form-control" id="appIcon" value="bi-app" onchange="updateIconPreview()">
+                                        </div>
+                                        <small class="text-muted">Ex: bi-people-fill, bi-calculator</small>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <label class="form-label">Couleur</label>
+                                        <input type="color" class="form-control form-control-color w-100" id="appColor" value="#0d6efd">
+                                    </div>
                                 </div>
-                                <small class="text-muted">Ex: bi-people-fill, bi-calculator</small>
-                            </div>
-                            <div class="col-md-6">
-                                <label class="form-label">Couleur</label>
-                                <input type="color" class="form-control form-control-color w-100" id="appColor" value="#0d6efd">
                             </div>
                             
                             <!-- Section simplifiée avec ports -->
@@ -584,37 +593,36 @@
                                 </div>
                             </div>
                             
-                            <div class="col-md-6">
-                                <div class="form-check form-switch">
-                                    <input class="form-check-input" type="checkbox" id="appActive" checked>
-                                    <label class="form-check-label">Active</label>
+                            <!-- Options -->
+                            <div class="col-12" id="advancedOptionsSection">
+                                <div class="row">
+                                    <div class="col-md-6">
+                                        <div class="form-check form-switch">
+                                            <input class="form-check-input" type="checkbox" id="appActive" checked>
+                                            <label class="form-check-label">Active</label>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <div class="form-check form-switch">
+                                            <input class="form-check-input" type="checkbox" id="appRequiresAuth" checked>
+                                            <label class="form-check-label">Auth requise</label>
+                                        </div>
+                                    </div>
                                 </div>
                             </div>
-                            <div class="col-md-6">
-                                <div class="form-check form-switch">
-                                    <input class="form-check-input" type="checkbox" id="appRequiresAuth" checked>
-                                    <label class="form-check-label">Auth requise</label>
+                            
+                            <!-- Info M2M automatique (en création uniquement) -->
+                            <div class="col-12" id="m2mInfoSection">
+                                <div class="alert alert-info mb-0">
+                                    <i class="bi bi-robot me-2"></i>
+                                    <strong>Service Account M2M :</strong> créé automatiquement lorsque l'application s'enregistre au démarrage.
                                 </div>
-                            </div>
-                            <!-- Option M2M - uniquement en création -->
-                            <div class="col-12" id="createM2MSection">
-                                <hr>
-                                <div class="form-check form-switch">
-                                    <input class="form-check-input" type="checkbox" id="appCreateM2M">
-                                    <label class="form-check-label">
-                                        <i class="bi bi-robot me-1"></i>Créer un Service Account M2M
-                                    </label>
-                                </div>
-                                <small class="text-muted">
-                                    Génère automatiquement un compte technique pour la communication machine-to-machine.
-                                    Les credentials seront affichés après création.
-                                </small>
                             </div>
                         </div>
                     </div>
                     <div class="modal-footer">
                         <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuler</button>
-                        <button type="submit" class="btn btn-primary">
+                        <button type="submit" class="btn btn-primary" id="appSubmitBtn">
                             <i class="bi bi-check-lg me-1"></i>Enregistrer
                         </button>
                     </div>
@@ -755,6 +763,8 @@
                             </button>
                         </div>
                     </div>
+                    <!-- Info fichier secrets (affiché si auto-register) -->
+                    <div id="secretsFileInfo" class="d-none"></div>
                     <hr>
                     <p class="small text-muted mb-2">Exemple d'utilisation :</p>
                     <pre class="bg-dark text-light p-2 rounded small"><code>curl -X POST "http://hub/api/auth/token" \

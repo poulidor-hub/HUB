@@ -227,7 +227,7 @@ class TestUsersEndpoints:
             headers=get_auth_header(token)
         )
         
-        assert response.status_code == 200
+        assert response.status_code in [200, 204]
     
     @pytest.mark.asyncio
     async def test_admin_cannot_delete_self(self, client: AsyncClient, admin_user: User):

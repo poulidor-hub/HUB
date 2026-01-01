@@ -399,6 +399,113 @@ async def register_app(
     )
 
 
+@router.post("/auto-register", response_model=AppRegisterResponse)
+async def admin_auto_register_app(
+    app_data: AppRegisterRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_admin)
+):
+    """
+    Auto-enregistrement d'une application déclenché par un admin.
+    
+    Permet à un administrateur de pré-créer une application avec ses
+    credentials M2M, comme si l'application s'était auto-enregistrée.
+    
+    L'admin fournit juste le slug et les ports, le Hub génère le reste.
+    Les credentials sont sauvegardés dans `secrets/service_accounts/`.
+    """
+    logger.info(f"📝 Auto-enregistrement admin pour '{app_data.slug}'")
+    
+    # Vérifier si l'application existe déjà
+    result = await db.execute(
+        select(Application)
+        .options(selectinload(Application.service_accounts))
+        .where(Application.slug == app_data.slug)
+    )
+    existing_app = result.scalar_one_or_none()
+    
+    if existing_app:
+        # Application existante - retourner les infos sans le secret
+        logger.info(f"⚠️ Application '{app_data.slug}' déjà enregistrée")
+        
+        # Trouver le service account associé
+        sa = next((sa for sa in existing_app.service_accounts), None)
+        
+        return AppRegisterResponse(
+            message=f"Application '{app_data.slug}' existe déjà.",
+            application=AppResponse.model_validate(existing_app),
+            credentials={"client_id": sa.client_id} if sa else None,
+            is_new=False
+        )
+    
+    # Nouvelle application - créer l'app et le service account
+    host = settings.get_hub_host()
+    api_url = f"http://{host}:{app_data.api_port}"
+    frontend_url = f"http://{host}:{app_data.frontend_port}" if app_data.frontend_port else None
+    callback_url = f"{frontend_url}/callback" if frontend_url else None
+    
+    app = Application(
+        name=app_data.name or app_data.slug.replace("-", " ").title(),
+        slug=app_data.slug,
+        description=app_data.description or f"Application {app_data.slug} (pré-enregistrée)",
+        api_url=api_url,
+        frontend_url=frontend_url,
+        callback_url=callback_url,
+        requires_auth=True
+    )
+    db.add(app)
+    await db.flush()
+    
+    # Créer le service account automatiquement
+    client_id = ServiceAccount.generate_client_id()
+    client_secret = ServiceAccount.generate_client_secret()
+    
+    service_account = ServiceAccount(
+        name=f"SA - {app.name}",
+        description=f"Service account auto-créé pour {app.name}",
+        client_id=client_id,
+        client_secret_hash=get_password_hash(client_secret)
+    )
+    db.add(service_account)
+    await db.flush()
+    
+    # Associer le service account à l'application
+    result = await db.execute(
+        select(ServiceAccount)
+        .options(selectinload(ServiceAccount.applications))
+        .where(ServiceAccount.id == service_account.id)
+    )
+    service_account = result.scalar_one()
+    service_account.applications.append(app)
+    
+    await db.commit()
+    await db.refresh(app)
+    
+    # Sauvegarder les credentials dans le fichier
+    secrets_file = save_service_account_credentials(
+        name=app_data.slug,
+        client_id=client_id,
+        client_secret=client_secret,
+        app_slugs=[app_data.slug]
+    )
+    
+    logger.info(f"✅ Application '{app_data.slug}' pré-enregistrée par admin, credentials sauvés dans {secrets_file}")
+    
+    return AppRegisterResponse(
+        message=f"Application '{app_data.slug}' créée avec succès. Credentials M2M générés et sauvegardés.",
+        application=AppResponse.model_validate(app),
+        credentials={
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "hub_host": host,
+            "hub_api_port": settings.hub_api_port if hasattr(settings, 'hub_api_port') else 8000,
+            "secrets_file": secrets_file
+        },
+        is_new=True
+    )
+
+
 @router.get("/me/credentials", response_model=AppCredentialsResponse)
 async def get_app_credentials(
     request: Request,
@@ -650,7 +757,7 @@ async def set_app_users(
     """Définit les utilisateurs ayant accès à une application"""
     result = await db.execute(
         select(Application)
-        .options(selectinload(Application.users))
+        .options(selectinload(Application.user_roles))
         .where(Application.id == app_id)
     )
     app = result.scalar_one_or_none()
@@ -661,13 +768,27 @@ async def set_app_users(
             detail="Application non trouvée"
         )
     
-    # Récupérer les users
-    users_result = await db.execute(
-        select(User).where(User.id.in_(user_ids))
-    )
-    users = users_result.scalars().all()
+    # Supprimer les anciens rôles
+    for ur in app.user_roles:
+        await db.delete(ur)
     
-    app.users = list(users)
+    # Récupérer les users et créer les nouveaux rôles
+    if user_ids:
+        users_result = await db.execute(
+            select(User).where(User.id.in_(user_ids))
+        )
+        users = users_result.scalars().all()
+        
+        for user in users:
+            new_role = UserAppRole(
+                user_id=user.id,
+                app_id=app.id,
+                role="user"  # Rôle par défaut
+            )
+            db.add(new_role)
+    else:
+        users = []
+    
     await db.commit()
     
     return {"message": f"Utilisateurs mis à jour pour {app.name}", "users": [u.username for u in users]}
