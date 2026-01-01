@@ -385,6 +385,36 @@ class ImportResult(BaseModel):
     warnings: List[str] = []
 
 
+# ===== Docker Scanner Schemas =====
+class DockerPortInfo(BaseModel):
+    """Information sur un port exposé par un conteneur Docker"""
+    container_port: int
+    host_port: Optional[int] = None
+    protocol: str = "tcp"
+
+
+class DockerContainerInfo(BaseModel):
+    """Information sur un conteneur Docker découvert"""
+    container_id: str
+    name: str
+    image: str
+    status: str
+    ports: List[DockerPortInfo]
+    suggested_slug: str
+    suggested_name: str
+    labels: dict = {}
+
+
+class DockerScanResponse(BaseModel):
+    """Réponse du scan Docker"""
+    available: bool
+    docker_version: Optional[str] = None
+    containers_running: int = 0
+    containers_total: int = 0
+    discovered: List[DockerContainerInfo] = []
+    error: Optional[str] = None
+
+
 # Forward references
 UserResponse.model_rebuild()
 ServiceAccountResponse.model_rebuild()

@@ -1629,3 +1629,297 @@ async function exportSessions() {
         showToast('Erreur', 'Impossible d\'exporter les données', 'danger');
     }
 }
+
+// ===== Docker Scanner =====
+
+let dockerScanModal;
+let lastDockerScan = null;
+let dockerSelection = { api: null, frontend: null };
+
+/**
+ * Affiche la modal de scan Docker et lance le scan
+ */
+async function showDockerScanModal() {
+    if (!dockerScanModal) {
+        dockerScanModal = new bootstrap.Modal(document.getElementById('dockerScanModal'));
+    }
+    
+    // Reset UI et sélection
+    dockerSelection = { api: null, frontend: null };
+    document.getElementById('dockerStatus').classList.remove('d-none');
+    document.getElementById('dockerError').classList.add('d-none');
+    document.getElementById('dockerInfo').classList.add('d-none');
+    document.getElementById('dockerContainers').classList.add('d-none');
+    document.getElementById('dockerEmpty').classList.add('d-none');
+    document.getElementById('dockerIncludeStopped').checked = false;
+    updateDockerSelectionSummary();
+    
+    adminModal.hide();
+    dockerScanModal.show();
+    
+    // Lancer le scan
+    await performDockerScan();
+}
+
+/**
+ * Effectue le scan Docker
+ */
+async function performDockerScan() {
+    const includeStopped = document.getElementById('dockerIncludeStopped').checked;
+    
+    // Reset sélection
+    dockerSelection = { api: null, frontend: null };
+    updateDockerSelectionSummary();
+    
+    // Show loading
+    document.getElementById('dockerStatus').classList.remove('d-none');
+    document.getElementById('dockerStatus').innerHTML = `
+        <div class="d-flex align-items-center text-muted">
+            <div class="spinner-border spinner-border-sm me-2" role="status"></div>
+            Analyse des conteneurs Docker...
+        </div>
+    `;
+    document.getElementById('dockerError').classList.add('d-none');
+    document.getElementById('dockerInfo').classList.add('d-none');
+    document.getElementById('dockerContainers').classList.add('d-none');
+    document.getElementById('dockerEmpty').classList.add('d-none');
+    
+    try {
+        const result = await api.scanDockerContainers(includeStopped);
+        lastDockerScan = result;
+        
+        document.getElementById('dockerStatus').classList.add('d-none');
+        
+        if (!result.available) {
+            // Docker non disponible
+            document.getElementById('dockerError').classList.remove('d-none');
+            document.getElementById('dockerErrorMessage').textContent = 
+                result.error || 'Docker n\'est pas accessible depuis le Hub';
+            return;
+        }
+        
+        // Afficher les infos Docker
+        document.getElementById('dockerInfo').classList.remove('d-none');
+        document.getElementById('dockerVersion').textContent = result.docker_version || 'N/A';
+        document.getElementById('dockerRunning').textContent = result.containers_running || 0;
+        document.getElementById('dockerTotal').textContent = result.containers_total || 0;
+        
+        // Afficher les conteneurs découverts
+        if (result.discovered && result.discovered.length > 0) {
+            document.getElementById('dockerContainers').classList.remove('d-none');
+            renderDockerContainers(result.discovered);
+        } else {
+            document.getElementById('dockerEmpty').classList.remove('d-none');
+        }
+        
+    } catch (error) {
+        console.error('Erreur scan Docker:', error);
+        document.getElementById('dockerStatus').classList.add('d-none');
+        document.getElementById('dockerError').classList.remove('d-none');
+        document.getElementById('dockerErrorMessage').textContent = error.message;
+    }
+}
+
+/**
+ * Rafraîchit le scan Docker
+ */
+function refreshDockerScan() {
+    performDockerScan();
+}
+
+/**
+ * Affiche la liste des conteneurs découverts avec sélection API/Frontend
+ */
+function renderDockerContainers(containers) {
+    const list = document.getElementById('containersList');
+    
+    list.innerHTML = containers.map(container => {
+        const ports = container.ports.map(p => {
+            if (p.host_port) {
+                return `<span class="badge bg-primary me-1">${p.host_port}:${p.container_port}</span>`;
+            }
+            return `<span class="badge bg-secondary me-1">${p.container_port}</span>`;
+        }).join('');
+        
+        const statusClass = container.status === 'running' ? 'success' : 'secondary';
+        const statusIcon = container.status === 'running' ? 'play-circle-fill' : 'stop-circle-fill';
+        
+        // Vérifier si ce conteneur est sélectionné
+        const isApi = dockerSelection.api?.container_id === container.container_id;
+        const isFrontend = dockerSelection.frontend?.container_id === container.container_id;
+        const selectedClass = isApi ? 'border-danger border-2' : (isFrontend ? 'border-success border-2' : '');
+        const selectedBadge = isApi ? '<span class="badge bg-danger ms-2">API</span>' : 
+                            (isFrontend ? '<span class="badge bg-success ms-2">Frontend</span>' : '');
+        
+        return `
+            <div class="list-group-item ${selectedClass}" id="container-${container.container_id}">
+                <div class="d-flex w-100 justify-content-between align-items-start">
+                    <div class="flex-grow-1">
+                        <div class="d-flex align-items-center mb-1">
+                            <i class="bi bi-${statusIcon} text-${statusClass} me-2"></i>
+                            <strong>${escapeHtml(container.name)}</strong>
+                            ${selectedBadge}
+                            <small class="text-muted ms-2">(${escapeHtml(container.container_id)})</small>
+                        </div>
+                        <small class="text-muted d-block mb-2">
+                            <i class="bi bi-box me-1"></i>${escapeHtml(container.image)}
+                        </small>
+                        <div>
+                            <i class="bi bi-ethernet me-1 small text-muted"></i>
+                            ${ports || '<span class="text-muted small">Aucun port exposé</span>'}
+                        </div>
+                    </div>
+                    <div class="text-end">
+                        <div class="btn-group btn-group-sm mb-2">
+                            <button type="button" class="btn ${isApi ? 'btn-danger' : 'btn-outline-danger'}" 
+                                    onclick="selectDockerContainer('${container.container_id}', 'api')"
+                                    title="Définir comme API Backend">
+                                <i class="bi bi-hdd-rack"></i> API
+                            </button>
+                            <button type="button" class="btn ${isFrontend ? 'btn-success' : 'btn-outline-success'}" 
+                                    onclick="selectDockerContainer('${container.container_id}', 'frontend')"
+                                    title="Définir comme Frontend">
+                                <i class="bi bi-window"></i> Front
+                            </button>
+                        </div>
+                        <br>
+                        <span class="badge bg-light text-dark">
+                            <i class="bi bi-tag me-1"></i>${escapeHtml(container.suggested_slug)}
+                        </span>
+                    </div>
+                </div>
+            </div>
+        `;
+    }).join('');
+}
+
+/**
+ * Sélectionne un conteneur comme API ou Frontend
+ */
+function selectDockerContainer(containerId, type) {
+    if (!lastDockerScan || !lastDockerScan.discovered) return;
+    
+    const container = lastDockerScan.discovered.find(c => c.container_id === containerId);
+    if (!container) return;
+    
+    // Si déjà sélectionné pour ce type, désélectionner
+    if (dockerSelection[type]?.container_id === containerId) {
+        dockerSelection[type] = null;
+    } else {
+        // Si ce conteneur était sélectionné pour l'autre type, le retirer
+        const otherType = type === 'api' ? 'frontend' : 'api';
+        if (dockerSelection[otherType]?.container_id === containerId) {
+            dockerSelection[otherType] = null;
+        }
+        dockerSelection[type] = container;
+    }
+    
+    // Rafraîchir l'affichage
+    renderDockerContainers(lastDockerScan.discovered);
+    updateDockerSelectionSummary();
+}
+
+/**
+ * Met à jour le résumé de la sélection
+ */
+function updateDockerSelectionSummary() {
+    const summary = document.getElementById('dockerSelectionSummary');
+    const importBtn = document.getElementById('dockerImportBtn');
+    
+    if (!summary || !importBtn) return;
+    
+    const hasApi = dockerSelection.api !== null;
+    const hasFrontend = dockerSelection.frontend !== null;
+    
+    if (!hasApi && !hasFrontend) {
+        summary.innerHTML = '<span class="text-muted">Aucune sélection</span>';
+        importBtn.disabled = true;
+    } else {
+        let html = '';
+        if (hasApi) {
+            const port = dockerSelection.api.ports[0]?.host_port || '?';
+            html += `<span class="badge bg-danger me-2"><i class="bi bi-hdd-rack me-1"></i>API: ${escapeHtml(dockerSelection.api.name)} (port ${port})</span>`;
+        }
+        if (hasFrontend) {
+            const port = dockerSelection.frontend.ports[0]?.host_port || '?';
+            html += `<span class="badge bg-success"><i class="bi bi-window me-1"></i>Frontend: ${escapeHtml(dockerSelection.frontend.name)} (port ${port})</span>`;
+        }
+        summary.innerHTML = html;
+        importBtn.disabled = !hasApi; // Au minimum une API est requise
+    }
+}
+
+/**
+ * Importe la sélection Docker comme application
+ */
+function importDockerSelection() {
+    if (!dockerSelection.api) {
+        showToast('Erreur', 'Veuillez sélectionner au moins un conteneur API', 'warning');
+        return;
+    }
+    
+    const apiContainer = dockerSelection.api;
+    const frontendContainer = dockerSelection.frontend;
+    
+    // Fermer la modal Docker
+    dockerScanModal.hide();
+    
+    // Trouver les ports
+    const apiPort = apiContainer.ports[0]?.host_port || null;
+    const frontendPort = frontendContainer?.ports[0]?.host_port || null;
+    
+    // Générer un nom/slug à partir de la sélection
+    let appName, appSlug, description;
+    if (frontendContainer) {
+        // On a API + Frontend - essayer de trouver un nom commun
+        const apiName = apiContainer.suggested_name.replace(/\s*(api|backend)\s*/gi, '').trim();
+        const frontName = frontendContainer.suggested_name.replace(/\s*(frontend|front|ui)\s*/gi, '').trim();
+        // Prendre le nom le plus court ou le plus commun
+        appName = apiName.length <= frontName.length ? apiName : frontName;
+        if (!appName) appName = apiContainer.suggested_name;
+        appSlug = apiContainer.suggested_slug.replace(/-?(api|backend)$/i, '');
+        if (!appSlug) appSlug = apiContainer.suggested_slug;
+        description = `API: ${apiContainer.image}\nFrontend: ${frontendContainer.image}`;
+    } else {
+        appName = apiContainer.suggested_name;
+        appSlug = apiContainer.suggested_slug;
+        description = `Importé depuis Docker: ${apiContainer.image}`;
+    }
+    
+    // Pré-remplir le formulaire de création d'app
+    document.getElementById('appFormTitle').textContent = 'Importer depuis Docker';
+    document.getElementById('appForm').reset();
+    document.getElementById('appId').value = '';
+    document.getElementById('appMode').value = 'create';
+    document.getElementById('appName').value = appName;
+    document.getElementById('appSlug').value = appSlug;
+    document.getElementById('appDescription').value = description;
+    document.getElementById('appIcon').value = 'bi-box-seam';  // Icône Docker
+    document.getElementById('appColor').value = '#0db7ed';     // Couleur Docker
+    document.getElementById('appApiPort').value = apiPort || '';
+    document.getElementById('appFrontendPort').value = frontendPort || '';
+    document.getElementById('appActive').checked = apiContainer.status === 'running';
+    document.getElementById('appRequiresAuth').checked = true;
+    document.getElementById('appCustomHost').checked = false;
+    document.getElementById('customHostGroup').classList.add('d-none');
+    document.getElementById('appCreateM2M').checked = false;
+    document.getElementById('createM2MSection').classList.remove('d-none');
+    
+    // Afficher mode simplifié (ports)
+    document.getElementById('simplePortsSection').classList.remove('d-none');
+    document.getElementById('advancedUrlsSection').classList.add('d-none');
+    document.getElementById('appApiPort').required = true;
+    document.getElementById('appApiUrl').required = false;
+    
+    updateIconPreview();
+    updateUrlPreview();
+    
+    // Afficher le formulaire
+    appFormModal.show();
+    
+    const msg = frontendContainer 
+        ? `API "${apiContainer.name}" + Frontend "${frontendContainer.name}" pré-chargés.`
+        : `Conteneur "${apiContainer.name}" pré-chargé.`;
+    showToast('Import Docker', msg + ' Vérifiez et ajustez les informations.', 'info');
+}
+

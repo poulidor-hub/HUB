@@ -42,6 +42,11 @@ services:
       - ./hub/pytest.ini:/code/pytest.ini
       - ./secrets:/code/secrets:ro
       - ./secrets/service_accounts:/code/secrets/service_accounts:rw
+      # Socket Docker pour la détection automatique des conteneurs (lecture seule)
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    # Groupe docker pour accéder au socket (GID typique: 986 ou 999)
+    group_add:
+      - "986"
     depends_on:
       db:
         condition: service_healthy

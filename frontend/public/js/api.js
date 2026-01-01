@@ -402,6 +402,11 @@ class HubAPI {
             method: 'POST'
         });
     }
+
+    // Docker Scanner
+    async scanDockerContainers(includeStopped = false) {
+        return this.request(`/apps/docker/scan?include_stopped=${includeStopped}`);
+    }
 }
 
 const api = new HubAPI();

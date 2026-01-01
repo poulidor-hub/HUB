@@ -10,13 +10,17 @@ import logging
 
 from app.database import get_db
 from app.models import Application, User, ServiceAccount, UserAppRole
-from app.schemas import AppCreate, AppCreateSimplified, AppUpdate, AppResponse, AppWithUsers
+from app.schemas import (
+    AppCreate, AppCreateSimplified, AppUpdate, AppResponse, AppWithUsers,
+    DockerScanResponse, DockerContainerInfo, DockerPortInfo
+)
 from app.auth import get_current_admin, get_current_user, get_password_hash, get_settings
 from app.routes.service_accounts import save_service_account_credentials
 from app.routes.audit import log_action
 
 router = APIRouter(prefix="/api/apps", tags=["Applications"])
 settings = get_settings()
+logger = logging.getLogger(__name__)
 
 
 def generate_slug(name: str) -> str:
@@ -343,3 +347,95 @@ async def set_app_users(
     await db.commit()
     
     return {"message": f"Utilisateurs mis à jour pour {app.name}", "users": [u.username for u in users]}
+
+
+# ===== Docker Scanner =====
+
+@router.get("/docker/scan", response_model=DockerScanResponse)
+async def scan_docker_containers(
+    include_stopped: bool = False,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_admin)
+):
+    """
+    Scanne les conteneurs Docker en cours d'exécution sur le serveur.
+    
+    Retourne la liste des conteneurs avec leurs ports exposés,
+    permettant d'ajouter facilement des applications au Hub.
+    
+    ⚠️ Admin uniquement - Nécessite l'accès au socket Docker.
+    
+    Args:
+        include_stopped: Inclure les conteneurs arrêtés (défaut: False)
+    """
+    try:
+        from app.docker_scanner import docker_scanner
+    except ImportError as e:
+        logger.warning(f"Module docker_scanner non disponible: {e}")
+        return DockerScanResponse(
+            available=False,
+            error="Module Docker Scanner non disponible"
+        )
+    
+    # Récupérer les slugs des applications déjà enregistrées
+    result = await db.execute(select(Application.slug))
+    existing_slugs = {row[0] for row in result.fetchall()}
+    
+    # Scanner Docker
+    try:
+        docker_info = docker_scanner.get_docker_info()
+        
+        if not docker_info.get("available"):
+            return DockerScanResponse(
+                available=False,
+                error=docker_info.get("error", "Docker non accessible")
+            )
+        
+        containers = docker_scanner.scan_containers(include_stopped=include_stopped)
+        
+        # Convertir en schémas Pydantic
+        discovered = []
+        for container in containers:
+            # Marquer si le slug suggéré est déjà utilisé
+            suggested_slug = container.suggested_slug
+            if suggested_slug in existing_slugs:
+                # Ajouter un suffixe pour éviter les conflits
+                i = 2
+                while f"{suggested_slug}-{i}" in existing_slugs:
+                    i += 1
+                suggested_slug = f"{suggested_slug}-{i}"
+            
+            discovered.append(DockerContainerInfo(
+                container_id=container.container_id,
+                name=container.name,
+                image=container.image,
+                status=container.status,
+                ports=[
+                    DockerPortInfo(
+                        container_port=p.container_port,
+                        host_port=p.host_port,
+                        protocol=p.protocol
+                    )
+                    for p in container.ports
+                ],
+                suggested_slug=suggested_slug,
+                suggested_name=container.suggested_name,
+                labels=container.labels
+            ))
+        
+        logger.info(f"Scan Docker: {len(discovered)} conteneurs découverts par {current_user.username}")
+        
+        return DockerScanResponse(
+            available=True,
+            docker_version=docker_info.get("version"),
+            containers_running=docker_info.get("containers_running", 0),
+            containers_total=docker_info.get("containers_total", 0),
+            discovered=discovered
+        )
+        
+    except Exception as e:
+        logger.error(f"Erreur lors du scan Docker: {e}")
+        return DockerScanResponse(
+            available=False,
+            error=str(e)
+        )

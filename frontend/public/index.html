@@ -115,9 +115,14 @@
                         <div class="tab-pane fade show active" id="tabApps">
                             <div class="d-flex justify-content-between align-items-center mb-3">
                                 <h5 class="mb-0">Gestion des Applications</h5>
-                                <button class="btn btn-success btn-sm" onclick="showAddAppForm()">
-                                    <i class="bi bi-plus-lg me-1"></i>Ajouter
-                                </button>
+                                <div class="btn-group">
+                                    <button class="btn btn-outline-primary btn-sm" onclick="showDockerScanModal()">
+                                        <i class="bi bi-docker me-1"></i>Scanner Docker
+                                    </button>
+                                    <button class="btn btn-success btn-sm" onclick="showAddAppForm()">
+                                        <i class="bi bi-plus-lg me-1"></i>Ajouter
+                                    </button>
+                                </div>
                             </div>
                             <div id="appsTable" class="table-responsive">
                                 <!-- Table loaded dynamically -->
@@ -701,6 +706,88 @@
                     <button type="button" class="btn btn-primary" data-bs-dismiss="modal">
                         J'ai copié les credentials
                     </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Docker Scan Modal -->
+    <div class="modal fade" id="dockerScanModal" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header bg-info text-white">
+                    <h5 class="modal-title"><i class="bi bi-box-seam me-2"></i>Scanner les conteneurs Docker</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <!-- Docker Status -->
+                    <div id="dockerStatus" class="mb-3">
+                        <div class="d-flex align-items-center text-muted">
+                            <div class="spinner-border spinner-border-sm me-2" role="status"></div>
+                            Analyse en cours...
+                        </div>
+                    </div>
+                    
+                    <!-- Error Message -->
+                    <div id="dockerError" class="alert alert-danger d-none">
+                        <i class="bi bi-exclamation-triangle me-2"></i>
+                        <span id="dockerErrorMessage"></span>
+                    </div>
+                    
+                    <!-- Docker Info -->
+                    <div id="dockerInfo" class="d-none mb-3">
+                        <div class="d-flex gap-3 small text-muted">
+                            <span><i class="bi bi-box me-1"></i>Docker <span id="dockerVersion"></span></span>
+                            <span><i class="bi bi-play-circle me-1"></i><span id="dockerRunning"></span> en cours</span>
+                            <span><i class="bi bi-collection me-1"></i><span id="dockerTotal"></span> total</span>
+                        </div>
+                    </div>
+                    
+                    <!-- Containers List -->
+                    <div id="dockerContainers" class="d-none">
+                        <div class="alert alert-info small mb-3">
+                            <i class="bi bi-info-circle me-1"></i>
+                            <strong>Sélectionnez les conteneurs</strong> : Cliquez sur <span class="badge bg-danger">API</span> pour le backend 
+                            et <span class="badge bg-success">Front</span> pour le frontend. Vous pouvez sélectionner les deux pour créer une application complète.
+                        </div>
+                        <div class="list-group" id="containersList" style="max-height: 400px; overflow-y: auto;">
+                            <!-- Containers loaded dynamically -->
+                        </div>
+                    </div>
+                    
+                    <!-- Empty State -->
+                    <div id="dockerEmpty" class="d-none text-center text-muted py-4">
+                        <i class="bi bi-inbox display-4"></i>
+                        <p class="mt-2">Aucun conteneur détecté avec des ports exposés</p>
+                        <small>Les conteneurs système (DB, reverse proxy) sont automatiquement exclus</small>
+                    </div>
+                </div>
+                <div class="modal-footer flex-column align-items-stretch">
+                    <!-- Résumé de la sélection -->
+                    <div class="d-flex justify-content-between align-items-center w-100 mb-2 pb-2 border-bottom">
+                        <div>
+                            <strong class="small text-muted me-2">Sélection :</strong>
+                            <span id="dockerSelectionSummary"><span class="text-muted">Aucune sélection</span></span>
+                        </div>
+                        <button type="button" class="btn btn-primary" id="dockerImportBtn" onclick="importDockerSelection()" disabled>
+                            <i class="bi bi-plus-circle me-1"></i>Importer
+                        </button>
+                    </div>
+                    <!-- Options -->
+                    <div class="d-flex justify-content-between align-items-center w-100">
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="dockerIncludeStopped" onchange="refreshDockerScan()">
+                            <label class="form-check-label small" for="dockerIncludeStopped">
+                                Inclure les conteneurs arrêtés
+                            </label>
+                        </div>
+                        <div>
+                            <button type="button" class="btn btn-outline-secondary btn-sm" onclick="refreshDockerScan()">
+                                <i class="bi bi-arrow-clockwise me-1"></i>Actualiser
+                            </button>
+                            <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Fermer</button>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
