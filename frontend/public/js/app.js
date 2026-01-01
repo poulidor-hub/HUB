@@ -37,11 +37,24 @@ document.addEventListener('DOMContentLoaded', () => {
     saCredentialsModal = new bootstrap.Modal(document.getElementById('saCredentialsModal'));
     toast = new bootstrap.Toast(document.getElementById('toast'));
 
-    // Vérifier si une application externe demande une authentification SSO
-    // URL format: http://hub/?callback=http://app:port/callback
+    // Vérifier les paramètres URL
     const params = new URLSearchParams(window.location.search);
     const callbackUrl = params.get('callback');
-    if (callbackUrl) {
+    const action = params.get('action');
+    
+    // Si action=logout, l'utilisateur a été déconnecté d'une application
+    // => Ne PAS rediriger automatiquement, afficher le portail
+    if (action === 'logout') {
+        // Nettoyer l'URL sans recharger la page
+        window.history.replaceState({}, '', window.location.pathname);
+        // Effacer tout callback en attente pour éviter une reconnexion automatique
+        clearPendingCallback();
+        console.log('Déconnexion depuis une application - affichage du portail');
+        // Continuer normalement (afficher dashboard si connecté, sinon login)
+    }
+    // Sinon, si un callback est présent, c'est une demande de connexion SSO
+    // URL format: http://hub/?callback=http://app:port/callback
+    else if (callbackUrl) {
         setPendingCallback(decodeURIComponent(callbackUrl));
         // Nettoyer l'URL sans recharger la page
         window.history.replaceState({}, '', window.location.pathname);

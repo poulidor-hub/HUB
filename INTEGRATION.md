@@ -1,21 +1,82 @@
 # Guide d'Intégration - Hub d'Authentification
 
+> **Version** : 1.1.0  
+> **Dernière mise à jour** : 1er janvier 2026  
+> **Auteur** : Équipe Hub
+
 Ce document décrit comment intégrer vos applications avec le Hub d'authentification centralisé.
-
-## Table des matières
-
-1. [Principes fondamentaux](#principes-fondamentaux)
-2. [Configuration de l'application](#configuration-de-lapplication)
-3. [Intégration Backend (FastAPI)](#intégration-backend-fastapi)
-4. [Intégration Frontend](#intégration-frontend)
-5. [Communication Machine-to-Machine (M2M)](#communication-machine-to-machine-m2m)
-6. [Communication inter-API](#communication-inter-api)
-7. [Gestion des rôles](#gestion-des-rôles)
-8. [Endpoints du Hub](#endpoints-du-hub)
 
 ---
 
-## Principes fondamentaux
+## 📑 Table des matières
+
+### Concepts de base
+1. [Principes fondamentaux](#1-principes-fondamentaux)
+   - [Le Hub gère TOUTE l'authentification](#-le-hub-gère-toute-lauthentification)
+   - [Adresses IP, pas localhost !](#-adresses-ip-pas-localhost-)
+   - [Localisation du Hub](#-localisation-du-hub)
+
+### Configuration
+2. [Configuration de l'application](#2-configuration-de-lapplication)
+   - [Fichier `.env`](#fichier-env)
+   - [Fichier `config.py`](#fichier-configpy)
+
+### Intégration Backend
+3. [Intégration Backend (FastAPI)](#3-intégration-backend-fastapi)
+   - [Étape 1 : Dépendances](#étape-1--dépendances)
+   - [Étape 2 : Récupérer la clé publique du Hub](#étape-2--récupérer-la-clé-publique-du-hub)
+   - [Étape 3 : Module d'authentification `hub_auth.py`](#étape-3--module-dauthentification-hub_authpy)
+   - [Étape 4 : Utilisation dans les routes](#étape-4--utilisation-dans-les-routes)
+
+### Intégration Frontend
+4. [Intégration Frontend](#4-intégration-frontend)
+   - [Principes](#principes)
+   - [Paramètres URL du Hub](#paramètres-url-du-hub)
+   - [Configuration JavaScript](#configuration-javascript)
+   - [Module d'authentification](#module-dauthentification)
+   - [Gestion des préférences UI locales](#gestion-des-préférences-ui-locales)
+
+### Communication inter-services
+5. [Communication Machine-to-Machine (M2M)](#5-communication-machine-to-machine-m2m)
+   - [Création automatique du Service Account](#création-automatique-du-service-account)
+   - [Exemple Python - Client M2M](#exemple-python---client-m2m)
+
+6. [Communication inter-API](#6-communication-inter-api)
+   - [Architecture](#architecture)
+   - [Configurer l'IP du Hub](#configurer-lip-du-hub)
+   - [Créer un Service Account](#créer-un-service-account)
+   - [Client M2M complet (`hub_client.py`)](#client-m2m-complet-hub_clientpy)
+   - [Checklist d'intégration inter-API](#checklist-dintégration-inter-api)
+
+### Sécurité et rôles
+7. [Gestion des rôles](#7-gestion-des-rôles)
+   - [Structure du token JWT](#structure-du-token-jwt)
+   - [Rôles disponibles](#rôles-disponibles)
+   - [Vérification des rôles côté backend](#vérification-des-rôles-côté-backend)
+   - [Vérification des rôles côté frontend](#vérification-des-rôles-côté-frontend)
+
+### Référence API
+8. [Endpoints du Hub](#8-endpoints-du-hub)
+   - [Authentification](#authentification)
+   - [Durée des tokens](#durée-des-tokens-géré-par-le-hub-uniquement)
+   - [Format des réponses](#format-des-réponses)
+
+### Déploiement
+9. [Configuration du Dockerfile](#9-configuration-du-dockerfile)
+   - [Fichiers requis](#fichiers-requis)
+   - [Exemple de Dockerfile](#exemple-de-dockerfile)
+   - [Avec Docker Compose (volumes)](#avec-docker-compose-volumes)
+
+### Annexes
+10. [Résumé](#10-résumé)
+    - [Ce que l'application DOIT faire](#ce-que-lapplication-doit-faire)
+    - [Ce que l'application NE DOIT PAS faire](#ce-que-lapplication-ne-doit-pas-faire)
+
+11. [Contact Hub](#11-contact-hub)
+
+---
+
+## 1. Principes fondamentaux
 
 ### 🔐 Le Hub gère TOUTE l'authentification
 
@@ -51,13 +112,13 @@ http://192.0.2.12:4178/callback
 
 ### 📍 Localisation du Hub
 
-Par défaut, le Hub est accessible sur **la même IP que votre application**. Si le Hub est sur une machine différente, configurez l'IP dans le fichier \`.env\` de votre application.
+Par défaut, le Hub est accessible sur **la même IP que votre application**. Si le Hub est sur une machine différente, configurez l'IP dans le fichier `.env` de votre application.
 
 ---
 
-## Configuration de l'application
+## 2. Configuration de l'application
 
-### Fichier \`.env\`
+### Fichier `.env`
 
 Créez un fichier \`.env\` à la racine de votre application :
 
@@ -170,7 +231,7 @@ def get_settings() -> Settings:
 
 ---
 
-## Intégration Backend (FastAPI)
+## 3. Intégration Backend (FastAPI)
 
 ### Étape 1 : Dépendances
 
@@ -431,7 +492,7 @@ async def create_employee(
 
 ---
 
-## Intégration Frontend
+## 4. Intégration Frontend
 
 ### Principes
 
@@ -440,7 +501,38 @@ async def create_employee(
 3. **Stockage** : Garder le token en localStorage
 4. **Requêtes** : Envoyer le token dans le header \`Authorization\`
 5. **Expiration** : Rediriger vers le Hub si 401
-6. **Préférences** : L'app peut stocker des préférences UI localement
+6. **Déconnexion** : Rediriger vers le Hub avec \`action=logout\`
+7. **Préférences** : L'app peut stocker des préférences UI localement
+
+### Paramètres URL du Hub
+
+Le Hub accepte plusieurs paramètres dans l'URL pour contrôler le comportement de l'authentification :
+
+| Paramètre | Description | Exemple |
+|-----------|-------------|---------|
+| \`callback\` | URL de retour après connexion réussie | \`?callback=http://app:4178/callback\` |
+| \`action\` | Action spéciale à effectuer | \`?action=logout\` |
+
+#### ⚠️ Éviter la reconnexion automatique après déconnexion
+
+Quand un utilisateur se déconnecte de votre application, **n'utilisez PAS** \`callback\` pour rediriger vers le Hub, sinon le Hub le reconnectera automatiquement s'il a une session active.
+
+**❌ INCORRECT** (cause une boucle de reconnexion) :
+\`\`\`javascript
+// L'utilisateur reste connecté au Hub → reconnexion automatique !
+window.location.href = \`\${HUB_URL}?callback=\${encodeURIComponent(callbackUrl)}\`;
+\`\`\`
+
+**✅ CORRECT** (affiche le portail sans reconnexion) :
+\`\`\`javascript
+// action=logout indique au Hub de ne PAS rediriger automatiquement
+window.location.href = \`\${HUB_URL}?action=logout\`;
+\`\`\`
+
+Le paramètre \`action=logout\` :
+- Efface tout callback en attente
+- Affiche le portail Hub (dashboard si connecté, login sinon)
+- **Ne redirige PAS automatiquement** vers une application
 
 ### Configuration JavaScript
 
@@ -616,6 +708,10 @@ class HubAuth {
     
     /**
      * Déconnexion - révoque le token sur le Hub
+     * 
+     * ⚠️ IMPORTANT : Utiliser `action=logout` pour éviter la reconnexion automatique !
+     * Si l'utilisateur est connecté au Hub et qu'on redirige avec un `callback`,
+     * le Hub le reconnectera automatiquement à l'application.
      */
     async logout() {
         if (this.token) {
@@ -634,8 +730,9 @@ class HubAuth {
         localStorage.removeItem('hub_token');
         localStorage.removeItem('hub_refresh_token');
         
-        // Rediriger vers le Hub
-        this.login();
+        // ⚠️ Rediriger vers le Hub SANS callback, avec action=logout
+        // Cela évite que le Hub reconnecte automatiquement l'utilisateur
+        window.location.href = \`\${CONFIG.HUB_FRONTEND_URL}?action=logout\`;
     }
     
     /**
@@ -740,7 +837,7 @@ const userPrefs = new UserPreferences();
 
 ---
 
-## Communication Machine-to-Machine (M2M)
+## 5. Communication Machine-to-Machine (M2M)
 
 ### Création automatique du Service Account
 
@@ -822,7 +919,7 @@ employees = await m2m.call_api(f"http://{settings.hub_ip}:18087/api/employees")
 
 ---
 
-## Communication inter-API
+## 6. Communication inter-API
 
 Cette section détaille comment vos applications peuvent communiquer entre elles via le Hub.
 
@@ -1058,7 +1155,7 @@ networks:
 
 ---
 
-## Gestion des rôles
+## 7. Gestion des rôles
 
 ### Structure du token JWT
 
@@ -1138,7 +1235,7 @@ if (role === 'viewer') {
 
 ---
 
-## Endpoints du Hub
+## 8. Endpoints du Hub
 
 ### Authentification
 
@@ -1183,28 +1280,7 @@ if (role === 'viewer') {
 
 ---
 
-## Résumé
-
-### Ce que l'application DOIT faire
-
-✅ Valider les tokens JWT avec la clé publique du Hub  
-✅ Vérifier les rôles et accès dans le token  
-✅ Rediriger vers le Hub si token expiré (401)  
-✅ Utiliser des IP (pas localhost) pour les URLs  
-✅ Stocker les préférences UI localement si besoin  
-
-### Ce que l'application NE DOIT PAS faire
-
-❌ Créer des tokens JWT  
-❌ Définir la durée des tokens  
-❌ Gérer les utilisateurs (création, modification)  
-❌ Stocker des mots de passe  
-❌ Implémenter son propre système de login  
-❌ Utiliser \`localhost\` dans les URLs de redirection  
-
----
-
-## ⚠️ Configuration du Dockerfile
+## 9. Configuration du Dockerfile
 
 > **IMPORTANT** : Le Dockerfile de votre application doit copier les fichiers nécessaires à l'authentification !
 
@@ -1258,7 +1334,7 @@ services:
 
 ### Où trouver ces fichiers ?
 
-1. **`hub_auth.py`** : Généré à partir du template dans ce guide (section [Intégration Backend](#intégration-backend-fastapi))
+1. **`hub_auth.py`** : Généré à partir du template dans ce guide (section [Intégration Backend](#3-intégration-backend-fastapi))
 2. **`jwt_public_key.pem`** : Dans le dossier `secrets/` du projet Hub
 
 ```bash
@@ -1268,7 +1344,28 @@ cp /chemin/vers/HUB/secrets/jwt_public_key.pem ./secrets/
 
 ---
 
-## Contact Hub
+## 10. Résumé
+
+### Ce que l'application DOIT faire
+
+✅ Valider les tokens JWT avec la clé publique du Hub  
+✅ Vérifier les rôles et accès dans le token  
+✅ Rediriger vers le Hub si token expiré (401)  
+✅ Utiliser des IP (pas localhost) pour les URLs  
+✅ Stocker les préférences UI localement si besoin  
+
+### Ce que l'application NE DOIT PAS faire
+
+❌ Créer des tokens JWT  
+❌ Définir la durée des tokens  
+❌ Gérer les utilisateurs (création, modification)  
+❌ Stocker des mots de passe  
+❌ Implémenter son propre système de login  
+❌ Utiliser \`localhost\` dans les URLs de redirection  
+
+---
+
+## 11. Contact Hub
 
 - **URL Hub API** : \`http://[IP_SERVEUR]:8000\`
 - **URL Hub Frontend** : \`http://[IP_SERVEUR]:80\`
