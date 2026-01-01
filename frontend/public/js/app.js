@@ -7,6 +7,9 @@ let allApps = [];
 let allServiceAccounts = [];
 let hubHost = null;  // IP/hostname du Hub (chargé depuis l'API)
 
+// Tracking des fenêtres d'applications ouvertes pour fermeture automatique au logout
+const openedAppWindows = new Map();
+
 // Bootstrap instances
 let adminModal, appFormModal, userFormModal, serviceAccountFormModal, saCredentialsModal, toast;
 
@@ -161,7 +164,24 @@ function showDashboard() {
 
 async function logout() {
     try {
+        // Fermer tous les onglets d'applications ouverts AVANT la déconnexion
+        const closedCount = closeAllAppWindows();
+        if (closedCount > 0) {
+            console.log(`${closedCount} onglet(s) d'application fermé(s)`);
+        }
+        
         await api.logout();
+        
+        // Message personnalisé selon le nombre d'onglets fermés
+        if (closedCount > 0) {
+            const appText = closedCount === 1 ? 'application fermée' : 'applications fermées';
+            showToast('Déconnexion', `À bientôt ! (${closedCount} ${appText})`, 'info');
+        } else {
+            showToast('Déconnexion', 'À bientôt !', 'info');
+        }
+    } catch (error) {
+        console.error('Erreur lors du logout:', error);
+        showToast('Déconnexion', 'À bientôt !', 'info');
     } finally {
         currentUser = null;
         document.getElementById('loginSection').classList.remove('d-none');
@@ -170,7 +190,6 @@ async function logout() {
         document.getElementById('logoutBtn').classList.add('d-none');
         document.getElementById('adminBtn').classList.add('d-none');
         document.getElementById('loginForm').reset();
-        showToast('Déconnexion', 'À bientôt !', 'info');
     }
 }
 
@@ -224,10 +243,53 @@ function openApp(slug, frontendUrl) {
     // Logger l'accès à l'application (async, non bloquant)
     api.logAppAccess(slug).catch(e => console.warn('Échec log accès app:', e));
 
-    // Rediriger avec le token
+    // Nettoyer les références aux fenêtres déjà fermées
+    cleanupClosedWindows();
+
+    // Rediriger avec le token dans un nouvel onglet
     const separator = frontendUrl.includes('?') ? '&' : '?';
     const url = `${frontendUrl}${separator}access_token=${api.token}`;
-    window.open(url, '_blank');
+    
+    // Ouvrir avec un nom unique pour pouvoir tracker la fenêtre
+    const windowName = `hub_app_${slug}_${Date.now()}`;
+    const appWindow = window.open(url, windowName);
+    
+    // Stocker la référence pour fermeture automatique au logout
+    if (appWindow) {
+        openedAppWindows.set(windowName, appWindow);
+        console.log(`Application ${slug} ouverte dans l'onglet ${windowName}`);
+    }
+}
+
+/**
+ * Nettoie les références aux fenêtres qui ont été fermées manuellement
+ */
+function cleanupClosedWindows() {
+    for (const [name, win] of openedAppWindows.entries()) {
+        if (win.closed) {
+            openedAppWindows.delete(name);
+        }
+    }
+}
+
+/**
+ * Ferme tous les onglets d'applications ouverts par le Hub
+ */
+function closeAllAppWindows() {
+    let closedCount = 0;
+    for (const [name, win] of openedAppWindows.entries()) {
+        if (win && !win.closed) {
+            try {
+                win.close();
+                closedCount++;
+                console.log(`Onglet ${name} fermé`);
+            } catch (e) {
+                console.warn(`Impossible de fermer l'onglet ${name}:`, e);
+            }
+        }
+    }
+    openedAppWindows.clear();
+    return closedCount;
 }
 
 // ===== Admin Panel =====
