@@ -10,6 +10,23 @@ let hubHost = null;  // IP/hostname du Hub (chargé depuis l'API)
 // Bootstrap instances
 let adminModal, appFormModal, userFormModal, serviceAccountFormModal, saCredentialsModal, toast;
 
+/**
+ * Gestion du callback SSO - persisté en sessionStorage pour survivre aux reloads
+ */
+function getPendingCallback() {
+    return sessionStorage.getItem('sso_pending_callback');
+}
+
+function setPendingCallback(url) {
+    if (url) {
+        sessionStorage.setItem('sso_pending_callback', url);
+    }
+}
+
+function clearPendingCallback() {
+    sessionStorage.removeItem('sso_pending_callback');
+}
+
 // Initialize on DOM load
 document.addEventListener('DOMContentLoaded', () => {
     // Initialize Bootstrap components
@@ -19,6 +36,17 @@ document.addEventListener('DOMContentLoaded', () => {
     serviceAccountFormModal = new bootstrap.Modal(document.getElementById('serviceAccountFormModal'));
     saCredentialsModal = new bootstrap.Modal(document.getElementById('saCredentialsModal'));
     toast = new bootstrap.Toast(document.getElementById('toast'));
+
+    // Vérifier si une application externe demande une authentification SSO
+    // URL format: http://hub/?callback=http://app:port/callback
+    const params = new URLSearchParams(window.location.search);
+    const callbackUrl = params.get('callback');
+    if (callbackUrl) {
+        setPendingCallback(decodeURIComponent(callbackUrl));
+        // Nettoyer l'URL sans recharger la page
+        window.history.replaceState({}, '', window.location.pathname);
+        console.log('SSO callback enregistré:', getPendingCallback());
+    }
 
     // Check if already logged in
     if (api.token) {
@@ -53,6 +81,20 @@ async function handleLogin(event) {
     try {
         errorDiv.classList.add('d-none');
         await api.login(username, password);
+        
+        // Si un callback SSO est en attente, rediriger vers l'application externe
+        const pendingCallback = getPendingCallback();
+        if (pendingCallback) {
+            clearPendingCallback();  // Nettoyer AVANT la redirection
+            const separator = pendingCallback.includes('?') ? '&' : '?';
+            const redirectUrl = `${pendingCallback}${separator}access_token=${api.token}`;
+            console.log('Redirection SSO vers:', redirectUrl);
+            showToast('Connexion réussie', `Redirection vers l'application...`, 'success');
+            // Redirection immédiate
+            window.location.href = redirectUrl;
+            return;
+        }
+        
         await loadCurrentUser();
         showToast('Connexion réussie', `Bienvenue ${username} !`, 'success');
     } catch (error) {
@@ -65,6 +107,20 @@ async function handleLogin(event) {
 async function loadCurrentUser() {
     try {
         currentUser = await api.getCurrentUser();
+        
+        // Si l'utilisateur est déjà connecté et qu'un callback SSO est en attente
+        // Rediriger directement vers l'application externe
+        const pendingCallback = getPendingCallback();
+        if (pendingCallback) {
+            clearPendingCallback();  // Nettoyer AVANT la redirection
+            const separator = pendingCallback.includes('?') ? '&' : '?';
+            const redirectUrl = `${pendingCallback}${separator}access_token=${api.token}`;
+            console.log('Utilisateur déjà connecté, redirection SSO vers:', redirectUrl);
+            // Redirection immédiate
+            window.location.href = redirectUrl;
+            return;
+        }
+        
         showDashboard();
     } catch (error) {
         console.error('Failed to load user:', error);
@@ -323,6 +379,8 @@ async function showAddAppForm() {
     document.getElementById('appRequiresAuth').checked = true;
     document.getElementById('appCustomHost').checked = false;
     document.getElementById('customHostGroup').classList.add('d-none');
+    document.getElementById('appCreateM2M').checked = false;
+    document.getElementById('createM2MSection').classList.remove('d-none');
     
     // Afficher mode simplifié (ports), masquer mode avancé (URLs)
     document.getElementById('simplePortsSection').classList.remove('d-none');
@@ -340,6 +398,9 @@ async function editApp(id) {
     const app = allApps.find(a => a.id === id);
     if (!app) return;
 
+    // Réinitialiser le formulaire avant de remplir les valeurs
+    document.getElementById('appForm').reset();
+    
     document.getElementById('appFormTitle').textContent = 'Modifier l\'Application';
     document.getElementById('appId').value = app.id;
     document.getElementById('appMode').value = 'edit';
@@ -354,9 +415,10 @@ async function editApp(id) {
     document.getElementById('appActive').checked = app.is_active;
     document.getElementById('appRequiresAuth').checked = app.requires_auth;
     
-    // En mode édition, afficher les URLs directes
+    // En mode édition, afficher les URLs directes et masquer l'option M2M
     document.getElementById('simplePortsSection').classList.add('d-none');
     document.getElementById('advancedUrlsSection').classList.remove('d-none');
+    document.getElementById('createM2MSection').classList.add('d-none');
     document.getElementById('appApiPort').required = false;
     document.getElementById('appApiUrl').required = true;
     
@@ -406,17 +468,26 @@ async function handleSaveApp(event) {
     try {
         if (id && mode === 'edit') {
             // Mode édition - utiliser les URLs directes
+            // Ne pas envoyer les champs vides pour éviter d'écraser les valeurs existantes
             const data = {
                 name: document.getElementById('appName').value,
                 description: document.getElementById('appDescription').value || null,
                 icon: document.getElementById('appIcon').value,
                 color: document.getElementById('appColor').value,
-                api_url: document.getElementById('appApiUrl').value,
-                frontend_url: document.getElementById('appFrontendUrl').value || null,
-                callback_url: document.getElementById('appCallbackUrl').value || null,
                 is_active: document.getElementById('appActive').checked,
                 requires_auth: document.getElementById('appRequiresAuth').checked
             };
+            
+            // Ajouter les URLs seulement si elles sont renseignées
+            const apiUrl = document.getElementById('appApiUrl').value;
+            const frontendUrl = document.getElementById('appFrontendUrl').value;
+            const callbackUrl = document.getElementById('appCallbackUrl').value;
+            
+            if (apiUrl) data.api_url = apiUrl;
+            if (frontendUrl) data.frontend_url = frontendUrl;
+            else if (frontendUrl === '') data.frontend_url = null;  // Permettre de vider explicitement
+            if (callbackUrl) data.callback_url = callbackUrl;
+            else if (callbackUrl === '') data.callback_url = null;  // Permettre de vider explicitement
             
             await api.updateApp(id, data);
             showToast('Succès', 'Application modifiée', 'success');
@@ -426,6 +497,7 @@ async function handleSaveApp(event) {
         } else {
             // Mode création - utiliser les ports (schéma simplifié)
             const customHost = document.getElementById('appCustomHost').checked;
+            const createM2M = document.getElementById('appCreateM2M').checked;
             const data = {
                 name: document.getElementById('appName').value,
                 slug: document.getElementById('appSlug').value,
@@ -436,7 +508,8 @@ async function handleSaveApp(event) {
                 frontend_port: document.getElementById('appFrontendPort').value ? 
                     parseInt(document.getElementById('appFrontendPort').value) : null,
                 custom_host: customHost ? document.getElementById('appCustomHostValue').value : null,
-                requires_auth: document.getElementById('appRequiresAuth').checked
+                requires_auth: document.getElementById('appRequiresAuth').checked,
+                create_service_account: createM2M
             };
             
             const result = await api.createApp(data);
@@ -882,4 +955,185 @@ function copyToClipboard(elementId) {
     input.select();
     document.execCommand('copy');
     showToast('Copié', 'Valeur copiée dans le presse-papier', 'success');
+}
+
+// ===== Audit & Sessions =====
+
+async function loadAuditData() {
+    const days = parseInt(document.getElementById('auditPeriod')?.value || 30);
+    
+    try {
+        // Charger toutes les données en parallèle
+        const [stats, activeSessions, history] = await Promise.all([
+            api.getConnectionStats(days),
+            api.getActiveSessions(),
+            api.getSessionHistory(days)
+        ]);
+        
+        renderAuditStats(stats);
+        renderActiveSessions(activeSessions);
+        renderSessionHistory(history);
+        renderTopUsers(stats.top_users || []);
+    } catch (error) {
+        console.error('Erreur chargement audit:', error);
+        showToast('Erreur', 'Impossible de charger les données d\'audit', 'danger');
+    }
+}
+
+function renderAuditStats(stats) {
+    document.getElementById('statActiveNow').textContent = stats.active_now || 0;
+    document.getElementById('statTotalSessions').textContent = stats.total_sessions || 0;
+    document.getElementById('statUniqueUsers').textContent = stats.unique_users || 0;
+    document.getElementById('statAvgDuration').textContent = stats.avg_session_duration_display || 'N/A';
+}
+
+function renderActiveSessions(data) {
+    const container = document.getElementById('activeSessionsTable');
+    const countBadge = document.getElementById('activeSessionCount');
+    
+    countBadge.textContent = data.active_count || 0;
+    
+    if (!data.sessions || data.sessions.length === 0) {
+        container.innerHTML = `
+            <div class="text-center py-4 text-muted">
+                <i class="bi bi-person-x display-6"></i>
+                <p class="mt-2">Aucun utilisateur connecté</p>
+            </div>
+        `;
+        return;
+    }
+    
+    container.innerHTML = `
+        <table class="table table-sm table-hover mb-0">
+            <thead>
+                <tr>
+                    <th>Utilisateur</th>
+                    <th>Connecté depuis</th>
+                    <th>Durée</th>
+                    <th>IP</th>
+                </tr>
+            </thead>
+            <tbody>
+                ${data.sessions.map(s => `
+                    <tr>
+                        <td>
+                            <span class="badge bg-success me-2"><i class="bi bi-circle-fill" style="font-size: 0.5rem;"></i></span>
+                            <strong>${escapeHtml(s.username || 'Unknown')}</strong>
+                        </td>
+                        <td><small>${formatDateTime(s.login_at)}</small></td>
+                        <td><span class="badge bg-light text-dark">${s.duration_minutes} min</span></td>
+                        <td><code class="small">${s.ip_address || '-'}</code></td>
+                    </tr>
+                `).join('')}
+            </tbody>
+        </table>
+    `;
+}
+
+function renderSessionHistory(data) {
+    const container = document.getElementById('sessionHistoryTable');
+    
+    if (!data.sessions || data.sessions.length === 0) {
+        container.innerHTML = `
+            <div class="text-center py-4 text-muted">
+                <i class="bi bi-clock-history display-6"></i>
+                <p class="mt-2">Aucune session dans cette période</p>
+            </div>
+        `;
+        return;
+    }
+    
+    container.innerHTML = `
+        <table class="table table-sm table-hover mb-0">
+            <thead class="sticky-top bg-white">
+                <tr>
+                    <th>Utilisateur</th>
+                    <th>Connexion</th>
+                    <th>Déconnexion</th>
+                    <th>Durée</th>
+                    <th>Raison</th>
+                    <th>IP</th>
+                </tr>
+            </thead>
+            <tbody>
+                ${data.sessions.map(s => `
+                    <tr>
+                        <td><strong>${escapeHtml(s.username || 'Unknown')}</strong></td>
+                        <td><small>${formatDateTime(s.login_at)}</small></td>
+                        <td><small>${s.logout_at ? formatDateTime(s.logout_at) : '<span class="badge bg-success">En cours</span>'}</small></td>
+                        <td><span class="badge bg-light text-dark">${s.duration_display || '-'}</span></td>
+                        <td>${getLogoutReasonBadge(s.logout_reason)}</td>
+                        <td><code class="small">${s.ip_address || '-'}</code></td>
+                    </tr>
+                `).join('')}
+            </tbody>
+        </table>
+    `;
+}
+
+function renderTopUsers(topUsers) {
+    const container = document.getElementById('topUsersTable');
+    
+    if (!topUsers || topUsers.length === 0) {
+        container.innerHTML = `
+            <div class="text-center py-4 text-muted">
+                <i class="bi bi-trophy display-6"></i>
+                <p class="mt-2">Aucune donnée disponible</p>
+            </div>
+        `;
+        return;
+    }
+    
+    container.innerHTML = `
+        <table class="table table-sm table-hover mb-0">
+            <thead>
+                <tr>
+                    <th>#</th>
+                    <th>Utilisateur</th>
+                    <th>Sessions</th>
+                    <th>Temps total</th>
+                </tr>
+            </thead>
+            <tbody>
+                ${topUsers.map((u, index) => `
+                    <tr>
+                        <td>
+                            ${index < 3 
+                                ? `<span class="badge ${index === 0 ? 'bg-warning' : index === 1 ? 'bg-secondary' : 'bg-danger'}">${index + 1}</span>`
+                                : `<span class="text-muted">${index + 1}</span>`
+                            }
+                        </td>
+                        <td><strong>${escapeHtml(u.username)}</strong></td>
+                        <td><span class="badge bg-primary">${u.sessions}</span></td>
+                        <td>${u.total_time_display}</td>
+                    </tr>
+                `).join('')}
+            </tbody>
+        </table>
+    `;
+}
+
+function formatDateTime(isoString) {
+    if (!isoString) return '-';
+    const date = new Date(isoString);
+    return date.toLocaleString('fr-FR', {
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+    });
+}
+
+function getLogoutReasonBadge(reason) {
+    if (!reason) return '<span class="badge bg-success">Actif</span>';
+    
+    const badges = {
+        'explicit': '<span class="badge bg-info">Déconnexion</span>',
+        'timeout': '<span class="badge bg-warning text-dark">Timeout</span>',
+        'token_revoked': '<span class="badge bg-danger">Révoqué</span>',
+        'forced': '<span class="badge bg-danger">Forcé</span>'
+    };
+    
+    return badges[reason] || `<span class="badge bg-secondary">${reason}</span>`;
 }

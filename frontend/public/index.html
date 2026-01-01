@@ -104,6 +104,11 @@
                                 <i class="bi bi-robot me-1"></i>Service Accounts
                             </button>
                         </li>
+                        <li class="nav-item">
+                            <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tabAudit" onclick="loadAuditData()">
+                                <i class="bi bi-graph-up me-1"></i>Audit
+                            </button>
+                        </li>
                     </ul>
                     <div class="tab-content p-4">
                         <!-- Apps Tab -->
@@ -143,6 +148,94 @@
                             </div>
                             <div id="serviceAccountsTable" class="table-responsive">
                                 <!-- Table loaded dynamically -->
+                            </div>
+                        </div>
+                        <!-- Audit Tab -->
+                        <div class="tab-pane fade" id="tabAudit">
+                            <div class="d-flex justify-content-between align-items-center mb-3">
+                                <div>
+                                    <h5 class="mb-0"><i class="bi bi-graph-up me-2"></i>Audit & Connexions</h5>
+                                    <small class="text-muted">Suivi des connexions et sessions utilisateurs</small>
+                                </div>
+                                <div class="d-flex gap-2">
+                                    <select class="form-select form-select-sm" id="auditPeriod" onchange="loadAuditData()" style="width: auto;">
+                                        <option value="7">7 derniers jours</option>
+                                        <option value="30" selected>30 derniers jours</option>
+                                        <option value="90">90 derniers jours</option>
+                                    </select>
+                                    <button class="btn btn-outline-primary btn-sm" onclick="loadAuditData()">
+                                        <i class="bi bi-arrow-clockwise"></i>
+                                    </button>
+                                </div>
+                            </div>
+                            <!-- Stats Cards -->
+                            <div class="row g-3 mb-4" id="auditStatsCards">
+                                <div class="col-md-3">
+                                    <div class="card bg-primary text-white">
+                                        <div class="card-body text-center">
+                                            <h3 id="statActiveNow">-</h3>
+                                            <small>Connectés maintenant</small>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="col-md-3">
+                                    <div class="card bg-success text-white">
+                                        <div class="card-body text-center">
+                                            <h3 id="statTotalSessions">-</h3>
+                                            <small>Sessions totales</small>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="col-md-3">
+                                    <div class="card bg-info text-white">
+                                        <div class="card-body text-center">
+                                            <h3 id="statUniqueUsers">-</h3>
+                                            <small>Utilisateurs uniques</small>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="col-md-3">
+                                    <div class="card bg-warning text-dark">
+                                        <div class="card-body text-center">
+                                            <h3 id="statAvgDuration">-</h3>
+                                            <small>Durée moyenne</small>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <!-- Active Sessions -->
+                            <div class="card mb-4">
+                                <div class="card-header d-flex justify-content-between align-items-center">
+                                    <span><i class="bi bi-person-check me-2"></i>Sessions actives</span>
+                                    <span class="badge bg-success" id="activeSessionCount">0</span>
+                                </div>
+                                <div class="card-body p-0">
+                                    <div id="activeSessionsTable" class="table-responsive">
+                                        <!-- Table loaded dynamically -->
+                                    </div>
+                                </div>
+                            </div>
+                            <!-- Session History -->
+                            <div class="card mb-4">
+                                <div class="card-header">
+                                    <i class="bi bi-clock-history me-2"></i>Historique des sessions
+                                </div>
+                                <div class="card-body p-0">
+                                    <div id="sessionHistoryTable" class="table-responsive" style="max-height: 400px; overflow-y: auto;">
+                                        <!-- Table loaded dynamically -->
+                                    </div>
+                                </div>
+                            </div>
+                            <!-- Top Users -->
+                            <div class="card">
+                                <div class="card-header">
+                                    <i class="bi bi-trophy me-2"></i>Top utilisateurs (par connexions)
+                                </div>
+                                <div class="card-body p-0">
+                                    <div id="topUsersTable" class="table-responsive">
+                                        <!-- Table loaded dynamically -->
+                                    </div>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -256,6 +349,20 @@
                                     <input class="form-check-input" type="checkbox" id="appRequiresAuth" checked>
                                     <label class="form-check-label">Auth requise</label>
                                 </div>
+                            </div>
+                            <!-- Option M2M - uniquement en création -->
+                            <div class="col-12" id="createM2MSection">
+                                <hr>
+                                <div class="form-check form-switch">
+                                    <input class="form-check-input" type="checkbox" id="appCreateM2M">
+                                    <label class="form-check-label">
+                                        <i class="bi bi-robot me-1"></i>Créer un Service Account M2M
+                                    </label>
+                                </div>
+                                <small class="text-muted">
+                                    Génère automatiquement un compte technique pour la communication machine-to-machine.
+                                    Les credentials seront affichés après création.
+                                </small>
                             </div>
                         </div>
                     </div>

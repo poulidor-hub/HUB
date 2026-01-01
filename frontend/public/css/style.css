@@ -172,3 +172,49 @@ body {
         font-size: 1.5rem;
     }
 }
+
+/* Audit Tab Styles */
+#tabAudit .card {
+    border: none;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+
+#tabAudit .card-header {
+    background-color: #f8f9fa;
+    border-bottom: 1px solid #e9ecef;
+    font-weight: 600;
+}
+
+#auditStatsCards .card {
+    border-radius: 12px;
+    transition: transform 0.2s;
+}
+
+#auditStatsCards .card:hover {
+    transform: translateY(-2px);
+}
+
+#auditStatsCards h3 {
+    font-size: 2rem;
+    font-weight: 700;
+    margin-bottom: 0;
+}
+
+/* Session History scrollable table */
+#sessionHistoryTable thead th {
+    position: sticky;
+    top: 0;
+    background: white;
+    z-index: 1;
+}
+
+/* Online indicator pulse animation */
+@keyframes pulse {
+    0% { opacity: 1; }
+    50% { opacity: 0.5; }
+    100% { opacity: 1; }
+}
+
+.badge .bi-circle-fill {
+    animation: pulse 2s infinite;
+}

@@ -187,6 +187,7 @@ class AppWithUsers(AppResponse):
             frontend_url=app.frontend_url,
             callback_url=app.callback_url,
             is_active=app.is_active,
+            requires_auth=app.requires_auth,
             created_at=app.created_at,
             users=users
         )
@@ -216,6 +217,11 @@ class LoginRequest(BaseModel):
 
 class RefreshTokenRequest(BaseModel):
     refresh_token: str
+
+
+class LogoutRequest(BaseModel):
+    """Requête de déconnexion avec refresh token optionnel"""
+    refresh_token: Optional[str] = None
 
 
 class ClientCredentialsRequest(BaseModel):

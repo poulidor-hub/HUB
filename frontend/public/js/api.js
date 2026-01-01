@@ -176,10 +176,27 @@ class HubAPI {
     }
 
     async logout() {
+        // Sauvegarder les tokens avant de les effacer
+        const accessToken = this.token;
+        const refreshTokenValue = this.refreshToken;
+        
+        // Effacer les tokens locaux IMMÉDIATEMENT pour éviter toute reconnexion automatique
+        this.clearToken();
+        
+        // Tenter de révoquer côté serveur (best effort)
         try {
-            await this.request('/auth/logout?revoke_all=true', { method: 'POST' });
-        } finally {
-            this.clearToken();
+            // Envoyer le refresh token au serveur pour le révoquer
+            const response = await fetch(`${API_BASE}/auth/logout?revoke_all=true`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${accessToken}`
+                },
+                body: JSON.stringify({ refresh_token: refreshTokenValue })
+            });
+            // Ignorer les erreurs - les tokens locaux sont déjà effacés
+        } catch (e) {
+            console.log('Logout server notification failed (tokens already cleared locally)');
         }
     }
 
@@ -286,6 +303,25 @@ class HubAPI {
             method: 'PUT',
             body: JSON.stringify(appIds)
         });
+    }
+
+    // Audit
+    async getActiveSessions() {
+        return this.request('/audit/sessions/active');
+    }
+
+    async getSessionHistory(days = 7, userId = null) {
+        let url = `/audit/sessions/history?days=${days}`;
+        if (userId) url += `&user_id=${userId}`;
+        return this.request(url);
+    }
+
+    async getConnectionStats(days = 7) {
+        return this.request(`/audit/stats?days=${days}`);
+    }
+
+    async getUserStats(userId, days = 30) {
+        return this.request(`/audit/stats/user/${userId}?days=${days}`);
     }
 }
 

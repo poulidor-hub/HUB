@@ -8,7 +8,7 @@ from typing import Optional
 
 from app.database import get_db
 from app.models import User, AuditLog, ServiceAccount, UserAppRole, UserSession
-from app.schemas import Token, LoginRequest, TokenIntrospection, RefreshTokenRequest
+from app.schemas import Token, LoginRequest, TokenIntrospection, RefreshTokenRequest, LogoutRequest
 from app.auth import (
     verify_password,
     create_access_token,
@@ -325,11 +325,13 @@ async def logout(
     request: Request,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-    revoke_all: bool = False
+    revoke_all: bool = False,
+    logout_data: Optional[LogoutRequest] = None
 ):
     """
     Déconnexion - révoque le token actuel.
     Si revoke_all=True, révoque aussi tous les refresh tokens de l'utilisateur.
+    Si un refresh_token est fourni dans le body, il sera révoqué spécifiquement.
     """
     # Récupérer le token depuis le header pour obtenir le jti
     auth_header = request.headers.get("authorization", "")
@@ -347,6 +349,16 @@ async def logout(
                 )
         except:
             pass  # Token déjà invalide, on continue
+    
+    # Révoquer le refresh token spécifique s'il est fourni
+    if logout_data and logout_data.refresh_token:
+        try:
+            refresh_token_obj = await verify_refresh_token(db, logout_data.refresh_token)
+            if refresh_token_obj and refresh_token_obj.user_id == current_user.id:
+                refresh_token_obj.revoked_at = datetime.utcnow()
+                await db.commit()
+        except:
+            pass  # Token déjà invalide ou n'appartient pas à l'utilisateur
     
     # Révoquer tous les refresh tokens si demandé
     if revoke_all:
