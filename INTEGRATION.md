@@ -1,6 +1,6 @@
 # Guide d'Intégration - Hub d'Authentification
 
-> **Version** : 1.1.0  
+> **Version** : 2.0.0  
 > **Dernière mise à jour** : 1er janvier 2026  
 > **Auteur** : Équipe Hub
 
@@ -18,18 +18,26 @@ Ce document décrit comment intégrer vos applications avec le Hub d'authentific
 
 ### Configuration
 2. [Configuration de l'application](#2-configuration-de-lapplication)
-   - [Fichier `.env`](#fichier-env)
+   - [Fichier `.env` simplifié](#fichier-env-simplifié)
    - [Fichier `config.py`](#fichier-configpy)
 
+### 🆕 Auto-enregistrement dynamique
+3. [Auto-enregistrement et récupération dynamique des credentials](#3-auto-enregistrement-et-récupération-dynamique-des-credentials)
+   - [Principe](#principe)
+   - [Flux d'auto-enregistrement](#flux-dauto-enregistrement)
+   - [Client Python avec auto-enregistrement (`hub_client.py`)](#client-python-avec-auto-enregistrement-hub_clientpy)
+   - [Endpoints d'auto-enregistrement](#endpoints-dauto-enregistrement)
+   - [Mode rétrocompatible (credentials statiques)](#mode-rétrocompatible-credentials-statiques)
+
 ### Intégration Backend
-3. [Intégration Backend (FastAPI)](#3-intégration-backend-fastapi)
+4. [Intégration Backend (FastAPI)](#4-intégration-backend-fastapi)
    - [Étape 1 : Dépendances](#étape-1--dépendances)
    - [Étape 2 : Récupérer la clé publique du Hub](#étape-2--récupérer-la-clé-publique-du-hub)
    - [Étape 3 : Module d'authentification `hub_auth.py`](#étape-3--module-dauthentification-hub_authpy)
    - [Étape 4 : Utilisation dans les routes](#étape-4--utilisation-dans-les-routes)
 
 ### Intégration Frontend
-4. [Intégration Frontend](#4-intégration-frontend)
+5. [Intégration Frontend](#5-intégration-frontend)
    - [Principes](#principes)
    - [Paramètres URL du Hub](#paramètres-url-du-hub)
    - [Configuration JavaScript](#configuration-javascript)
@@ -37,11 +45,11 @@ Ce document décrit comment intégrer vos applications avec le Hub d'authentific
    - [Gestion des préférences UI locales](#gestion-des-préférences-ui-locales)
 
 ### Communication inter-services
-5. [Communication Machine-to-Machine (M2M)](#5-communication-machine-to-machine-m2m)
+6. [Communication Machine-to-Machine (M2M)](#6-communication-machine-to-machine-m2m)
    - [Création automatique du Service Account](#création-automatique-du-service-account)
    - [Exemple Python - Client M2M](#exemple-python---client-m2m)
 
-6. [Communication inter-API](#6-communication-inter-api)
+7. [Communication inter-API](#7-communication-inter-api)
    - [Architecture](#architecture)
    - [Configurer l'IP du Hub](#configurer-lip-du-hub)
    - [Créer un Service Account](#créer-un-service-account)
@@ -49,30 +57,31 @@ Ce document décrit comment intégrer vos applications avec le Hub d'authentific
    - [Checklist d'intégration inter-API](#checklist-dintégration-inter-api)
 
 ### Sécurité et rôles
-7. [Gestion des rôles](#7-gestion-des-rôles)
+8. [Gestion des rôles](#8-gestion-des-rôles)
    - [Structure du token JWT](#structure-du-token-jwt)
    - [Rôles disponibles](#rôles-disponibles)
    - [Vérification des rôles côté backend](#vérification-des-rôles-côté-backend)
    - [Vérification des rôles côté frontend](#vérification-des-rôles-côté-frontend)
 
 ### Référence API
-8. [Endpoints du Hub](#8-endpoints-du-hub)
+9. [Endpoints du Hub](#9-endpoints-du-hub)
    - [Authentification](#authentification)
+   - [Auto-enregistrement](#auto-enregistrement)
    - [Durée des tokens](#durée-des-tokens-géré-par-le-hub-uniquement)
    - [Format des réponses](#format-des-réponses)
 
 ### Déploiement
-9. [Configuration du Dockerfile](#9-configuration-du-dockerfile)
-   - [Fichiers requis](#fichiers-requis)
-   - [Exemple de Dockerfile](#exemple-de-dockerfile)
-   - [Avec Docker Compose (volumes)](#avec-docker-compose-volumes)
+10. [Configuration du Dockerfile](#10-configuration-du-dockerfile)
+    - [Fichiers requis](#fichiers-requis)
+    - [Exemple de Dockerfile](#exemple-de-dockerfile)
+    - [Avec Docker Compose (volumes)](#avec-docker-compose-volumes)
 
 ### Annexes
-10. [Résumé](#10-résumé)
+11. [Résumé](#11-résumé)
     - [Ce que l'application DOIT faire](#ce-que-lapplication-doit-faire)
     - [Ce que l'application NE DOIT PAS faire](#ce-que-lapplication-ne-doit-pas-faire)
 
-11. [Contact Hub](#11-contact-hub)
+12. [Contact Hub](#12-contact-hub)
 
 ---
 
@@ -118,14 +127,32 @@ Par défaut, le Hub est accessible sur **la même IP que votre application**. Si
 
 ## 2. Configuration de l'application
 
-### Fichier `.env`
+### Fichier `.env` simplifié
 
 Créez un fichier \`.env\` à la racine de votre application :
 
 \`\`\`env
+# ══════════════════════════════════════════════════════════════════════════════
+# CONFIGURATION MINIMALE (mode auto-enregistrement)
+# ══════════════════════════════════════════════════════════════════════════════
+
+# Slug de votre application (identifiant unique)
+# ⚠️ IMPORTANT : Ce slug est choisi par VOUS, pas par le Hub !
+APP_SLUG=mon-app
+
+# Port de votre API backend
+API_PORT=18087
+
+# Port de votre frontend (optionnel)
+FRONTEND_PORT=4178
+
+# ══════════════════════════════════════════════════════════════════════════════
+# CONFIGURATION HUB (optionnel - auto-détection par défaut)
+# ══════════════════════════════════════════════════════════════════════════════
+
 # Adresse du Hub d'authentification
-# Par défaut: même IP que l'application
-# Décommentez et modifiez si le Hub est sur une autre machine
+# Par défaut: même IP que l'application (auto-détection)
+# Décommentez si le Hub est sur une autre machine
 # HUB_HOST=192.168.1.100
 
 # Port de l'API Hub (par défaut: 8000)
@@ -134,15 +161,19 @@ HUB_API_PORT=8000
 # Port du Frontend Hub (par défaut: 80)
 HUB_FRONTEND_PORT=80
 
-# Slug de votre application (défini dans le Hub)
-APP_SLUG=mon-app
-
-# Port de votre API
-API_PORT=18087
-
-# Port de votre frontend (optionnel)
-FRONTEND_PORT=4178
+# ══════════════════════════════════════════════════════════════════════════════
+# CREDENTIALS M2M (optionnel - mode rétrocompatible)
+# ══════════════════════════════════════════════════════════════════════════════
+# 
+# ⚠️ NON RECOMMANDÉ : Préférez le mode auto-enregistrement (section 3)
+# Ces variables sont optionnelles si vous utilisez l'auto-enregistrement.
+# Elles sont conservées pour la rétrocompatibilité.
+#
+# CLIENT_ID=sa_xxx
+# CLIENT_SECRET=secret_xxx
 \`\`\`
+
+> 💡 **Nouveau !** Les credentials `CLIENT_ID` et `CLIENT_SECRET` ne sont plus obligatoires dans le `.env`. Votre application peut les récupérer dynamiquement au démarrage via l'auto-enregistrement (voir section 3).
 
 ### Fichier \`config.py\`
 
@@ -231,7 +262,466 @@ def get_settings() -> Settings:
 
 ---
 
-## 3. Intégration Backend (FastAPI)
+## 3. Auto-enregistrement et récupération dynamique des credentials
+
+### Principe
+
+> 🆕 **Nouveauté v2.0** : Les applications peuvent désormais s'auto-enregistrer auprès du Hub et récupérer leurs credentials M2M dynamiquement, **sans avoir à modifier leur fichier `.env`**.
+
+Le flux traditionnel nécessitait de :
+1. Créer manuellement l'application dans le Hub
+2. Copier les credentials dans le `.env` de l'application
+3. Redémarrer l'application
+
+**Avec l'auto-enregistrement**, l'application :
+1. Définit son `APP_SLUG` dans son `.env` (son identifiant unique)
+2. Au démarrage, s'enregistre automatiquement auprès du Hub
+3. Reçoit et stocke ses credentials **en mémoire** (pas dans un fichier)
+4. Peut régénérer son secret si besoin (perte, rotation...)
+
+### Flux d'auto-enregistrement
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  FLUX AUTO-ENREGISTREMENT                                                   │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  ┌──────────────┐                        ┌──────────────┐                   │
+│  │ Application  │                        │     HUB      │                   │
+│  │  (.env avec  │                        │  (API 8000)  │                   │
+│  │  APP_SLUG)   │                        │              │                   │
+│  └──────┬───────┘                        └──────┬───────┘                   │
+│         │                                       │                           │
+│         │  1. POST /api/apps/register           │                           │
+│         │  { slug: "mon-app", api_port: 18087 } │                           │
+│         │──────────────────────────────────────►│                           │
+│         │                                       │                           │
+│         │                                       │ 2. Vérifie IP Docker      │
+│         │                                       │    (whitelist réseau)     │
+│         │                                       │                           │
+│         │                                       │ 3. Crée app + SA          │
+│         │                                       │    (si nouvelle)          │
+│         │                                       │                           │
+│         │  4. Réponse avec credentials          │                           │
+│         │  { client_id, client_secret, ... }    │                           │
+│         │◄──────────────────────────────────────│                           │
+│         │                                       │                           │
+│         │  5. Stocke en MÉMOIRE                 │                           │
+│         │     (pas dans .env !)                 │                           │
+│         │                                       │                           │
+│         │  6. Utilise pour auth M2M             │                           │
+│         │──────────────────────────────────────►│                           │
+│         │                                       │                           │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Sécurité : IP Whitelist
+
+L'auto-enregistrement est **sécurisé par whitelist IP**. Seules les requêtes provenant des réseaux Docker sont acceptées :
+
+| Réseau | Plage IP |
+|--------|----------|
+| Docker Bridge | `172.17.x.x` à `172.31.x.x` |
+| Docker Overlay | `10.0.x.x` |
+| Réseaux locaux | `192.168.x.x` |
+
+> ⚠️ Une application externe au réseau Docker ne peut PAS s'auto-enregistrer.
+
+### Client Python avec auto-enregistrement (`hub_client.py`)
+
+Créez ce fichier dans votre application pour gérer l'auto-enregistrement et l'authentification M2M :
+
+\`\`\`python
+"""
+Hub Client avec Auto-enregistrement
+====================================
+Client pour l'authentification M2M avec le Hub.
+Gère automatiquement l'enregistrement de l'application et la récupération des credentials.
+
+Usage:
+    from hub_client import hub_client
+    
+    # Au démarrage de l'app (dans main.py ou lifespan)
+    await hub_client.register()
+    
+    # Pour appeler une autre API
+    response = await hub_client.call_api("GET", "http://autre-api:8080/data")
+"""
+import httpx
+import os
+import logging
+from datetime import datetime, timedelta
+from typing import Optional
+
+logger = logging.getLogger(__name__)
+
+
+class HubClient:
+    """Client Hub avec auto-enregistrement et authentification M2M"""
+    
+    def __init__(self):
+        # Configuration depuis .env
+        self.app_slug = os.getenv("APP_SLUG")
+        self.api_port = int(os.getenv("API_PORT", "8000"))
+        self.frontend_port = os.getenv("FRONTEND_PORT")
+        
+        self.hub_host = os.getenv("HUB_HOST", self._detect_hub_host())
+        self.hub_port = int(os.getenv("HUB_API_PORT", "8000"))
+        
+        # Credentials (depuis .env OU dynamiques)
+        self._client_id = os.getenv("CLIENT_ID")
+        self._client_secret = os.getenv("CLIENT_SECRET")
+        
+        # Token cache
+        self._token: Optional[str] = None
+        self._token_expires_at: Optional[datetime] = None
+        
+        # État
+        self._registered = False
+    
+    def _detect_hub_host(self) -> str:
+        """Détecte l'IP du Hub (même serveur par défaut)"""
+        import socket
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.connect(("8.8.8.8", 80))
+            ip = s.getsockname()[0]
+            s.close()
+            return ip
+        except Exception:
+            return "hub-api"  # Fallback Docker service name
+    
+    @property
+    def hub_url(self) -> str:
+        return f"http://{self.hub_host}:{self.hub_port}"
+    
+    @property
+    def has_credentials(self) -> bool:
+        """Vérifie si les credentials sont disponibles"""
+        return bool(self._client_id and self._client_secret)
+    
+    async def register(self) -> bool:
+        """
+        Auto-enregistre l'application auprès du Hub.
+        
+        - Si l'app est nouvelle : crée l'app et retourne les credentials
+        - Si l'app existe déjà : retourne un message (pas les credentials)
+        - En cas d'erreur : l'app doit avoir des credentials dans .env
+        
+        Returns:
+            True si l'enregistrement a réussi ou si les credentials sont déjà disponibles
+        """
+        if not self.app_slug:
+            logger.error("❌ APP_SLUG non défini dans .env - impossible de s'enregistrer")
+            return False
+        
+        # Si credentials déjà en .env, pas besoin de s'enregistrer
+        if self.has_credentials:
+            logger.info(f"✅ Credentials trouvés dans .env pour '{self.app_slug}'")
+            self._registered = True
+            return True
+        
+        logger.info(f"📝 Auto-enregistrement de '{self.app_slug}' auprès du Hub...")
+        
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                response = await client.post(
+                    f"{self.hub_url}/api/apps/register",
+                    json={
+                        "slug": self.app_slug,
+                        "api_port": self.api_port,
+                        "frontend_port": int(self.frontend_port) if self.frontend_port else None
+                    }
+                )
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    
+                    if data.get("is_new") and data.get("credentials"):
+                        # Nouvelle app - stocker les credentials en mémoire
+                        creds = data["credentials"]
+                        self._client_id = creds["client_id"]
+                        self._client_secret = creds["client_secret"]
+                        logger.info(f"✅ Application '{self.app_slug}' enregistrée avec succès !")
+                        logger.info(f"   Client ID: {self._client_id}")
+                        logger.debug(f"   Client Secret: {self._client_secret[:8]}...")
+                    else:
+                        # App existante - besoin de régénérer le secret
+                        logger.warning(f"⚠️ Application '{self.app_slug}' existe déjà. Régénération du secret...")
+                        return await self.regenerate_secret()
+                    
+                    self._registered = True
+                    return True
+                
+                elif response.status_code == 403:
+                    logger.error(f"❌ Auto-enregistrement refusé (IP non autorisée)")
+                    logger.error(f"   Seules les IPs Docker peuvent s'auto-enregistrer")
+                    return False
+                
+                else:
+                    logger.error(f"❌ Erreur d'enregistrement: {response.status_code}")
+                    logger.error(f"   {response.text}")
+                    return False
+                    
+        except httpx.ConnectError:
+            logger.error(f"❌ Impossible de contacter le Hub à {self.hub_url}")
+            logger.error(f"   Vérifiez que HUB_HOST est correctement configuré")
+            return False
+        except Exception as e:
+            logger.error(f"❌ Erreur lors de l'enregistrement: {e}")
+            return False
+    
+    async def regenerate_secret(self) -> bool:
+        """
+        Régénère le client_secret auprès du Hub.
+        
+        Utile si :
+        - L'application a perdu son secret
+        - Rotation de sécurité
+        - Premier démarrage d'une app existante sans credentials en .env
+        """
+        if not self._client_id:
+            # Essayer de récupérer le client_id depuis l'enregistrement
+            logger.info("🔍 Récupération du client_id...")
+            try:
+                async with httpx.AsyncClient(timeout=10.0) as client:
+                    response = await client.post(
+                        f"{self.hub_url}/api/apps/register",
+                        json={
+                            "slug": self.app_slug,
+                            "api_port": self.api_port,
+                            "frontend_port": int(self.frontend_port) if self.frontend_port else None
+                        }
+                    )
+                    if response.status_code == 200:
+                        data = response.json()
+                        if data.get("credentials"):
+                            self._client_id = data["credentials"].get("client_id")
+            except Exception as e:
+                logger.error(f"❌ Impossible de récupérer le client_id: {e}")
+                return False
+        
+        if not self._client_id:
+            logger.error("❌ Impossible de régénérer le secret sans client_id")
+            return False
+        
+        logger.info(f"🔄 Régénération du secret pour '{self.app_slug}'...")
+        
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                response = await client.post(
+                    f"{self.hub_url}/api/apps/me/regenerate-secret",
+                    headers={"X-Client-ID": self._client_id}
+                )
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    self._client_secret = data["client_secret"]
+                    logger.info(f"✅ Secret régénéré avec succès !")
+                    logger.debug(f"   Nouveau secret: {self._client_secret[:8]}...")
+                    self._registered = True
+                    # Invalider le token en cache
+                    self._token = None
+                    self._token_expires_at = None
+                    return True
+                else:
+                    logger.error(f"❌ Erreur de régénération: {response.status_code}")
+                    logger.error(f"   {response.text}")
+                    return False
+                    
+        except Exception as e:
+            logger.error(f"❌ Erreur lors de la régénération: {e}")
+            return False
+    
+    async def get_token(self) -> str:
+        """
+        Obtient un token M2M, avec cache automatique.
+        Renouvelle le token 5 minutes avant expiration.
+        """
+        # Vérifier si enregistré
+        if not self.has_credentials and not self._registered:
+            success = await self.register()
+            if not success:
+                raise Exception("Impossible de s'enregistrer auprès du Hub")
+        
+        # Vérifier le cache
+        if self._token and self._token_expires_at:
+            if datetime.utcnow() < self._token_expires_at - timedelta(minutes=5):
+                return self._token
+        
+        # Demander un nouveau token
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.post(
+                f"{self.hub_url}/api/auth/token",
+                data={
+                    "grant_type": "client_credentials",
+                    "client_id": self._client_id,
+                    "client_secret": self._client_secret,
+                }
+            )
+            
+            if response.status_code == 401:
+                # Secret invalide - essayer de régénérer
+                logger.warning("⚠️ Secret invalide, tentative de régénération...")
+                if await self.regenerate_secret():
+                    # Réessayer avec le nouveau secret
+                    return await self.get_token()
+                raise Exception("Authentification M2M échouée")
+            
+            if response.status_code != 200:
+                logger.error(f"Erreur auth Hub: {response.text}")
+                raise Exception(f"Impossible d'obtenir un token: {response.status_code}")
+            
+            data = response.json()
+            self._token = data["access_token"]
+            
+            # Parser l'expiration
+            if "expires_at" in data:
+                expires_str = data["expires_at"].replace("Z", "+00:00")
+                self._token_expires_at = datetime.fromisoformat(expires_str).replace(tzinfo=None)
+            else:
+                expires_in = data.get("expires_in", 1800)
+                self._token_expires_at = datetime.utcnow() + timedelta(seconds=expires_in)
+            
+            logger.debug("✅ Token M2M obtenu avec succès")
+            return self._token
+    
+    async def call_api(self, method: str, url: str, **kwargs) -> httpx.Response:
+        """
+        Appelle une API externe avec le token M2M.
+        
+        Gère automatiquement :
+        - L'obtention du token
+        - Le renouvellement si expiré
+        - La régénération du secret si invalide
+        """
+        token = await self.get_token()
+        headers = kwargs.pop("headers", {})
+        headers["Authorization"] = f"Bearer {token}"
+        
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            return await client.request(method, url, headers=headers, **kwargs)
+    
+    async def validate_token(self, token: str) -> dict:
+        """Valide un token utilisateur auprès du Hub."""
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.get(
+                f"{self.hub_url}/api/auth/me",
+                headers={"Authorization": f"Bearer {token}"}
+            )
+            if response.status_code != 200:
+                raise Exception("Token invalide")
+            return response.json()
+
+
+# Instance singleton
+hub_client = HubClient()
+\`\`\`
+
+### Intégration au démarrage de l'application
+
+\`\`\`python
+# main.py
+from contextlib import asynccontextmanager
+from fastapi import FastAPI
+from hub_client import hub_client
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # === DÉMARRAGE ===
+    # Auto-enregistrement auprès du Hub
+    success = await hub_client.register()
+    if not success:
+        import logging
+        logging.warning("⚠️ Auto-enregistrement échoué. Mode dégradé activé.")
+    
+    yield
+    
+    # === ARRÊT ===
+    # Nettoyage si nécessaire
+
+
+app = FastAPI(lifespan=lifespan)
+\`\`\`
+
+### Endpoints d'auto-enregistrement
+
+| Endpoint | Méthode | Description | Sécurité |
+|----------|---------|-------------|----------|
+| `/api/apps/register` | POST | Auto-enregistrement d'une app | IP Docker uniquement |
+| `/api/apps/me/credentials` | GET | Récupère les infos (sans secret) | IP Docker + X-Client-ID |
+| `/api/apps/me/regenerate-secret` | POST | Régénère le client_secret | IP Docker + X-Client-ID |
+
+#### POST /api/apps/register
+
+**Requête :**
+\`\`\`json
+{
+  "slug": "mon-app",
+  "name": "Mon Application",
+  "api_port": 18087,
+  "frontend_port": 4178
+}
+\`\`\`
+
+**Réponse (nouvelle app) :**
+\`\`\`json
+{
+  "message": "Application 'mon-app' créée avec succès. Credentials M2M générés.",
+  "application": { ... },
+  "credentials": {
+    "client_id": "sa_abc123...",
+    "client_secret": "secret_xyz...",
+    "hub_host": "192.0.2.11",
+    "hub_api_port": 8000
+  },
+  "is_new": true
+}
+\`\`\`
+
+**Réponse (app existante) :**
+\`\`\`json
+{
+  "message": "Application 'mon-app' déjà enregistrée. Utilisez /api/apps/me/credentials...",
+  "application": { ... },
+  "credentials": { "client_id": "sa_abc123..." },
+  "is_new": false
+}
+\`\`\`
+
+#### POST /api/apps/me/regenerate-secret
+
+**Headers requis :** `X-Client-ID: sa_abc123...`
+
+**Réponse :**
+\`\`\`json
+{
+  "app_slug": "mon-app",
+  "app_name": "Mon Application",
+  "client_id": "sa_abc123...",
+  "client_secret": "nouveau_secret_xyz...",
+  "hub_host": "192.0.2.11",
+  "hub_api_port": 8000,
+  "message": "⚠️ NOUVEAU SECRET GÉNÉRÉ ! L'ancien secret est maintenant invalide."
+}
+\`\`\`
+
+### Mode rétrocompatible (credentials statiques)
+
+Pour les applications existantes ou si vous préférez le mode manuel, vous pouvez toujours définir les credentials dans le `.env` :
+
+\`\`\`env
+# Mode rétrocompatible - credentials statiques
+CLIENT_ID=<VOTRE_CLIENT_ID>
+CLIENT_SECRET=<VOTRE_CLIENT_SECRET>
+\`\`\`
+
+Le `HubClient` détecte automatiquement si des credentials sont présents dans `.env` et les utilise sans appeler l'auto-enregistrement.
+
+---
+
+## 4. Intégration Backend (FastAPI)
 
 ### Étape 1 : Dépendances
 
@@ -492,7 +982,7 @@ async def create_employee(
 
 ---
 
-## 4. Intégration Frontend
+## 5. Intégration Frontend
 
 ### Principes
 
@@ -855,7 +1345,7 @@ const userPrefs = new UserPreferences();
 
 ---
 
-## 5. Communication Machine-to-Machine (M2M)
+## 6. Communication Machine-to-Machine (M2M)
 
 ### Création automatique du Service Account
 
@@ -937,7 +1427,7 @@ employees = await m2m.call_api(f"http://{settings.hub_ip}:18087/api/employees")
 
 ---
 
-## 6. Communication inter-API
+## 7. Communication inter-API
 
 Cette section détaille comment vos applications peuvent communiquer entre elles via le Hub.
 
@@ -1173,7 +1663,7 @@ networks:
 
 ---
 
-## 7. Gestion des rôles
+## 8. Gestion des rôles
 
 ### Structure du token JWT
 
@@ -1253,7 +1743,7 @@ if (role === 'viewer') {
 
 ---
 
-## 8. Endpoints du Hub
+## 9. Endpoints du Hub
 
 ### Authentification
 
@@ -1266,6 +1756,16 @@ if (role === 'viewer') {
 | \`/api/auth/me\` | GET | Infos utilisateur connecté |
 | \`/api/auth/public-key\` | GET | Clé publique RSA |
 | \`/api/auth/hub-host\` | GET | IP/hostname du Hub |
+
+### Auto-enregistrement (🆕 v2.0)
+
+| Endpoint | Méthode | Description | Sécurité |
+|----------|---------|-------------|----------|
+| \`/api/apps/register\` | POST | Auto-enregistrement d'une application | IP Docker uniquement |
+| \`/api/apps/me/credentials\` | GET | Récupère les credentials (sans secret) | IP Docker + X-Client-ID |
+| \`/api/apps/me/regenerate-secret\` | POST | Régénère le client_secret | IP Docker + X-Client-ID |
+
+> 💡 Ces endpoints sont accessibles **uniquement depuis les réseaux Docker** (172.17.x.x - 172.31.x.x, 10.0.x.x, 192.168.x.x).
 
 ### Durée des tokens (géré par le Hub uniquement)
 
@@ -1298,7 +1798,7 @@ if (role === 'viewer') {
 
 ---
 
-## 9. Configuration du Dockerfile
+## 10. Configuration du Dockerfile
 
 > **IMPORTANT** : Le Dockerfile de votre application doit copier les fichiers nécessaires à l'authentification !
 
@@ -1362,7 +1862,7 @@ cp /chemin/vers/HUB/secrets/jwt_public_key.pem ./secrets/
 
 ---
 
-## 10. Résumé
+## 11. Résumé
 
 ### Ce que l'application DOIT faire
 
@@ -1383,7 +1883,7 @@ cp /chemin/vers/HUB/secrets/jwt_public_key.pem ./secrets/
 
 ---
 
-## 11. Contact Hub
+## 12. Contact Hub
 
 - **URL Hub API** : \`http://[IP_SERVEUR]:8000\`
 - **URL Hub Frontend** : \`http://[IP_SERVEUR]:80\`

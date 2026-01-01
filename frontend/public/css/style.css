@@ -1,11 +1,14 @@
 :root {
-    --primary-color: #0d6efd;
-    --dark-bg: #1a1d21;
+    --primary-color: #495057;
+    --accent-color: #0d6efd;
+    --dark-bg: #212529;
     --card-bg: #ffffff;
+    --text-muted: #6c757d;
+    --border-color: #dee2e6;
 }
 
 body {
-    background-color: #f5f6fa;
+    background-color: #f8f9fa;
     font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
 }
 
@@ -217,4 +220,101 @@ body {
 
 .badge .bi-circle-fill {
     animation: pulse 2s infinite;
+}
+
+/* Admin Navigation */
+#adminNavigation .nav-link {
+    color: rgba(255, 255, 255, 0.7);
+    padding: 0.5rem 1rem;
+    border-radius: 6px;
+    margin-right: 0.5rem;
+    transition: all 0.2s;
+}
+
+#adminNavigation .nav-link:hover {
+    color: #fff;
+    background-color: rgba(255, 255, 255, 0.1);
+}
+
+#adminNavigation .nav-link.active {
+    color: #fff;
+    background-color: rgba(255, 255, 255, 0.15);
+}
+
+/* Section Pages */
+#auditSection, #usersSection {
+    background-color: #f8f9fa;
+    min-height: calc(100vh - 70px);
+}
+
+#auditSection .card,
+#usersSection .card {
+    border: 1px solid var(--border-color);
+    box-shadow: none;
+}
+
+#auditSection .card-header,
+#usersSection .card-header {
+    background-color: #fff;
+    border-bottom: 1px solid var(--border-color);
+    font-weight: 600;
+}
+
+/* Stats cards on dedicated pages */
+#auditPageStatsCards .card,
+#usersSection .row.g-3 .card {
+    border-radius: 8px;
+    transition: transform 0.2s;
+}
+
+#auditPageStatsCards .card:hover,
+#usersSection .row.g-3 .card:hover {
+    transform: translateY(-2px);
+}
+
+#auditPageStatsCards h3,
+#usersSection .row.g-3 h3 {
+    font-size: 1.75rem;
+    font-weight: 700;
+    margin-bottom: 0;
+}
+
+/* Nav tabs styling */
+.nav-tabs .nav-link {
+    color: var(--text-muted);
+    border: none;
+    border-bottom: 2px solid transparent;
+    padding: 0.75rem 1rem;
+}
+
+.nav-tabs .nav-link:hover {
+    color: var(--primary-color);
+    border-color: transparent;
+}
+
+.nav-tabs .nav-link.active {
+    color: var(--primary-color);
+    background-color: transparent;
+    border-color: transparent;
+    border-bottom-color: var(--accent-color);
+}
+
+/* Neutral badges */
+.badge.bg-secondary {
+    background-color: #6c757d !important;
+}
+
+.badge.bg-light {
+    background-color: #f8f9fa !important;
+    border: 1px solid #dee2e6;
+}
+
+/* Table improvements */
+.table-hover tbody tr:hover {
+    background-color: rgba(0, 0, 0, 0.02);
+}
+
+/* Action badges - more subtle */
+.badge[class*="bg-"] {
+    font-weight: 500;
 }

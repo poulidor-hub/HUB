@@ -3,10 +3,9 @@ import asyncio
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import select
-from sqlalchemy.orm import selectinload
 
 from app.database import init_db, async_session_maker
-from app.models import User, Application, UserAppRole
+from app.models import User
 from app.auth import get_password_hash, cleanup_expired_tokens
 from app.config import get_settings
 from app.routes import auth, users, apps, service_accounts, backup, audit, docs
@@ -33,42 +32,6 @@ async def create_default_admin():
             print(f"✅ Admin créé: {settings.admin_username}")
 
 
-async def create_default_app():
-    """Crée l'application Salarie par défaut"""
-    async with async_session_maker() as db:
-        result = await db.execute(select(Application).where(Application.slug == "salarie"))
-        if not result.scalar_one_or_none():
-            app = Application(
-                name="API Salariés",
-                slug="salarie",
-                description="Gestion des salariés et contrats",
-                icon="bi-people-fill",
-                color="#198754",
-                api_url="http://host.docker.internal:18087",
-                frontend_url="http://localhost:4178",
-                callback_url="http://localhost:4178/callback",
-                is_active=True,
-                requires_auth=True
-            )
-            db.add(app)
-            await db.commit()
-            await db.refresh(app)
-            
-            # Associer l'admin à cette app avec le rôle admin
-            admin_result = await db.execute(select(User).where(User.is_admin == True))
-            admin = admin_result.scalar_one_or_none()
-            if admin:
-                user_app_role = UserAppRole(
-                    user_id=admin.id,
-                    app_id=app.id,
-                    role="admin"
-                )
-                db.add(user_app_role)
-                await db.commit()
-            
-            print("✅ Application 'API Salariés' créée")
-
-
 async def periodic_token_cleanup():
     """Tâche périodique pour nettoyer les tokens expirés (toutes les heures)"""
     while True:
@@ -93,7 +56,6 @@ async def lifespan(app: FastAPI):
     print("🚀 Démarrage du Hub d'Authentification...")
     await init_db()
     await create_default_admin()
-    await create_default_app()
     
     # Démarrer la tâche de nettoyage périodique
     _cleanup_task = asyncio.create_task(periodic_token_cleanup())

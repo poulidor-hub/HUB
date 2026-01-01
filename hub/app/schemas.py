@@ -1,7 +1,10 @@
 from pydantic import BaseModel, EmailStr, Field
-from typing import Optional, List
+from typing import Optional, List, TYPE_CHECKING
 from datetime import datetime
 from enum import Enum
+
+if TYPE_CHECKING:
+    from app.schemas import AppResponse
 
 
 class GrantType(str, Enum):
@@ -404,6 +407,7 @@ class DockerContainerInfo(BaseModel):
     suggested_slug: str
     suggested_name: str
     labels: dict = {}
+    is_registered: bool = False  # True si le conteneur est déjà enregistré comme app
 
 
 class DockerScanResponse(BaseModel):
@@ -414,6 +418,35 @@ class DockerScanResponse(BaseModel):
     containers_total: int = 0
     discovered: List[DockerContainerInfo] = []
     error: Optional[str] = None
+
+
+# ===== Auto-Registration Schemas =====
+class AppRegisterRequest(BaseModel):
+    """Requête d'auto-enregistrement d'une application"""
+    slug: str = Field(..., min_length=2, max_length=50, pattern=r'^[a-z0-9-]+$', description="Slug unique de l'application (défini dans .env)")
+    name: Optional[str] = Field(None, max_length=100, description="Nom de l'application (optionnel, utilise le slug si absent)")
+    description: Optional[str] = Field(None, description="Description de l'application")
+    api_port: int = Field(..., ge=1, le=65535, description="Port de l'API backend")
+    frontend_port: Optional[int] = Field(None, ge=1, le=65535, description="Port du frontend (optionnel)")
+
+
+class AppRegisterResponse(BaseModel):
+    """Réponse à l'auto-enregistrement"""
+    message: str
+    application: "AppResponse"
+    credentials: Optional[dict] = None  # client_id, client_secret (retourné une seule fois)
+    is_new: bool  # True si nouvelle app, False si existante
+
+
+class AppCredentialsResponse(BaseModel):
+    """Réponse contenant les credentials M2M d'une application"""
+    app_slug: str
+    app_name: str
+    client_id: str
+    client_secret: Optional[str] = None  # Seulement après régénération
+    hub_host: str
+    hub_api_port: int = 8000
+    message: str
 
 
 # Forward references

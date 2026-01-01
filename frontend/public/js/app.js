@@ -159,9 +159,52 @@ function showDashboard() {
 
     if (currentUser.is_admin) {
         document.getElementById('adminBtn').classList.remove('d-none');
+        document.getElementById('adminNavigation').classList.remove('d-none');
     }
 
     loadApps();
+}
+
+// ===== Page Navigation =====
+
+let currentPage = 'dashboard';
+
+function showPage(page) {
+    // Masquer toutes les sections
+    document.getElementById('dashboardSection').classList.add('d-none');
+    document.getElementById('auditSection').classList.add('d-none');
+    document.getElementById('usersSection').classList.add('d-none');
+    
+    // Réinitialiser les styles de navigation
+    document.querySelectorAll('#adminNavigation .nav-link').forEach(link => {
+        link.classList.remove('active');
+    });
+    
+    currentPage = page;
+    
+    switch(page) {
+        case 'dashboard':
+            document.getElementById('dashboardSection').classList.remove('d-none');
+            break;
+        case 'audit':
+            if (!currentUser?.is_admin) {
+                showToast('Accès refusé', 'Vous devez être administrateur', 'danger');
+                return;
+            }
+            document.getElementById('auditSection').classList.remove('d-none');
+            document.getElementById('navAudit')?.classList.add('active');
+            loadAuditPageData();
+            break;
+        case 'users':
+            if (!currentUser?.is_admin) {
+                showToast('Accès refusé', 'Vous devez être administrateur', 'danger');
+                return;
+            }
+            document.getElementById('usersSection').classList.remove('d-none');
+            document.getElementById('navUsers')?.classList.add('active');
+            loadUsersPageData();
+            break;
+    }
 }
 
 async function logout() {
@@ -186,11 +229,15 @@ async function logout() {
         showToast('Déconnexion', 'À bientôt !', 'info');
     } finally {
         currentUser = null;
+        currentPage = 'dashboard';
         document.getElementById('loginSection').classList.remove('d-none');
         document.getElementById('dashboardSection').classList.add('d-none');
+        document.getElementById('auditSection').classList.add('d-none');
+        document.getElementById('usersSection').classList.add('d-none');
         document.getElementById('userInfo').classList.add('d-none');
         document.getElementById('logoutBtn').classList.add('d-none');
         document.getElementById('adminBtn').classList.add('d-none');
+        document.getElementById('adminNavigation').classList.add('d-none');
         document.getElementById('loginForm').reset();
     }
 }
@@ -306,16 +353,14 @@ async function showAdminPanel() {
 }
 
 async function loadAdminData() {
-    const [apps, users, serviceAccounts] = await Promise.all([
+    const [apps, serviceAccounts] = await Promise.all([
         api.getAllApps(),
-        api.getUsers(),
         api.getServiceAccounts()
     ]);
     
     allApps = apps;
     allServiceAccounts = serviceAccounts;
     renderAppsTable(apps);
-    renderUsersTable(users);
     renderServiceAccountsTable(serviceAccounts);
 }
 
@@ -355,8 +400,8 @@ function renderAppsTable(apps) {
                         <td><span class="badge bg-secondary">${app.users?.length || 0}</span></td>
                         <td>
                             ${app.is_active 
-                                ? '<span class="badge bg-success">Actif</span>' 
-                                : '<span class="badge bg-danger">Inactif</span>'}
+                                ? '<span class="badge bg-light text-dark"><i class="bi bi-check-circle text-success me-1"></i>Actif</span>' 
+                                : '<span class="badge bg-light text-dark"><i class="bi bi-x-circle text-danger me-1"></i>Inactif</span>'}
                         </td>
                         <td class="text-end">
                             <button class="btn btn-sm btn-outline-primary me-1" onclick="editApp(${app.id})">
@@ -395,8 +440,8 @@ function renderUsersTable(users) {
                         <td><small class="text-muted">${escapeHtml(user.email || '-')}</small></td>
                         <td>
                             ${user.is_admin 
-                                ? '<span class="badge bg-warning text-dark">Admin</span>' 
-                                : '<span class="badge bg-info">User</span>'}
+                                ? '<span class="badge bg-dark">Admin</span>' 
+                                : '<span class="badge bg-light text-dark">User</span>'}
                         </td>
                         <td>
                             ${user.app_roles?.map(ar => `
@@ -794,8 +839,11 @@ async function handleSaveUser(event) {
         
         showToast('Succès', id ? 'Utilisateur modifié' : 'Utilisateur créé', 'success');
         userFormModal.hide();
-        await loadAdminData();
-        adminModal.show();
+        
+        // Recharger la page appropriée
+        if (currentPage === 'users') {
+            await loadUsersPageData();
+        }
     } catch (error) {
         showToast('Erreur', error.message, 'danger');
     }
@@ -889,8 +937,8 @@ function renderServiceAccountsTable(serviceAccounts) {
                         </td>
                         <td>
                             ${sa.is_active 
-                                ? '<span class="badge bg-success">Actif</span>' 
-                                : '<span class="badge bg-danger">Inactif</span>'}
+                                ? '<span class="badge bg-light text-dark"><i class="bi bi-check-circle text-success me-1"></i>Actif</span>' 
+                                : '<span class="badge bg-light text-dark"><i class="bi bi-x-circle text-danger me-1"></i>Inactif</span>'}
                         </td>
                         <td class="text-end">
                             <div class="btn-group btn-group-sm">
@@ -1269,7 +1317,7 @@ function renderSessionHistory(data) {
                     <tr>
                         <td><strong>${escapeHtml(s.username || 'Unknown')}</strong></td>
                         <td><small>${formatDateTime(s.login_at)}</small></td>
-                        <td><small>${s.logout_at ? formatDateTime(s.logout_at) : '<span class="badge bg-success">En cours</span>'}</small></td>
+                        <td><small>${s.logout_at ? formatDateTime(s.logout_at) : '<span class="badge bg-secondary">En cours</span>'}</small></td>
                         <td><span class="badge bg-light text-dark">${s.duration_display || '-'}</span></td>
                         <td>${getLogoutReasonBadge(s.logout_reason)}</td>
                         <td><code class="small">${s.ip_address || '-'}</code></td>
@@ -1335,13 +1383,13 @@ function formatDateTime(isoString) {
 }
 
 function getLogoutReasonBadge(reason) {
-    if (!reason) return '<span class="badge bg-success">Actif</span>';
+    if (!reason) return '<span class="badge bg-secondary">Actif</span>';
     
     const badges = {
-        'explicit': '<span class="badge bg-info">Déconnexion</span>',
-        'timeout': '<span class="badge bg-warning text-dark">Timeout</span>',
-        'token_revoked': '<span class="badge bg-danger">Révoqué</span>',
-        'forced': '<span class="badge bg-danger">Forcé</span>'
+        'explicit': '<span class="badge bg-light text-dark">Déconnexion</span>',
+        'timeout': '<span class="badge bg-light text-dark">Timeout</span>',
+        'token_revoked': '<span class="badge bg-light text-dark">Révoqué</span>',
+        'forced': '<span class="badge bg-light text-dark">Forcé</span>'
     };
     
     return badges[reason] || `<span class="badge bg-secondary">${reason}</span>`;
@@ -1613,12 +1661,12 @@ function renderAuditLogs(data) {
 
 function getActionBadge(action) {
     const badges = {
-        'access_app': '<span class="badge bg-primary">Accès App</span>',
-        'login': '<span class="badge bg-success">Connexion</span>',
-        'logout': '<span class="badge bg-info">Déconnexion</span>',
-        'service_account_login': '<span class="badge bg-purple" style="background-color: #6f42c1;">M2M</span>'
+        'access_app': '<span class="badge bg-secondary">Accès App</span>',
+        'login': '<span class="badge bg-secondary">Connexion</span>',
+        'logout': '<span class="badge bg-light text-dark">Déconnexion</span>',
+        'service_account_login': '<span class="badge bg-dark">M2M</span>'
     };
-    return badges[action] || `<span class="badge bg-secondary">${action}</span>`;
+    return badges[action] || `<span class="badge bg-light text-dark">${action}</span>`;
 }
 
 async function changeLogsPage(page) {
@@ -1722,6 +1770,7 @@ async function showDockerScanModal() {
     document.getElementById('dockerContainers').classList.add('d-none');
     document.getElementById('dockerEmpty').classList.add('d-none');
     document.getElementById('dockerIncludeStopped').checked = false;
+    document.getElementById('dockerShowAll').checked = false;
     updateDockerSelectionSummary();
     
     adminModal.hide();
@@ -1736,6 +1785,7 @@ async function showDockerScanModal() {
  */
 async function performDockerScan() {
     const includeStopped = document.getElementById('dockerIncludeStopped').checked;
+    const showAll = document.getElementById('dockerShowAll').checked;
     
     // Reset sélection
     dockerSelection = { api: null, frontend: null };
@@ -1755,7 +1805,7 @@ async function performDockerScan() {
     document.getElementById('dockerEmpty').classList.add('d-none');
     
     try {
-        const result = await api.scanDockerContainers(includeStopped);
+        const result = await api.scanDockerContainers(includeStopped, showAll);
         lastDockerScan = result;
         
         document.getElementById('dockerStatus').classList.add('d-none');
@@ -1821,14 +1871,20 @@ function renderDockerContainers(containers) {
         const selectedBadge = isApi ? '<span class="badge bg-danger ms-2">API</span>' : 
                             (isFrontend ? '<span class="badge bg-success ms-2">Frontend</span>' : '');
         
+        // Conteneur déjà enregistré ?
+        const isRegistered = container.is_registered;
+        const registeredBadge = isRegistered ? '<span class="badge bg-warning text-dark ms-2"><i class="bi bi-check-circle me-1"></i>Déjà enregistré</span>' : '';
+        const registeredClass = isRegistered ? 'opacity-50' : '';
+        
         return `
-            <div class="list-group-item ${selectedClass}" id="container-${container.container_id}">
+            <div class="list-group-item ${selectedClass} ${registeredClass}" id="container-${container.container_id}">
                 <div class="d-flex w-100 justify-content-between align-items-start">
                     <div class="flex-grow-1">
                         <div class="d-flex align-items-center mb-1">
                             <i class="bi bi-${statusIcon} text-${statusClass} me-2"></i>
                             <strong>${escapeHtml(container.name)}</strong>
                             ${selectedBadge}
+                            ${registeredBadge}
                             <small class="text-muted ms-2">(${escapeHtml(container.container_id)})</small>
                         </div>
                         <small class="text-muted d-block mb-2">
@@ -1843,12 +1899,14 @@ function renderDockerContainers(containers) {
                         <div class="btn-group btn-group-sm mb-2">
                             <button type="button" class="btn ${isApi ? 'btn-danger' : 'btn-outline-danger'}" 
                                     onclick="selectDockerContainer('${container.container_id}', 'api')"
-                                    title="Définir comme API Backend">
+                                    title="Définir comme API Backend"
+                                    ${isRegistered ? 'disabled' : ''}>
                                 <i class="bi bi-hdd-rack"></i> API
                             </button>
                             <button type="button" class="btn ${isFrontend ? 'btn-success' : 'btn-outline-success'}" 
                                     onclick="selectDockerContainer('${container.container_id}', 'frontend')"
-                                    title="Définir comme Frontend">
+                                    title="Définir comme Frontend"
+                                    ${isRegistered ? 'disabled' : ''}>
                                 <i class="bi bi-window"></i> Front
                             </button>
                         </div>
@@ -1995,3 +2053,681 @@ function importDockerSelection() {
     showToast('Import Docker', msg + ' Vérifiez et ajustez les informations.', 'info');
 }
 
+// ===== Page Audit Dédiée =====
+
+let pageAuditLogsPage = 1;
+let pageAuditCurrentAppSlug = null;
+let pageAuditAppLogsPage = 1;
+let allUsersPage = [];
+
+async function loadAuditPageData() {
+    await loadAuditPageOverview();
+}
+
+async function loadAuditPageOverview() {
+    const days = parseInt(document.getElementById('auditPeriodPage')?.value || 30);
+    
+    try {
+        const [stats, activeSessions, history, appSummary] = await Promise.all([
+            api.getConnectionStats(days),
+            api.getActiveSessions(),
+            api.getSessionHistory(days),
+            api.getAppAuditSummary(days).catch(() => ({ apps: [] }))
+        ]);
+        
+        // Stats
+        document.getElementById('pageStatActiveNow').textContent = stats.active_now || 0;
+        document.getElementById('pageStatTotalSessions').textContent = stats.total_sessions || 0;
+        document.getElementById('pageStatUniqueUsers').textContent = stats.unique_users || 0;
+        document.getElementById('pageStatAvgDuration').textContent = stats.avg_session_duration_display || 'N/A';
+        
+        // Sessions actives
+        renderPageActiveSessions(activeSessions);
+        
+        // Top users
+        renderPageTopUsers(stats.top_users || []);
+        
+        // Top apps
+        renderPageTopApps(appSummary.apps || []);
+    } catch (error) {
+        console.error('Erreur chargement audit:', error);
+        showToast('Erreur', 'Impossible de charger les données d\'audit', 'danger');
+    }
+}
+
+function renderPageActiveSessions(data) {
+    const container = document.getElementById('pageActiveSessionsTable');
+    const countBadge = document.getElementById('pageActiveSessionCount');
+    
+    countBadge.textContent = data.active_count || 0;
+    
+    if (!data.sessions || data.sessions.length === 0) {
+        container.innerHTML = `
+            <div class="text-center py-4 text-muted">
+                <i class="bi bi-person-x display-6"></i>
+                <p class="mt-2">Aucun utilisateur connecté</p>
+            </div>
+        `;
+        return;
+    }
+    
+    container.innerHTML = `
+        <table class="table table-sm table-hover mb-0">
+            <thead>
+                <tr>
+                    <th>Utilisateur</th>
+                    <th>Connecté depuis</th>
+                    <th>Durée</th>
+                    <th>IP</th>
+                </tr>
+            </thead>
+            <tbody>
+                ${data.sessions.map(s => `
+                    <tr>
+                        <td>
+                            <span class="badge bg-secondary me-2"><i class="bi bi-circle-fill text-success" style="font-size: 0.5rem;"></i></span>
+                            <strong>${escapeHtml(s.username || 'Unknown')}</strong>
+                        </td>
+                        <td><small>${formatDateTime(s.login_at)}</small></td>
+                        <td><span class="badge bg-light text-dark">${s.duration_minutes} min</span></td>
+                        <td><code class="small">${s.ip_address || '-'}</code></td>
+                    </tr>
+                `).join('')}
+            </tbody>
+        </table>
+    `;
+}
+
+function renderPageTopUsers(topUsers) {
+    const container = document.getElementById('pageTopUsersTable');
+    
+    if (!topUsers || topUsers.length === 0) {
+        container.innerHTML = `
+            <div class="text-center py-4 text-muted">
+                <i class="bi bi-trophy display-6"></i>
+                <p class="mt-2">Aucune donnée disponible</p>
+            </div>
+        `;
+        return;
+    }
+    
+    container.innerHTML = `
+        <table class="table table-sm table-hover mb-0">
+            <thead>
+                <tr>
+                    <th>#</th>
+                    <th>Utilisateur</th>
+                    <th>Sessions</th>
+                    <th>Temps total</th>
+                </tr>
+            </thead>
+            <tbody>
+                ${topUsers.map((u, index) => `
+                    <tr>
+                        <td>
+                            ${index < 3 
+                                ? `<span class="badge ${index === 0 ? 'bg-warning text-dark' : 'bg-secondary'}">${index + 1}</span>`
+                                : `<span class="text-muted">${index + 1}</span>`
+                            }
+                        </td>
+                        <td><strong>${escapeHtml(u.username)}</strong></td>
+                        <td><span class="badge bg-secondary">${u.sessions}</span></td>
+                        <td>${u.total_time_display}</td>
+                    </tr>
+                `).join('')}
+            </tbody>
+        </table>
+    `;
+}
+
+function renderPageTopApps(apps) {
+    const container = document.getElementById('pageTopAppsTable');
+    
+    if (!apps || apps.length === 0) {
+        container.innerHTML = `
+            <div class="text-center py-4 text-muted">
+                <i class="bi bi-grid display-6"></i>
+                <p class="mt-2">Aucun accès enregistré</p>
+            </div>
+        `;
+        return;
+    }
+    
+    container.innerHTML = `
+        <table class="table table-sm table-hover mb-0">
+            <thead>
+                <tr>
+                    <th>#</th>
+                    <th>Application</th>
+                    <th>Accès</th>
+                    <th>Utilisateurs uniques</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                ${apps.map((app, index) => `
+                    <tr>
+                        <td>
+                            ${index < 3 
+                                ? `<span class="badge ${index === 0 ? 'bg-warning text-dark' : 'bg-secondary'}">${index + 1}</span>`
+                                : `<span class="text-muted">${index + 1}</span>`
+                            }
+                        </td>
+                        <td>
+                            <span class="me-2 rounded px-2 py-1" style="background-color: ${app.color}; color: white;">
+                                <i class="${app.icon}"></i>
+                            </span>
+                            <strong>${escapeHtml(app.name)}</strong>
+                            <small class="text-muted ms-1">(${app.slug})</small>
+                        </td>
+                        <td><span class="badge bg-secondary">${app.access_count}</span></td>
+                        <td><span class="badge bg-light text-dark">${app.unique_users}</span></td>
+                        <td>
+                            <button class="btn btn-sm btn-outline-secondary" onclick="showPageAppAuditDetail('${app.slug}')">
+                                <i class="bi bi-eye"></i>
+                            </button>
+                        </td>
+                    </tr>
+                `).join('')}
+            </tbody>
+        </table>
+    `;
+}
+
+async function loadAuditPageApps() {
+    const days = parseInt(document.getElementById('auditPeriodPage')?.value || 30);
+    
+    try {
+        const summary = await api.getAppAuditSummary(days);
+        renderPageAuditAppsGrid(summary.apps || []);
+    } catch (error) {
+        console.error('Erreur chargement apps audit:', error);
+        showToast('Erreur', 'Impossible de charger les données', 'danger');
+    }
+}
+
+function renderPageAuditAppsGrid(apps) {
+    const container = document.getElementById('auditPageAppsGrid');
+    document.getElementById('auditPageAppDetail').classList.add('d-none');
+    container.classList.remove('d-none');
+    
+    if (!apps || apps.length === 0) {
+        container.innerHTML = `
+            <div class="col-12 text-center py-5 text-muted">
+                <i class="bi bi-grid display-1"></i>
+                <h4 class="mt-3">Aucun accès enregistré</h4>
+                <p>Les accès aux applications apparaîtront ici</p>
+            </div>
+        `;
+        return;
+    }
+    
+    container.innerHTML = apps.map(app => `
+        <div class="col-sm-6 col-md-4 col-lg-3 mb-3">
+            <div class="card h-100 cursor-pointer" onclick="showPageAppAuditDetail('${app.slug}')" style="cursor: pointer;">
+                <div class="card-body text-center">
+                    <div class="mb-2">
+                        <span class="rounded-circle d-inline-flex align-items-center justify-content-center" 
+                              style="width: 60px; height: 60px; background-color: ${app.color}; color: white; font-size: 1.5rem;">
+                            <i class="${app.icon}"></i>
+                        </span>
+                    </div>
+                    <h6 class="card-title mb-1">${escapeHtml(app.name)}</h6>
+                    <p class="card-text small text-muted mb-2">${app.slug}</p>
+                    <div class="d-flex justify-content-center gap-3">
+                        <div class="text-center">
+                            <div class="h5 mb-0">${app.access_count}</div>
+                            <small class="text-muted">Accès</small>
+                        </div>
+                        <div class="text-center">
+                            <div class="h5 mb-0">${app.unique_users}</div>
+                            <small class="text-muted">Users</small>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    `).join('');
+}
+
+async function showPageAppAuditDetail(appSlug) {
+    pageAuditCurrentAppSlug = appSlug;
+    pageAuditAppLogsPage = 1;
+    
+    const days = parseInt(document.getElementById('auditPeriodPage')?.value || 30);
+    
+    // Basculer vers l'onglet "Par Application" si pas déjà dessus
+    const appsTab = document.querySelector('[data-bs-target="#auditPageApps"]');
+    if (appsTab && !appsTab.classList.contains('active')) {
+        appsTab.click();
+    }
+    
+    try {
+        const data = await api.getAppAuditDetail(appSlug, { days, page: 1, pageSize: 50 });
+        
+        // Masquer la grille, afficher le détail
+        document.getElementById('auditPageAppsGrid').classList.add('d-none');
+        document.getElementById('auditPageAppDetail').classList.remove('d-none');
+        
+        // Remplir les infos de l'app
+        document.getElementById('pageAppDetailIcon').innerHTML = `<i class="${data.app.icon}" style="color: ${data.app.color};"></i>`;
+        document.getElementById('pageAppDetailIcon').style.backgroundColor = `${data.app.color}20`;
+        document.getElementById('pageAppDetailName').textContent = data.app.name;
+        document.getElementById('pageAppDetailSlug').textContent = data.app.slug;
+        
+        // Stats
+        document.getElementById('pageAppDetailAccess').textContent = data.stats.total_access;
+        document.getElementById('pageAppDetailUsers').textContent = data.stats.unique_users;
+        document.getElementById('pageAppDetailPeriod').textContent = `${days} jours`;
+        
+        // Top users
+        renderPageAppDetailTopUsers(data.top_users);
+        
+        // Logs
+        renderPageAppDetailLogs(data);
+        
+    } catch (error) {
+        console.error('Erreur détail app:', error);
+        showToast('Erreur', 'Impossible de charger les détails', 'danger');
+    }
+}
+
+function hidePageAppDetail() {
+    document.getElementById('auditPageAppDetail').classList.add('d-none');
+    document.getElementById('auditPageAppsGrid').classList.remove('d-none');
+    pageAuditCurrentAppSlug = null;
+}
+
+function renderPageAppDetailTopUsers(topUsers) {
+    const container = document.getElementById('pageAppDetailTopUsers');
+    
+    if (!topUsers || topUsers.length === 0) {
+        container.innerHTML = '<p class="text-muted text-center py-3">Aucune donnée</p>';
+        return;
+    }
+    
+    container.innerHTML = `
+        <table class="table table-sm mb-0">
+            <tbody>
+                ${topUsers.map((u, i) => `
+                    <tr>
+                        <td class="text-center" style="width: 30px;">
+                            ${i < 3 
+                                ? `<span class="badge ${i === 0 ? 'bg-warning text-dark' : 'bg-secondary'}">${i + 1}</span>`
+                                : `<span class="text-muted">${i + 1}</span>`
+                            }
+                        </td>
+                        <td><strong>${escapeHtml(u.username)}</strong></td>
+                        <td class="text-end"><span class="badge bg-secondary">${u.access_count}</span></td>
+                    </tr>
+                `).join('')}
+            </tbody>
+        </table>
+    `;
+}
+
+function renderPageAppDetailLogs(data) {
+    const container = document.getElementById('pageAppDetailLogs');
+    const pagination = document.getElementById('pageAppDetailPagination');
+    
+    pagination.innerHTML = renderPagination(data.page, data.total_pages, 'loadPageAppDetailPage');
+    
+    if (!data.logs || data.logs.length === 0) {
+        container.innerHTML = '<p class="text-muted text-center py-4">Aucun accès enregistré</p>';
+        return;
+    }
+    
+    container.innerHTML = `
+        <table class="table table-sm table-hover mb-0">
+            <thead class="sticky-top bg-white">
+                <tr>
+                    <th>Date/Heure</th>
+                    <th>Utilisateur</th>
+                    <th>IP</th>
+                </tr>
+            </thead>
+            <tbody>
+                ${data.logs.map(l => `
+                    <tr>
+                        <td><small>${formatDateTime(l.created_at)}</small></td>
+                        <td><strong>${escapeHtml(l.username)}</strong></td>
+                        <td><code class="small">${l.ip_address || '-'}</code></td>
+                    </tr>
+                `).join('')}
+            </tbody>
+        </table>
+    `;
+}
+
+async function loadPageAppDetailPage(page) {
+    if (!pageAuditCurrentAppSlug) return;
+    pageAuditAppLogsPage = page;
+    
+    const days = parseInt(document.getElementById('auditPeriodPage')?.value || 30);
+    
+    try {
+        const data = await api.getAppAuditDetail(pageAuditCurrentAppSlug, { days, page, pageSize: 50 });
+        renderPageAppDetailLogs(data);
+    } catch (error) {
+        console.error('Erreur pagination:', error);
+    }
+}
+
+async function loadAuditPageLogsTab() {
+    const days = parseInt(document.getElementById('auditPeriodPage')?.value || 30);
+    const action = document.getElementById('pageLogsFilterAction')?.value || null;
+    const target = document.getElementById('pageLogsFilterApp')?.value || null;
+    const userId = document.getElementById('pageLogsFilterUser')?.value || null;
+    
+    try {
+        await loadPageLogsFilters();
+        
+        const data = await api.getAuditLogs({
+            days,
+            action: action || null,
+            target: target || null,
+            userId: userId ? parseInt(userId) : null,
+            page: pageAuditLogsPage,
+            pageSize: 50
+        });
+        
+        renderPageAuditLogs(data);
+    } catch (error) {
+        console.error('Erreur chargement logs:', error);
+        showToast('Erreur', 'Impossible de charger les logs', 'danger');
+    }
+}
+
+async function loadPageLogsFilters() {
+    const actionSelect = document.getElementById('pageLogsFilterAction');
+    const appSelect = document.getElementById('pageLogsFilterApp');
+    
+    if (actionSelect.options.length <= 1) {
+        try {
+            const actions = await api.getAvailableActions();
+            actions.actions.forEach(a => {
+                const opt = document.createElement('option');
+                opt.value = a.action;
+                opt.textContent = `${getActionLabel(a.action)} (${a.count})`;
+                actionSelect.appendChild(opt);
+            });
+        } catch (e) {
+            console.warn('Impossible de charger les actions:', e);
+        }
+    }
+    
+    if (appSelect.options.length <= 1) {
+        try {
+            const apps = allApps.length > 0 ? allApps : await api.getAllApps();
+            apps.forEach(app => {
+                const opt = document.createElement('option');
+                opt.value = app.slug;
+                opt.textContent = app.name;
+                appSelect.appendChild(opt);
+            });
+        } catch (e) {
+            console.warn('Impossible de charger les apps:', e);
+        }
+    }
+}
+
+function resetPageLogsFilters() {
+    document.getElementById('pageLogsFilterAction').value = '';
+    document.getElementById('pageLogsFilterApp').value = '';
+    document.getElementById('pageLogsFilterUser').value = '';
+    pageAuditLogsPage = 1;
+    loadAuditPageLogsTab();
+}
+
+function renderPageAuditLogs(data) {
+    const container = document.getElementById('pageAuditLogsTable');
+    const countSpan = document.getElementById('pageLogsCount');
+    const pagination = document.getElementById('pageLogsPagination');
+    
+    countSpan.textContent = `${data.total_count} résultats`;
+    pagination.innerHTML = renderPagination(data.page, data.total_pages, 'changePageLogsPage');
+    
+    if (!data.logs || data.logs.length === 0) {
+        container.innerHTML = `
+            <div class="text-center py-5 text-muted">
+                <i class="bi bi-list-ul display-4"></i>
+                <p class="mt-2">Aucun log trouvé</p>
+            </div>
+        `;
+        return;
+    }
+    
+    container.innerHTML = `
+        <table class="table table-sm table-hover mb-0">
+            <thead class="sticky-top bg-white">
+                <tr>
+                    <th>Date/Heure</th>
+                    <th>Utilisateur</th>
+                    <th>Action</th>
+                    <th>Cible</th>
+                    <th>Détails</th>
+                    <th>IP</th>
+                </tr>
+            </thead>
+            <tbody>
+                ${data.logs.map(l => `
+                    <tr>
+                        <td><small>${formatDateTime(l.created_at)}</small></td>
+                        <td><strong>${escapeHtml(l.username)}</strong></td>
+                        <td>${getActionBadge(l.action)}</td>
+                        <td><code class="small">${l.target || '-'}</code></td>
+                        <td><small class="text-muted">${escapeHtml(l.details || '-')}</small></td>
+                        <td><code class="small">${l.ip_address || '-'}</code></td>
+                    </tr>
+                `).join('')}
+            </tbody>
+        </table>
+    `;
+}
+
+async function changePageLogsPage(page) {
+    pageAuditLogsPage = page;
+    await loadAuditPageLogsTab();
+}
+
+async function loadAuditPageSessions() {
+    const days = parseInt(document.getElementById('auditPeriodPage')?.value || 30);
+    
+    try {
+        const history = await api.getSessionHistory(days);
+        renderPageSessionHistory(history);
+        document.getElementById('pageSessionsCount').textContent = `${history.total_sessions || 0} sessions`;
+    } catch (error) {
+        console.error('Erreur chargement sessions:', error);
+        showToast('Erreur', 'Impossible de charger les sessions', 'danger');
+    }
+}
+
+function renderPageSessionHistory(data) {
+    const container = document.getElementById('pageSessionHistoryTable');
+    
+    if (!data.sessions || data.sessions.length === 0) {
+        container.innerHTML = `
+            <div class="text-center py-4 text-muted">
+                <i class="bi bi-clock-history display-6"></i>
+                <p class="mt-2">Aucune session dans cette période</p>
+            </div>
+        `;
+        return;
+    }
+    
+    container.innerHTML = `
+        <table class="table table-sm table-hover mb-0">
+            <thead class="sticky-top bg-white">
+                <tr>
+                    <th>Utilisateur</th>
+                    <th>Connexion</th>
+                    <th>Déconnexion</th>
+                    <th>Durée</th>
+                    <th>Raison</th>
+                    <th>IP</th>
+                </tr>
+            </thead>
+            <tbody>
+                ${data.sessions.map(s => `
+                    <tr>
+                        <td><strong>${escapeHtml(s.username || 'Unknown')}</strong></td>
+                        <td><small>${formatDateTime(s.login_at)}</small></td>
+                        <td><small>${s.logout_at ? formatDateTime(s.logout_at) : '<span class="badge bg-secondary">En cours</span>'}</small></td>
+                        <td><span class="badge bg-light text-dark">${s.duration_display || '-'}</span></td>
+                        <td>${getLogoutReasonBadge(s.logout_reason)}</td>
+                        <td><code class="small">${s.ip_address || '-'}</code></td>
+                    </tr>
+                `).join('')}
+            </tbody>
+        </table>
+    `;
+}
+
+// ===== Page Utilisateurs Dédiée =====
+
+async function loadUsersPageData() {
+    try {
+        const [users, activeSessions] = await Promise.all([
+            api.getUsers(),
+            api.getActiveSessions().catch(() => ({ sessions: [] }))
+        ]);
+        
+        allUsersPage = users;
+        
+        // Stats
+        document.getElementById('usersStatTotal').textContent = users.length;
+        document.getElementById('usersStatActive').textContent = users.filter(u => u.is_active).length;
+        document.getElementById('usersStatAdmins').textContent = users.filter(u => u.is_admin).length;
+        document.getElementById('usersStatConnected').textContent = activeSessions.active_count || 0;
+        
+        renderUsersPageTable(users);
+    } catch (error) {
+        console.error('Erreur chargement utilisateurs:', error);
+        showToast('Erreur', 'Impossible de charger les utilisateurs', 'danger');
+    }
+}
+
+function renderUsersPageTable(users) {
+    const container = document.getElementById('usersPageTable');
+    
+    if (!users || users.length === 0) {
+        container.innerHTML = `
+            <div class="text-center py-5 text-muted">
+                <i class="bi bi-people display-4"></i>
+                <p class="mt-2">Aucun utilisateur</p>
+            </div>
+        `;
+        return;
+    }
+    
+    container.innerHTML = `
+        <table class="table table-hover align-middle mb-0">
+            <thead>
+                <tr>
+                    <th>Utilisateur</th>
+                    <th>Email</th>
+                    <th>Rôle Hub</th>
+                    <th>Applications (Rôle)</th>
+                    <th>Statut</th>
+                    <th class="text-end">Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                ${users.map(user => `
+                    <tr>
+                        <td><strong>${escapeHtml(user.username)}</strong></td>
+                        <td><small class="text-muted">${escapeHtml(user.email || '-')}</small></td>
+                        <td>
+                            ${user.is_admin 
+                                ? '<span class="badge bg-dark">Admin</span>' 
+                                : '<span class="badge bg-light text-dark">User</span>'}
+                        </td>
+                        <td>
+                            ${user.app_roles?.map(ar => `
+                                <span class="badge bg-secondary me-1">
+                                    ${escapeHtml(ar.app_name)} 
+                                    <small>(${ar.role})</small>
+                                </span>
+                            `).join('') || '<span class="text-muted">-</span>'}
+                        </td>
+                        <td>
+                            ${user.is_active 
+                                ? '<span class="badge bg-light text-dark"><i class="bi bi-check-circle text-success me-1"></i>Actif</span>' 
+                                : '<span class="badge bg-light text-dark"><i class="bi bi-x-circle text-danger me-1"></i>Inactif</span>'}
+                        </td>
+                        <td class="text-end">
+                            <button class="btn btn-sm btn-outline-secondary me-1" onclick="editUserPage(${user.id})">
+                                <i class="bi bi-pencil"></i>
+                            </button>
+                            <button class="btn btn-sm btn-outline-danger" onclick="deleteUserPage(${user.id}, '${escapeHtml(user.username)}')" 
+                                ${user.id === currentUser.id ? 'disabled' : ''}>
+                                <i class="bi bi-trash"></i>
+                            </button>
+                        </td>
+                    </tr>
+                `).join('')}
+            </tbody>
+        </table>
+    `;
+}
+
+function filterUsersTable() {
+    const search = document.getElementById('usersSearchInput').value.toLowerCase();
+    const filtered = allUsersPage.filter(user => 
+        user.username.toLowerCase().includes(search) ||
+        (user.email && user.email.toLowerCase().includes(search))
+    );
+    renderUsersPageTable(filtered);
+}
+
+function showAddUserFormPage() {
+    document.getElementById('userFormTitle').textContent = 'Nouvel Utilisateur';
+    document.getElementById('userForm').reset();
+    document.getElementById('userId').value = '';
+    document.getElementById('userUsername').disabled = false;
+    document.getElementById('userPassword').required = true;
+    document.getElementById('passwordHint').classList.add('d-none');
+    document.getElementById('userActive').checked = true;
+    document.getElementById('userAdmin').checked = false;
+    loadUserAppsCheckboxes([]);
+    userFormModal.show();
+}
+
+async function editUserPage(id) {
+    const user = allUsersPage.find(u => u.id === id);
+    if (!user) {
+        const users = await api.getUsers();
+        const foundUser = users.find(u => u.id === id);
+        if (!foundUser) return;
+        Object.assign(user, foundUser);
+    }
+
+    document.getElementById('userFormTitle').textContent = 'Modifier l\'Utilisateur';
+    document.getElementById('userId').value = user.id;
+    document.getElementById('userUsername').value = user.username;
+    document.getElementById('userUsername').disabled = true;
+    document.getElementById('userEmail').value = user.email || '';
+    document.getElementById('userPassword').value = '';
+    document.getElementById('userPassword').required = false;
+    document.getElementById('passwordHint').classList.remove('d-none');
+    document.getElementById('userActive').checked = user.is_active;
+    document.getElementById('userAdmin').checked = user.is_admin;
+    
+    const userAppRoles = user.app_roles || [];
+    loadUserAppsWithRoles(userAppRoles);
+    
+    userFormModal.show();
+}
+
+async function deleteUserPage(id, username) {
+    if (!confirm(`Supprimer l'utilisateur "${username}" ?`)) return;
+    
+    try {
+        await api.deleteUser(id);
+        showToast('Succès', 'Utilisateur supprimé', 'success');
+        await loadUsersPageData();
+    } catch (error) {
+        showToast('Erreur', error.message, 'danger');
+    }
+}

@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Hub - Portail d'Applications</title>
+    <link rel="icon" type="image/svg+xml" href="favicon.svg">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.2/font/bootstrap-icons.css" rel="stylesheet">
     <link href="css/style.css" rel="stylesheet">
@@ -12,10 +13,27 @@
     <!-- Navigation -->
     <nav class="navbar navbar-expand-lg navbar-dark bg-dark fixed-top">
         <div class="container">
-            <a class="navbar-brand d-flex align-items-center" href="#">
+            <a class="navbar-brand d-flex align-items-center" href="#" onclick="showPage('dashboard')">
                 <i class="bi bi-grid-3x3-gap-fill me-2"></i>
                 <span>Hub</span>
             </a>
+            
+            <!-- Navigation Admin (masquée pour non-admins) -->
+            <div id="adminNavigation" class="d-none">
+                <ul class="navbar-nav me-auto">
+                    <li class="nav-item">
+                        <a class="nav-link" href="#" onclick="showPage('audit')" id="navAudit">
+                            <i class="bi bi-graph-up me-1"></i>Audit
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="#" onclick="showPage('users')" id="navUsers">
+                            <i class="bi bi-people me-1"></i>Utilisateurs
+                        </a>
+                    </li>
+                </ul>
+            </div>
+            
             <div class="d-flex align-items-center">
                 <span id="userInfo" class="text-light me-3 d-none">
                     <i class="bi bi-person-circle me-1"></i>
@@ -24,7 +42,7 @@
                 <button id="adminBtn" class="btn btn-outline-light btn-sm me-2 d-none" onclick="showAdminPanel()">
                     <i class="bi bi-gear"></i> Admin
                 </button>
-                <button id="logoutBtn" class="btn btn-outline-danger btn-sm d-none" onclick="logout()">
+                <button id="logoutBtn" class="btn btn-outline-secondary btn-sm d-none" onclick="logout()">
                     <i class="bi bi-box-arrow-right"></i>
                 </button>
             </div>
@@ -79,6 +97,335 @@
         </div>
     </div>
 
+    <!-- Section Audit (page dédiée) -->
+    <div id="auditSection" class="container-fluid py-4 d-none" style="margin-top: 70px;">
+        <div class="container">
+            <!-- En-tête -->
+            <div class="d-flex justify-content-between align-items-center mb-4">
+                <div>
+                    <h1 class="h3 mb-1"><i class="bi bi-graph-up me-2"></i>Audit & Suivi</h1>
+                    <p class="text-muted mb-0">Suivi des connexions et accès aux applications</p>
+                </div>
+                <div class="d-flex gap-2">
+                    <select class="form-select form-select-sm" id="auditPeriodPage" onchange="loadAuditPageData()" style="width: auto;">
+                        <option value="7">7 derniers jours</option>
+                        <option value="30" selected>30 derniers jours</option>
+                        <option value="90">90 derniers jours</option>
+                        <option value="365">1 an</option>
+                    </select>
+                    <div class="btn-group btn-group-sm">
+                        <button class="btn btn-outline-secondary dropdown-toggle" data-bs-toggle="dropdown">
+                            <i class="bi bi-download me-1"></i>Export
+                        </button>
+                        <ul class="dropdown-menu dropdown-menu-end">
+                            <li><a class="dropdown-item" href="#" onclick="exportAuditLogs()"><i class="bi bi-file-earmark-text me-2"></i>Logs d'audit (CSV)</a></li>
+                            <li><a class="dropdown-item" href="#" onclick="exportSessions()"><i class="bi bi-file-earmark-text me-2"></i>Sessions (CSV)</a></li>
+                        </ul>
+                    </div>
+                    <button class="btn btn-outline-secondary btn-sm" onclick="loadAuditPageData()">
+                        <i class="bi bi-arrow-clockwise"></i>
+                    </button>
+                </div>
+            </div>
+            
+            <!-- Sous-navigation audit -->
+            <ul class="nav nav-tabs mb-4" id="auditPageTabs">
+                <li class="nav-item">
+                    <button class="nav-link active" data-bs-toggle="tab" data-bs-target="#auditPageOverview" onclick="loadAuditPageOverview()">
+                        <i class="bi bi-speedometer2 me-1"></i>Vue d'ensemble
+                    </button>
+                </li>
+                <li class="nav-item">
+                    <button class="nav-link" data-bs-toggle="tab" data-bs-target="#auditPageApps" onclick="loadAuditPageApps()">
+                        <i class="bi bi-grid me-1"></i>Par Application
+                    </button>
+                </li>
+                <li class="nav-item">
+                    <button class="nav-link" data-bs-toggle="tab" data-bs-target="#auditPageLogs" onclick="loadAuditPageLogsTab()">
+                        <i class="bi bi-list-ul me-1"></i>Logs détaillés
+                    </button>
+                </li>
+                <li class="nav-item">
+                    <button class="nav-link" data-bs-toggle="tab" data-bs-target="#auditPageSessions" onclick="loadAuditPageSessions()">
+                        <i class="bi bi-clock-history me-1"></i>Sessions
+                    </button>
+                </li>
+            </ul>
+            
+            <div class="tab-content">
+                <!-- Vue d'ensemble -->
+                <div class="tab-pane fade show active" id="auditPageOverview">
+                    <!-- Stats Cards -->
+                    <div class="row g-3 mb-4" id="auditPageStatsCards">
+                        <div class="col-md-3">
+                            <div class="card border">
+                                <div class="card-body text-center">
+                                    <h3 id="pageStatActiveNow" class="text-primary">-</h3>
+                                    <small class="text-muted">Connectés maintenant</small>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="card border">
+                                <div class="card-body text-center">
+                                    <h3 id="pageStatTotalSessions">-</h3>
+                                    <small class="text-muted">Sessions totales</small>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="card border">
+                                <div class="card-body text-center">
+                                    <h3 id="pageStatUniqueUsers">-</h3>
+                                    <small class="text-muted">Utilisateurs uniques</small>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="card border">
+                                <div class="card-body text-center">
+                                    <h3 id="pageStatAvgDuration">-</h3>
+                                    <small class="text-muted">Durée moyenne</small>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="row">
+                        <!-- Sessions actives -->
+                        <div class="col-md-6">
+                            <div class="card mb-4">
+                                <div class="card-header d-flex justify-content-between align-items-center">
+                                    <span><i class="bi bi-person-check me-2"></i>Sessions actives</span>
+                                    <span class="badge bg-secondary" id="pageActiveSessionCount">0</span>
+                                </div>
+                                <div class="card-body p-0">
+                                    <div id="pageActiveSessionsTable" class="table-responsive" style="max-height: 300px; overflow-y: auto;"></div>
+                                </div>
+                            </div>
+                        </div>
+                        <!-- Top utilisateurs -->
+                        <div class="col-md-6">
+                            <div class="card mb-4">
+                                <div class="card-header">
+                                    <i class="bi bi-trophy me-2"></i>Top utilisateurs (par connexions)
+                                </div>
+                                <div class="card-body p-0">
+                                    <div id="pageTopUsersTable" class="table-responsive" style="max-height: 300px; overflow-y: auto;"></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Apps les plus consultées -->
+                    <div class="card">
+                        <div class="card-header">
+                            <i class="bi bi-bar-chart me-2"></i>Applications les plus consultées
+                        </div>
+                        <div class="card-body p-0">
+                            <div id="pageTopAppsTable" class="table-responsive"></div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Par Application -->
+                <div class="tab-pane fade" id="auditPageApps">
+                    <div class="row" id="auditPageAppsGrid">
+                        <!-- Cards des apps chargées dynamiquement -->
+                    </div>
+                    <!-- Détail d'une app -->
+                    <div id="auditPageAppDetail" class="d-none">
+                        <div class="d-flex align-items-center mb-4">
+                            <button class="btn btn-outline-secondary btn-sm me-3" onclick="hidePageAppDetail()">
+                                <i class="bi bi-arrow-left"></i>
+                            </button>
+                            <div class="d-flex align-items-center">
+                                <span id="pageAppDetailIcon" class="me-2 rounded p-2 fs-4"></span>
+                                <div>
+                                    <h5 class="mb-0" id="pageAppDetailName"></h5>
+                                    <small class="text-muted" id="pageAppDetailSlug"></small>
+                                </div>
+                            </div>
+                        </div>
+                        <!-- Stats de l'app -->
+                        <div class="row g-3 mb-4">
+                            <div class="col-md-4">
+                                <div class="card bg-light">
+                                    <div class="card-body text-center">
+                                        <h4 id="pageAppDetailAccess">-</h4>
+                                        <small class="text-muted">Accès totaux</small>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-4">
+                                <div class="card bg-light">
+                                    <div class="card-body text-center">
+                                        <h4 id="pageAppDetailUsers">-</h4>
+                                        <small class="text-muted">Utilisateurs uniques</small>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-4">
+                                <div class="card bg-light">
+                                    <div class="card-body text-center">
+                                        <h4 id="pageAppDetailPeriod">-</h4>
+                                        <small class="text-muted">Période</small>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="row">
+                            <!-- Top users de cette app -->
+                            <div class="col-md-4">
+                                <div class="card mb-4">
+                                    <div class="card-header"><i class="bi bi-people me-2"></i>Top utilisateurs</div>
+                                    <div class="card-body p-0">
+                                        <div id="pageAppDetailTopUsers" class="table-responsive"></div>
+                                    </div>
+                                </div>
+                            </div>
+                            <!-- Logs récents -->
+                            <div class="col-md-8">
+                                <div class="card">
+                                    <div class="card-header d-flex justify-content-between align-items-center">
+                                        <span><i class="bi bi-list me-2"></i>Accès récents</span>
+                                        <div id="pageAppDetailPagination"></div>
+                                    </div>
+                                    <div class="card-body p-0">
+                                        <div id="pageAppDetailLogs" class="table-responsive" style="max-height: 400px; overflow-y: auto;"></div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Logs détaillés -->
+                <div class="tab-pane fade" id="auditPageLogs">
+                    <!-- Filtres -->
+                    <div class="card mb-4">
+                        <div class="card-body">
+                            <div class="row g-3 align-items-end">
+                                <div class="col-md-3">
+                                    <label class="form-label small">Action</label>
+                                    <select class="form-select form-select-sm" id="pageLogsFilterAction" onchange="loadAuditPageLogsTab()">
+                                        <option value="">Toutes les actions</option>
+                                    </select>
+                                </div>
+                                <div class="col-md-3">
+                                    <label class="form-label small">Application</label>
+                                    <select class="form-select form-select-sm" id="pageLogsFilterApp" onchange="loadAuditPageLogsTab()">
+                                        <option value="">Toutes les apps</option>
+                                    </select>
+                                </div>
+                                <div class="col-md-3">
+                                    <label class="form-label small">Utilisateur</label>
+                                    <input type="text" class="form-control form-control-sm" id="pageLogsFilterUser" placeholder="ID utilisateur" onchange="loadAuditPageLogsTab()">
+                                </div>
+                                <div class="col-md-3">
+                                    <button class="btn btn-sm btn-outline-secondary w-100" onclick="resetPageLogsFilters()">
+                                        <i class="bi bi-x-circle me-1"></i>Réinitialiser
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <!-- Table des logs -->
+                    <div class="card">
+                        <div class="card-header d-flex justify-content-between align-items-center">
+                            <span><i class="bi bi-list-ul me-2"></i>Logs d'audit</span>
+                            <div class="d-flex align-items-center gap-2">
+                                <span class="text-muted small" id="pageLogsCount">0 résultats</span>
+                                <nav id="pageLogsPagination"></nav>
+                            </div>
+                        </div>
+                        <div class="card-body p-0">
+                            <div id="pageAuditLogsTable" class="table-responsive" style="max-height: 500px; overflow-y: auto;"></div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Sessions -->
+                <div class="tab-pane fade" id="auditPageSessions">
+                    <div class="card">
+                        <div class="card-header d-flex justify-content-between align-items-center">
+                            <span><i class="bi bi-clock-history me-2"></i>Historique des sessions</span>
+                            <span class="text-muted small" id="pageSessionsCount">0 sessions</span>
+                        </div>
+                        <div class="card-body p-0">
+                            <div id="pageSessionHistoryTable" class="table-responsive" style="max-height: 600px; overflow-y: auto;"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Section Utilisateurs (page dédiée) -->
+    <div id="usersSection" class="container-fluid py-4 d-none" style="margin-top: 70px;">
+        <div class="container">
+            <!-- En-tête -->
+            <div class="d-flex justify-content-between align-items-center mb-4">
+                <div>
+                    <h1 class="h3 mb-1"><i class="bi bi-people me-2"></i>Gestion des Utilisateurs</h1>
+                    <p class="text-muted mb-0">Gérer les comptes utilisateurs et leurs accès aux applications</p>
+                </div>
+                <div class="d-flex gap-2">
+                    <div class="input-group input-group-sm" style="width: 250px;">
+                        <span class="input-group-text"><i class="bi bi-search"></i></span>
+                        <input type="text" class="form-control" id="usersSearchInput" placeholder="Rechercher..." oninput="filterUsersTable()">
+                    </div>
+                    <button class="btn btn-primary btn-sm" onclick="showAddUserFormPage()">
+                        <i class="bi bi-person-plus me-1"></i>Ajouter
+                    </button>
+                </div>
+            </div>
+            
+            <!-- Stats utilisateurs -->
+            <div class="row g-3 mb-4">
+                <div class="col-md-3">
+                    <div class="card border">
+                        <div class="card-body text-center">
+                            <h3 id="usersStatTotal" class="text-primary">-</h3>
+                            <small class="text-muted">Utilisateurs totaux</small>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="card border">
+                        <div class="card-body text-center">
+                            <h3 id="usersStatActive">-</h3>
+                            <small class="text-muted">Actifs</small>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="card border">
+                        <div class="card-body text-center">
+                            <h3 id="usersStatAdmins">-</h3>
+                            <small class="text-muted">Administrateurs</small>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="card border">
+                        <div class="card-body text-center">
+                            <h3 id="usersStatConnected">-</h3>
+                            <small class="text-muted">Connectés maintenant</small>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Table des utilisateurs -->
+            <div class="card">
+                <div class="card-body p-0">
+                    <div id="usersPageTable" class="table-responsive"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Admin Panel Modal -->
     <div class="modal fade" id="adminModal" tabindex="-1">
         <div class="modal-dialog modal-xl">
@@ -95,18 +442,8 @@
                             </button>
                         </li>
                         <li class="nav-item">
-                            <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tabUsers">
-                                <i class="bi bi-people me-1"></i>Utilisateurs
-                            </button>
-                        </li>
-                        <li class="nav-item">
                             <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tabServiceAccounts">
                                 <i class="bi bi-robot me-1"></i>Service Accounts
-                            </button>
-                        </li>
-                        <li class="nav-item">
-                            <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tabAudit" onclick="loadAuditData()">
-                                <i class="bi bi-graph-up me-1"></i>Audit
                             </button>
                         </li>
                     </ul>
@@ -116,27 +453,15 @@
                             <div class="d-flex justify-content-between align-items-center mb-3">
                                 <h5 class="mb-0">Gestion des Applications</h5>
                                 <div class="btn-group">
-                                    <button class="btn btn-outline-primary btn-sm" onclick="showDockerScanModal()">
-                                        <i class="bi bi-docker me-1"></i>Scanner Docker
+                                    <button class="btn btn-outline-secondary btn-sm" onclick="showDockerScanModal()">
+                                        <i class="bi bi-box-seam me-1"></i>Scanner Docker
                                     </button>
-                                    <button class="btn btn-success btn-sm" onclick="showAddAppForm()">
+                                    <button class="btn btn-primary btn-sm" onclick="showAddAppForm()">
                                         <i class="bi bi-plus-lg me-1"></i>Ajouter
                                     </button>
                                 </div>
                             </div>
                             <div id="appsTable" class="table-responsive">
-                                <!-- Table loaded dynamically -->
-                            </div>
-                        </div>
-                        <!-- Users Tab -->
-                        <div class="tab-pane fade" id="tabUsers">
-                            <div class="d-flex justify-content-between align-items-center mb-3">
-                                <h5 class="mb-0">Gestion des Utilisateurs</h5>
-                                <button class="btn btn-success btn-sm" onclick="showAddUserForm()">
-                                    <i class="bi bi-person-plus me-1"></i>Ajouter
-                                </button>
-                            </div>
-                            <div id="usersTable" class="table-responsive">
                                 <!-- Table loaded dynamically -->
                             </div>
                         </div>
@@ -147,281 +472,12 @@
                                     <h5 class="mb-0">Service Accounts (M2M)</h5>
                                     <small class="text-muted">Comptes techniques pour la communication entre applications</small>
                                 </div>
-                                <button class="btn btn-success btn-sm" onclick="showAddServiceAccountForm()">
+                                <button class="btn btn-primary btn-sm" onclick="showAddServiceAccountForm()">
                                     <i class="bi bi-plus-lg me-1"></i>Ajouter
                                 </button>
                             </div>
                             <div id="serviceAccountsTable" class="table-responsive">
                                 <!-- Table loaded dynamically -->
-                            </div>
-                        </div>
-                        <!-- Audit Tab -->
-                        <div class="tab-pane fade" id="tabAudit">
-                            <!-- En-tête avec navigation -->
-                            <div class="d-flex justify-content-between align-items-center mb-3">
-                                <div>
-                                    <h5 class="mb-0"><i class="bi bi-graph-up me-2"></i>Audit Complet</h5>
-                                    <small class="text-muted">Suivi des connexions et accès aux applications</small>
-                                </div>
-                                <div class="d-flex gap-2">
-                                    <select class="form-select form-select-sm" id="auditPeriod" onchange="loadAuditData()" style="width: auto;">
-                                        <option value="7">7 derniers jours</option>
-                                        <option value="30" selected>30 derniers jours</option>
-                                        <option value="90">90 derniers jours</option>
-                                        <option value="365">1 an</option>
-                                    </select>
-                                    <div class="btn-group btn-group-sm">
-                                        <button class="btn btn-outline-success dropdown-toggle" data-bs-toggle="dropdown">
-                                            <i class="bi bi-download me-1"></i>Export
-                                        </button>
-                                        <ul class="dropdown-menu dropdown-menu-end">
-                                            <li><a class="dropdown-item" href="#" onclick="exportAuditLogs()"><i class="bi bi-file-earmark-text me-2"></i>Logs d'audit (CSV)</a></li>
-                                            <li><a class="dropdown-item" href="#" onclick="exportSessions()"><i class="bi bi-file-earmark-text me-2"></i>Sessions (CSV)</a></li>
-                                        </ul>
-                                    </div>
-                                    <button class="btn btn-outline-primary btn-sm" onclick="loadAuditData()">
-                                        <i class="bi bi-arrow-clockwise"></i>
-                                    </button>
-                                </div>
-                            </div>
-                            
-                            <!-- Sous-navigation audit -->
-                            <ul class="nav nav-pills mb-4" id="auditSubTabs">
-                                <li class="nav-item">
-                                    <button class="nav-link active" data-bs-toggle="pill" data-bs-target="#auditOverview" onclick="loadAuditOverview()">
-                                        <i class="bi bi-speedometer2 me-1"></i>Vue d'ensemble
-                                    </button>
-                                </li>
-                                <li class="nav-item">
-                                    <button class="nav-link" data-bs-toggle="pill" data-bs-target="#auditApps" onclick="loadAuditApps()">
-                                        <i class="bi bi-grid me-1"></i>Par Application
-                                    </button>
-                                </li>
-                                <li class="nav-item">
-                                    <button class="nav-link" data-bs-toggle="pill" data-bs-target="#auditLogs" onclick="loadAuditLogsTab()">
-                                        <i class="bi bi-list-ul me-1"></i>Logs détaillés
-                                    </button>
-                                </li>
-                                <li class="nav-item">
-                                    <button class="nav-link" data-bs-toggle="pill" data-bs-target="#auditSessions" onclick="loadAuditSessions()">
-                                        <i class="bi bi-clock-history me-1"></i>Sessions
-                                    </button>
-                                </li>
-                            </ul>
-                            
-                            <div class="tab-content">
-                                <!-- Vue d'ensemble -->
-                                <div class="tab-pane fade show active" id="auditOverview">
-                                    <!-- Stats Cards -->
-                                    <div class="row g-3 mb-4" id="auditStatsCards">
-                                        <div class="col-md-3">
-                                            <div class="card bg-primary text-white">
-                                                <div class="card-body text-center">
-                                                    <h3 id="statActiveNow">-</h3>
-                                                    <small>Connectés maintenant</small>
-                                                </div>
-                                            </div>
-                                        </div>
-                                        <div class="col-md-3">
-                                            <div class="card bg-success text-white">
-                                                <div class="card-body text-center">
-                                                    <h3 id="statTotalSessions">-</h3>
-                                                    <small>Sessions totales</small>
-                                                </div>
-                                            </div>
-                                        </div>
-                                        <div class="col-md-3">
-                                            <div class="card bg-info text-white">
-                                                <div class="card-body text-center">
-                                                    <h3 id="statUniqueUsers">-</h3>
-                                                    <small>Utilisateurs uniques</small>
-                                                </div>
-                                            </div>
-                                        </div>
-                                        <div class="col-md-3">
-                                            <div class="card bg-warning text-dark">
-                                                <div class="card-body text-center">
-                                                    <h3 id="statAvgDuration">-</h3>
-                                                    <small>Durée moyenne</small>
-                                                </div>
-                                            </div>
-                                        </div>
-                                    </div>
-                                    
-                                    <div class="row">
-                                        <!-- Sessions actives -->
-                                        <div class="col-md-6">
-                                            <div class="card mb-4">
-                                                <div class="card-header d-flex justify-content-between align-items-center">
-                                                    <span><i class="bi bi-person-check me-2"></i>Sessions actives</span>
-                                                    <span class="badge bg-success" id="activeSessionCount">0</span>
-                                                </div>
-                                                <div class="card-body p-0">
-                                                    <div id="activeSessionsTable" class="table-responsive" style="max-height: 300px; overflow-y: auto;">
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        </div>
-                                        <!-- Top utilisateurs -->
-                                        <div class="col-md-6">
-                                            <div class="card mb-4">
-                                                <div class="card-header">
-                                                    <i class="bi bi-trophy me-2"></i>Top utilisateurs (par connexions)
-                                                </div>
-                                                <div class="card-body p-0">
-                                                    <div id="topUsersTable" class="table-responsive" style="max-height: 300px; overflow-y: auto;">
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        </div>
-                                    </div>
-                                    
-                                    <!-- Apps les plus consultées -->
-                                    <div class="card">
-                                        <div class="card-header">
-                                            <i class="bi bi-bar-chart me-2"></i>Applications les plus consultées
-                                        </div>
-                                        <div class="card-body p-0">
-                                            <div id="topAppsTable" class="table-responsive">
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
-                                
-                                <!-- Par Application -->
-                                <div class="tab-pane fade" id="auditApps">
-                                    <div class="row" id="auditAppsGrid">
-                                        <!-- Cards des apps chargées dynamiquement -->
-                                    </div>
-                                    <!-- Détail d'une app -->
-                                    <div id="auditAppDetail" class="d-none">
-                                        <div class="d-flex align-items-center mb-4">
-                                            <button class="btn btn-outline-secondary btn-sm me-3" onclick="hideAppDetail()">
-                                                <i class="bi bi-arrow-left"></i>
-                                            </button>
-                                            <div class="d-flex align-items-center">
-                                                <span id="appDetailIcon" class="me-2 rounded p-2 fs-4"></span>
-                                                <div>
-                                                    <h5 class="mb-0" id="appDetailName"></h5>
-                                                    <small class="text-muted" id="appDetailSlug"></small>
-                                                </div>
-                                            </div>
-                                        </div>
-                                        <!-- Stats de l'app -->
-                                        <div class="row g-3 mb-4">
-                                            <div class="col-md-4">
-                                                <div class="card bg-light">
-                                                    <div class="card-body text-center">
-                                                        <h4 id="appDetailAccess">-</h4>
-                                                        <small class="text-muted">Accès totaux</small>
-                                                    </div>
-                                                </div>
-                                            </div>
-                                            <div class="col-md-4">
-                                                <div class="card bg-light">
-                                                    <div class="card-body text-center">
-                                                        <h4 id="appDetailUsers">-</h4>
-                                                        <small class="text-muted">Utilisateurs uniques</small>
-                                                    </div>
-                                                </div>
-                                            </div>
-                                            <div class="col-md-4">
-                                                <div class="card bg-light">
-                                                    <div class="card-body text-center">
-                                                        <h4 id="appDetailPeriod">-</h4>
-                                                        <small class="text-muted">Période</small>
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        </div>
-                                        <div class="row">
-                                            <!-- Top users de cette app -->
-                                            <div class="col-md-4">
-                                                <div class="card mb-4">
-                                                    <div class="card-header"><i class="bi bi-people me-2"></i>Top utilisateurs</div>
-                                                    <div class="card-body p-0">
-                                                        <div id="appDetailTopUsers" class="table-responsive"></div>
-                                                    </div>
-                                                </div>
-                                            </div>
-                                            <!-- Logs récents -->
-                                            <div class="col-md-8">
-                                                <div class="card">
-                                                    <div class="card-header d-flex justify-content-between align-items-center">
-                                                        <span><i class="bi bi-list me-2"></i>Accès récents</span>
-                                                        <div id="appDetailPagination"></div>
-                                                    </div>
-                                                    <div class="card-body p-0">
-                                                        <div id="appDetailLogs" class="table-responsive" style="max-height: 400px; overflow-y: auto;"></div>
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
-                                
-                                <!-- Logs détaillés -->
-                                <div class="tab-pane fade" id="auditLogs">
-                                    <!-- Filtres -->
-                                    <div class="card mb-4">
-                                        <div class="card-body">
-                                            <div class="row g-3 align-items-end">
-                                                <div class="col-md-3">
-                                                    <label class="form-label small">Action</label>
-                                                    <select class="form-select form-select-sm" id="logsFilterAction" onchange="loadAuditLogsTab()">
-                                                        <option value="">Toutes les actions</option>
-                                                        <!-- Options chargées dynamiquement -->
-                                                    </select>
-                                                </div>
-                                                <div class="col-md-3">
-                                                    <label class="form-label small">Application</label>
-                                                    <select class="form-select form-select-sm" id="logsFilterApp" onchange="loadAuditLogsTab()">
-                                                        <option value="">Toutes les apps</option>
-                                                        <!-- Options chargées dynamiquement -->
-                                                    </select>
-                                                </div>
-                                                <div class="col-md-3">
-                                                    <label class="form-label small">Utilisateur</label>
-                                                    <input type="text" class="form-control form-control-sm" id="logsFilterUser" placeholder="ID utilisateur" onchange="loadAuditLogsTab()">
-                                                </div>
-                                                <div class="col-md-3">
-                                                    <button class="btn btn-sm btn-outline-secondary w-100" onclick="resetLogsFilters()">
-                                                        <i class="bi bi-x-circle me-1"></i>Réinitialiser
-                                                    </button>
-                                                </div>
-                                            </div>
-                                        </div>
-                                    </div>
-                                    <!-- Table des logs -->
-                                    <div class="card">
-                                        <div class="card-header d-flex justify-content-between align-items-center">
-                                            <span><i class="bi bi-list-ul me-2"></i>Logs d'audit</span>
-                                            <div class="d-flex align-items-center gap-2">
-                                                <span class="text-muted small" id="logsCount">0 résultats</span>
-                                                <nav id="logsPagination"></nav>
-                                            </div>
-                                        </div>
-                                        <div class="card-body p-0">
-                                            <div id="auditLogsTable" class="table-responsive" style="max-height: 500px; overflow-y: auto;">
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
-                                
-                                <!-- Sessions -->
-                                <div class="tab-pane fade" id="auditSessions">
-                                    <!-- Session History -->
-                                    <div class="card">
-                                        <div class="card-header d-flex justify-content-between align-items-center">
-                                            <span><i class="bi bi-clock-history me-2"></i>Historique des sessions</span>
-                                            <span class="text-muted small" id="sessionsCount">0 sessions</span>
-                                        </div>
-                                        <div class="card-body p-0">
-                                            <div id="sessionHistoryTable" class="table-responsive" style="max-height: 600px; overflow-y: auto;">
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
                             </div>
                         </div>
                     </div>
@@ -779,11 +835,19 @@
                     </div>
                     <!-- Options -->
                     <div class="d-flex justify-content-between align-items-center w-100">
-                        <div class="form-check">
-                            <input class="form-check-input" type="checkbox" id="dockerIncludeStopped" onchange="refreshDockerScan()">
-                            <label class="form-check-label small" for="dockerIncludeStopped">
-                                Inclure les conteneurs arrêtés
-                            </label>
+                        <div>
+                            <div class="form-check form-check-inline">
+                                <input class="form-check-input" type="checkbox" id="dockerIncludeStopped" onchange="refreshDockerScan()">
+                                <label class="form-check-label small" for="dockerIncludeStopped">
+                                    Conteneurs arrêtés
+                                </label>
+                            </div>
+                            <div class="form-check form-check-inline">
+                                <input class="form-check-input" type="checkbox" id="dockerShowAll" onchange="refreshDockerScan()">
+                                <label class="form-check-label small" for="dockerShowAll">
+                                    Afficher tout
+                                </label>
+                            </div>
                         </div>
                         <div>
                             <button type="button" class="btn btn-outline-secondary btn-sm" onclick="refreshDockerScan()">

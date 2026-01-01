@@ -12,7 +12,8 @@ from app.database import get_db
 from app.models import Application, User, ServiceAccount, UserAppRole
 from app.schemas import (
     AppCreate, AppCreateSimplified, AppUpdate, AppResponse, AppWithUsers,
-    DockerScanResponse, DockerContainerInfo, DockerPortInfo
+    DockerScanResponse, DockerContainerInfo, DockerPortInfo,
+    AppRegisterRequest, AppRegisterResponse, AppCredentialsResponse
 )
 from app.auth import get_current_admin, get_current_user, get_password_hash, get_settings
 from app.routes.service_accounts import save_service_account_credentials
@@ -21,6 +22,36 @@ from app.routes.audit import log_action
 router = APIRouter(prefix="/api/apps", tags=["Applications"])
 settings = get_settings()
 logger = logging.getLogger(__name__)
+
+
+# ===== IP Whitelist pour auto-enregistrement =====
+# Réseaux Docker autorisés pour l'auto-enregistrement (sans authentification)
+DOCKER_NETWORK_PREFIXES = [
+    "172.17.",      # docker0 (bridge par défaut)
+    "172.18.",      # Réseaux Docker custom
+    "172.19.",
+    "172.20.",
+    "172.21.",
+    "172.22.",
+    "172.23.",
+    "172.24.",
+    "172.25.",
+    "172.26.",
+    "172.27.",
+    "172.28.",
+    "172.29.",
+    "172.30.",
+    "172.31.",
+    "10.0.",        # Réseaux Docker overlay
+    "192.168.",     # Réseaux locaux
+]
+
+
+def is_docker_network_ip(ip: str) -> bool:
+    """Vérifie si l'IP provient d'un réseau Docker autorisé"""
+    if not ip:
+        return False
+    return any(ip.startswith(prefix) for prefix in DOCKER_NETWORK_PREFIXES)
 
 
 def generate_slug(name: str) -> str:
@@ -246,6 +277,270 @@ async def create_app(
     return response
 
 
+# ===== Auto-Registration Endpoints =====
+
+@router.post("/register", response_model=AppRegisterResponse)
+async def register_app(
+    app_data: AppRegisterRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Auto-enregistrement d'une application depuis le réseau Docker.
+    
+    ⚠️ Accessible UNIQUEMENT depuis les réseaux Docker (IP whitelist).
+    
+    L'application envoie son slug (défini dans son .env) et reçoit :
+    - Ses credentials M2M (client_id, client_secret) si nouvelle app
+    - Un message de confirmation si l'app existe déjà
+    
+    Flux :
+    1. L'app démarre et appelle cet endpoint avec son slug
+    2. Le Hub crée l'app + service account si elle n'existe pas
+    3. L'app reçoit ses credentials et les stocke en mémoire (pas dans .env)
+    """
+    client_ip = request.client.host if request.client else None
+    
+    # Vérifier que l'IP provient d'un réseau Docker
+    if not is_docker_network_ip(client_ip):
+        logger.warning(f"🚫 Tentative d'auto-enregistrement depuis IP non autorisée: {client_ip}")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Auto-enregistrement autorisé uniquement depuis le réseau Docker (IP: {client_ip})"
+        )
+    
+    logger.info(f"📝 Demande d'auto-enregistrement pour '{app_data.slug}' depuis {client_ip}")
+    
+    # Vérifier si l'application existe déjà
+    result = await db.execute(
+        select(Application)
+        .options(selectinload(Application.service_accounts))
+        .where(Application.slug == app_data.slug)
+    )
+    existing_app = result.scalar_one_or_none()
+    
+    if existing_app:
+        # Application existante - retourner les infos sans le secret
+        logger.info(f"✅ Application '{app_data.slug}' déjà enregistrée")
+        
+        # Trouver le service account associé
+        sa = next((sa for sa in existing_app.service_accounts), None)
+        
+        return AppRegisterResponse(
+            message=f"Application '{app_data.slug}' déjà enregistrée. Utilisez /api/apps/me/credentials pour récupérer vos credentials.",
+            application=AppResponse.model_validate(existing_app),
+            credentials={"client_id": sa.client_id} if sa else None,
+            is_new=False
+        )
+    
+    # Nouvelle application - créer l'app et le service account
+    host = settings.get_hub_host()
+    api_url = f"http://{host}:{app_data.api_port}"
+    frontend_url = f"http://{host}:{app_data.frontend_port}" if app_data.frontend_port else None
+    callback_url = f"{frontend_url}/callback" if frontend_url else None
+    
+    app = Application(
+        name=app_data.name or app_data.slug.replace("-", " ").title(),
+        slug=app_data.slug,
+        description=app_data.description or f"Application {app_data.slug} (auto-enregistrée)",
+        api_url=api_url,
+        frontend_url=frontend_url,
+        callback_url=callback_url,
+        requires_auth=True
+    )
+    db.add(app)
+    await db.flush()
+    
+    # Créer le service account automatiquement
+    client_id = ServiceAccount.generate_client_id()
+    client_secret = ServiceAccount.generate_client_secret()
+    
+    service_account = ServiceAccount(
+        name=f"SA - {app.name}",
+        description=f"Service account auto-créé pour {app.name}",
+        client_id=client_id,
+        client_secret_hash=get_password_hash(client_secret)
+    )
+    db.add(service_account)
+    await db.flush()
+    
+    # Associer le service account à l'application
+    result = await db.execute(
+        select(ServiceAccount)
+        .options(selectinload(ServiceAccount.applications))
+        .where(ServiceAccount.id == service_account.id)
+    )
+    service_account = result.scalar_one()
+    service_account.applications.append(app)
+    
+    await db.commit()
+    await db.refresh(app)
+    
+    # Sauvegarder les credentials dans le fichier (backup)
+    save_service_account_credentials(
+        name=app_data.slug,
+        client_id=client_id,
+        client_secret=client_secret,
+        app_slugs=[app_data.slug]
+    )
+    
+    logger.info(f"✅ Nouvelle application '{app_data.slug}' auto-enregistrée depuis {client_ip}")
+    
+    return AppRegisterResponse(
+        message=f"Application '{app_data.slug}' créée avec succès. Credentials M2M générés.",
+        application=AppResponse.model_validate(app),
+        credentials={
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "hub_host": host,
+            "hub_api_port": settings.hub_api_port if hasattr(settings, 'hub_api_port') else 8000
+        },
+        is_new=True
+    )
+
+
+@router.get("/me/credentials", response_model=AppCredentialsResponse)
+async def get_app_credentials(
+    request: Request,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Récupère les credentials M2M d'une application.
+    
+    ⚠️ Accessible UNIQUEMENT depuis les réseaux Docker (IP whitelist).
+    ⚠️ Le client_secret n'est PAS retourné (sécurité).
+    
+    L'application doit fournir son client_id dans le header X-Client-ID
+    pour s'identifier.
+    """
+    client_ip = request.client.host if request.client else None
+    
+    if not is_docker_network_ip(client_ip):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Accès autorisé uniquement depuis le réseau Docker (IP: {client_ip})"
+        )
+    
+    client_id = request.headers.get("X-Client-ID")
+    if not client_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Header X-Client-ID requis"
+        )
+    
+    # Trouver le service account
+    result = await db.execute(
+        select(ServiceAccount)
+        .options(selectinload(ServiceAccount.applications))
+        .where(ServiceAccount.client_id == client_id)
+    )
+    sa = result.scalar_one_or_none()
+    
+    if not sa:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Service account non trouvé"
+        )
+    
+    if not sa.applications:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Aucune application associée à ce service account"
+        )
+    
+    app = sa.applications[0]
+    host = settings.get_hub_host()
+    
+    return AppCredentialsResponse(
+        app_slug=app.slug,
+        app_name=app.name,
+        client_id=sa.client_id,
+        client_secret=None,  # Jamais retourné ici pour la sécurité
+        hub_host=host,
+        hub_api_port=8000,
+        message="Credentials récupérés. Le client_secret n'est pas retourné pour des raisons de sécurité. Utilisez /me/regenerate-secret si vous avez perdu votre secret."
+    )
+
+
+@router.post("/me/regenerate-secret", response_model=AppCredentialsResponse)
+async def regenerate_app_secret(
+    request: Request,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Régénère le client_secret d'une application.
+    
+    ⚠️ Accessible UNIQUEMENT depuis les réseaux Docker (IP whitelist).
+    ⚠️ L'ancien secret sera IMMÉDIATEMENT invalidé !
+    
+    L'application doit fournir son client_id dans le header X-Client-ID.
+    Le nouveau secret est retourné UNE SEULE FOIS dans cette réponse.
+    """
+    client_ip = request.client.host if request.client else None
+    
+    if not is_docker_network_ip(client_ip):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Accès autorisé uniquement depuis le réseau Docker (IP: {client_ip})"
+        )
+    
+    client_id = request.headers.get("X-Client-ID")
+    if not client_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Header X-Client-ID requis"
+        )
+    
+    # Trouver le service account
+    result = await db.execute(
+        select(ServiceAccount)
+        .options(selectinload(ServiceAccount.applications))
+        .where(ServiceAccount.client_id == client_id)
+    )
+    sa = result.scalar_one_or_none()
+    
+    if not sa:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Service account non trouvé"
+        )
+    
+    if not sa.applications:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Aucune application associée à ce service account"
+        )
+    
+    app = sa.applications[0]
+    
+    # Générer un nouveau secret
+    new_secret = ServiceAccount.generate_client_secret()
+    sa.client_secret_hash = get_password_hash(new_secret)
+    
+    await db.commit()
+    
+    # Mettre à jour le fichier de backup
+    save_service_account_credentials(
+        name=app.slug,
+        client_id=sa.client_id,
+        client_secret=new_secret,
+        app_slugs=[app.slug]
+    )
+    
+    host = settings.get_hub_host()
+    logger.info(f"🔄 Secret régénéré pour '{app.slug}' depuis {client_ip}")
+    
+    return AppCredentialsResponse(
+        app_slug=app.slug,
+        app_name=app.name,
+        client_id=sa.client_id,
+        client_secret=new_secret,  # Retourné UNE SEULE FOIS !
+        hub_host=host,
+        hub_api_port=8000,
+        message="⚠️ NOUVEAU SECRET GÉNÉRÉ ! L'ancien secret est maintenant invalide. Stockez ce secret en mémoire, il ne sera plus affiché."
+    )
+
+
 @router.get("/{app_id}", response_model=AppWithUsers)
 async def get_app(
     app_id: int,
@@ -302,12 +597,16 @@ async def update_app(
 @router.delete("/{app_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_app(
     app_id: int,
+    request: Request,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_admin)
+    current_user: User = Depends(get_current_admin)
 ):
     """Supprime une application (admin uniquement)"""
+    # Charger l'app avec ses relations pour pouvoir les nettoyer
     result = await db.execute(
-        select(Application).where(Application.id == app_id)
+        select(Application)
+        .options(selectinload(Application.service_accounts))
+        .where(Application.id == app_id)
     )
     app = result.scalar_one_or_none()
     
@@ -317,8 +616,28 @@ async def delete_app(
             detail="Application non trouvée"
         )
     
+    app_name = app.name
+    app_slug = app.slug
+    
+    # Supprimer les associations avec les service accounts (table intermédiaire)
+    # Les cascades SQL devraient le faire, mais on s'assure explicitement
+    app.service_accounts.clear()
+    
+    # Logger l'action avant la suppression
+    await log_action(
+        db=db,
+        user_id=current_user.id,
+        action="delete_app",
+        target=app_slug,
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent", ""),
+        details=f"Suppression de l'application {app_name} (slug: {app_slug})"
+    )
+    
     await db.delete(app)
     await db.commit()
+    
+    logger.info(f"Application supprimée: {app_name} (slug: {app_slug}) par {current_user.username}")
 
 
 @router.post("/{app_id}/users")
@@ -359,6 +678,7 @@ async def set_app_users(
 @router.get("/docker/scan", response_model=DockerScanResponse)
 async def scan_docker_containers(
     include_stopped: bool = False,
+    show_all: bool = False,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_admin)
 ):
@@ -372,6 +692,7 @@ async def scan_docker_containers(
     
     Args:
         include_stopped: Inclure les conteneurs arrêtés (défaut: False)
+        show_all: Afficher tous les conteneurs, même ceux déjà enregistrés (défaut: False)
     """
     try:
         from app.docker_scanner import docker_scanner
@@ -382,9 +703,22 @@ async def scan_docker_containers(
             error="Module Docker Scanner non disponible"
         )
     
-    # Récupérer les slugs des applications déjà enregistrées
-    result = await db.execute(select(Application.slug))
-    existing_slugs = {row[0] for row in result.fetchall()}
+    # Récupérer les slugs et URLs des applications déjà enregistrées
+    result = await db.execute(select(Application.slug, Application.api_url, Application.frontend_url))
+    existing_slugs = set()
+    existing_ports = set()
+    for row in result.fetchall():
+        existing_slugs.add(row[0])
+        # Extraire les ports depuis api_url et frontend_url (format: http://host:port)
+        from urllib.parse import urlparse
+        for url in [row[1], row[2]]:  # api_url et frontend_url
+            if url:
+                try:
+                    parsed = urlparse(url)
+                    if parsed.port:
+                        existing_ports.add(parsed.port)
+                except Exception:
+                    pass
     
     # Scanner Docker
     try:
@@ -398,13 +732,24 @@ async def scan_docker_containers(
         
         containers = docker_scanner.scan_containers(include_stopped=include_stopped)
 
-        # Exclure les conteneurs déjà associés à une application existante
+        # Filtrer les conteneurs (sauf si show_all=True)
         filtered_containers = []
         for container in containers:
+            # Vérifier par slug (label ou suggéré)
             container_slug = container.labels.get("hub.app_slug") or container.suggested_slug
-            if container_slug in existing_slugs:
-                logger.debug("Conteneur ignoré car déjà lié à une app existante: %s", container_slug)
+            is_registered = container_slug in existing_slugs
+            
+            # Vérifier par ports - si un des ports hôte du conteneur est déjà utilisé par une app
+            container_ports = {p.host_port for p in container.ports if p.host_port}
+            has_registered_port = bool(container_ports & existing_ports)
+            
+            # Si show_all=False, exclure les conteneurs déjà enregistrés
+            if not show_all and (is_registered or has_registered_port):
+                logger.debug("Conteneur filtré (déjà enregistré): %s", container.name)
                 continue
+            
+            # Marquer le conteneur comme déjà enregistré (pour l'affichage)
+            container.is_registered = is_registered or has_registered_port
             filtered_containers.append(container)
 
         containers = filtered_containers
@@ -436,10 +781,11 @@ async def scan_docker_containers(
                 ],
                 suggested_slug=suggested_slug,
                 suggested_name=container.suggested_name,
-                labels=container.labels
+                labels=container.labels,
+                is_registered=getattr(container, 'is_registered', False)
             ))
         
-        logger.info(f"Scan Docker: {len(discovered)} conteneurs découverts par {current_user.username}")
+        logger.info(f"Scan Docker: {len(discovered)} conteneurs découverts par {current_user.username} (show_all={show_all})")
         
         return DockerScanResponse(
             available=True,

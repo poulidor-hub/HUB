@@ -404,8 +404,8 @@ class HubAPI {
     }
 
     // Docker Scanner
-    async scanDockerContainers(includeStopped = false) {
-        return this.request(`/apps/docker/scan?include_stopped=${includeStopped}`);
+    async scanDockerContainers(includeStopped = false, showAll = false) {
+        return this.request(`/apps/docker/scan?include_stopped=${includeStopped}&show_all=${showAll}`);
     }
 }
 
