@@ -735,6 +735,24 @@ class HubAuth {
         window.location.href = \`\${CONFIG.HUB_FRONTEND_URL}?action=logout\`;
     }
     
+    // ═══════════════════════════════════════════════════════════════════════════
+    // ⚠️ IMPORTANT : FERMETURE DES ONGLETS LORS DE LA DÉCONNEXION
+    // ═══════════════════════════════════════════════════════════════════════════
+    //
+    // Lors de la déconnexion d'une application, il est IMPÉRATIF de fermer 
+    // manuellement tous les onglets correspondant à cette application.
+    //
+    // Pourquoi ?
+    // - Le token JWT reste valide côté navigateur jusqu'à son expiration
+    // - Les onglets ouverts conservent le token en mémoire/localStorage
+    // - Un onglet non fermé pourrait continuer à fonctionner avec l'ancien token
+    // - Pour garantir une déconnexion complète, fermez tous les onglets de l'app
+    //
+    // Bonne pratique :
+    // Informez vos utilisateurs de fermer tous les onglets de l'application
+    // après s'être déconnectés pour garantir la sécurité de leur session.
+    // ═══════════════════════════════════════════════════════════════════════════
+    
     /**
      * Vérifie si l'utilisateur est connecté
      */
