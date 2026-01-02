@@ -98,19 +98,31 @@ class DockerScanner:
     def __init__(self):
         self._client = None
         self._available = None
+        self._last_error = None
+    
+    def reset(self):
+        """Réinitialise le client Docker (pour retry après échec)"""
+        self._client = None
+        self._available = None
+        self._last_error = None
     
     @property
     def client(self):
-        """Client Docker (lazy loading)"""
+        """Client Docker (lazy loading avec retry si échec précédent)"""
         if self._client is None:
             try:
                 import docker
                 self._client = docker.from_env()
+                # Test de connexion
+                self._client.ping()
                 self._available = True
+                self._last_error = None
+                logger.info("✅ Docker SDK connecté")
             except Exception as e:
                 logger.warning(f"Docker SDK non disponible: {e}")
                 self._client = False
                 self._available = False
+                self._last_error = str(e)
         return self._client if self._client else None
     
     @property
@@ -119,6 +131,11 @@ class DockerScanner:
         if self._available is None:
             _ = self.client  # Déclenche le chargement
         return self._available
+    
+    @property
+    def last_error(self) -> Optional[str]:
+        """Retourne la dernière erreur de connexion"""
+        return self._last_error
     
     def scan_containers(
         self, 

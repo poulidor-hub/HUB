@@ -1016,6 +1016,49 @@ async def scan_docker_containers(
         )
 
 
+@router.post("/docker/reconnect")
+async def reconnect_docker(
+    current_user: User = Depends(get_current_admin)
+):
+    """
+    Réinitialise la connexion Docker.
+    
+    Utile si la connexion a échoué au démarrage à cause de permissions
+    ou si le socket Docker a été redémarré.
+    
+    ⚠️ Admin uniquement.
+    """
+    try:
+        from app.docker_scanner import docker_scanner
+        
+        # Réinitialiser
+        docker_scanner.reset()
+        
+        # Tenter une nouvelle connexion
+        if docker_scanner.is_available:
+            docker_info = docker_scanner.get_docker_info()
+            logger.info(f"✅ Docker reconnecté par {current_user.username}")
+            return {
+                "success": True,
+                "message": "Docker reconnecté avec succès",
+                "docker_version": docker_info.get("version"),
+                "containers_running": docker_info.get("containers_running", 0)
+            }
+        else:
+            return {
+                "success": False,
+                "message": "Impossible de se connecter à Docker",
+                "error": docker_scanner.last_error
+            }
+    except Exception as e:
+        logger.error(f"Erreur reconnexion Docker: {e}")
+        return {
+            "success": False,
+            "message": "Erreur lors de la reconnexion",
+            "error": str(e)
+        }
+
+
 @router.put("/{app_id}/shared")
 async def set_app_shared(
     app_id: int,
