@@ -5,6 +5,44 @@
 
 ---
 
+## [2.4.0] - 2 janvier 2026
+
+### ⚠️ BREAKING CHANGE
+
+#### Retrait du header X-Client-ID et du mode rétrocompatible
+- **Suppression** du support du header `X-Client-ID` dans les endpoints `/api/apps/me/*`
+- **Suppression** du mode rétrocompatible avec credentials statiques (`CLIENT_ID`/`CLIENT_SECRET` dans `.env`)
+- Utilisation **exclusive** du header `X-Slug` pour l'identification des applications
+- Le `HubClient` n'utilise plus de credentials depuis `.env`, uniquement l'auto-enregistrement
+
+### 📝 Modifications documentation
+
+| Section | Modification |
+|---------|--------------|
+| Version | 2.3.0 → 2.4.0 |
+| Section 2 | Suppression des variables CLIENT_ID/CLIENT_SECRET du .env |
+| Section 3 | Suppression de "Mode rétrocompatible (credentials statiques)" |
+| Section 3 | Mise à jour HubClient pour utiliser X-Slug |
+| Section 10 | Suppression références X-Client-ID, utilisation X-Slug uniquement |
+| Table des matières | Suppression lien vers "Mode rétrocompatible" |
+
+### 📋 Migration requise
+
+Les applications doivent :
+1. **Retirer** `CLIENT_ID` et `CLIENT_SECRET` de leur `.env`
+2. **Utiliser** exclusivement `APP_SLUG` pour l'identification
+3. **Mettre à jour** leur `hub_client.py` avec la nouvelle version
+4. L'auto-enregistrement via `X-Slug` devient le seul mode supporté
+
+### 📋 Checklist pour agents IA
+
+- [ ] Supprimer toute utilisation de `X-Client-ID` header
+- [ ] Remplacer par `X-Slug: <app_slug>` dans tous les appels
+- [ ] Supprimer `CLIENT_ID` et `CLIENT_SECRET` des fichiers `.env`
+- [ ] Mettre à jour le `HubClient` avec la nouvelle version de la doc
+
+---
+
 ## [2.3.0] - 2 janvier 2026
 
 ### ✨ Nouvelles fonctionnalités

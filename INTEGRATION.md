@@ -1,6 +1,6 @@
 # Guide d'Intégration - Hub d'Authentification
 
-> **Version** : 2.3.0  
+> **Version** : 2.4.0  
 > **Dernière mise à jour** : 2 janvier 2026  
 > **Auteur** : Équipe Hub
 
@@ -31,7 +31,6 @@ curl http://hub:8000/api/docs/integration/version
    - [Flux d'auto-enregistrement](#flux-dauto-enregistrement)
    - [Client Python avec auto-enregistrement (`hub_client.py`)](#client-python-avec-auto-enregistrement-hub_clientpy)
    - [Endpoints d'auto-enregistrement](#endpoints-dauto-enregistrement)
-   - [Mode rétrocompatible (credentials statiques)](#mode-rétrocompatible-credentials-statiques)
 
 ### Intégration Backend
 4. [Intégration Backend (FastAPI)](#4-intégration-backend-fastapi)
@@ -171,20 +170,9 @@ HUB_API_PORT=8000
 
 # Port du Frontend Hub (par défaut: 80)
 HUB_FRONTEND_PORT=80
-
-# ══════════════════════════════════════════════════════════════════════════════
-# CREDENTIALS M2M (optionnel - mode rétrocompatible)
-# ══════════════════════════════════════════════════════════════════════════════
-# 
-# ⚠️ NON RECOMMANDÉ : Préférez le mode auto-enregistrement (section 3)
-# Ces variables sont optionnelles si vous utilisez l'auto-enregistrement.
-# Elles sont conservées pour la rétrocompatibilité.
-#
-# CLIENT_ID=sa_xxx
-# CLIENT_SECRET=secret_xxx
 \`\`\`
 
-> 💡 **Nouveau !** Les credentials `CLIENT_ID` et `CLIENT_SECRET` ne sont plus obligatoires dans le `.env`. Votre application peut les récupérer dynamiquement au démarrage via l'auto-enregistrement (voir section 3).
+> 💡 Les credentials sont récupérés **automatiquement** au démarrage via l'auto-enregistrement (voir section 3). Aucune configuration manuelle n'est nécessaire.
 
 ### Fichier \`config.py\`
 
@@ -379,9 +367,9 @@ class HubClient:
         self.hub_host = os.getenv("HUB_HOST", self._detect_hub_host())
         self.hub_port = int(os.getenv("HUB_API_PORT", "8000"))
         
-        # Credentials (depuis .env OU dynamiques)
-        self._client_id = os.getenv("CLIENT_ID")
-        self._client_secret = os.getenv("CLIENT_SECRET")
+        # Credentials (récupérés dynamiquement via auto-enregistrement)
+        self._client_id: Optional[str] = None
+        self._client_secret: Optional[str] = None
         
         # Token cache
         self._token: Optional[str] = None
@@ -416,20 +404,18 @@ class HubClient:
         Auto-enregistre l'application auprès du Hub.
         
         - Si l'app est nouvelle : crée l'app et retourne les credentials
-        - Si l'app existe déjà : retourne un message (pas les credentials)
-        - En cas d'erreur : l'app doit avoir des credentials dans .env
+        - Si l'app existe déjà : régénère automatiquement le secret
         
         Returns:
-            True si l'enregistrement a réussi ou si les credentials sont déjà disponibles
+            True si l'enregistrement a réussi
         """
         if not self.app_slug:
             logger.error("❌ APP_SLUG non défini dans .env - impossible de s'enregistrer")
             return False
         
-        # Si credentials déjà en .env, pas besoin de s'enregistrer
-        if self.has_credentials:
-            logger.info(f"✅ Credentials trouvés dans .env pour '{self.app_slug}'")
-            self._registered = True
+        # Si déjà enregistré avec des credentials valides
+        if self.has_credentials and self._registered:
+            logger.info(f"✅ Déjà enregistré pour '{self.app_slug}'")
             return True
         
         logger.info(f"📝 Auto-enregistrement de '{self.app_slug}' auprès du Hub...")
@@ -484,36 +470,15 @@ class HubClient:
     
     async def regenerate_secret(self) -> bool:
         """
-        Régénère le client_secret auprès du Hub.
+        Régénère le client_secret auprès du Hub via X-Slug.
         
         Utile si :
         - L'application a perdu son secret
         - Rotation de sécurité
-        - Premier démarrage d'une app existante sans credentials en .env
+        - Premier démarrage d'une app existante
         """
-        if not self._client_id:
-            # Essayer de récupérer le client_id depuis l'enregistrement
-            logger.info("🔍 Récupération du client_id...")
-            try:
-                async with httpx.AsyncClient(timeout=10.0) as client:
-                    response = await client.post(
-                        f"{self.hub_url}/api/apps/register",
-                        json={
-                            "slug": self.app_slug,
-                            "api_port": self.api_port,
-                            "frontend_port": int(self.frontend_port) if self.frontend_port else None
-                        }
-                    )
-                    if response.status_code == 200:
-                        data = response.json()
-                        if data.get("credentials"):
-                            self._client_id = data["credentials"].get("client_id")
-            except Exception as e:
-                logger.error(f"❌ Impossible de récupérer le client_id: {e}")
-                return False
-        
-        if not self._client_id:
-            logger.error("❌ Impossible de régénérer le secret sans client_id")
+        if not self.app_slug:
+            logger.error("❌ APP_SLUG non défini - impossible de régénérer le secret")
             return False
         
         logger.info(f"🔄 Régénération du secret pour '{self.app_slug}'...")
@@ -522,13 +487,15 @@ class HubClient:
             async with httpx.AsyncClient(timeout=10.0) as client:
                 response = await client.post(
                     f"{self.hub_url}/api/apps/me/regenerate-secret",
-                    headers={"X-Client-ID": self._client_id}
+                    headers={"X-Slug": self.app_slug}
                 )
                 
                 if response.status_code == 200:
                     data = response.json()
+                    self._client_id = data["client_id"]
                     self._client_secret = data["client_secret"]
                     logger.info(f"✅ Secret régénéré avec succès !")
+                    logger.debug(f"   Client ID: {self._client_id}")
                     logger.debug(f"   Nouveau secret: {self._client_secret[:8]}...")
                     self._registered = True
                     # Invalider le token en cache
@@ -661,8 +628,8 @@ app = FastAPI(lifespan=lifespan)
 | Endpoint | Méthode | Description | Sécurité |
 |----------|---------|-------------|----------|
 | `/api/apps/register` | POST | Auto-enregistrement d'une app | IP Docker uniquement |
-| `/api/apps/me/credentials` | GET | Récupère les infos (sans secret) | IP Docker + X-Client-ID |
-| `/api/apps/me/regenerate-secret` | POST | Régénère le client_secret | IP Docker + X-Client-ID |
+| `/api/apps/me/credentials` | GET | Récupère les infos (sans secret) | IP Docker + X-Slug |
+| `/api/apps/me/regenerate-secret` | POST | Régénère le client_secret | IP Docker + X-Slug |
 
 #### POST /api/apps/register
 
@@ -703,7 +670,7 @@ app = FastAPI(lifespan=lifespan)
 
 #### POST /api/apps/me/regenerate-secret
 
-**Headers requis :** `X-Client-ID: sa_abc123...`
+**Headers requis :** `X-Slug: mon-app`
 
 **Réponse :**
 \`\`\`json
@@ -717,18 +684,6 @@ app = FastAPI(lifespan=lifespan)
   "message": "⚠️ NOUVEAU SECRET GÉNÉRÉ ! L'ancien secret est maintenant invalide."
 }
 \`\`\`
-
-### Mode rétrocompatible (credentials statiques)
-
-Pour les applications existantes ou si vous préférez le mode manuel, vous pouvez toujours définir les credentials dans le `.env` :
-
-\`\`\`env
-# Mode rétrocompatible - credentials statiques
-CLIENT_ID=<VOTRE_CLIENT_ID>
-CLIENT_SECRET=<VOTRE_CLIENT_SECRET>
-\`\`\`
-
-Le `HubClient` détecte automatiquement si des credentials sont présents dans `.env` et les utilise sans appeler l'auto-enregistrement.
 
 ---
 
@@ -746,24 +701,130 @@ httpx>=0.25.0
 
 ### Étape 2 : Récupérer la clé publique du Hub
 
-La clé publique peut être :
-- Copiée manuellement dans un fichier \`jwt_public_key.pem\`
-- Récupérée dynamiquement depuis le Hub
+> 🔑 **À chaque démarrage**, votre application doit récupérer la clé publique depuis le Hub.
+> Cela garantit que vous utilisez toujours la clé actuelle, même après une rotation.
 
-**Option A : Fichier statique** (recommandé en production)
+#### Méthodes de récupération
 
-Créez \`jwt_public_key.pem\` en récupérant la clé depuis :
+| Méthode | Endpoint | Format | Recommandation |
+|---------|----------|--------|----------------|
+| **JWKS (standard OIDC)** | `GET /api/auth/.well-known/jwks.json` | JSON Web Key Set | ✅ **Recommandé** |
+| **PEM brut** | `GET /api/auth/public-key` | PEM string | Compatible legacy |
+
+#### Option A : Via JWKS (recommandé)
+
+Le endpoint JWKS suit le standard OIDC et retourne la clé au format JSON Web Key :
+
+\`\`\`bash
+# Récupérer la clé publique au format JWKS
+curl http://[IP_HUB]:8000/api/auth/.well-known/jwks.json
 \`\`\`
-GET http://[IP_HUB]:8000/api/auth/public-key
+
+**Réponse :**
+\`\`\`json
+{
+  "keys": [{
+    "kty": "RSA",
+    "use": "sig",
+    "alg": "RS256",
+    "kid": "hub-jwt-key-1",
+    "n": "...",
+    "e": "AQAB"
+  }]
+}
 \`\`\`
 
-**Option B : Récupération dynamique** (pour développement)
+**Implémentation Python avec récupération automatique au démarrage :**
+
+\`\`\`python
+"""
+hub_auth.py - Module d'authentification avec récupération dynamique de la clé
+"""
+import jwt
+import httpx
+import logging
+from jwt import PyJWKClient
+from functools import lru_cache
+from config import get_settings
+
+logger = logging.getLogger(__name__)
+settings = get_settings()
+
+# Client JWKS pour récupérer automatiquement la clé publique
+_jwks_client: PyJWKClient | None = None
+
+
+def get_jwks_client() -> PyJWKClient:
+    """
+    Retourne le client JWKS (initialisé au premier appel).
+    La clé publique est récupérée automatiquement depuis le Hub.
+    """
+    global _jwks_client
+    if _jwks_client is None:
+        jwks_url = f"{settings.hub_api_url}/api/auth/.well-known/jwks.json"
+        logger.info(f"🔑 Récupération de la clé publique depuis {jwks_url}")
+        _jwks_client = PyJWKClient(jwks_url, cache_keys=True, lifespan=3600)
+        logger.info("✅ Clé publique JWT chargée avec succès")
+    return _jwks_client
+
+
+def verify_hub_token(token: str) -> dict:
+    """
+    Vérifie un token JWT en récupérant dynamiquement la clé depuis le Hub.
+    """
+    try:
+        jwks_client = get_jwks_client()
+        signing_key = jwks_client.get_signing_key_from_jwt(token)
+        
+        payload = jwt.decode(
+            token,
+            signing_key.key,
+            algorithms=["RS256"]
+        )
+        return payload
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(
+            status_code=401,
+            detail="Token expiré - Reconnectez-vous via le Hub"
+        )
+    except jwt.InvalidTokenError as e:
+        raise HTTPException(
+            status_code=401,
+            detail=f"Token invalide: {str(e)}"
+        )
+
+
+# Initialisation au démarrage (dans main.py lifespan)
+async def init_auth():
+    """Appeler au démarrage pour pré-charger la clé publique"""
+    get_jwks_client()
+\`\`\`
+
+**Intégration dans le lifespan de votre application :**
+
+\`\`\`python
+# main.py
+from contextlib import asynccontextmanager
+from fastapi import FastAPI
+from hub_auth import init_auth
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Récupérer la clé publique JWT au démarrage
+    await init_auth()
+    yield
+
+app = FastAPI(lifespan=lifespan)
+\`\`\`
+
+#### Option B : Via endpoint PEM (legacy)
 
 \`\`\`python
 import httpx
 from config import get_settings
 
 async def fetch_public_key() -> str:
+    """Récupère la clé publique PEM au démarrage"""
     settings = get_settings()
     async with httpx.AsyncClient() as client:
         response = await client.get(f"{settings.hub_api_url}/api/auth/public-key")
@@ -1878,7 +1939,8 @@ if (role === 'viewer') {
 | \`/api/auth/token/introspect\` | POST | Vérifier si un token est valide |
 | \`/api/auth/logout\` | POST | Déconnecter et révoquer le token |
 | \`/api/auth/me\` | GET | Infos utilisateur connecté |
-| \`/api/auth/public-key\` | GET | Clé publique RSA |
+| \`/api/auth/public-key\` | GET | Clé publique RSA (format PEM) |
+| \`/api/auth/.well-known/jwks.json\` | GET | 🆕 Clé publique RSA (format JWKS - standard OIDC) |
 | \`/api/auth/hub-host\` | GET | IP/hostname du Hub |
 
 ### Auto-enregistrement (🆕 v2.0)
@@ -1886,30 +1948,26 @@ if (role === 'viewer') {
 | Endpoint | Méthode | Description | Sécurité |
 |----------|---------|-------------|----------|
 | \`/api/apps/register\` | POST | Auto-enregistrement d'une application | IP Docker uniquement |
-| \`/api/apps/me/credentials\` | GET | Récupère les credentials (sans secret) | IP Docker + X-Client-ID ou X-Slug |
-| \`/api/apps/me/regenerate-secret\` | POST | Régénère le client_secret | IP Docker + X-Client-ID ou X-Slug |
+| \`/api/apps/me/credentials\` | GET | Récupère les credentials (sans secret) | IP Docker + X-Slug |
+| \`/api/apps/me/regenerate-secret\` | POST | Régénère le client_secret | IP Docker + X-Slug |
 
 > 💡 Ces endpoints sont accessibles **uniquement depuis les réseaux Docker** (172.17.x.x - 172.31.x.x, 10.0.x.x, 192.168.x.x).
 
-#### Headers d'identification (🆕 v2.3)
+#### Header d'identification
 
-Les endpoints `/me/credentials` et `/me/regenerate-secret` acceptent deux méthodes d'identification :
+Les endpoints `/me/credentials` et `/me/regenerate-secret` utilisent le header `X-Slug` pour identifier l'application :
 
 | Header | Description | Exemple |
 |--------|-------------|---------|
-| `X-Client-ID` | Identifiant du service account | `X-Client-ID: sa_abc123...` |
 | `X-Slug` | Slug de l'application | `X-Slug: mon-app` |
 
 **Exemples :**
 
 \`\`\`bash
-# Par client_id (méthode classique)
-curl -H "X-Client-ID: sa_abc123..." http://hub:8000/api/apps/me/credentials
-
-# Par slug (nouveau - plus simple)
+# Récupérer les credentials
 curl -H "X-Slug: mon-app" http://hub:8000/api/apps/me/credentials
 
-# Régénérer le secret par slug
+# Régénérer le secret
 curl -X POST -H "X-Slug: mon-app" http://hub:8000/api/apps/me/regenerate-secret
 \`\`\`
 
