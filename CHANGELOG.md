@@ -5,6 +5,36 @@
 
 ---
 
+## [2.3.0] - 2 janvier 2026
+
+### ✨ Nouvelles fonctionnalités
+
+#### Support du header X-Slug
+- Les endpoints `/api/apps/me/credentials` et `/api/apps/me/regenerate-secret` acceptent désormais `X-Slug` en plus de `X-Client-ID`
+- Permet aux applications de s'identifier par leur slug au lieu de leur client_id
+- Plus simple pour les applications qui ne connaissent pas encore leur client_id
+
+### 📝 Modifications documentation
+
+| Section | Modification |
+|---------|--------------|
+| Version | 2.2.0 → 2.3.0 |
+| Section 10 | Ajout sous-section "Headers d'identification" |
+
+### 🔧 Modifications code
+
+| Fichier | Modification |
+|---------|--------------|
+| `hub/app/routes/apps.py` | Support X-Slug dans get_app_credentials |
+| `hub/app/routes/apps.py` | Support X-Slug dans regenerate_app_secret |
+
+### 📋 Checklist pour agents IA
+
+- [ ] Possibilité d'utiliser `X-Slug: mon-app` au lieu de `X-Client-ID`
+- [ ] Utile pour récupérer/régénérer credentials quand client_id inconnu
+
+---
+
 ## [2.2.0] - 2 janvier 2026
 
 ### ✨ Nouvelles fonctionnalités

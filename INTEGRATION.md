@@ -1,6 +1,6 @@
 # Guide d'Intégration - Hub d'Authentification
 
-> **Version** : 2.2.0  
+> **Version** : 2.3.0  
 > **Dernière mise à jour** : 2 janvier 2026  
 > **Auteur** : Équipe Hub
 
@@ -1886,10 +1886,32 @@ if (role === 'viewer') {
 | Endpoint | Méthode | Description | Sécurité |
 |----------|---------|-------------|----------|
 | \`/api/apps/register\` | POST | Auto-enregistrement d'une application | IP Docker uniquement |
-| \`/api/apps/me/credentials\` | GET | Récupère les credentials (sans secret) | IP Docker + X-Client-ID |
-| \`/api/apps/me/regenerate-secret\` | POST | Régénère le client_secret | IP Docker + X-Client-ID |
+| \`/api/apps/me/credentials\` | GET | Récupère les credentials (sans secret) | IP Docker + X-Client-ID ou X-Slug |
+| \`/api/apps/me/regenerate-secret\` | POST | Régénère le client_secret | IP Docker + X-Client-ID ou X-Slug |
 
 > 💡 Ces endpoints sont accessibles **uniquement depuis les réseaux Docker** (172.17.x.x - 172.31.x.x, 10.0.x.x, 192.168.x.x).
+
+#### Headers d'identification (🆕 v2.3)
+
+Les endpoints `/me/credentials` et `/me/regenerate-secret` acceptent deux méthodes d'identification :
+
+| Header | Description | Exemple |
+|--------|-------------|---------|
+| `X-Client-ID` | Identifiant du service account | `X-Client-ID: sa_abc123...` |
+| `X-Slug` | Slug de l'application | `X-Slug: mon-app` |
+
+**Exemples :**
+
+\`\`\`bash
+# Par client_id (méthode classique)
+curl -H "X-Client-ID: sa_abc123..." http://hub:8000/api/apps/me/credentials
+
+# Par slug (nouveau - plus simple)
+curl -H "X-Slug: mon-app" http://hub:8000/api/apps/me/credentials
+
+# Régénérer le secret par slug
+curl -X POST -H "X-Slug: mon-app" http://hub:8000/api/apps/me/regenerate-secret
+\`\`\`
 
 ### Documentation et Changelog (🆕 v2.2)
 

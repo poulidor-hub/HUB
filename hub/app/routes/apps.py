@@ -553,8 +553,9 @@ async def get_app_credentials(
     ⚠️ Accessible UNIQUEMENT depuis les réseaux Docker (IP whitelist).
     ⚠️ Le client_secret n'est PAS retourné (sécurité).
     
-    L'application doit fournir son client_id dans le header X-Client-ID
-    pour s'identifier.
+    L'application doit fournir soit :
+    - `X-Client-ID` : son client_id (ex: sa_xxxx...)
+    - `X-Slug` : son slug d'application (ex: mon-app)
     """
     client_ip = request.client.host if request.client else None
     
@@ -565,19 +566,45 @@ async def get_app_credentials(
         )
     
     client_id = request.headers.get("X-Client-ID")
-    if not client_id:
+    app_slug = request.headers.get("X-Slug")
+    
+    if not client_id and not app_slug:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Header X-Client-ID requis"
+            detail="Header X-Client-ID ou X-Slug requis"
         )
     
-    # Trouver le service account
-    result = await db.execute(
-        select(ServiceAccount)
-        .options(selectinload(ServiceAccount.applications))
-        .where(ServiceAccount.client_id == client_id)
-    )
-    sa = result.scalar_one_or_none()
+    # Trouver le service account (par client_id ou par slug)
+    if client_id:
+        result = await db.execute(
+            select(ServiceAccount)
+            .options(selectinload(ServiceAccount.applications))
+            .where(ServiceAccount.client_id == client_id)
+        )
+        sa = result.scalar_one_or_none()
+    else:
+        # Recherche par slug de l'application via la table d'association
+        from app.models import service_account_app_access
+        
+        result = await db.execute(
+            select(ServiceAccount)
+            .options(selectinload(ServiceAccount.applications))
+            .join(service_account_app_access, ServiceAccount.id == service_account_app_access.c.service_account_id)
+            .join(Application, Application.id == service_account_app_access.c.app_id)
+            .where(Application.slug == app_slug)
+        )
+        sa = result.scalar_one_or_none()
+        
+        if not sa:
+            # Vérifier si l'app existe mais n'a pas de service account
+            app_result = await db.execute(
+                select(Application).where(Application.slug == app_slug)
+            )
+            if not app_result.scalar_one_or_none():
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Application '{app_slug}' non trouvée"
+                )
     
     if not sa:
         raise HTTPException(
@@ -616,7 +643,10 @@ async def regenerate_app_secret(
     ⚠️ Accessible UNIQUEMENT depuis les réseaux Docker (IP whitelist).
     ⚠️ L'ancien secret sera IMMÉDIATEMENT invalidé !
     
-    L'application doit fournir son client_id dans le header X-Client-ID.
+    L'application doit fournir soit :
+    - `X-Client-ID` : son client_id (ex: sa_xxxx...)
+    - `X-Slug` : son slug d'application (ex: mon-app)
+    
     Le nouveau secret est retourné UNE SEULE FOIS dans cette réponse.
     """
     client_ip = request.client.host if request.client else None
@@ -628,19 +658,45 @@ async def regenerate_app_secret(
         )
     
     client_id = request.headers.get("X-Client-ID")
-    if not client_id:
+    app_slug = request.headers.get("X-Slug")
+    
+    if not client_id and not app_slug:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Header X-Client-ID requis"
+            detail="Header X-Client-ID ou X-Slug requis"
         )
     
-    # Trouver le service account
-    result = await db.execute(
-        select(ServiceAccount)
-        .options(selectinload(ServiceAccount.applications))
-        .where(ServiceAccount.client_id == client_id)
-    )
-    sa = result.scalar_one_or_none()
+    # Trouver le service account (par client_id ou par slug)
+    if client_id:
+        result = await db.execute(
+            select(ServiceAccount)
+            .options(selectinload(ServiceAccount.applications))
+            .where(ServiceAccount.client_id == client_id)
+        )
+        sa = result.scalar_one_or_none()
+    else:
+        # Recherche par slug de l'application via la table d'association
+        from app.models import service_account_app_access
+        
+        result = await db.execute(
+            select(ServiceAccount)
+            .options(selectinload(ServiceAccount.applications))
+            .join(service_account_app_access, ServiceAccount.id == service_account_app_access.c.service_account_id)
+            .join(Application, Application.id == service_account_app_access.c.app_id)
+            .where(Application.slug == app_slug)
+        )
+        sa = result.scalar_one_or_none()
+        
+        if not sa:
+            # Vérifier si l'app existe mais n'a pas de service account
+            app_result = await db.execute(
+                select(Application).where(Application.slug == app_slug)
+            )
+            if not app_result.scalar_one_or_none():
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Application '{app_slug}' non trouvée"
+                )
     
     if not sa:
         raise HTTPException(
