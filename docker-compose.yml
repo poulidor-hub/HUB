@@ -48,9 +48,12 @@ services:
       - ./CHANGELOG.md:/code/CHANGELOG.md:ro
       # Socket Docker pour la détection automatique des conteneurs (lecture seule)
       - /var/run/docker.sock:/var/run/docker.sock:ro
-    # Groupe docker pour accéder au socket (GID typique: 986 ou 999)
+    # Groupe docker pour accéder au socket
+    # ⚠️ Le GID varie selon les systèmes : 986 (Arch), 999 (Debian), 998, etc.
+    # Vérifiez avec: getent group docker
+    # Définissez DOCKER_GID dans .env ou utilisez: DOCKER_GID=$(getent group docker | cut -d: -f3)
     group_add:
-      - "986"
+      - "${DOCKER_GID:-986}"
     depends_on:
       db:
         condition: service_healthy
