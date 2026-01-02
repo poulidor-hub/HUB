@@ -130,6 +130,16 @@ async def create_service_account(
         sa.applications = list(apps)
         app_slugs = [app.slug for app in apps]
     
+    # Ajouter automatiquement les applications partagées (is_shared_service=True)
+    shared_result = await db.execute(
+        select(Application).where(Application.is_shared_service == True)
+    )
+    shared_apps = shared_result.scalars().all()
+    for shared_app in shared_apps:
+        if shared_app not in sa.applications:
+            sa.applications.append(shared_app)
+            app_slugs.append(shared_app.slug)
+    
     db.add(sa)
     await db.commit()
     await db.refresh(sa)

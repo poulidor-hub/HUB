@@ -229,12 +229,24 @@ async def create_app(
         service_account = result.scalar_one()
         service_account.applications.append(app)
         
+        # Ajouter automatiquement les applications partagées (is_shared_service=True)
+        shared_result = await db.execute(
+            select(Application).where(Application.is_shared_service == True)
+        )
+        shared_apps = shared_result.scalars().all()
+        shared_slugs = []
+        for shared_app in shared_apps:
+            if shared_app not in service_account.applications:
+                service_account.applications.append(shared_app)
+                shared_slugs.append(shared_app.slug)
+        
         # Sauvegarder les credentials automatiquement
+        all_app_slugs = [app_data.slug] + shared_slugs
         secrets_file = save_service_account_credentials(
             name=app_data.slug,
             client_id=client_id,
             client_secret=client_secret,
-            app_slugs=[app_data.slug]
+            app_slugs=all_app_slugs
         )
         
         service_account_info = {
@@ -373,15 +385,27 @@ async def register_app(
     service_account = result.scalar_one()
     service_account.applications.append(app)
     
+    # Ajouter automatiquement les applications partagées (is_shared_service=True)
+    shared_result = await db.execute(
+        select(Application).where(Application.is_shared_service == True)
+    )
+    shared_apps = shared_result.scalars().all()
+    shared_slugs = []
+    for shared_app in shared_apps:
+        if shared_app not in service_account.applications:
+            service_account.applications.append(shared_app)
+            shared_slugs.append(shared_app.slug)
+    
     await db.commit()
     await db.refresh(app)
     
     # Sauvegarder les credentials dans le fichier (backup)
+    all_app_slugs = [app_data.slug] + shared_slugs
     save_service_account_credentials(
         name=app_data.slug,
         client_id=client_id,
         client_secret=client_secret,
-        app_slugs=[app_data.slug]
+        app_slugs=all_app_slugs
     )
     
     logger.info(f"✅ Nouvelle application '{app_data.slug}' auto-enregistrée depuis {client_ip}")
@@ -479,15 +503,27 @@ async def admin_auto_register_app(
     service_account = result.scalar_one()
     service_account.applications.append(app)
     
+    # Ajouter automatiquement les applications partagées (is_shared_service=True)
+    shared_result = await db.execute(
+        select(Application).where(Application.is_shared_service == True)
+    )
+    shared_apps = shared_result.scalars().all()
+    shared_slugs = []
+    for shared_app in shared_apps:
+        if shared_app not in service_account.applications:
+            service_account.applications.append(shared_app)
+            shared_slugs.append(shared_app.slug)
+    
     await db.commit()
     await db.refresh(app)
     
     # Sauvegarder les credentials dans le fichier
+    all_app_slugs = [app_data.slug] + shared_slugs
     secrets_file = save_service_account_credentials(
         name=app_data.slug,
         client_id=client_id,
         client_secret=client_secret,
-        app_slugs=[app_data.slug]
+        app_slugs=all_app_slugs
     )
     
     logger.info(f"✅ Application '{app_data.slug}' pré-enregistrée par admin, credentials sauvés dans {secrets_file}")
@@ -922,3 +958,43 @@ async def scan_docker_containers(
             available=False,
             error=str(e)
         )
+
+
+@router.put("/{app_id}/shared")
+async def set_app_shared(
+    app_id: int,
+    is_shared: bool,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_admin),
+):
+    """
+    Marque une application comme service partagé (admin uniquement).
+    
+    Si is_shared=True, cette application sera automatiquement accessible
+    par tous les nouveaux service accounts créés.
+    
+    ⚠️ Les service accounts existants ne sont pas modifiés.
+    """
+    result = await db.execute(
+        select(Application).where(Application.id == app_id)
+    )
+    app = result.scalar_one_or_none()
+    
+    if not app:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Application non trouvée"
+        )
+    
+    app.is_shared_service = is_shared
+    db.add(app)
+    await db.commit()
+    
+    logger.info(f"🔧 Application '{app.slug}' is_shared_service={is_shared} par {current_user.username}")
+    
+    return {
+        "message": f"Application '{app.slug}' mise à jour",
+        "app_id": app.id,
+        "slug": app.slug,
+        "is_shared_service": is_shared
+    }

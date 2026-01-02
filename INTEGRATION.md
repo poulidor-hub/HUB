@@ -1,10 +1,14 @@
 # Guide d'Intégration - Hub d'Authentification
 
-> **Version** : 2.0.0  
-> **Dernière mise à jour** : 1er janvier 2026  
+> **Version** : 2.2.0  
+> **Dernière mise à jour** : 2 janvier 2026  
 > **Auteur** : Équipe Hub
 
 Ce document décrit comment intégrer vos applications avec le Hub d'authentification centralisé.
+
+# 1. Vérifier la version actuelle du Hub
+curl http://hub:8000/api/docs/integration/version
+
 
 ---
 
@@ -49,7 +53,13 @@ Ce document décrit comment intégrer vos applications avec le Hub d'authentific
    - [Création automatique du Service Account](#création-automatique-du-service-account)
    - [Exemple Python - Client M2M](#exemple-python---client-m2m)
 
-7. [Communication inter-API](#7-communication-inter-api)
+7. [🆕 Services Partagés (APIs de données)](#7-services-partagés-apis-de-données)
+   - [Concept](#concept)
+   - [Configuration d'une API comme service partagé](#configuration-dune-api-comme-service-partagé)
+   - [Accès automatique pour les nouvelles applications](#accès-automatique-pour-les-nouvelles-applications)
+   - [APIs partagées disponibles](#apis-partagées-disponibles)
+
+8. [Communication inter-API](#8-communication-inter-api)
    - [Architecture](#architecture)
    - [Configurer l'IP du Hub](#configurer-lip-du-hub)
    - [Créer un Service Account](#créer-un-service-account)
@@ -57,31 +67,32 @@ Ce document décrit comment intégrer vos applications avec le Hub d'authentific
    - [Checklist d'intégration inter-API](#checklist-dintégration-inter-api)
 
 ### Sécurité et rôles
-8. [Gestion des rôles](#8-gestion-des-rôles)
+9. [Gestion des rôles](#9-gestion-des-rôles)
    - [Structure du token JWT](#structure-du-token-jwt)
    - [Rôles disponibles](#rôles-disponibles)
    - [Vérification des rôles côté backend](#vérification-des-rôles-côté-backend)
    - [Vérification des rôles côté frontend](#vérification-des-rôles-côté-frontend)
 
 ### Référence API
-9. [Endpoints du Hub](#9-endpoints-du-hub)
-   - [Authentification](#authentification)
-   - [Auto-enregistrement](#auto-enregistrement)
-   - [Durée des tokens](#durée-des-tokens-géré-par-le-hub-uniquement)
-   - [Format des réponses](#format-des-réponses)
+10. [Endpoints du Hub](#10-endpoints-du-hub)
+    - [Authentification](#authentification)
+    - [Auto-enregistrement](#auto-enregistrement)
+    - [Documentation et Changelog](#documentation-et-changelog)
+    - [Durée des tokens](#durée-des-tokens-géré-par-le-hub-uniquement)
+    - [Format des réponses](#format-des-réponses)
 
 ### Déploiement
-10. [Configuration du Dockerfile](#10-configuration-du-dockerfile)
+11. [Configuration du Dockerfile](#11-configuration-du-dockerfile)
     - [Fichiers requis](#fichiers-requis)
     - [Exemple de Dockerfile](#exemple-de-dockerfile)
     - [Avec Docker Compose (volumes)](#avec-docker-compose-volumes)
 
 ### Annexes
-11. [Résumé](#11-résumé)
+12. [Résumé](#12-résumé)
     - [Ce que l'application DOIT faire](#ce-que-lapplication-doit-faire)
     - [Ce que l'application NE DOIT PAS faire](#ce-que-lapplication-ne-doit-pas-faire)
 
-12. [Contact Hub](#12-contact-hub)
+13. [Contact Hub](#13-contact-hub)
 
 ---
 
@@ -1427,7 +1438,120 @@ employees = await m2m.call_api(f"http://{settings.hub_ip}:18087/api/employees")
 
 ---
 
-## 7. Communication inter-API
+## 7. Services Partagés (APIs de données)
+
+> 🆕 **Nouveauté v2.1** : Les applications peuvent désormais accéder automatiquement aux APIs de données partagées (ex: API Salariés) sans configuration manuelle des droits d'accès.
+
+### Concept
+
+Certaines APIs fournissent des données communes à toutes les applications de l'entreprise (données RH, référentiels, etc.). Plutôt que de configurer manuellement les droits d'accès pour chaque nouvelle application, le Hub peut **automatiquement** accorder l'accès à ces APIs partagées.
+
+```
+┌─────────────────┐     1. Auto-enregistrement        ┌─────────────┐
+│   Nouvelle App  │ ─────────────────────────────────►│     Hub     │
+│   (démarrage)   │     { slug, api_port, ... }       │             │
+└─────────────────┘                                    └─────────────┘
+                                                              │
+                          2. Création app + service account   │
+                             + liens AUTOMATIQUES vers        │
+                             APIs partagées (is_shared_service)│
+                                                              ▼
+┌─────────────────┐     3. Réponse avec credentials   ┌─────────────┐
+│   Nouvelle App  │ ◄─────────────────────────────────│     Hub     │
+│                 │     + accès aux APIs partagées    │             │
+└─────────────────┘                                    └─────────────┘
+        │
+        │ 4. Peut immédiatement appeler les APIs partagées !
+        ▼
+┌─────────────────┐     5. Appel M2M avec token       ┌─────────────┐
+│   Nouvelle App  │ ─────────────────────────────────►│ API Salariés│
+│                 │     Authorization: Bearer <token> │ (partagée)  │
+└─────────────────┘                                    └─────────────┘
+```
+
+### Configuration d'une API comme service partagé
+
+#### 1. Modèle de données
+
+Le modèle `Application` inclut un champ `is_shared_service` :
+
+```python
+class Application(SQLModel, table=True):
+    __tablename__ = "applications"
+    
+    # ... champs existants ...
+    
+    is_shared_service: bool = Field(
+        default=False,
+        description="Si True, cette API est accessible par tous les service accounts (API de données partagées)"
+    )
+```
+
+#### 2. Marquer une API comme partagée
+
+```sql
+-- Via SQL directement
+UPDATE applications SET is_shared_service = TRUE WHERE slug = 'salarie';
+
+-- Ou via l'API Hub (admin requis)
+PATCH /api/apps/{app_id}
+{ "is_shared_service": true }
+```
+
+### Accès automatique pour les nouvelles applications
+
+Lors de la création d'un service account (via auto-enregistrement ou création manuelle), le Hub ajoute **automatiquement** les droits d'accès aux APIs partagées :
+
+```python
+# Logique interne du Hub lors de la création d'un service account
+from sqlmodel import select
+
+# Récupérer toutes les apps partagées
+shared_apps = session.exec(
+    select(Application).where(Application.is_shared_service == True)
+).all()
+
+# Les ajouter aux autorisations du service account
+for shared_app in shared_apps:
+    if shared_app.id != app.id:  # Ne pas ajouter l'app elle-même
+        access = ServiceAccountAppAccess(
+            service_account_id=service_account.id,
+            app_id=shared_app.id
+        )
+        session.add(access)
+
+session.commit()
+```
+
+### APIs partagées disponibles
+
+| Slug | Nom | Description |
+|------|-----|-------------|
+| `salarie` | API Salariés | Données RH des employés |
+
+> 💡 Pour ajouter une nouvelle API partagée, utilisez la commande SQL ci-dessus ou l'API d'administration.
+
+### Exemple d'utilisation
+
+Une fois votre application enregistrée, elle peut **immédiatement** appeler les APIs partagées :
+
+```python
+from hub_client import hub_client
+
+# Au démarrage de l'app
+await hub_client.register()
+
+# L'API Salariés est automatiquement accessible !
+response = await hub_client.call_api(
+    "GET",
+    "http://192.0.2.11:18087/api/employees"
+)
+employees = response.json()
+```
+
+---
+
+## 8. Communication inter-API
 
 Cette section détaille comment vos applications peuvent communiquer entre elles via le Hub.
 
@@ -1663,7 +1787,7 @@ networks:
 
 ---
 
-## 8. Gestion des rôles
+## 9. Gestion des rôles
 
 ### Structure du token JWT
 
@@ -1743,7 +1867,7 @@ if (role === 'viewer') {
 
 ---
 
-## 9. Endpoints du Hub
+## 10. Endpoints du Hub
 
 ### Authentification
 
@@ -1766,6 +1890,72 @@ if (role === 'viewer') {
 | \`/api/apps/me/regenerate-secret\` | POST | Régénère le client_secret | IP Docker + X-Client-ID |
 
 > 💡 Ces endpoints sont accessibles **uniquement depuis les réseaux Docker** (172.17.x.x - 172.31.x.x, 10.0.x.x, 192.168.x.x).
+
+### Documentation et Changelog (🆕 v2.2)
+
+Ces endpoints permettent aux agents IA et aux développeurs de consulter la documentation et de suivre les modifications.
+
+#### Documentation d'intégration
+
+| Endpoint | Méthode | Description |
+|----------|---------|-------------|
+| \`/api/docs/integration\` | GET | Documentation complète (Markdown) |
+| \`/api/docs/integration?section=X\` | GET | Section spécifique (numéro ou alias) |
+| \`/api/docs/integration/sections\` | GET | Liste JSON de toutes les sections |
+| \`/api/docs/integration/shortcuts\` | GET | Guide ASCII des raccourcis |
+| \`/api/docs/integration/version\` | GET | Version et métadonnées |
+
+**Aliases disponibles :** \`principes\`, \`config\`, \`auto-register\`, \`backend\`, \`frontend\`, \`m2m\`, \`shared\`, \`inter-api\`, \`roles\`, \`endpoints\`, \`docker\`, \`resume\`, \`contact\`
+
+#### Changelog (historique des modifications)
+
+| Endpoint | Méthode | Description |
+|----------|---------|-------------|
+| \`/api/docs/changelog\` | GET | Changelog complet |
+| \`/api/docs/changelog?since=X.Y.Z\` | GET | Changements depuis une version |
+| \`/api/docs/changelog?latest=true\` | GET | Dernière version uniquement |
+| \`/api/docs/changelog?format=json\` | GET | Format JSON structuré |
+| \`/api/docs/changelog/versions\` | GET | Liste des versions disponibles |
+| \`/api/docs/changelog/diff?from_version=X.Y.Z\` | GET | Différences entre versions |
+
+**Exemples d'utilisation pour agents IA :**
+
+\`\`\`bash
+# Quelle est la version actuelle ?
+curl http://hub:8000/api/docs/integration/version
+
+# Quels changements depuis ma version 2.0.0 ?
+curl "http://hub:8000/api/docs/changelog?since=2.0.0"
+
+# Voir le diff détaillé avec checklist
+curl "http://hub:8000/api/docs/changelog/diff?from_version=2.0.0"
+
+# Format JSON pour parsing automatique
+curl "http://hub:8000/api/docs/changelog?format=json"
+\`\`\`
+
+**Réponse du diff (exemple) :**
+
+\`\`\`json
+{
+  "from_version": "2.0.0",
+  "to_version": "2.2.0",
+  "versions_included": ["2.2.0", "2.1.0"],
+  "changes_count": 15,
+  "summary": {
+    "new_features": 5,
+    "doc_changes": 3,
+    "code_changes": 4,
+    "breaking_changes": 0,
+    "checklist_items": 3
+  },
+  "action_required": true,
+  "changes": {
+    "features": ["[2.1.0] Services Partagés M2M", ...],
+    "checklist": ["[2.1.0] Mettre à jour la numérotation des sections", ...]
+  }
+}
+\`\`\`
 
 ### Durée des tokens (géré par le Hub uniquement)
 
@@ -1798,7 +1988,7 @@ if (role === 'viewer') {
 
 ---
 
-## 10. Configuration du Dockerfile
+## 11. Configuration du Dockerfile
 
 > **IMPORTANT** : Le Dockerfile de votre application doit copier les fichiers nécessaires à l'authentification !
 
@@ -1862,7 +2052,7 @@ cp /chemin/vers/HUB/secrets/jwt_public_key.pem ./secrets/
 
 ---
 
-## 11. Résumé
+## 12. Résumé
 
 ### Ce que l'application DOIT faire
 
@@ -1871,6 +2061,7 @@ cp /chemin/vers/HUB/secrets/jwt_public_key.pem ./secrets/
 ✅ Rediriger vers le Hub si token expiré (401)  
 ✅ Utiliser des IP (pas localhost) pour les URLs  
 ✅ Stocker les préférences UI localement si besoin  
+✅ Utiliser l'auto-enregistrement pour accéder automatiquement aux APIs partagées  
 
 ### Ce que l'application NE DOIT PAS faire
 
@@ -1883,7 +2074,7 @@ cp /chemin/vers/HUB/secrets/jwt_public_key.pem ./secrets/
 
 ---
 
-## 12. Contact Hub
+## 13. Contact Hub
 
 - **URL Hub API** : \`http://[IP_SERVEUR]:8000\`
 - **URL Hub Frontend** : \`http://[IP_SERVEUR]:80\`

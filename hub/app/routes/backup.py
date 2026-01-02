@@ -84,6 +84,7 @@ async def export_environment(
             callback_url=app.callback_url,
             is_active=app.is_active,
             requires_auth=app.requires_auth,
+            is_shared_service=app.is_shared_service,
             created_at=app.created_at,
             available_roles=[
                 AppRoleExport(name=role.name, description=role.description)
@@ -220,6 +221,7 @@ async def import_environment(
                     existing_app.callback_url = app_data.callback_url
                     existing_app.is_active = app_data.is_active
                     existing_app.requires_auth = app_data.requires_auth
+                    existing_app.is_shared_service = app_data.is_shared_service
                     result.apps_updated += 1
                     app_id_map[app_data.slug] = existing_app.id
             else:
@@ -234,7 +236,8 @@ async def import_environment(
                     frontend_url=app_data.frontend_url,
                     callback_url=app_data.callback_url,
                     is_active=app_data.is_active,
-                    requires_auth=app_data.requires_auth
+                    requires_auth=app_data.requires_auth,
+                    is_shared_service=app_data.is_shared_service
                 )
                 db.add(new_app)
                 await db.flush()

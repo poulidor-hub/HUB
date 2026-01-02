@@ -102,6 +102,7 @@ class Application(Base):
     callback_url = Column(String(255))  # URL de callback pour le token
     is_active = Column(Boolean, default=True)
     requires_auth = Column(Boolean, default=True)
+    is_shared_service = Column(Boolean, default=False)  # Si True, accessible par tous les service accounts
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     

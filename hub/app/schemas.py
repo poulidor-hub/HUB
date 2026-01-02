@@ -112,6 +112,7 @@ class AppBase(BaseModel):
     frontend_url: Optional[str] = None
     callback_url: Optional[str] = None
     requires_auth: bool = True
+    is_shared_service: bool = Field(default=False, description="Si True, cette app est accessible par tous les service accounts")
 
 
 class AppCreateSimplified(BaseModel):
@@ -143,11 +144,13 @@ class AppUpdate(BaseModel):
     callback_url: Optional[str] = None
     is_active: Optional[bool] = None
     requires_auth: Optional[bool] = None
+    is_shared_service: Optional[bool] = None
 
 
 class AppResponse(AppBase):
     id: int
     is_active: bool
+    is_shared_service: bool
     created_at: datetime
     
     class Config:
@@ -192,6 +195,7 @@ class AppWithUsers(AppResponse):
             callback_url=app.callback_url,
             is_active=app.is_active,
             requires_auth=app.requires_auth,
+            is_shared_service=app.is_shared_service,
             created_at=app.created_at,
             users=users
         )
@@ -324,6 +328,7 @@ class AppExport(BaseModel):
     callback_url: Optional[str] = None
     is_active: bool = True
     requires_auth: bool = True
+    is_shared_service: bool = False
     created_at: Optional[datetime] = None
     available_roles: List[AppRoleExport] = []
 
