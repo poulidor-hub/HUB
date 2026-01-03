@@ -124,7 +124,9 @@ async function handleLogin(event) {
 
 async function loadCurrentUser() {
     try {
+        console.log('loadCurrentUser: Token présent:', !!api.token);
         currentUser = await api.getCurrentUser();
+        console.log('loadCurrentUser: Utilisateur chargé:', currentUser?.username, 'is_admin:', currentUser?.is_admin);
         
         // Si l'utilisateur est déjà connecté et qu'un callback SSO est en attente
         // Rediriger directement vers l'application externe
@@ -399,20 +401,36 @@ async function showAdminPanel() {
         await loadAdminData();
         adminModal.show();
     } catch (error) {
+        console.error('Erreur chargement admin:', error);
+        // Si session expirée, forcer la déconnexion
+        if (error.message === 'Session expirée') {
+            showToast('Session expirée', 'Veuillez vous reconnecter', 'warning');
+            await logout();
+            return;
+        }
         showToast('Erreur', 'Impossible de charger les données admin', 'danger');
     }
 }
 
 async function loadAdminData() {
-    const [apps, serviceAccounts] = await Promise.all([
-        api.getAllApps(),
-        api.getServiceAccounts()
-    ]);
-    
-    allApps = apps;
-    allServiceAccounts = serviceAccounts;
-    renderAppsTable(apps);
-    renderServiceAccountsTable(serviceAccounts);
+    console.log('loadAdminData: Chargement des données admin...');
+    try {
+        const [apps, serviceAccounts] = await Promise.all([
+            api.getAllApps(),
+            api.getServiceAccounts()
+        ]);
+        
+        console.log('loadAdminData: Apps chargées:', apps?.length || 0);
+        console.log('loadAdminData: Service accounts chargés:', serviceAccounts?.length || 0);
+        
+        allApps = apps;
+        allServiceAccounts = serviceAccounts;
+        renderAppsTable(apps);
+        renderServiceAccountsTable(serviceAccounts);
+    } catch (error) {
+        console.error('loadAdminData: Erreur:', error);
+        throw error;
+    }
 }
 
 function renderAppsTable(apps) {
@@ -591,7 +609,16 @@ async function showAddAppForm() {
 
 async function editApp(id) {
     const app = allApps.find(a => a.id === id);
-    if (!app) return;
+    if (!app) {
+        showToast('Erreur', 'Application non trouvée. Veuillez rafraîchir la page.', 'danger');
+        // Tenter de recharger les données
+        try {
+            await loadAdminData();
+        } catch (e) {
+            console.error('Impossible de recharger les apps:', e);
+        }
+        return;
+    }
 
     // Réinitialiser le formulaire avant de remplir les valeurs
     document.getElementById('appForm').reset();

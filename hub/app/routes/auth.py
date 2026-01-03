@@ -494,13 +494,14 @@ async def refresh_access_token(
     if refresh_obj.user:
         user = refresh_obj.user
         roles = ["admin"] if user.is_admin else ["user"]
-        apps = [app.slug for app in user.applications]
+        apps = user.get_apps_with_roles()  # Dict {app_slug: role}
         sub = user.username
         is_sa = False
     else:
         sa = refresh_obj.service_account
         roles = ["service_account"]
-        apps = [app.slug for app in sa.applications]
+        # Service accounts ont accès "service" aux apps
+        apps = {app.slug: "service" for app in sa.applications}
         sub = sa.client_id
         is_sa = True
     

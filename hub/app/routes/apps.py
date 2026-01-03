@@ -716,7 +716,8 @@ async def get_app_credentials(
             .join(Application, Application.id == service_account_app_access.c.app_id)
             .where(Application.slug == app_slug)
         )
-        sa = result.scalar_one_or_none()
+        # Utiliser scalars().first() car la jointure peut créer des doublons
+        sa = result.scalars().first()
         
         if not sa:
             # Vérifier si l'app existe mais n'a pas de service account
@@ -808,7 +809,8 @@ async def regenerate_app_secret(
             .join(Application, Application.id == service_account_app_access.c.app_id)
             .where(Application.slug == app_slug)
         )
-        sa = result.scalar_one_or_none()
+        # Utiliser scalars().first() car la jointure peut créer des doublons
+        sa = result.scalars().first()
         
         if not sa:
             # Vérifier si l'app existe mais n'a pas de service account
