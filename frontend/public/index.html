@@ -523,8 +523,19 @@
                                         <div class="input-group">
                                             <span class="input-group-text"><i id="iconPreview" class="bi bi-app"></i></span>
                                             <input type="text" class="form-control" id="appIcon" value="bi-app" onchange="updateIconPreview()">
+                                            <button type="button" class="btn btn-outline-secondary" onclick="toggleIconPicker()" title="Choisir une icône">
+                                                <i class="bi bi-grid-3x3-gap"></i>
+                                            </button>
                                         </div>
-                                        <small class="text-muted">Ex: bi-people-fill, bi-calculator</small>
+                                        <!-- Grille de sélection d'icônes -->
+                                        <div id="iconPickerContainer" class="icon-picker-container d-none mt-2">
+                                            <div class="icon-picker-header">
+                                                <input type="text" class="form-control form-control-sm" id="iconSearchInput" placeholder="Rechercher une icône..." oninput="filterIcons()">
+                                            </div>
+                                            <div id="iconPickerGrid" class="icon-picker-grid">
+                                                <!-- Icons loaded dynamically -->
+                                            </div>
+                                        </div>
                                     </div>
                                     <div class="col-md-6">
                                         <label class="form-label">Couleur</label>

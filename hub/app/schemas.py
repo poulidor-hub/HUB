@@ -157,6 +157,34 @@ class AppResponse(AppBase):
         from_attributes = True
 
 
+class AppResponseWithMyRole(AppResponse):
+    """Application avec le rôle de l'utilisateur courant (pour le dashboard admin)"""
+    my_role: Optional[str] = None  # Rôle de l'utilisateur courant sur cette app (null si pas de rôle)
+    
+    class Config:
+        from_attributes = True
+    
+    @classmethod
+    def from_app_with_role(cls, app, my_role: Optional[str] = None) -> "AppResponseWithMyRole":
+        """Crée une réponse avec le rôle de l'utilisateur courant"""
+        return cls(
+            id=app.id,
+            name=app.name,
+            slug=app.slug,
+            description=app.description,
+            icon=app.icon,
+            color=app.color,
+            api_url=app.api_url,
+            frontend_url=app.frontend_url,
+            callback_url=app.callback_url,
+            is_active=app.is_active,
+            requires_auth=app.requires_auth,
+            is_shared_service=app.is_shared_service,
+            created_at=app.created_at,
+            my_role=my_role
+        )
+
+
 class AppBrief(BaseModel):
     id: int
     name: str

@@ -5,6 +5,79 @@
 
 ---
 
+## [2.5.1] - 3 janvier 2026
+
+### 🐛 Correction documentation - Format du champ `apps`
+
+**Problème identifié** : Plusieurs applications ont rencontré des erreurs d'intégration car la documentation indiquait que le champ `apps` du token JWT était toujours un dictionnaire, alors qu'il peut aussi être une liste.
+
+**Corrections apportées** :
+
+| Section | Modification |
+|---------|-------------|
+| Structure du token JWT | Ajout d'un avertissement et documentation des deux formats possibles (dict et liste) |
+| `TokenPayload` (hub_auth.py) | Mise à jour du code pour normaliser `apps` en dictionnaire, gérant le cas liste |
+| JavaScript `getAppRole()` | Ajout de la gestion du cas où `apps` est une liste |
+| JavaScript | Ajout d'une nouvelle méthode `hasAppAccess()` compatible dict/liste |
+
+**Formats du champ `apps`** :
+- **Dictionnaire** : `{"salarie": "admin", "compta": "viewer"}` (tokens utilisateur)
+- **Liste** : `["salarie", "exemple-app"]` (certains tokens M2M/service account)
+
+**Code de normalisation recommandé** (Python) :
+```python
+raw_apps = payload.get("apps", {})
+if isinstance(raw_apps, list):
+    apps = {app: "service" for app in raw_apps}
+else:
+    apps = raw_apps
+```
+
+---
+
+## [2.5.0] - 2 janvier 2026
+
+### 📝 Nouvelle section documentation
+
+#### Section 11 - Troubleshooting M2M (Erreurs courantes)
+
+Ajout d'une section complète de dépannage pour les erreurs M2M :
+
+| Sous-section | Contenu |
+|--------------|--------|
+| Erreur 401 - Not Authenticated | Diagnostic token absent/expiré/invalide |
+| Erreur 403 - Forbidden | **Cause principale** : Service Account sans accès à l'API cible |
+| Erreur 403 - IP non autorisée | Auto-enregistrement hors réseau Docker |
+| Tableau récapitulatif | Vue synthétique de toutes les erreurs M2M |
+
+### 🔧 Solutions documentées pour erreur 403 M2M
+
+1. **Option A** : Marquer l'API cible comme `is_shared_service = TRUE`
+   - Via SQL : `UPDATE applications SET is_shared_service = TRUE WHERE slug = 'salarie';`
+   - Via API : `PATCH /api/apps/{app_id}` avec `{"is_shared_service": true}`
+
+2. **Option B** : Ajouter manuellement l'accès au Service Account
+   - Via API : `PUT /api/service-accounts/{sa_id}/apps` avec liste des IDs d'apps
+
+3. **Option C** : Régénérer le Service Account après activation du shared service
+
+### 📋 Modifications structure
+
+| Section | Modification |
+|---------|-------------|
+| Version | 2.4.0 → 2.5.0 |
+| Table des matières | Ajout section 11 Troubleshooting M2M |
+| Numérotation | Sections 11-13 → 12-14 (décalage) |
+| Section 11 (NEW) | Troubleshooting M2M complet avec solutions |
+
+### 📋 Checklist pour agents IA
+
+- [ ] En cas d'erreur 403 M2M, vérifier le champ `apps` dans le token JWT décodé
+- [ ] Si l'API cible n'est pas dans `apps`, activer `is_shared_service` ou ajouter l'accès manuellement
+- [ ] Les Service Accounts créés AVANT l'activation de `is_shared_service` ne sont pas mis à jour automatiquement
+
+---
+
 ## [2.4.0] - 2 janvier 2026
 
 ### ⚠️ BREAKING CHANGE

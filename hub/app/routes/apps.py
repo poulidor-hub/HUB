@@ -12,6 +12,7 @@ from app.database import get_db
 from app.models import Application, User, ServiceAccount, UserAppRole
 from app.schemas import (
     AppCreate, AppCreateSimplified, AppUpdate, AppResponse, AppWithUsers,
+    AppResponseWithMyRole,
     DockerScanResponse, DockerContainerInfo, DockerPortInfo,
     AppRegisterRequest, AppRegisterResponse, AppCredentialsResponse
 )
@@ -62,24 +63,37 @@ def generate_slug(name: str) -> str:
     return slug
 
 
-@router.get("/", response_model=List[AppResponse])
+@router.get("/", response_model=List[AppResponseWithMyRole])
 async def list_apps(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """Liste les applications (admin voit tout, user voit les siennes)"""
+    """Liste les applications (admin voit tout, user voit les siennes)
+    
+    Retourne également le rôle de l'utilisateur courant sur chaque app (my_role)
+    """
+    # Charger les rôles de l'utilisateur courant
+    user_result = await db.execute(
+        select(User)
+        .options(selectinload(User.app_roles).selectinload(UserAppRole.application))
+        .where(User.id == current_user.id)
+    )
+    user = user_result.scalar_one()
+    user_roles_map = {ar.application.slug: ar.role for ar in user.app_roles}
+    
     if current_user.is_admin:
         result = await db.execute(select(Application))
-        return result.scalars().all()
+        apps = result.scalars().all()
+        return [
+            AppResponseWithMyRole.from_app_with_role(app, user_roles_map.get(app.slug))
+            for app in apps
+        ]
     else:
         # Retourne uniquement les apps de l'utilisateur via app_roles
-        result = await db.execute(
-            select(User)
-            .options(selectinload(User.app_roles).selectinload(UserAppRole.application))
-            .where(User.id == current_user.id)
-        )
-        user = result.scalar_one()
-        return [ar.application for ar in user.app_roles]
+        return [
+            AppResponseWithMyRole.from_app_with_role(ar.application, ar.role)
+            for ar in user.app_roles
+        ]
 
 
 @router.post("/access/{app_slug}")
@@ -130,6 +144,115 @@ async def log_app_access(
         "app_name": app.name,
         "user_role": user_role or "admin"
     }
+
+
+# Rôles disponibles pour les apps
+AVAILABLE_ROLES = ["admin", "manager", "user", "viewer"]
+
+
+@router.put("/me/role/{app_slug}")
+async def update_my_role(
+    app_slug: str,
+    role: Optional[str] = None,
+    request: Request = None,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_admin)
+):
+    """
+    Permet à un admin de modifier son propre rôle sur une application.
+    
+    - Si role est fourni: définit/modifie le rôle
+    - Si role est null ou vide: supprime le rôle (l'admin garde accès via is_admin)
+    
+    ⚠️ Admin uniquement - Les admins ont toujours accès à toutes les apps,
+    ce rôle est pour définir leur rôle "officiel" dans l'application.
+    """
+    # Vérifier que l'app existe
+    result = await db.execute(select(Application).where(Application.slug == app_slug))
+    app = result.scalar_one_or_none()
+    
+    if not app:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Application non trouvée"
+        )
+    
+    # Valider le rôle si fourni
+    if role and role not in AVAILABLE_ROLES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Rôle invalide. Rôles disponibles: {', '.join(AVAILABLE_ROLES)}"
+        )
+    
+    # Chercher le rôle existant
+    role_result = await db.execute(
+        select(UserAppRole).where(
+            UserAppRole.user_id == current_user.id,
+            UserAppRole.app_id == app.id
+        )
+    )
+    existing_role = role_result.scalar_one_or_none()
+    
+    if role:
+        # Définir/modifier le rôle
+        if existing_role:
+            existing_role.role = role
+        else:
+            new_role = UserAppRole(
+                user_id=current_user.id,
+                app_id=app.id,
+                role=role
+            )
+            db.add(new_role)
+        
+        await log_action(
+            db=db,
+            user_id=current_user.id,
+            action="update_my_role",
+            target=app_slug,
+            ip_address=request.client.host if request and request.client else None,
+            user_agent=request.headers.get("user-agent", "") if request else "",
+            details=f"Rôle défini à '{role}' sur {app.name}"
+        )
+        
+        await db.commit()
+        
+        return {
+            "message": f"Rôle '{role}' défini sur {app.name}",
+            "app_slug": app_slug,
+            "app_name": app.name,
+            "my_role": role
+        }
+    else:
+        # Supprimer le rôle
+        if existing_role:
+            await db.delete(existing_role)
+            
+            await log_action(
+                db=db,
+                user_id=current_user.id,
+                action="remove_my_role",
+                target=app_slug,
+                ip_address=request.client.host if request and request.client else None,
+                user_agent=request.headers.get("user-agent", "") if request else "",
+                details=f"Rôle supprimé sur {app.name}"
+            )
+            
+            await db.commit()
+            
+            return {
+                "message": f"Rôle supprimé sur {app.name}",
+                "app_slug": app_slug,
+                "app_name": app.name,
+                "my_role": None
+            }
+        else:
+            return {
+                "message": f"Aucun rôle à supprimer sur {app.name}",
+                "app_slug": app_slug,
+                "app_name": app.name,
+                "my_role": None
+            }
 
 
 @router.get("/all")

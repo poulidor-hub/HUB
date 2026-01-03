@@ -61,6 +61,29 @@ body {
     margin-bottom: 0;
 }
 
+/* App Role Selector (for admins) */
+.app-role-selector {
+    border-top: 1px solid rgba(0,0,0,0.1);
+    padding-top: 0.75rem;
+    margin-top: 0.75rem;
+}
+
+.app-role-selector .form-select {
+    font-size: 0.8rem;
+    padding: 0.25rem 1.75rem 0.25rem 0.5rem;
+    background-color: rgba(0,0,0,0.03);
+    border: 1px solid rgba(0,0,0,0.1);
+    cursor: pointer;
+}
+
+.app-role-selector .form-select:hover {
+    background-color: rgba(0,0,0,0.06);
+}
+
+.app-role-selector .form-select:focus {
+    box-shadow: 0 0 0 2px rgba(13, 110, 253, 0.25);
+}
+
 /* Navbar */
 .navbar {
     backdrop-filter: blur(10px);
@@ -317,4 +340,78 @@ body {
 /* Action badges - more subtle */
 .badge[class*="bg-"] {
     font-weight: 500;
+}
+
+/* Icon Picker */
+.icon-picker-container {
+    background: var(--card-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+    overflow: hidden;
+}
+
+.icon-picker-header {
+    padding: 0.5rem;
+    background: #f8f9fa;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.icon-picker-grid {
+    display: grid;
+    grid-template-columns: repeat(6, 1fr);
+    gap: 4px;
+    padding: 0.5rem;
+    max-height: 200px;
+    overflow-y: auto;
+}
+
+.icon-picker-item {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    aspect-ratio: 1;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    background: transparent;
+    font-size: 1.25rem;
+    color: var(--primary-color);
+}
+
+.icon-picker-item:hover {
+    background: #e9ecef;
+    border-color: var(--border-color);
+    transform: scale(1.1);
+}
+
+.icon-picker-item.selected {
+    background: var(--accent-color);
+    color: white;
+    border-color: var(--accent-color);
+}
+
+.icon-picker-item.hidden {
+    display: none;
+}
+
+/* Scrollbar personnalisée pour le picker */
+.icon-picker-grid::-webkit-scrollbar {
+    width: 6px;
+}
+
+.icon-picker-grid::-webkit-scrollbar-track {
+    background: #f1f1f1;
+    border-radius: 3px;
+}
+
+.icon-picker-grid::-webkit-scrollbar-thumb {
+    background: #c1c1c1;
+    border-radius: 3px;
+}
+
+.icon-picker-grid::-webkit-scrollbar-thumb:hover {
+    background: #a8a8a8;
 }

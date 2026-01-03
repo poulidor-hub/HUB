@@ -268,6 +268,8 @@ function renderAppsGrid(apps) {
         return;
     }
 
+    const isAdmin = currentUser?.is_admin;
+
     grid.innerHTML = apps.map(app => `
         <div class="col-sm-6 col-md-4 col-lg-3">
             <div class="card app-card shadow-sm h-100" onclick="openApp('${app.slug}', '${app.frontend_url || ''}')">
@@ -277,10 +279,48 @@ function renderAppsGrid(apps) {
                     </div>
                     <h5>${escapeHtml(app.name)}</h5>
                     <p>${escapeHtml(app.description || 'Aucune description')}</p>
+                    ${isAdmin ? `
+                        <div class="app-role-selector mt-2" onclick="event.stopPropagation()">
+                            <select class="form-select form-select-sm" 
+                                    id="appRole_${app.slug}" 
+                                    onchange="updateMyAppRole('${app.slug}', this.value)"
+                                    title="Mon rôle sur cette application">
+                                <option value="" ${!app.my_role ? 'selected' : ''}>-- Mon rôle --</option>
+                                <option value="admin" ${app.my_role === 'admin' ? 'selected' : ''}>Admin</option>
+                                <option value="manager" ${app.my_role === 'manager' ? 'selected' : ''}>Manager</option>
+                                <option value="user" ${app.my_role === 'user' ? 'selected' : ''}>User</option>
+                                <option value="viewer" ${app.my_role === 'viewer' ? 'selected' : ''}>Viewer</option>
+                            </select>
+                        </div>
+                    ` : ''}
                 </div>
             </div>
         </div>
     `).join('');
+}
+
+/**
+ * Met à jour le rôle de l'admin courant sur une application
+ */
+async function updateMyAppRole(appSlug, role) {
+    try {
+        const result = await api.updateMyAppRole(appSlug, role || null);
+        const roleText = role ? `défini à "${role}"` : 'supprimé';
+        showToast('Rôle mis à jour', `Votre rôle sur ${result.app_name} a été ${roleText}. Le nouveau rôle sera actif à la prochaine connexion à l'app.`, 'success');
+        
+        // Optionnel: Rafraîchir le token pour que le nouveau rôle soit pris en compte immédiatement
+        // (nécessite un refresh token valide)
+        try {
+            await api.tryRefreshToken();
+        } catch (e) {
+            console.log('Refresh token non disponible, le nouveau rôle sera actif après re-login');
+        }
+    } catch (error) {
+        console.error('Erreur mise à jour rôle:', error);
+        showToast('Erreur', error.message || 'Impossible de mettre à jour le rôle', 'danger');
+        // Recharger pour remettre la bonne valeur
+        loadApps();
+    }
 }
 
 function openApp(slug, frontendUrl) {
@@ -528,6 +568,10 @@ async function showAddAppForm() {
     // Bouton
     document.getElementById('appSubmitBtn').innerHTML = '<i class="bi bi-check-lg me-1"></i>Enregistrer';
     
+    // Réinitialiser et masquer le picker d'icônes
+    hideIconPicker();
+    document.getElementById('iconSearchInput').value = '';
+    
     updateIconPreview();
     updateUrlPreview();
     adminModal.hide();
@@ -572,6 +616,10 @@ async function editApp(id) {
     
     // Bouton en mode édition
     document.getElementById('appSubmitBtn').innerHTML = '<i class="bi bi-check-lg me-1"></i>Enregistrer';
+    
+    // Réinitialiser et masquer le picker d'icônes
+    hideIconPicker();
+    document.getElementById('iconSearchInput').value = '';
     
     updateIconPreview();
     
@@ -695,7 +743,210 @@ async function deleteApp(id, name) {
 function updateIconPreview() {
     const icon = document.getElementById('appIcon').value;
     document.getElementById('iconPreview').className = `bi ${icon}`;
+    // Met à jour la sélection dans le picker si ouvert
+    updateIconPickerSelection();
 }
+
+// ===== Icon Picker =====
+
+// Liste des icônes Bootstrap populaires organisées par catégorie
+const BOOTSTRAP_ICONS = [
+    // Applications & UI
+    'bi-app', 'bi-app-indicator', 'bi-grid', 'bi-grid-3x3', 'bi-grid-3x3-gap', 'bi-grid-3x3-gap-fill',
+    'bi-layout-text-window', 'bi-layout-text-sidebar', 'bi-window', 'bi-window-stack', 'bi-window-sidebar',
+    'bi-columns', 'bi-columns-gap', 'bi-view-list', 'bi-view-stacked', 'bi-kanban',
+    // Documents
+    'bi-file-earmark', 'bi-file-earmark-text', 'bi-file-earmark-code', 'bi-file-earmark-pdf', 'bi-file-earmark-spreadsheet',
+    'bi-file-earmark-richtext', 'bi-file-earmark-zip', 'bi-file-earmark-image', 'bi-file-earmark-music', 'bi-file-earmark-play',
+    'bi-files', 'bi-folder', 'bi-folder-fill', 'bi-folder2', 'bi-folder2-open',
+    // Personnes
+    'bi-person', 'bi-person-fill', 'bi-person-circle', 'bi-person-badge', 'bi-person-badge-fill',
+    'bi-people', 'bi-people-fill', 'bi-person-plus', 'bi-person-plus-fill', 'bi-person-check', 'bi-person-check-fill',
+    'bi-person-gear', 'bi-person-workspace', 'bi-person-video', 'bi-person-lines-fill', 'bi-person-vcard',
+    // Business
+    'bi-briefcase', 'bi-briefcase-fill', 'bi-building', 'bi-buildings', 'bi-buildings-fill',
+    'bi-shop', 'bi-shop-window', 'bi-cart', 'bi-cart-fill', 'bi-cart3', 'bi-cart4',
+    'bi-basket', 'bi-basket-fill', 'bi-bag', 'bi-bag-fill', 'bi-handbag', 'bi-handbag-fill',
+    'bi-wallet', 'bi-wallet-fill', 'bi-wallet2', 'bi-credit-card', 'bi-credit-card-fill',
+    'bi-bank', 'bi-bank2', 'bi-piggy-bank', 'bi-piggy-bank-fill', 'bi-cash', 'bi-cash-stack', 'bi-cash-coin',
+    'bi-currency-euro', 'bi-currency-dollar', 'bi-receipt', 'bi-receipt-cutoff',
+    // Tech & Infra
+    'bi-hdd', 'bi-hdd-fill', 'bi-hdd-network', 'bi-hdd-network-fill', 'bi-hdd-rack', 'bi-hdd-rack-fill',
+    'bi-hdd-stack', 'bi-hdd-stack-fill', 'bi-server', 'bi-database', 'bi-database-fill',
+    'bi-cpu', 'bi-cpu-fill', 'bi-memory', 'bi-gpu-card', 'bi-motherboard', 'bi-motherboard-fill',
+    'bi-pc', 'bi-pc-display', 'bi-pc-display-horizontal', 'bi-laptop', 'bi-laptop-fill',
+    'bi-phone', 'bi-phone-fill', 'bi-tablet', 'bi-tablet-fill', 'bi-smartwatch',
+    'bi-router', 'bi-router-fill', 'bi-modem', 'bi-modem-fill', 'bi-wifi', 'bi-broadcast',
+    // Cloud & Réseau
+    'bi-cloud', 'bi-cloud-fill', 'bi-cloud-upload', 'bi-cloud-download', 'bi-cloud-check', 'bi-cloud-check-fill',
+    'bi-cloud-arrow-up', 'bi-cloud-arrow-down', 'bi-cloud-slash', 'bi-clouds', 'bi-clouds-fill',
+    'bi-globe', 'bi-globe2', 'bi-globe-americas', 'bi-globe-europe-africa', 'bi-globe-asia-australia',
+    'bi-link', 'bi-link-45deg', 'bi-share', 'bi-share-fill', 'bi-diagram-2', 'bi-diagram-3',
+    // Charts & Data
+    'bi-graph-up', 'bi-graph-up-arrow', 'bi-graph-down', 'bi-bar-chart', 'bi-bar-chart-fill',
+    'bi-bar-chart-line', 'bi-bar-chart-steps', 'bi-pie-chart', 'bi-pie-chart-fill',
+    'bi-activity', 'bi-speedometer', 'bi-speedometer2', 'bi-clipboard-data', 'bi-clipboard-data-fill',
+    // Sécurité
+    'bi-shield', 'bi-shield-fill', 'bi-shield-check', 'bi-shield-lock', 'bi-shield-lock-fill',
+    'bi-lock', 'bi-lock-fill', 'bi-unlock', 'bi-unlock-fill', 'bi-key', 'bi-key-fill',
+    'bi-fingerprint', 'bi-eye', 'bi-eye-fill', 'bi-eye-slash', 'bi-eye-slash-fill',
+    // Outils & Settings
+    'bi-gear', 'bi-gear-fill', 'bi-gear-wide', 'bi-gear-wide-connected', 'bi-gears',
+    'bi-tools', 'bi-wrench', 'bi-wrench-adjustable', 'bi-hammer', 'bi-screwdriver',
+    'bi-sliders', 'bi-sliders2', 'bi-toggles', 'bi-toggles2',
+    // Communication
+    'bi-chat', 'bi-chat-fill', 'bi-chat-dots', 'bi-chat-dots-fill', 'bi-chat-left-text', 'bi-chat-left-text-fill',
+    'bi-chat-square', 'bi-chat-square-fill', 'bi-chat-square-text', 'bi-chat-quote', 'bi-chat-quote-fill',
+    'bi-envelope', 'bi-envelope-fill', 'bi-envelope-open', 'bi-envelope-at', 'bi-mailbox', 'bi-mailbox2',
+    'bi-telephone', 'bi-telephone-fill', 'bi-telephone-inbound', 'bi-telephone-outbound', 'bi-headset',
+    'bi-megaphone', 'bi-megaphone-fill', 'bi-bell', 'bi-bell-fill', 'bi-bell-slash',
+    // Médias
+    'bi-camera', 'bi-camera-fill', 'bi-camera-video', 'bi-camera-video-fill', 'bi-film',
+    'bi-image', 'bi-image-fill', 'bi-images', 'bi-card-image', 'bi-file-image',
+    'bi-music-note', 'bi-music-note-beamed', 'bi-music-note-list', 'bi-volume-up', 'bi-volume-up-fill',
+    'bi-play', 'bi-play-fill', 'bi-play-circle', 'bi-play-circle-fill', 'bi-play-btn', 'bi-play-btn-fill',
+    'bi-mic', 'bi-mic-fill', 'bi-mic-mute', 'bi-mic-mute-fill', 'bi-record', 'bi-record-fill',
+    // Maps & Lieux
+    'bi-geo', 'bi-geo-fill', 'bi-geo-alt', 'bi-geo-alt-fill', 'bi-pin', 'bi-pin-fill',
+    'bi-pin-map', 'bi-pin-map-fill', 'bi-map', 'bi-map-fill', 'bi-compass', 'bi-compass-fill',
+    'bi-signpost', 'bi-signpost-fill', 'bi-signpost-2', 'bi-signpost-2-fill', 'bi-signpost-split',
+    'bi-house', 'bi-house-fill', 'bi-house-door', 'bi-house-door-fill', 'bi-house-gear', 'bi-house-gear-fill',
+    // Transport
+    'bi-car-front', 'bi-car-front-fill', 'bi-truck', 'bi-truck-front', 'bi-truck-front-fill',
+    'bi-bicycle', 'bi-scooter', 'bi-bus-front', 'bi-bus-front-fill', 'bi-train-front', 'bi-train-front-fill',
+    'bi-airplane', 'bi-airplane-fill', 'bi-rocket', 'bi-rocket-fill', 'bi-rocket-takeoff', 'bi-rocket-takeoff-fill',
+    // Nature & Météo
+    'bi-sun', 'bi-sun-fill', 'bi-moon', 'bi-moon-fill', 'bi-stars', 'bi-star', 'bi-star-fill',
+    'bi-cloud-sun', 'bi-cloud-sun-fill', 'bi-cloud-moon', 'bi-cloud-rain', 'bi-cloud-rain-fill',
+    'bi-lightning', 'bi-lightning-fill', 'bi-snow', 'bi-snow2', 'bi-tornado',
+    'bi-tree', 'bi-tree-fill', 'bi-flower1', 'bi-flower2', 'bi-flower3',
+    // Médical & Santé
+    'bi-heart', 'bi-heart-fill', 'bi-heart-pulse', 'bi-heart-pulse-fill', 'bi-activity',
+    'bi-hospital', 'bi-hospital-fill', 'bi-bandaid', 'bi-bandaid-fill', 'bi-capsule', 'bi-capsule-pill',
+    'bi-thermometer', 'bi-thermometer-half', 'bi-clipboard2-pulse', 'bi-clipboard2-pulse-fill',
+    // Education
+    'bi-book', 'bi-book-fill', 'bi-book-half', 'bi-journals', 'bi-journal', 'bi-journal-text',
+    'bi-bookmark', 'bi-bookmark-fill', 'bi-bookmarks', 'bi-bookmarks-fill', 'bi-bookshelf',
+    'bi-mortarboard', 'bi-mortarboard-fill', 'bi-backpack', 'bi-backpack-fill', 'bi-pen', 'bi-pen-fill',
+    'bi-pencil', 'bi-pencil-fill', 'bi-pencil-square', 'bi-brush', 'bi-brush-fill', 'bi-palette', 'bi-palette-fill',
+    // Actions
+    'bi-check', 'bi-check2', 'bi-check-circle', 'bi-check-circle-fill', 'bi-check-lg', 'bi-check-all',
+    'bi-x', 'bi-x-circle', 'bi-x-circle-fill', 'bi-x-lg', 'bi-x-octagon', 'bi-x-octagon-fill',
+    'bi-plus', 'bi-plus-circle', 'bi-plus-circle-fill', 'bi-plus-lg', 'bi-plus-square', 'bi-plus-square-fill',
+    'bi-dash', 'bi-dash-circle', 'bi-dash-circle-fill', 'bi-dash-lg', 'bi-dash-square', 'bi-dash-square-fill',
+    'bi-arrow-up', 'bi-arrow-down', 'bi-arrow-left', 'bi-arrow-right', 'bi-arrow-clockwise', 'bi-arrow-counterclockwise',
+    'bi-arrow-repeat', 'bi-arrows-expand', 'bi-arrows-fullscreen', 'bi-arrows-move',
+    // Divers utiles
+    'bi-box', 'bi-box-fill', 'bi-box-seam', 'bi-box-seam-fill', 'bi-boxes', 'bi-archive', 'bi-archive-fill',
+    'bi-inbox', 'bi-inbox-fill', 'bi-send', 'bi-send-fill', 'bi-reply', 'bi-reply-fill',
+    'bi-clipboard', 'bi-clipboard-fill', 'bi-clipboard-check', 'bi-clipboard-check-fill',
+    'bi-calendar', 'bi-calendar-fill', 'bi-calendar-event', 'bi-calendar-event-fill', 'bi-calendar-check', 'bi-calendar-check-fill',
+    'bi-clock', 'bi-clock-fill', 'bi-clock-history', 'bi-stopwatch', 'bi-stopwatch-fill', 'bi-hourglass', 'bi-hourglass-split',
+    'bi-alarm', 'bi-alarm-fill', 'bi-watch',
+    'bi-calculator', 'bi-calculator-fill', 'bi-percent', 'bi-hash', 'bi-at',
+    'bi-qr-code', 'bi-qr-code-scan', 'bi-upc', 'bi-upc-scan', 'bi-barcode',
+    'bi-tag', 'bi-tag-fill', 'bi-tags', 'bi-tags-fill', 'bi-bookmark-star', 'bi-bookmark-star-fill',
+    'bi-trophy', 'bi-trophy-fill', 'bi-award', 'bi-award-fill', 'bi-patch-check', 'bi-patch-check-fill',
+    'bi-flag', 'bi-flag-fill', 'bi-puzzle', 'bi-puzzle-fill', 'bi-lightbulb', 'bi-lightbulb-fill',
+    'bi-magic', 'bi-gem', 'bi-gift', 'bi-gift-fill', 'bi-ticket', 'bi-ticket-fill',
+    'bi-cup', 'bi-cup-fill', 'bi-cup-hot', 'bi-cup-hot-fill',
+    // Robots & Tech avancée
+    'bi-robot', 'bi-cpu', 'bi-bricks', 'bi-plugin', 'bi-terminal', 'bi-terminal-fill',
+    'bi-code', 'bi-code-slash', 'bi-code-square', 'bi-braces', 'bi-braces-asterisk',
+    'bi-bug', 'bi-bug-fill', 'bi-vector-pen', 'bi-bezier', 'bi-bezier2',
+    // Social & Partage
+    'bi-hand-thumbs-up', 'bi-hand-thumbs-up-fill', 'bi-hand-thumbs-down', 'bi-hand-thumbs-down-fill',
+    'bi-emoji-smile', 'bi-emoji-smile-fill', 'bi-emoji-heart-eyes', 'bi-emoji-heart-eyes-fill',
+    'bi-emoji-laughing', 'bi-emoji-laughing-fill', 'bi-emoji-neutral', 'bi-emoji-neutral-fill',
+    // Formes
+    'bi-circle', 'bi-circle-fill', 'bi-square', 'bi-square-fill', 'bi-triangle', 'bi-triangle-fill',
+    'bi-diamond', 'bi-diamond-fill', 'bi-hexagon', 'bi-hexagon-fill', 'bi-pentagon', 'bi-pentagon-fill',
+    'bi-octagon', 'bi-octagon-fill', 'bi-heart', 'bi-heart-fill', 'bi-suit-heart', 'bi-suit-heart-fill'
+];
+
+let iconPickerVisible = false;
+
+function toggleIconPicker() {
+    const container = document.getElementById('iconPickerContainer');
+    iconPickerVisible = !iconPickerVisible;
+    
+    if (iconPickerVisible) {
+        container.classList.remove('d-none');
+        renderIconPicker();
+        document.getElementById('iconSearchInput').focus();
+    } else {
+        container.classList.add('d-none');
+    }
+}
+
+function hideIconPicker() {
+    iconPickerVisible = false;
+    const container = document.getElementById('iconPickerContainer');
+    if (container) {
+        container.classList.add('d-none');
+    }
+}
+
+function renderIconPicker() {
+    const grid = document.getElementById('iconPickerGrid');
+    const currentIcon = document.getElementById('appIcon').value;
+    
+    grid.innerHTML = BOOTSTRAP_ICONS.map(icon => `
+        <div class="icon-picker-item ${icon === currentIcon ? 'selected' : ''}" 
+             data-icon="${icon}" 
+             onclick="selectIcon('${icon}')"
+             title="${icon}">
+            <i class="bi ${icon}"></i>
+        </div>
+    `).join('');
+}
+
+function selectIcon(iconName) {
+    document.getElementById('appIcon').value = iconName;
+    updateIconPreview();
+    
+    // Fermer le picker après sélection
+    toggleIconPicker();
+}
+
+function updateIconPickerSelection() {
+    const currentIcon = document.getElementById('appIcon').value;
+    const items = document.querySelectorAll('.icon-picker-item');
+    
+    items.forEach(item => {
+        if (item.dataset.icon === currentIcon) {
+            item.classList.add('selected');
+        } else {
+            item.classList.remove('selected');
+        }
+    });
+}
+
+function filterIcons() {
+    const searchTerm = document.getElementById('iconSearchInput').value.toLowerCase();
+    const items = document.querySelectorAll('.icon-picker-item');
+    
+    items.forEach(item => {
+        const iconName = item.dataset.icon.toLowerCase();
+        if (iconName.includes(searchTerm)) {
+            item.classList.remove('hidden');
+        } else {
+            item.classList.add('hidden');
+        }
+    });
+}
+
+// Fermer le picker si on clique en dehors
+document.addEventListener('click', (e) => {
+    const picker = document.getElementById('iconPickerContainer');
+    const toggleBtn = e.target.closest('[onclick="toggleIconPicker()"]');
+    const pickerContainer = e.target.closest('#iconPickerContainer');
+    
+    if (iconPickerVisible && !toggleBtn && !pickerContainer) {
+        iconPickerVisible = false;
+        picker?.classList.add('d-none');
+    }
+});
 
 // ===== User CRUD =====
 
@@ -2613,12 +2864,14 @@ function renderPageSessionHistory(data) {
 
 async function loadUsersPageData() {
     try {
-        const [users, activeSessions] = await Promise.all([
+        const [users, activeSessions, apps] = await Promise.all([
             api.getUsers(),
-            api.getActiveSessions().catch(() => ({ sessions: [] }))
+            api.getActiveSessions().catch(() => ({ sessions: [] })),
+            api.getAllApps()
         ]);
         
         allUsersPage = users;
+        allApps = apps;  // Charger aussi les apps pour le formulaire d'édition utilisateur
         
         // Stats
         document.getElementById('usersStatTotal').textContent = users.length;

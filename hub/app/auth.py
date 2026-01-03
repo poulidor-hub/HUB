@@ -72,10 +72,16 @@ def create_access_token(
         "type": "service_account" if is_service_account else "user"
     }
     
+    # Header avec kid pour identifier la clé de signature
+    headers = {
+        "kid": "hub-jwt-key-1"  # Doit correspondre au kid dans le JWKS
+    }
+    
     token = jwt.encode(
         payload,
         settings.jwt_private_key,
-        algorithm=settings.jwt_algorithm
+        algorithm=settings.jwt_algorithm,
+        headers=headers
     )
     
     return token, expire, jti

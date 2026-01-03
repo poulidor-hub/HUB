@@ -228,6 +228,14 @@ class HubAPI {
         });
     }
 
+    async updateMyAppRole(appSlug, role) {
+        // role peut être null pour supprimer le rôle
+        const url = `/apps/me/role/${encodeURIComponent(appSlug)}${role ? `?role=${encodeURIComponent(role)}` : ''}`;
+        return this.request(url, {
+            method: 'PUT'
+        });
+    }
+
     async deleteApp(id) {
         return this.request(`/apps/${id}`, {
             method: 'DELETE'

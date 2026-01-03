@@ -1,7 +1,7 @@
 # Guide d'Intégration - Hub d'Authentification
 
-> **Version** : 2.4.0  
-> **Dernière mise à jour** : 2 janvier 2026  
+> **Version** : 2.5.1  
+> **Dernière mise à jour** : 3 janvier 2026  
 > **Auteur** : Équipe Hub
 
 Ce document décrit comment intégrer vos applications avec le Hub d'authentification centralisé.
@@ -80,18 +80,25 @@ curl http://hub:8000/api/docs/integration/version
     - [Durée des tokens](#durée-des-tokens-géré-par-le-hub-uniquement)
     - [Format des réponses](#format-des-réponses)
 
+### Troubleshooting
+11. [🆕 Troubleshooting M2M (Erreurs courantes)](#11-troubleshooting-m2m-erreurs-courantes)
+    - [Erreur 401 - Not Authenticated](#-erreur-401---not-authenticated)
+    - [Erreur 403 - Forbidden (Token reconnu mais accès refusé)](#-erreur-403---forbidden-token-reconnu-mais-accès-refusé)
+    - [Erreur 403 - IP non autorisée](#-erreur-403---ip-non-autorisée-auto-enregistrement)
+    - [Tableau récapitulatif des erreurs M2M](#-tableau-récapitulatif-des-erreurs-m2m)
+
 ### Déploiement
-11. [Configuration du Dockerfile](#11-configuration-du-dockerfile)
+12. [Configuration du Dockerfile](#12-configuration-du-dockerfile)
     - [Fichiers requis](#fichiers-requis)
     - [Exemple de Dockerfile](#exemple-de-dockerfile)
     - [Avec Docker Compose (volumes)](#avec-docker-compose-volumes)
 
 ### Annexes
-12. [Résumé](#12-résumé)
+13. [Résumé](#13-résumé)
     - [Ce que l'application DOIT faire](#ce-que-lapplication-doit-faire)
     - [Ce que l'application NE DOIT PAS faire](#ce-que-lapplication-ne-doit-pas-faire)
 
-13. [Contact Hub](#13-contact-hub)
+14. [Contact Hub](#14-contact-hub)
 
 ---
 
@@ -888,7 +895,14 @@ class TokenPayload:
     def __init__(self, payload: dict):
         self.sub: str = payload.get("sub", "")           # Username
         self.roles: list = payload.get("roles", [])       # ["admin"] ou ["user"]
-        self.apps: dict = payload.get("apps", {})         # {"app-slug": "role"}
+        # ⚠️ IMPORTANT: apps peut être un dict {"app-slug": "role"} OU une liste ["app-slug1", "app-slug2"]
+        # Pour assurer la compatibilité, on normalise toujours en dict
+        raw_apps = payload.get("apps", {})
+        if isinstance(raw_apps, list):
+            # Si c'est une liste, on convertit en dict avec rôle "service" par défaut
+            self.apps: dict = {app: "service" for app in raw_apps}
+        else:
+            self.apps: dict = raw_apps
         self.exp: int = payload.get("exp", 0)             # Expiration
         self.token_type: str = payload.get("type", "user")  # "user" ou "service_account"
         self.raw: dict = payload
@@ -1340,11 +1354,33 @@ class HubAuth {
     
     /**
      * Récupère le rôle de l'utilisateur pour cette application
+     * ⚠️ apps peut être un dict {"app-slug": "role"} ou une liste ["app-slug1", ...]
      */
     getAppRole() {
         const payload = this.getTokenPayload();
         if (!payload || !payload.apps) return null;
+        
+        // Gérer le cas où apps est une liste (certains tokens M2M)
+        if (Array.isArray(payload.apps)) {
+            return payload.apps.includes(CONFIG.APP_SLUG) ? 'service' : null;
+        }
+        
         return payload.apps[CONFIG.APP_SLUG] || null;
+    }
+    
+    /**
+     * Vérifie si l'utilisateur a accès à cette application
+     * ⚠️ apps peut être un dict ou une liste
+     */
+    hasAppAccess() {
+        const payload = this.getTokenPayload();
+        if (!payload || !payload.apps) return false;
+        
+        if (Array.isArray(payload.apps)) {
+            return payload.apps.includes(CONFIG.APP_SLUG);
+        }
+        
+        return CONFIG.APP_SLUG in payload.apps;
     }
 }
 
@@ -1852,6 +1888,10 @@ networks:
 
 ### Structure du token JWT
 
+> ⚠️ **IMPORTANT** : Le champ `apps` peut être soit un **dictionnaire** `{"app-slug": "role"}` soit une **liste** `["app-slug1", "app-slug2"]`.
+> Votre code doit gérer les deux formats (voir `TokenPayload` dans la section `hub_auth.py`).
+
+**Format dictionnaire (token utilisateur) :**
 \`\`\`json
 {
   "sub": "jean.dupont",
@@ -1865,6 +1905,19 @@ networks:
   "exp": 1735650600,
   "iat": 1735648800,
   "jti": "abc123"
+}
+\`\`\`
+
+**Format liste (certains tokens M2M/service account) :**
+\`\`\`json
+{
+  "sub": "sa_mon-app",
+  "roles": ["service_account"],
+  "apps": ["salarie", "exemple-app", "referentiels"],
+  "type": "service_account",
+  "exp": 1735650600,
+  "iat": 1735648800,
+  "jti": "def456"
 }
 \`\`\`
 
@@ -2068,7 +2121,132 @@ curl "http://hub:8000/api/docs/changelog?format=json"
 
 ---
 
-## 11. Configuration du Dockerfile
+## 11. Troubleshooting M2M (Erreurs courantes)
+
+### 🔴 Erreur 401 - Not Authenticated
+
+**Symptôme** : L'API cible répond `401 Unauthorized`
+
+**Causes possibles** :
+- Token absent ou malformé dans le header `Authorization`
+- Token expiré
+- Clé publique JWT non synchronisée
+
+**Solutions** :
+```bash
+# 1. Vérifier que le token est bien envoyé
+curl -v http://api-cible:8080/endpoint \
+  -H "Authorization: Bearer $TOKEN"
+
+# 2. Décoder le token pour vérifier l'expiration
+echo $TOKEN | cut -d'.' -f2 | base64 -d | jq .
+
+# 3. Obtenir un nouveau token
+curl -X POST http://hub:8000/api/auth/token \
+  -d "grant_type=client_credentials&client_id=$CLIENT_ID&client_secret=$CLIENT_SECRET"
+```
+
+---
+
+### 🔴 Erreur 403 - Forbidden (Token reconnu mais accès refusé)
+
+**Symptôme** : L'API cible répond `403 Forbidden` alors que le token est valide
+
+**Cause** : Le Service Account n'a **pas les droits d'accès** à l'API cible.
+
+Le token M2M contient un champ `apps` listant les applications autorisées. Si l'API cible n'est pas dans cette liste, l'accès est refusé.
+
+**Vérification** :
+```bash
+# Décoder le token pour voir les apps autorisées
+echo $TOKEN | cut -d'.' -f2 | base64 -d | jq '.apps'
+
+# Exemple de sortie :
+# {
+#   "exemple-app": "service",
+#   "salarie": "service"       # ← L'API salarie doit être présente !
+# }
+```
+
+**Solutions** :
+
+#### Option A : Marquer l'API comme service partagé (recommandé pour APIs de données)
+
+Si l'API cible est une API de données commune (ex: API Salariés, API Référentiels), elle devrait être accessible à toutes les applications :
+
+```sql
+-- Via SQL sur la base Hub
+UPDATE applications SET is_shared_service = TRUE WHERE slug = 'salarie';
+```
+
+Ou via l'API Hub (admin requis) :
+```bash
+# 1. Obtenir un token admin
+ADMIN_TOKEN=$(curl -s -X POST http://hub:8000/api/auth/token \
+  -d "grant_type=password&username=admin&password=admin123" | jq -r '.access_token')
+
+# 2. Récupérer l'ID de l'app
+APP_ID=$(curl -s http://hub:8000/api/apps/ \
+  -H "Authorization: Bearer $ADMIN_TOKEN" | jq '.[] | select(.slug=="salarie") | .id')
+
+# 3. Activer is_shared_service
+curl -X PATCH http://hub:8000/api/apps/$APP_ID \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"is_shared_service": true}'
+```
+
+> ⚠️ **Note** : Les Service Accounts créés **AVANT** l'activation de `is_shared_service` ne sont pas automatiquement mis à jour. Utilisez l'Option B pour les corriger.
+
+#### Option B : Ajouter l'accès manuellement au Service Account
+
+```bash
+# 1. Lister les service accounts pour trouver l'ID
+curl http://hub:8000/api/service-accounts/ \
+  -H "Authorization: Bearer $ADMIN_TOKEN" | jq '.[] | {id, name}'
+
+# 2. Voir les apps actuellement autorisées
+curl http://hub:8000/api/service-accounts/{sa_id} \
+  -H "Authorization: Bearer $ADMIN_TOKEN" | jq '.applications'
+
+# 3. Mettre à jour les apps autorisées (liste complète des IDs)
+curl -X PUT http://hub:8000/api/service-accounts/{sa_id}/apps \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '[1, 5, 12]'  # IDs des apps: salarie(1), exemple-app(5), autre-app(12)
+```
+
+#### Option C : Régénérer le Service Account après ajout du shared service
+
+Si vous venez d'activer `is_shared_service` sur l'API cible, le Service Account existant ne sera pas automatiquement mis à jour. Vous pouvez :
+
+1. Supprimer et recréer le Service Account (les shared services seront ajoutés automatiquement)
+2. Ou utiliser l'Option B pour ajouter manuellement l'accès
+
+---
+
+### 🔴 Erreur 403 - IP non autorisée (Auto-enregistrement)
+
+**Symptôme** : `POST /api/apps/register` répond `403 Forbidden`
+
+**Cause** : L'auto-enregistrement est réservé aux IPs du réseau Docker.
+
+**Solution** : Vérifiez que votre application s'exécute dans le même réseau Docker que le Hub, ou configurez manuellement l'application via l'API d'administration.
+
+---
+
+### 📊 Tableau récapitulatif des erreurs M2M
+
+| Code | Message | Cause | Solution |
+|------|---------|-------|----------|
+| **401** | Not authenticated | Token absent/expiré/invalide | Régénérer le token |
+| **403** | Forbidden | Service Account sans accès à l'API | Activer `is_shared_service` OU ajouter l'app aux accès du SA |
+| **403** | IP non autorisée | Auto-enregistrement hors Docker | Créer l'app manuellement |
+| **500** | Internal error | Erreur côté Hub | Vérifier les logs du Hub |
+
+---
+
+## 12. Configuration du Dockerfile
 
 > **IMPORTANT** : Le Dockerfile de votre application doit copier les fichiers nécessaires à l'authentification !
 
@@ -2132,7 +2310,7 @@ cp /chemin/vers/HUB/secrets/jwt_public_key.pem ./secrets/
 
 ---
 
-## 12. Résumé
+## 13. Résumé
 
 ### Ce que l'application DOIT faire
 
@@ -2154,7 +2332,7 @@ cp /chemin/vers/HUB/secrets/jwt_public_key.pem ./secrets/
 
 ---
 
-## 13. Contact Hub
+## 14. Contact Hub
 
 - **URL Hub API** : \`http://[IP_SERVEUR]:8000\`
 - **URL Hub Frontend** : \`http://[IP_SERVEUR]:80\`
