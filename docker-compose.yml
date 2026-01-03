@@ -43,6 +43,8 @@ services:
       - ./hub/pytest.ini:/code/pytest.ini
       - ./secrets:/code/secrets:rw
       - ./secrets/service_accounts:/code/secrets/service_accounts:rw
+      # Version centralisée (source unique de vérité)
+      - ./VERSION:/code/VERSION:ro
       # Documentation d'intégration (accessible via /api/docs/integration)
       - ./INTEGRATION.md:/code/INTEGRATION.md:ro
       # Changelog pour agents IA (accessible via /api/docs/changelog)

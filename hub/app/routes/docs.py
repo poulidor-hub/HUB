@@ -1,7 +1,8 @@
 """
 Routes pour exposer la documentation du Hub
 ============================================
-Le fichier INTEGRATION.md est la SOURCE UNIQUE de vérité.
+Le fichier VERSION est la SOURCE UNIQUE de vérité pour la version.
+Les métadonnées de documentation sont extraites de INTEGRATION.md.
 Les sections et shortcuts sont extraits dynamiquement du fichier.
 """
 import re
@@ -14,9 +15,29 @@ import logging
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/docs", tags=["documentation"])
 
-# Chemin vers le fichier INTEGRATION.md (depuis le conteneur Docker)
+# Chemin vers les fichiers (depuis le conteneur Docker)
 DOCS_PATH = Path("/code/INTEGRATION.md")
 CHANGELOG_PATH = Path("/code/CHANGELOG.md")
+VERSION_PATH = Path("/code/VERSION")
+
+
+def get_hub_version() -> str:
+    """
+    Lit la version depuis le fichier VERSION (source unique de vérité).
+    Fallback sur INTEGRATION.md si VERSION n'existe pas.
+    """
+    if VERSION_PATH.exists():
+        return VERSION_PATH.read_text().strip()
+    
+    # Fallback: extraire depuis INTEGRATION.md
+    if DOCS_PATH.exists():
+        content = DOCS_PATH.read_text(encoding="utf-8")
+        match = re.search(r"\*\*Version\*\*\s*:\s*(\d+\.\d+\.\d+)", content)
+        if match:
+            return match.group(1)
+    
+    return "unknown"
+
 
 # Alias statiques vers des mots-clés de recherche
 # Ces alias permettent de trouver des sections par mot-clé
@@ -335,6 +356,8 @@ async def get_version():
     Retourne la version de la documentation.
     Utile pour les applications clientes qui veulent vérifier les mises à jour.
     
+    La version est lue depuis le fichier VERSION (source unique de vérité).
+    
     **Exemple :**
     ```bash
     curl http://hub:8000/api/docs/integration/version
@@ -351,12 +374,15 @@ async def get_version():
         metadata = get_doc_metadata(content)
         sections = parse_doc_sections(content)
         
+        # Utiliser la version depuis le fichier VERSION (source unique)
+        version = get_hub_version()
+        
         return {
-            "version": metadata.get("version"),
+            "version": version,
             "last_update": metadata.get("date"),
             "author": metadata.get("author"),
             "total_sections": len(sections),
-            "source_file": "INTEGRATION.md",
+            "source_file": "VERSION",
             "endpoints": {
                 "full_doc": "/api/docs/integration",
                 "sections": "/api/docs/integration/sections",
