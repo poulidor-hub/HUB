@@ -229,6 +229,28 @@ class AppWithUsers(AppResponse):
         )
 
 
+# ===== Découverte M2M Schemas =====
+class AppDiscoveryItem(BaseModel):
+    """Informations d'une application pour la découverte M2M"""
+    slug: str = Field(..., description="Identifiant unique de l'application")
+    name: str = Field(..., description="Nom de l'application")
+    description: Optional[str] = Field(None, description="Description de l'application")
+    api_url: str = Field(..., description="URL de l'API de l'application")
+    is_shared_service: bool = Field(..., description="Si True, API partagée accessible à tous les SA")
+    
+    class Config:
+        from_attributes = True
+
+
+class DiscoverResponse(BaseModel):
+    """Réponse de l'endpoint de découverte M2M"""
+    shared_services: List[AppDiscoveryItem] = Field(
+        ..., 
+        description="Liste des APIs partagées (is_shared_service=True)"
+    )
+    total_shared: int = Field(..., description="Nombre total d'APIs partagées")
+
+
 # ===== Auth Schemas =====
 class Token(BaseModel):
     access_token: str

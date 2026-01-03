@@ -1,6 +1,6 @@
 # Guide d'Intégration - Hub d'Authentification
 
-> **Version** : 2.5.2  
+> **Version** : 2.5.3  
 > **Dernière mise à jour** : 3 janvier 2026  
 > **Auteur** : Équipe Hub
 
@@ -1610,6 +1610,10 @@ m2m = M2MClient(
 employees = await m2m.call_api(f"http://{settings.hub_ip}:18087/api/employees")
 \`\`\`
 
+### 🆕 Découverte des services partagés (v2.5.3)
+
+> 💡 Besoin de connaître les APIs disponibles pour la communication M2M ? Utilisez l'endpoint de découverte `GET /api/apps/discover` pour lister dynamiquement les services partagés. Voir [Section 7 - Services Partagés](#7-services-partagés-apis-de-données) pour plus de détails.
+
 ---
 
 ## 7. Services Partagés (APIs de données)
@@ -1704,6 +1708,86 @@ session.commit()
 | `salarie` | API Salariés | Données RH des employés |
 
 > 💡 Pour ajouter une nouvelle API partagée, utilisez la commande SQL ci-dessus ou l'API d'administration.
+
+### 🆕 Découverte dynamique des services partagés (v2.5.3)
+
+L'endpoint `GET /api/apps/discover` permet à une application de **découvrir dynamiquement** les APIs partagées disponibles, sans connaître leur configuration à l'avance.
+
+#### Endpoint
+
+| Méthode | URL | Authentification |
+|---------|-----|------------------|
+| `GET` | `/api/apps/discover` | Token M2M (Service Account) |
+
+#### Requête
+
+\`\`\`bash
+# Obtenir un token M2M
+TOKEN=$(curl -s -X POST "http://[HUB_IP]:8000/api/auth/token" \
+  -d "grant_type=client_credentials&client_id=sa_xxx&client_secret=secret_xxx" \
+  | jq -r '.access_token')
+
+# Découvrir les services partagés
+curl -X GET "http://[HUB_IP]:8000/api/apps/discover" \
+  -H "Authorization: Bearer $TOKEN"
+\`\`\`
+
+#### Réponse
+
+\`\`\`json
+{
+  "shared_services": [
+    {
+      "slug": "salarie",
+      "name": "API Salariés",
+      "description": "Données RH des employés",
+      "api_url": "http://192.0.2.11:18087",
+      "is_shared_service": true
+    },
+    {
+      "slug": "referentiel",
+      "name": "API Référentiels",
+      "description": "Référentiels métier (communes, codes, etc.)",
+      "api_url": "http://192.0.2.11:18088",
+      "is_shared_service": true
+    }
+  ],
+  "total_shared": 2
+}
+\`\`\`
+
+#### Exemple Python avec `hub_client`
+
+\`\`\`python
+from hub_client import hub_client
+
+async def discover_and_call_services():
+    """Découvre les services partagés et les appelle dynamiquement"""
+    
+    # 1. Découvrir les services disponibles
+    response = await hub_client.call_api(
+        "GET",
+        f"{hub_client.hub_url}/api/apps/discover"
+    )
+    discovery = response.json()
+    
+    print(f"📡 {discovery['total_shared']} services partagés disponibles:")
+    for service in discovery['shared_services']:
+        print(f"   - {service['name']} ({service['slug']}): {service['api_url']}")
+    
+    # 2. Appeler un service découvert dynamiquement
+    salarie_service = next(
+        (s for s in discovery['shared_services'] if s['slug'] == 'salarie'),
+        None
+    )
+    
+    if salarie_service:
+        employees = await hub_client.call_api(
+            "GET",
+            f"{salarie_service['api_url']}/api/employees"
+        )
+        print(f"✅ {len(employees.json())} employés récupérés")
+\`\`\`
 
 ### Exemple d'utilisation
 
@@ -2205,6 +2289,14 @@ class TokenManager:
 | \`/api/apps/me/regenerate-secret\` | POST | Régénère le client_secret | IP Docker + X-Slug |
 
 > 💡 Ces endpoints sont accessibles **uniquement depuis les réseaux Docker** (172.17.x.x - 172.31.x.x, 10.0.x.x, 192.168.x.x).
+
+### 🆕 Découverte M2M (v2.5.3)
+
+| Endpoint | Méthode | Description | Sécurité |
+|----------|---------|-------------|----------|
+| \`/api/apps/discover\` | GET | Liste les services partagés disponibles | Token M2M (Service Account) |
+
+> 💡 Cet endpoint permet aux applications de découvrir dynamiquement les APIs partagées (`is_shared_service=True`) sans configuration préalable.
 
 #### Header d'identification
 

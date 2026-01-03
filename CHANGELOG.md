@@ -5,6 +5,60 @@
 
 ---
 
+## [2.5.3] - 3 janvier 2026
+
+### 🆕 Endpoint de découverte M2M
+
+**Nouvelle fonctionnalité** : Les applications peuvent maintenant découvrir dynamiquement les services partagés disponibles via un nouvel endpoint dédié.
+
+| Fonctionnalité | Description |
+|----------------|-------------|
+| **GET /api/apps/discover** | Endpoint de découverte des APIs partagées (`is_shared_service=True`) |
+| **Authentification M2M** | Accessible uniquement avec un token Service Account |
+| **Réponse structurée** | Liste des services avec slug, nom, description et URL |
+
+### 🔧 Ajouts techniques
+
+| Élément | Description |
+|---------|-------------|
+| `AppDiscoveryItem` (schemas.py) | Nouveau schéma pour les infos de découverte d'une app |
+| `DiscoverResponse` (schemas.py) | Schéma de réponse avec liste `shared_services` + total |
+| `/api/apps/discover` (routes/apps.py) | Implémentation de l'endpoint avec vérification token M2M |
+
+### 📝 Documentation mise à jour
+
+| Section | Modification |
+|---------|-------------|
+| Version | 2.5.2 → 2.5.3 |
+| Section 6 (M2M) | Ajout note vers la découverte des services partagés |
+| Section 7 (Services Partagés) | Nouvelle sous-section "Découverte dynamique des services partagés" avec exemples |
+| Section 10 (Endpoints) | Ajout table "Découverte M2M" avec le nouvel endpoint |
+
+### 📋 Cas d'usage
+
+L'endpoint permet aux applications de :
+- Découvrir les APIs partagées sans configuration manuelle
+- Récupérer dynamiquement les URLs des services
+- S'adapter automatiquement lors de l'ajout de nouveaux services partagés
+
+**Exemple de réponse :**
+```json
+{
+  "shared_services": [
+    {
+      "slug": "salarie",
+      "name": "API Salariés",
+      "description": "Données RH des employés",
+      "api_url": "http://192.0.2.11:18087",
+      "is_shared_service": true
+    }
+  ],
+  "total_shared": 1
+}
+```
+
+---
+
 ## [2.5.2] - 3 janvier 2026
 
 ### 🔄 Resync automatique M2M et robustification

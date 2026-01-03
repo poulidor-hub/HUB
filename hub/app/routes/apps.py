@@ -14,9 +14,10 @@ from app.schemas import (
     AppCreate, AppCreateSimplified, AppUpdate, AppResponse, AppWithUsers,
     AppResponseWithMyRole,
     DockerScanResponse, DockerContainerInfo, DockerPortInfo,
-    AppRegisterRequest, AppRegisterResponse, AppCredentialsResponse
+    AppRegisterRequest, AppRegisterResponse, AppCredentialsResponse,
+    AppDiscoveryItem, DiscoverResponse
 )
-from app.auth import get_current_admin, get_current_user, get_password_hash, get_settings
+from app.auth import get_current_admin, get_current_user, get_password_hash, get_settings, verify_token_not_revoked, oauth2_scheme
 from app.routes.service_accounts import save_service_account_credentials
 from app.routes.audit import log_action
 
@@ -61,6 +62,80 @@ def generate_slug(name: str) -> str:
     slug = re.sub(r'[^a-z0-9]+', '-', slug)
     slug = slug.strip('-')
     return slug
+
+
+# ===== Découverte M2M =====
+@router.get("/discover", response_model=DiscoverResponse)
+async def discover_shared_services(
+    token: str = Depends(oauth2_scheme),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    🆕 Découverte des APIs partagées pour la communication M2M.
+    
+    Retourne la liste des applications marquées comme services partagés
+    (`is_shared_service=True`), accessibles par tous les Service Accounts.
+    
+    **Authentification requise** : Token M2M (Service Account) uniquement.
+    
+    **Usage** : Permet aux applications de découvrir dynamiquement les APIs
+    de données disponibles (ex: API Salariés, API Référentiels) sans
+    configuration manuelle.
+    
+    **Exemple de réponse** :
+    ```json
+    {
+        "shared_services": [
+            {
+                "slug": "salarie",
+                "name": "API Salariés",
+                "description": "Données RH des employés",
+                "api_url": "http://192.0.2.11:18087",
+                "is_shared_service": true
+            }
+        ],
+        "total_shared": 1
+    }
+    ```
+    """
+    # Vérifier le token et qu'il s'agit d'un service account
+    payload = await verify_token_not_revoked(token, db)
+    
+    if payload.get("type") != "service_account":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Cet endpoint est réservé aux Service Accounts (authentification M2M)"
+        )
+    
+    # Récupérer toutes les apps partagées actives
+    result = await db.execute(
+        select(Application)
+        .where(
+            Application.is_shared_service == True,
+            Application.is_active == True
+        )
+        .order_by(Application.name)
+    )
+    shared_apps = result.scalars().all()
+    
+    # Construire la réponse
+    shared_services = [
+        AppDiscoveryItem(
+            slug=app.slug,
+            name=app.name,
+            description=app.description,
+            api_url=app.api_url,
+            is_shared_service=True
+        )
+        for app in shared_apps
+    ]
+    
+    logger.info(f"🔍 Découverte M2M par SA '{payload.get('sub')}': {len(shared_services)} services partagés")
+    
+    return DiscoverResponse(
+        shared_services=shared_services,
+        total_shared=len(shared_services)
+    )
 
 
 @router.get("/", response_model=List[AppResponseWithMyRole])
