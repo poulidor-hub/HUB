@@ -1,6 +1,6 @@
 # Guide d'Intégration - Hub d'Authentification
 
-> **Version** : 2.5.1  
+> **Version** : 2.5.2  
 > **Dernière mise à jour** : 3 janvier 2026  
 > **Auteur** : Équipe Hub
 
@@ -83,6 +83,7 @@ curl http://hub:8000/api/docs/integration/version
 ### Troubleshooting
 11. [🆕 Troubleshooting M2M (Erreurs courantes)](#11-troubleshooting-m2m-erreurs-courantes)
     - [Erreur 401 - Not Authenticated](#-erreur-401---not-authenticated)
+    - [🆕 Resync Automatique M2M](#-resync-automatique-m2m-v252)
     - [Erreur 403 - Forbidden (Token reconnu mais accès refusé)](#-erreur-403---forbidden-token-reconnu-mais-accès-refusé)
     - [Erreur 403 - IP non autorisée](#-erreur-403---ip-non-autorisée-auto-enregistrement)
     - [Tableau récapitulatif des erreurs M2M](#-tableau-récapitulatif-des-erreurs-m2m)
@@ -92,6 +93,7 @@ curl http://hub:8000/api/docs/integration/version
     - [Fichiers requis](#fichiers-requis)
     - [Exemple de Dockerfile](#exemple-de-dockerfile)
     - [Avec Docker Compose (volumes)](#avec-docker-compose-volumes)
+
 
 ### Annexes
 13. [Résumé](#13-résumé)
@@ -352,12 +354,17 @@ L'auto-enregistrement est **sécurisé par whitelist IP**. Seules les requêtes 
 
 Créez ce fichier dans votre application pour gérer l'auto-enregistrement et l'authentification M2M :
 
+> 🆕 **v2.5.2** : Ajout du resync automatique avec protection contre les boucles infinies et thread-safety.
+
 \`\`\`python
 """
-Hub Client avec Auto-enregistrement
-====================================
+Hub Client avec Auto-enregistrement et Resync Automatique
+==========================================================
 Client pour l'authentification M2M avec le Hub.
-Gère automatiquement l'enregistrement de l'application et la récupération des credentials.
+Gère automatiquement :
+- L'enregistrement de l'application
+- La récupération des credentials
+- Le resync automatique en cas de secret invalide (401)
 
 Usage:
     from hub_client import hub_client
@@ -368,6 +375,7 @@ Usage:
     # Pour appeler une autre API
     response = await hub_client.call_api("GET", "http://autre-api:8080/data")
 """
+import asyncio
 import httpx
 import os
 import logging
@@ -376,9 +384,13 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
+# 🆕 Constantes de protection contre les boucles infinies
+MAX_RESYNC_ATTEMPTS = 3   # Nombre max de tentatives de resync
+RESYNC_COOLDOWN = 30      # Secondes minimum entre deux resyncs
+
 
 class HubClient:
-    """Client Hub avec auto-enregistrement et authentification M2M"""
+    """Client Hub avec auto-enregistrement, authentification M2M et resync automatique"""
     
     def __init__(self):
         # Configuration depuis .env
@@ -399,6 +411,11 @@ class HubClient:
         
         # État
         self._registered = False
+        
+        # 🆕 Protection resync (thread-safety + anti-boucle)
+        self._resync_lock = asyncio.Lock()
+        self._last_resync_attempt: Optional[datetime] = None
+        self._resync_count = 0
     
     def _detect_hub_host(self) -> str:
         """Détecte l'IP du Hub (même serveur par défaut)"""
@@ -533,10 +550,40 @@ class HubClient:
             logger.error(f"❌ Erreur lors de la régénération: {e}")
             return False
     
-    async def get_token(self) -> str:
+    async def _auto_resync(self) -> bool:
+        """
+        🆕 Resync automatique avec protection contre les boucles infinies.
+        Thread-safe grâce à asyncio.Lock().
+        """
+        async with self._resync_lock:
+            # Vérifier le cooldown
+            if self._last_resync_attempt:
+                elapsed = (datetime.utcnow() - self._last_resync_attempt).total_seconds()
+                if elapsed < RESYNC_COOLDOWN:
+                    logger.warning(f"⚠️ Resync ignoré (cooldown {RESYNC_COOLDOWN}s, reste {RESYNC_COOLDOWN - elapsed:.0f}s)")
+                    return False
+            
+            # Vérifier le nombre max de tentatives
+            if self._resync_count >= MAX_RESYNC_ATTEMPTS:
+                logger.error(f"❌ Nombre max de resyncs atteint ({MAX_RESYNC_ATTEMPTS})")
+                return False
+            
+            self._last_resync_attempt = datetime.utcnow()
+            self._resync_count += 1
+            
+            logger.warning(f"🔄 Secret invalide détecté, resync automatique (tentative {self._resync_count}/{MAX_RESYNC_ATTEMPTS})...")
+            
+            success = await self.regenerate_secret()
+            if success:
+                logger.info(f"✅ Credentials régénérés pour '{self.app_slug}' (resync #{self._resync_count})")
+            return success
+    
+    async def get_token(self, _retry_count: int = 0) -> str:
         """
         Obtient un token M2M, avec cache automatique.
         Renouvelle le token 5 minutes avant expiration.
+        
+        🆕 v2.5.2 : Gère automatiquement les erreurs 401 (secret invalide) avec resync.
         """
         # Vérifier si enregistré
         if not self.has_credentials and not self._registered:
@@ -561,12 +608,12 @@ class HubClient:
             )
             
             if response.status_code == 401:
-                # Secret invalide - essayer de régénérer
-                logger.warning("⚠️ Secret invalide, tentative de régénération...")
-                if await self.regenerate_secret():
-                    # Réessayer avec le nouveau secret
-                    return await self.get_token()
-                raise Exception("Authentification M2M échouée")
+                # 🆕 Secret invalide - resync automatique avec protection
+                logger.warning(f"⚠️ Erreur 401 - Secret invalide (tentative {_retry_count + 1}/{MAX_RESYNC_ATTEMPTS})")
+                if _retry_count < MAX_RESYNC_ATTEMPTS and await self._auto_resync():
+                    logger.info("🔄 Retry après resync...")
+                    return await self.get_token(_retry_count=_retry_count + 1)
+                raise Exception("Authentification M2M échouée après resync")
             
             if response.status_code != 200:
                 logger.error(f"Erreur auth Hub: {response.text}")
@@ -583,7 +630,9 @@ class HubClient:
                 expires_in = data.get("expires_in", 1800)
                 self._token_expires_at = datetime.utcnow() + timedelta(seconds=expires_in)
             
-            logger.debug("✅ Token M2M obtenu avec succès")
+            # 🆕 Reset du compteur de resync après succès
+            self._resync_count = 0
+            logger.debug(f"✅ Token M2M obtenu (expire: {self._token_expires_at})")
             return self._token
     
     async def call_api(self, method: str, url: str, **kwargs) -> httpx.Response:
@@ -919,7 +968,8 @@ class TokenPayload:
         else:
             self.apps: dict = raw_apps
         self.exp: int = payload.get("exp", 0)             # Expiration
-        self.token_type: str = payload.get("type", "user")  # "user" ou "service_account"
+        # ⚠️ Le champ JWT est "type", mais on accepte aussi "token_type" par rétrocompatibilité
+        self.token_type: str = payload.get("type", payload.get("token_type", "user"))
         self.raw: dict = payload
     
     def get_role_for_app(self, app_slug: str) -> Optional[str]:
@@ -935,8 +985,20 @@ class TokenPayload:
         return "admin" in self.roles
     
     def is_service_account(self) -> bool:
-        """Vérifie si c'est un service account (M2M)"""
-        return self.token_type == "service_account"
+        """
+        Vérifie si c'est un service account (M2M).
+        
+        🆕 v2.5.2 : Détection robustifiée pour gérer plusieurs formats :
+        - type = "service_account" (standard)
+        - type = "service" (legacy)
+        - role "service_account" dans roles
+        - rôle "service" dans apps
+        """
+        return (
+            self.token_type in ("service", "service_account") or
+            "service_account" in self.roles or
+            "service" in self.apps.values()
+        )
 
 
 def verify_hub_token(token: str) -> TokenPayload:
@@ -2269,6 +2331,7 @@ curl "http://hub:8000/api/docs/changelog?format=json"
 - Token absent ou malformé dans le header `Authorization`
 - Token expiré
 - Clé publique JWT non synchronisée
+- **🆕 Secret M2M invalide** (régénéré côté Hub ou expiré)
 
 **Solutions** :
 ```bash
@@ -2283,6 +2346,61 @@ echo $TOKEN | cut -d'.' -f2 | base64 -d | jq .
 curl -X POST http://hub:8000/api/auth/token \
   -d "grant_type=client_credentials&client_id=$CLIENT_ID&client_secret=$CLIENT_SECRET"
 ```
+
+### 🆕 Resync Automatique M2M (v2.5.2)
+
+Si vous utilisez le `HubClient` fourni dans ce guide, les erreurs 401 liées à un secret invalide sont gérées **automatiquement** :
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  Architecture de résilience M2M                             │
+├─────────────────────────────────────────────────────────────┤
+│  get_token()                                                │
+│       │                                                     │
+│       ▼                                                     │
+│  ┌─────────────┐     ┌─────────────┐     ┌─────────────┐   │
+│  │ Cache Token │────▶│ POST /token │────▶│   Success   │   │
+│  │   valide?   │     │             │     │             │   │
+│  └─────────────┘     └─────────────┘     └─────────────┘   │
+│       │ non               │ 401                             │
+│       ▼                   ▼                                 │
+│  ┌─────────────┐     ┌─────────────┐                       │
+│  │  Obtenir    │     │ _auto_resync│◀─── asyncio.Lock()    │
+│  │ new token   │     │             │     (thread-safe)     │
+│  └─────────────┘     └─────────────┘                       │
+│                           │                                 │
+│                           ▼                                 │
+│                      ┌─────────────┐                       │
+│                      │ regenerate- │                       │
+│                      │   secret    │                       │
+│                      └─────────────┘                       │
+│                           │                                 │
+│                           ▼                                 │
+│                      ┌─────────────┐                       │
+│                      │   Retry     │ (max 3 tentatives)    │
+│                      │ get_token() │                       │
+│                      └─────────────┘                       │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**Protections intégrées :**
+
+| Protection | Description |
+|------------|-------------|
+| `MAX_RESYNC_ATTEMPTS = 3` | Nombre max de tentatives avant abandon |
+| `RESYNC_COOLDOWN = 30` | Secondes minimum entre deux resyncs |
+| `asyncio.Lock()` | Protection contre les accès concurrents |
+
+**Exemple de logs lors d'un resync :**
+```
+⚠️ Erreur 401 - Secret invalide (tentative 1/3)
+🔄 Secret invalide détecté, resync automatique (tentative 1/3)...
+✅ Credentials régénérés pour 'mon-app' (resync #1)
+🔄 Retry après resync...
+✅ Token M2M obtenu (expire: 2026-01-03 20:19:42)
+```
+
+> 💡 **Conseil** : Si vous voyez des resyncs fréquents dans les logs, vérifiez si le Hub n'est pas en cours de redémarrage ou si le secret n'est pas régénéré manuellement.
 
 ---
 
