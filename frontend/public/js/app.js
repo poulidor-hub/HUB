@@ -306,20 +306,31 @@ async function updateMyAppRole(appSlug, role) {
     try {
         const result = await api.updateMyAppRole(appSlug, role || null);
         const roleText = role ? `défini à "${role}"` : 'supprimé';
-        showToast('Rôle mis à jour', `Votre rôle sur ${result.app_name} a été ${roleText}. Le nouveau rôle sera actif à la prochaine connexion à l'app.`, 'success');
         
-        // Optionnel: Rafraîchir le token pour que le nouveau rôle soit pris en compte immédiatement
-        // (nécessite un refresh token valide)
+        // Rafraîchir le token pour que le nouveau rôle soit pris en compte immédiatement
+        // Le refresh token recharge les rôles depuis la base de données
+        let tokenRefreshed = false;
         try {
-            await api.tryRefreshToken();
+            tokenRefreshed = await api.tryRefreshToken();
         } catch (e) {
             console.log('Refresh token non disponible, le nouveau rôle sera actif après re-login');
+        }
+        
+        // IMPORTANT: Recharger la liste des applications pour refléter le nouveau rôle
+        // Cela vide le cache implicite de l'UI et recharge depuis l'API
+        await loadApps();
+        
+        // Message adapté selon que le token a été rafraîchi ou non
+        if (tokenRefreshed) {
+            showToast('Rôle mis à jour', `Votre rôle sur ${result.app_name} a été ${roleText}. Actif immédiatement.`, 'success');
+        } else {
+            showToast('Rôle mis à jour', `Votre rôle sur ${result.app_name} a été ${roleText}. Le nouveau rôle sera actif à la prochaine connexion à l'app.`, 'success');
         }
     } catch (error) {
         console.error('Erreur mise à jour rôle:', error);
         showToast('Erreur', error.message || 'Impossible de mettre à jour le rôle', 'danger');
         // Recharger pour remettre la bonne valeur
-        loadApps();
+        await loadApps();
     }
 }
 
