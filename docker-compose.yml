@@ -35,12 +35,13 @@ services:
       - ADMIN_PASSWORD=${ADMIN_PASSWORD:-admin123}
       - ADMIN_EMAIL=${ADMIN_EMAIL:-admin@local.lan}
       - HUB_HOST=${HUB_HOST:-}
+      - AUTO_GENERATE_KEYS=${AUTO_GENERATE_KEYS:-false}
     volumes:
       - ./hub/app:/code/app
       - ./hub/tests:/code/tests
       - ./hub/app_tester.py:/code/app_tester.py
       - ./hub/pytest.ini:/code/pytest.ini
-      - ./secrets:/code/secrets:ro
+      - ./secrets:/code/secrets:rw
       - ./secrets/service_accounts:/code/secrets/service_accounts:rw
       # Documentation d'intégration (accessible via /api/docs/integration)
       - ./INTEGRATION.md:/code/INTEGRATION.md:ro
