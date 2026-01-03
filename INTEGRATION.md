@@ -193,6 +193,21 @@ from functools import lru_cache
 from pydantic_settings import BaseSettings
 
 
+> ⚠️ **PIÈGE DOCKER** : Dans un conteneur Docker, `socket.gethostbyname(socket.gethostname())` retourne l'**IP interne du conteneur** (ex: `172.17.0.5`), pas l'IP de l'hôte !
+> 
+> **Solution** : Utilisez **toujours** la variable d'environnement `HUB_HOST` explicitement définie dans votre `docker-compose.yml` ou `.env`, pointant vers l'IP de l'hôte Docker.
+> 
+> \`\`\`python
+> # ❌ INCORRECT en Docker - retourne l'IP interne du conteneur
+> import socket
+> local_ip = socket.gethostbyname(socket.gethostname())  # 172.17.0.5 (inaccessible de l'extérieur)
+> 
+> # ✅ CORRECT - toujours utiliser HUB_HOST
+> hub_host = os.getenv("HUB_HOST")  # 192.0.2.12 (IP réelle de l'hôte)
+> if not hub_host:
+>     raise RuntimeError("❌ HUB_HOST doit être défini dans l'environnement Docker")
+> \`\`\`
+
 def get_server_ip() -> str:
     """Détecte automatiquement l'IP du serveur (jamais localhost)"""
     try:
@@ -1929,7 +1944,49 @@ networks:
 | \`manager\` | 3 | Gestion des données, création/modification |
 | \`user\` | 2 | Accès standard lecture/écriture |
 | \`viewer\` | 1 | Lecture seule |
-| \`service\` | 3 | Service Account (M2M) |
+| \`service\` | 3 | Service Account (M2M) - équivalent à manager |
+
+#### Hiérarchie des rôles
+
+La hiérarchie des rôles suit l'ordre croissant suivant :
+
+```
+viewer (1) < user (2) < manager (3) = service (3) < admin (4)
+```
+
+Un utilisateur avec un rôle de niveau N peut accéder aux ressources qui nécessitent un rôle de niveau ≤ N.
+
+**Exemple d'implémentation Python :**
+
+\`\`\`python
+ROLE_HIERARCHY = {
+    "viewer": 1,
+    "user": 2,
+    "manager": 3,
+    "service": 3,  # Équivalent à manager pour les Service Accounts
+    "admin": 4
+}
+
+def has_minimum_role(user_role: str, required_role: str) -> bool:
+    """
+    Vérifie si le rôle de l'utilisateur atteint le niveau minimum requis.
+    
+    Args:
+        user_role: Rôle actuel de l'utilisateur (ex: "manager")
+        required_role: Rôle minimum requis (ex: "user")
+    
+    Returns:
+        True si user_role >= required_role dans la hiérarchie
+    """
+    user_level = ROLE_HIERARCHY.get(user_role, 0)
+    required_level = ROLE_HIERARCHY.get(required_role, 0)
+    return user_level >= required_level
+
+# Exemples d'utilisation
+has_minimum_role("admin", "manager")   # True - admin (4) >= manager (3)
+has_minimum_role("user", "manager")    # False - user (2) < manager (3)
+has_minimum_role("service", "manager") # True - service (3) >= manager (3)
+\`\`\`
 
 ### Vérification des rôles côté backend
 
@@ -1995,6 +2052,87 @@ if (role === 'viewer') {
 | \`/api/auth/public-key\` | GET | Clé publique RSA (format PEM) |
 | \`/api/auth/.well-known/jwks.json\` | GET | 🆕 Clé publique RSA (format JWKS - standard OIDC) |
 | \`/api/auth/hub-host\` | GET | IP/hostname du Hub |
+
+#### Renouvellement de token (OAuth2)
+
+Le Hub supporte le flux OAuth2 standard pour le renouvellement de tokens via l'endpoint unifié `/api/auth/token` avec `grant_type=refresh_token`.
+
+> ⚠️ **IMPORTANT** : Le renouvellement de token est géré **exclusivement** par le Hub. Les applications clientes doivent utiliser le flux OAuth2 ci-dessous.
+
+**Flux OAuth2 (recommandé) :**
+
+\`\`\`python
+import httpx
+from datetime import datetime
+
+class TokenManager:
+    """Gestionnaire de tokens avec renouvellement automatique."""
+    
+    def __init__(self, hub_url: str):
+        self.hub_url = hub_url
+        self.access_token: str | None = None
+        self.refresh_token: str | None = None
+        self.expires_at: datetime | None = None
+    
+    async def refresh_access_token(self) -> str:
+        """
+        Renouvelle l'access token via le flux OAuth2.
+        
+        Le Hub utilise la rotation automatique des refresh tokens :
+        chaque renouvellement retourne un nouveau refresh_token.
+        """
+        if not self.refresh_token:
+            raise ValueError("Pas de refresh token disponible")
+        
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                f"{self.hub_url}/api/auth/token",
+                data={
+                    "grant_type": "refresh_token",
+                    "refresh_token": self.refresh_token
+                },
+                headers={"Content-Type": "application/x-www-form-urlencoded"}
+            )
+            
+            if response.status_code != 200:
+                raise Exception(f"Refresh échoué: {response.status_code}")
+            
+            data = response.json()
+            
+            # Mettre à jour les tokens (rotation automatique)
+            self.access_token = data["access_token"]
+            self.refresh_token = data.get("refresh_token")  # Nouveau refresh token
+            self.expires_at = datetime.fromisoformat(data["expires_at"].replace("Z", "+00:00"))
+            
+            return self.access_token
+    
+    def is_expired(self) -> bool:
+        """Vérifie si le token est expiré ou sur le point de l'être."""
+        if not self.expires_at:
+            return True
+        # Considérer expiré 5 minutes avant pour éviter les problèmes de timing
+        from datetime import timedelta, timezone
+        return datetime.now(timezone.utc) >= self.expires_at - timedelta(minutes=5)
+    
+    async def get_valid_token(self) -> str:
+        """Retourne un token valide, en le renouvelant si nécessaire."""
+        if self.is_expired() and self.refresh_token:
+            await self.refresh_access_token()
+        return self.access_token
+\`\`\`
+
+**Réponse du Hub :**
+
+\`\`\`json
+{
+  "access_token": "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "token_type": "bearer",
+  "expires_at": "2026-01-03T15:30:00",
+  "refresh_token": "new_refresh_token_abc123"
+}
+\`\`\`
+
+> 💡 **Note** : Le Hub implémente la **rotation des refresh tokens**. Chaque renouvellement invalide l'ancien refresh token et en émet un nouveau. Conservez toujours le dernier refresh token reçu.
 
 ### Auto-enregistrement (🆕 v2.0)
 
