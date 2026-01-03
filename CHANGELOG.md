@@ -5,6 +5,57 @@
 
 ---
 
+## [2.5.2] - 3 janvier 2026
+
+### 🔄 Resync automatique M2M et robustification
+
+**Nouvelles fonctionnalités** :
+
+| Fonctionnalité | Description |
+|----------------|-------------|
+| **Resync automatique M2M** | Détection et récupération automatique en cas de secret invalide (401) |
+| **Thread-safety** | Protection contre les régénérations concurrentes avec `asyncio.Lock()` |
+| **Protection anti-boucle** | Max 3 tentatives + cooldown 30s entre resyncs |
+| **Logs verbeux** | Traçabilité complète du processus de resync |
+
+### 🔧 Corrections et améliorations
+
+| Élément | Modification |
+|---------|-------------|
+| `TokenPayload.is_service_account()` | Détection robustifiée (accepte `type`, `token_type`, rôles) |
+| Lecture champ JWT | Accepte `type` ET `token_type` par rétrocompatibilité |
+| `docker-compose.yml` | Ajout variable `AUTO_GENERATE_KEYS` + secrets en lecture-écriture |
+
+### 📝 Documentation mise à jour
+
+| Section | Modification |
+|---------|-------------|
+| Version | 2.5.1 → 2.5.2 |
+| Section 3 (hub_client.py) | Ajout constantes `MAX_RESYNC_ATTEMPTS`, `RESYNC_COOLDOWN` |
+| Section 3 (hub_client.py) | Nouvelle méthode `_auto_resync()` avec protection |
+| Section 3 (hub_client.py) | `get_token()` avec retry automatique après resync |
+| Section 11 | Nouvelle sous-section "Resync Automatique M2M (v2.5.2)" |
+| Table des matières | Ajout lien vers resync automatique |
+
+### 📋 Architecture de résilience M2M
+
+```
+get_token() → Cache valide? → Oui → Retourne token
+                    ↓ Non
+            POST /token → 200 OK → Retourne token
+                    ↓ 401
+            _auto_resync() → Lock + Cooldown check
+                    ↓
+            regenerate-secret → Retry get_token()
+```
+
+### 🐳 Docker
+
+- `AUTO_GENERATE_KEYS` maintenant passé au conteneur
+- Volume `secrets` en `:rw` (était `:ro`) pour permettre la génération des clés
+
+---
+
 ## [2.5.1] - 3 janvier 2026
 
 ### 🐛 Correction documentation - Format du champ `apps`
