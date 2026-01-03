@@ -4,6 +4,7 @@ secrets/*.key
 secrets/sa_*.env
 secrets/service_accounts/*.env
 .env.prod
+*.pem
 
 # Python
 __pycache__/
