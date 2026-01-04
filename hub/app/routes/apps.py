@@ -118,10 +118,10 @@ async def remove_shared_service_from_all_service_accounts(db: AsyncSession, app:
 
 
 # ===== IP Whitelist pour auto-enregistrement =====
-# Réseaux Docker autorisés pour l'auto-enregistrement (sans authentification)
+# Réseaux Docker autorisés par défaut pour l'auto-enregistrement (sans authentification)
 # SÉCURITÉ : Restreint aux réseaux Docker internes uniquement
-# Les réseaux 192.168.* et 10.0.* sont exclus par sécurité
-DOCKER_NETWORK_PREFIXES = [
+# Les réseaux 192.168.* et 10.0.* sont exclus par sécurité par défaut
+DEFAULT_DOCKER_NETWORK_PREFIXES = [
     "172.17.",      # docker0 (bridge par défaut)
     "172.18.",      # Réseaux Docker custom
     "172.19.",
@@ -137,17 +137,38 @@ DOCKER_NETWORK_PREFIXES = [
     "172.29.",
     "172.30.",
     "172.31.",
-    # SÉCURITÉ : 10.0.* et 192.168.* sont exclus pour éviter les enregistrements malveillants
-    # Si vous avez besoin d'autoriser un réseau spécifique, ajoutez-le explicitement
-    # Exemple : "10.0.42." pour un réseau overlay spécifique
 ]
 
 
+def get_whitelist_networks() -> list[str]:
+    """
+    Retourne la liste des préfixes de réseaux autorisés pour l'auto-enregistrement.
+    
+    Utilise APP_WHITELIST_NETWORKS depuis la config si défini,
+    sinon utilise les réseaux Docker par défaut (172.17-31.*).
+    
+    Format de APP_WHITELIST_NETWORKS : préfixes séparés par des virgules
+    Exemple : "172.17.,172.18.,192.168.50."
+    """
+    from app.config import get_settings
+    settings = get_settings()
+    
+    if settings.app_whitelist_networks:
+        # Parser la liste depuis la config (séparée par virgules)
+        networks = [n.strip() for n in settings.app_whitelist_networks.split(",") if n.strip()]
+        if networks:
+            return networks
+    
+    # Par défaut : réseaux Docker uniquement
+    return DEFAULT_DOCKER_NETWORK_PREFIXES
+
+
 def is_docker_network_ip(ip: str) -> bool:
-    """Vérifie si l'IP provient d'un réseau Docker autorisé"""
+    """Vérifie si l'IP provient d'un réseau autorisé (whitelist)"""
     if not ip:
         return False
-    return any(ip.startswith(prefix) for prefix in DOCKER_NETWORK_PREFIXES)
+    whitelist = get_whitelist_networks()
+    return any(ip.startswith(prefix) for prefix in whitelist)
 
 
 def generate_slug(name: str) -> str:

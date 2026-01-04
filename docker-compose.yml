@@ -36,6 +36,7 @@ services:
       - ADMIN_EMAIL=${ADMIN_EMAIL:-admin@local.lan}
       - HUB_HOST=${HUB_HOST:-}
       - AUTO_GENERATE_KEYS=${AUTO_GENERATE_KEYS:-false}
+      - APP_WHITELIST_NETWORKS=${APP_WHITELIST_NETWORKS:-}
     volumes:
       - ./hub/app:/code/app
       - ./hub/tests:/code/tests

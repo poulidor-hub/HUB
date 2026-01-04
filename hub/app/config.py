@@ -163,6 +163,11 @@ class Settings(BaseSettings):
     # Évite les rafraîchissements trop fréquents de la page audit
     audit_sse_cooldown: float = 5.0
     
+    # Whitelist des réseaux autorisés pour l'auto-enregistrement des applications
+    # Par défaut : réseaux Docker (172.17-31.*)
+    # Format : préfixes IP séparés par des virgules (ex: "172.17.,172.18.,192.168.50.")
+    app_whitelist_networks: str = ""
+    
     # Host du Hub (IP ou hostname accessible par les clients)
     # Si non défini, sera détecté automatiquement
     hub_host: str = ""
