@@ -62,13 +62,42 @@ class DiscoveredContainer:
 
 
 def generate_slug(name: str) -> str:
-    """Génère un slug à partir du nom du conteneur"""
-    # Retirer les prefixes courants (docker-compose)
+    """Génère un slug à partir du nom du conteneur Docker.
+    
+    Gère les formats Docker Compose modernes:
+    - project-service-1 (ancien format)
+    - project_service-service-1 (nouveau format avec underscores)
+    - service-1 (format simple)
+    
+    Exemples:
+    - "exemple-app-frontend-1" -> "exemple-app-frontend"
+    - "exemple-app_api-api-1" -> "exemple-app-api"
+    - "mon-app-backend-2" -> "mon-app-backend"
+    """
     slug = name.lower()
-    slug = re.sub(r'^[a-z]+-', '', slug)  # Retirer préfixe projet
-    slug = re.sub(r'-\d+$', '', slug)     # Retirer suffixes numériques
-    slug = re.sub(r'[^a-z0-9]+', '-', slug)
+    
+    # Retirer les suffixes numériques de réplicas (-1, -2, etc.)
+    slug = re.sub(r'-\d+$', '', slug)
+    
+    # Remplacer underscores par tirets (Docker Compose utilise _ pour le projet)
+    slug = slug.replace('_', '-')
+    
+    # Nettoyer les caractères non alphanumériques
+    slug = re.sub(r'[^a-z0-9-]+', '-', slug)
+    
+    # Éviter les doubles tirets
+    slug = re.sub(r'-+', '-', slug)
+    
+    # Nettoyer les tirets en début/fin
     slug = slug.strip('-')
+    
+    # Essayer de détecter et supprimer la répétition du suffixe de service
+    # Ex: "exemple-app-api-api" -> "exemple-app-api"
+    # Ex: "mon-app-frontend-frontend" -> "mon-app-frontend"
+    parts = slug.split('-')
+    if len(parts) >= 2 and parts[-1] == parts[-2]:
+        slug = '-'.join(parts[:-1])
+    
     return slug or "app"
 
 
@@ -222,7 +251,15 @@ class DockerScanner:
                 # Pour la description
                 final_description = hub_description or env_vars.get('APP_DESCRIPTION')
                 # Pour le slug
-                final_suggested_slug = env_vars.get('APP_SLUG') or generate_slug(name)
+                app_slug_from_env = env_vars.get('APP_SLUG')
+                generated_slug = generate_slug(name)
+                final_suggested_slug = app_slug_from_env or generated_slug
+                
+                # Log pour debug si le slug vient d'une variable d'env
+                if app_slug_from_env:
+                    logger.debug(f"Conteneur {name}: slug depuis APP_SLUG={app_slug_from_env}")
+                else:
+                    logger.debug(f"Conteneur {name}: slug généré={generated_slug}")
                 
                 discovered.append(DiscoveredContainer(
                     container_id=container.short_id,

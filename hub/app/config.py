@@ -163,6 +163,15 @@ class Settings(BaseSettings):
     # Évite les rafraîchissements trop fréquents de la page audit
     audit_sse_cooldown: float = 5.0
     
+    # Rétention des logs d'audit (en jours) - 0 = pas de purge automatique
+    audit_retention_days: int = 90
+    
+    # Rétention des logs d'erreurs (en jours) - 0 = pas de purge automatique
+    error_retention_days: int = 30
+    
+    # Intervalle de purge des logs (en heures)
+    log_purge_interval_hours: int = 24
+    
     # Whitelist des réseaux autorisés pour l'auto-enregistrement des applications
     # Par défaut : réseaux Docker (172.17-31.*)
     # Format : préfixes IP séparés par des virgules (ex: "172.17.,172.18.,192.168.50.")

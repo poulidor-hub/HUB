@@ -141,16 +141,59 @@ class AuditLog(Base):
     __tablename__ = "audit_logs"
     
     id = Column(Integer, primary_key=True, index=True)
+    request_id = Column(String(36), index=True)  # UUID pour traçabilité cross-service
     user_id = Column(Integer, ForeignKey('users.id', ondelete='SET NULL'), nullable=True)
+    service_account_id = Column(Integer, ForeignKey('service_accounts.id', ondelete='SET NULL'), nullable=True)
+    session_id = Column(Integer, ForeignKey('user_sessions.id', ondelete='SET NULL'), nullable=True)
+    
     action = Column(String(50), nullable=False)  # login, logout, access_app, etc.
     target = Column(String(100))  # app_slug, user_id, etc.
+    source_app_slug = Column(String(50), index=True, nullable=True)  # App source (X-Slug)
+    
+    request_method = Column(String(10))  # GET, POST, PUT, DELETE
+    request_path = Column(String(255))   # /api/apps/xxx
+    response_status = Column(Integer)     # 200, 403, 500, etc.
+    duration_ms = Column(Integer)         # Temps de traitement en ms
+    
     ip_address = Column(String(45))
     user_agent = Column(String(255))
     details = Column(Text)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+    
+    # Relations
+    service_account = relationship("ServiceAccount", backref="audit_logs")
+    session = relationship("UserSession", backref="audit_logs")
     
     def __repr__(self):
         return f"<AuditLog {self.action} by user {self.user_id}>"
+
+
+class ErrorLog(Base):
+    """Logs des erreurs HTTP (4xx, 5xx) - Vue séparée pour monitoring"""
+    __tablename__ = "error_logs"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    request_id = Column(String(36), index=True)  # Lien avec AuditLog si existe
+    
+    error_code = Column(Integer, nullable=False, index=True)  # 401, 403, 404, 500, etc.
+    error_type = Column(String(50))  # authentication, authorization, not_found, internal
+    error_message = Column(String(500))
+    
+    user_id = Column(Integer, ForeignKey('users.id', ondelete='SET NULL'), nullable=True)
+    service_account_id = Column(Integer, ForeignKey('service_accounts.id', ondelete='SET NULL'), nullable=True)
+    source_app_slug = Column(String(50), index=True, nullable=True)
+    
+    request_method = Column(String(10))
+    request_path = Column(String(255), index=True)
+    request_body = Column(Text)  # Corps de la requête (sanitisé)
+    
+    ip_address = Column(String(45))
+    user_agent = Column(String(255))
+    stack_trace = Column(Text)  # Traceback pour erreurs 5xx
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+    
+    def __repr__(self):
+        return f"<ErrorLog {self.error_code} on {self.request_path}>"
 
 
 class ServiceAccount(Base):

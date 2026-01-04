@@ -527,6 +527,8 @@ async def list_apps(
     Retourne également le rôle de l'utilisateur courant sur chaque app (my_role)
     et le statut Docker du conteneur (docker_status: 'running', 'stopped', ou null)
     """
+    logger.debug(f"list_apps appelé par {current_user.username} (is_admin={current_user.is_admin})")
+    
     # Charger les rôles de l'utilisateur courant
     user_result = await db.execute(
         select(User)
@@ -542,6 +544,7 @@ async def list_apps(
     if current_user.is_admin:
         result = await db.execute(select(Application))
         apps = result.scalars().all()
+        logger.debug(f"Admin {current_user.username}: {len(apps)} applications trouvées")
         return [
             AppResponseWithMyRole.from_app_with_role(
                 app, 
@@ -552,6 +555,8 @@ async def list_apps(
         ]
     else:
         # Retourne uniquement les apps de l'utilisateur via app_roles
+        apps_count = len(user.app_roles)
+        logger.debug(f"User {current_user.username}: {apps_count} applications accessibles")
         return [
             AppResponseWithMyRole.from_app_with_role(
                 ar.application, 

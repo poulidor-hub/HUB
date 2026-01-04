@@ -67,20 +67,69 @@ async def log_action(
     ip_address: str = None,
     user_agent: str = None,
     details: str = None,
-    notify_sse: bool = True
+    notify_sse: bool = True,
+    # Nouveaux paramètres de traçabilité
+    request: "Request" = None,  # Objet Request pour extraire le contexte
+    service_account_id: Optional[int] = None,
+    session_id: Optional[int] = None,
+    response_status: Optional[int] = None
 ):
     """
-    Enregistre une action dans les logs d'audit.
+    Enregistre une action dans les logs d'audit avec contexte enrichi.
     Actions supportées: login, logout, access_app, replace_app, delete_app, etc.
     
     Args:
         user_id: ID de l'utilisateur (None pour actions système/auto-registration)
         notify_sse: Si True, notifie les clients SSE de la nouvelle entrée
+        request: Objet Request FastAPI pour extraire automatiquement:
+            - request_id (UUID généré par middleware)
+            - source_app_slug (header X-Slug)
+            - request_method (GET, POST, etc.)
+            - request_path (/api/...)
+            - ip_address (si non fourni)
+            - user_agent (si non fourni)
+            - duration_ms (depuis start_time)
+        service_account_id: ID du service account (pour actions M2M)
+        session_id: ID de la session utilisateur
+        response_status: Code HTTP de la réponse
     """
+    # Extraire le contexte de la requête si fourni
+    request_id = None
+    source_app_slug = None
+    request_method = None
+    request_path = None
+    duration_ms = None
+    
+    if request:
+        import time
+        request_id = getattr(request.state, "request_id", None)
+        source_app_slug = getattr(request.state, "source_app_slug", None)
+        request_method = request.method
+        request_path = str(request.url.path)[:255]
+        
+        # Calculer la durée si start_time disponible
+        start_time = getattr(request.state, "start_time", None)
+        if start_time:
+            duration_ms = int((time.time() - start_time) * 1000)
+        
+        # Utiliser les valeurs de la requête si non fournies
+        if not ip_address and request.client:
+            ip_address = request.client.host
+        if not user_agent:
+            user_agent = request.headers.get("User-Agent")
+    
     log_entry = AuditLog(
+        request_id=request_id,
         user_id=user_id,
+        service_account_id=service_account_id,
+        session_id=session_id,
         action=action,
         target=target,
+        source_app_slug=source_app_slug,
+        request_method=request_method,
+        request_path=request_path,
+        response_status=response_status,
+        duration_ms=duration_ms,
         ip_address=ip_address,
         user_agent=user_agent[:255] if user_agent else None,
         details=details
@@ -92,6 +141,49 @@ async def log_action(
         _notify_audit()
     
     return log_entry
+
+
+async def purge_old_logs(
+    db: AsyncSession,
+    audit_retention_days: int,
+    error_retention_days: int
+) -> dict:
+    """
+    Purge les anciens logs d'audit et d'erreurs.
+    
+    Args:
+        audit_retention_days: Nombre de jours à conserver pour audit_logs (0 = pas de purge)
+        error_retention_days: Nombre de jours à conserver pour error_logs (0 = pas de purge)
+    
+    Returns:
+        dict avec le nombre d'entrées supprimées
+    """
+    from app.models import ErrorLog
+    from sqlalchemy import delete
+    
+    audit_deleted = 0
+    errors_deleted = 0
+    
+    if audit_retention_days > 0:
+        cutoff = datetime.utcnow() - timedelta(days=audit_retention_days)
+        result = await db.execute(
+            delete(AuditLog).where(AuditLog.created_at < cutoff)
+        )
+        audit_deleted = result.rowcount
+    
+    if error_retention_days > 0:
+        cutoff = datetime.utcnow() - timedelta(days=error_retention_days)
+        result = await db.execute(
+            delete(ErrorLog).where(ErrorLog.created_at < cutoff)
+        )
+        errors_deleted = result.rowcount
+    
+    await db.commit()
+    
+    return {
+        "audit_deleted": audit_deleted,
+        "errors_deleted": errors_deleted
+    }
 
 
 # =============================================================================
@@ -896,6 +988,289 @@ async def export_sessions_csv(
     output.seek(0)
     
     filename = f"sessions_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.csv"
+    
+    return StreamingResponse(
+        iter([output.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename={filename}"}
+    )
+
+
+# =============================================================================
+# ENDPOINTS ERROR LOGS
+# =============================================================================
+
+@router.get("/errors")
+async def get_error_logs(
+    page: int = Query(1, ge=1, description="Numéro de page"),
+    per_page: int = Query(50, ge=10, le=200, description="Éléments par page"),
+    error_code: Optional[int] = Query(None, description="Filtrer par code HTTP (401, 403, 500, etc.)"),
+    error_type: Optional[str] = Query(None, description="Filtrer par type (authentication, authorization, internal, etc.)"),
+    source_app: Optional[str] = Query(None, description="Filtrer par application source (X-Slug)"),
+    path: Optional[str] = Query(None, description="Filtrer par chemin (contient)"),
+    hours: int = Query(24, ge=1, le=168, description="Heures d'historique (max 7 jours)"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Liste les logs d'erreurs HTTP (4xx, 5xx).
+    Requiert: admin Hub
+    """
+    from app.models import ErrorLog
+    
+    if not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="Accès admin requis")
+    
+    since = datetime.utcnow() - timedelta(hours=hours)
+    
+    # Construire la requête
+    query = select(ErrorLog).where(ErrorLog.created_at >= since)
+    
+    if error_code:
+        query = query.where(ErrorLog.error_code == error_code)
+    if error_type:
+        query = query.where(ErrorLog.error_type == error_type)
+    if source_app:
+        query = query.where(ErrorLog.source_app_slug == source_app)
+    if path:
+        query = query.where(ErrorLog.request_path.ilike(f"%{path}%"))
+    
+    # Compter le total
+    count_query = select(func.count()).select_from(query.subquery())
+    result = await db.execute(count_query)
+    total = result.scalar()
+    
+    # Pagination
+    offset = (page - 1) * per_page
+    query = query.order_by(desc(ErrorLog.created_at)).offset(offset).limit(per_page)
+    
+    result = await db.execute(query)
+    errors = result.scalars().all()
+    
+    # Récupérer les usernames
+    user_ids = list(set(e.user_id for e in errors if e.user_id))
+    users_map = {}
+    if user_ids:
+        result = await db.execute(select(User).where(User.id.in_(user_ids)))
+        users_map = {u.id: u.username for u in result.scalars().all()}
+    
+    return {
+        "total": total,
+        "page": page,
+        "per_page": per_page,
+        "pages": (total + per_page - 1) // per_page,
+        "errors": [
+            {
+                "id": e.id,
+                "request_id": e.request_id,
+                "error_code": e.error_code,
+                "error_type": e.error_type,
+                "error_message": e.error_message,
+                "user_id": e.user_id,
+                "username": users_map.get(e.user_id) if e.user_id else None,
+                "source_app_slug": e.source_app_slug,
+                "request_method": e.request_method,
+                "request_path": e.request_path,
+                "ip_address": e.ip_address,
+                "created_at": e.created_at.isoformat(),
+                "has_stack_trace": bool(e.stack_trace)
+            }
+            for e in errors
+        ]
+    }
+
+
+@router.get("/errors/stats")
+async def get_error_stats(
+    hours: int = Query(24, ge=1, le=168, description="Heures d'historique"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Statistiques des erreurs HTTP.
+    Requiert: admin Hub
+    """
+    from app.models import ErrorLog
+    
+    if not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="Accès admin requis")
+    
+    since = datetime.utcnow() - timedelta(hours=hours)
+    
+    # Total des erreurs
+    result = await db.execute(
+        select(func.count(ErrorLog.id)).where(ErrorLog.created_at >= since)
+    )
+    total = result.scalar()
+    
+    # Par code d'erreur
+    result = await db.execute(
+        select(ErrorLog.error_code, func.count(ErrorLog.id).label('count'))
+        .where(ErrorLog.created_at >= since)
+        .group_by(ErrorLog.error_code)
+        .order_by(func.count(ErrorLog.id).desc())
+    )
+    by_code = [{"code": r.error_code, "count": r.count} for r in result.all()]
+    
+    # Par type d'erreur
+    result = await db.execute(
+        select(ErrorLog.error_type, func.count(ErrorLog.id).label('count'))
+        .where(ErrorLog.created_at >= since)
+        .group_by(ErrorLog.error_type)
+        .order_by(func.count(ErrorLog.id).desc())
+    )
+    by_type = [{"type": r.error_type, "count": r.count} for r in result.all()]
+    
+    # Par application source
+    result = await db.execute(
+        select(ErrorLog.source_app_slug, func.count(ErrorLog.id).label('count'))
+        .where(and_(ErrorLog.created_at >= since, ErrorLog.source_app_slug != None))
+        .group_by(ErrorLog.source_app_slug)
+        .order_by(func.count(ErrorLog.id).desc())
+        .limit(10)
+    )
+    by_source = [{"app": r.source_app_slug, "count": r.count} for r in result.all()]
+    
+    # Top endpoints avec erreurs
+    result = await db.execute(
+        select(ErrorLog.request_path, func.count(ErrorLog.id).label('count'))
+        .where(ErrorLog.created_at >= since)
+        .group_by(ErrorLog.request_path)
+        .order_by(func.count(ErrorLog.id).desc())
+        .limit(10)
+    )
+    top_endpoints = [{"path": r.request_path, "count": r.count} for r in result.all()]
+    
+    # Erreurs par heure (pour graphique)
+    hour_col = func.date_trunc('hour', ErrorLog.created_at).label('hour')
+    result = await db.execute(
+        select(
+            hour_col,
+            func.count(ErrorLog.id).label('count')
+        )
+        .where(ErrorLog.created_at >= since)
+        .group_by(hour_col)
+        .order_by(hour_col)
+    )
+    hourly = [{"hour": r.hour.isoformat() if r.hour else None, "count": r.count} for r in result.all()]
+    
+    return {
+        "period_hours": hours,
+        "total": total,
+        "by_code": by_code,
+        "by_type": by_type,
+        "by_source_app": by_source,
+        "top_endpoints": top_endpoints,
+        "hourly": hourly
+    }
+
+
+@router.get("/errors/{error_id}")
+async def get_error_detail(
+    error_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Détail d'une erreur (incluant le stack trace si disponible).
+    Requiert: admin Hub
+    """
+    from app.models import ErrorLog
+    
+    if not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="Accès admin requis")
+    
+    result = await db.execute(
+        select(ErrorLog).where(ErrorLog.id == error_id)
+    )
+    error = result.scalar_one_or_none()
+    
+    if not error:
+        raise HTTPException(status_code=404, detail="Erreur non trouvée")
+    
+    # Récupérer le username si user_id présent
+    username = None
+    if error.user_id:
+        result = await db.execute(select(User).where(User.id == error.user_id))
+        user = result.scalar_one_or_none()
+        username = user.username if user else None
+    
+    return {
+        "id": error.id,
+        "request_id": error.request_id,
+        "error_code": error.error_code,
+        "error_type": error.error_type,
+        "error_message": error.error_message,
+        "user_id": error.user_id,
+        "username": username,
+        "service_account_id": error.service_account_id,
+        "source_app_slug": error.source_app_slug,
+        "request_method": error.request_method,
+        "request_path": error.request_path,
+        "request_body": error.request_body,
+        "ip_address": error.ip_address,
+        "user_agent": error.user_agent,
+        "stack_trace": error.stack_trace,
+        "created_at": error.created_at.isoformat()
+    }
+
+
+@router.get("/export/errors")
+async def export_errors_csv(
+    hours: int = Query(24, ge=1, le=168, description="Heures d'historique"),
+    error_code: Optional[int] = Query(None, description="Filtrer par code HTTP"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Exporte les logs d'erreurs en CSV.
+    Requiert: admin Hub
+    """
+    from app.models import ErrorLog
+    
+    if not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="Accès admin requis")
+    
+    since = datetime.utcnow() - timedelta(hours=hours)
+    
+    query = select(ErrorLog).where(ErrorLog.created_at >= since)
+    
+    if error_code:
+        query = query.where(ErrorLog.error_code == error_code)
+    
+    query = query.order_by(desc(ErrorLog.created_at))
+    
+    result = await db.execute(query)
+    errors = result.scalars().all()
+    
+    # Générer le CSV
+    output = io.StringIO()
+    writer = csv.writer(output, delimiter=';')
+    
+    # En-têtes
+    writer.writerow([
+        'Date/Heure', 'Request ID', 'Code', 'Type', 'Message',
+        'Méthode', 'Chemin', 'App Source', 'Adresse IP', 'User Agent'
+    ])
+    
+    # Données
+    for e in errors:
+        writer.writerow([
+            e.created_at.strftime('%Y-%m-%d %H:%M:%S'),
+            e.request_id or '',
+            e.error_code,
+            e.error_type or '',
+            e.error_message or '',
+            e.request_method or '',
+            e.request_path or '',
+            e.source_app_slug or '',
+            e.ip_address or '',
+            e.user_agent or ''
+        ])
+    
+    output.seek(0)
+    
+    filename = f"error_logs_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.csv"
     
     return StreamingResponse(
         iter([output.getvalue()]),

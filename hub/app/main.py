@@ -1,11 +1,15 @@
 from contextlib import asynccontextmanager
 import asyncio
-from fastapi import FastAPI
+import time
+import uuid
+import traceback
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from sqlalchemy import select
 
 from app.database import init_db, async_session_maker, apply_migrations
-from app.models import User
+from app.models import User, ErrorLog
 from app.auth import get_password_hash, cleanup_expired_tokens
 from app.config import get_settings
 from app.routes import auth, users, apps, service_accounts, backup, audit, docs, events
@@ -15,6 +19,7 @@ settings = get_settings()
 # Variables globales pour contrôler les tâches périodiques
 _cleanup_task = None
 _docker_sync_task = None
+_log_purge_task = None
 
 
 async def create_default_admin():
@@ -79,9 +84,42 @@ async def periodic_docker_sync():
             await asyncio.sleep(interval)
 
 
+async def periodic_log_purge():
+    """Tâche périodique pour purger les anciens logs d'audit et d'erreurs"""
+    from app.routes.audit import purge_old_logs
+    
+    interval_hours = settings.log_purge_interval_hours
+    audit_days = settings.audit_retention_days
+    error_days = settings.error_retention_days
+    
+    if audit_days <= 0 and error_days <= 0:
+        print("🗑️ Purge des logs désactivée (rétention = 0)")
+        return
+    
+    print(f"🗑️ Purge des logs activée (audit: {audit_days}j, errors: {error_days}j, intervalle: {interval_hours}h)")
+    
+    # Attendre un peu avant la première purge
+    await asyncio.sleep(60)
+    
+    while True:
+        try:
+            async with async_session_maker() as db:
+                result = await purge_old_logs(db, audit_days, error_days)
+                if result["audit_deleted"] > 0 or result["errors_deleted"] > 0:
+                    print(f"🗑️ Purge logs: {result['audit_deleted']} audit, {result['errors_deleted']} erreurs supprimés")
+            
+            await asyncio.sleep(interval_hours * 3600)
+        except asyncio.CancelledError:
+            print("🛑 Tâche de purge des logs arrêtée")
+            break
+        except Exception as e:
+            print(f"⚠️ Erreur lors de la purge des logs: {e}")
+            await asyncio.sleep(interval_hours * 3600)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _cleanup_task, _docker_sync_task
+    global _cleanup_task, _docker_sync_task, _log_purge_task
     
     # Startup
     print("🚀 Démarrage du Hub d'Authentification...")
@@ -95,6 +133,9 @@ async def lifespan(app: FastAPI):
     
     # Démarrer la tâche de synchronisation Docker
     _docker_sync_task = asyncio.create_task(periodic_docker_sync())
+    
+    # Démarrer la tâche de purge des logs
+    _log_purge_task = asyncio.create_task(periodic_log_purge())
     
     print("✅ Hub prêt !")
     yield
@@ -111,6 +152,12 @@ async def lifespan(app: FastAPI):
         _docker_sync_task.cancel()
         try:
             await _docker_sync_task
+        except asyncio.CancelledError:
+            pass
+    if _log_purge_task:
+        _log_purge_task.cancel()
+        try:
+            await _log_purge_task
         except asyncio.CancelledError:
             pass
 
@@ -131,6 +178,128 @@ app.add_middleware(
     allow_headers=["*"],
     expose_headers=["*"],
 )
+
+
+# =============================================================================
+# MIDDLEWARE DE CONTEXTE DE REQUÊTE
+# =============================================================================
+
+@app.middleware("http")
+async def request_context_middleware(request: Request, call_next):
+    """
+    Middleware qui enrichit chaque requête avec un contexte de traçabilité :
+    - request_id: UUID unique pour tracer la requête
+    - source_app_slug: Application source (header X-Slug)
+    - start_time: Horodatage de début pour calculer la durée
+    """
+    # Générer un request_id unique
+    request.state.request_id = str(uuid.uuid4())
+    
+    # Extraire le X-Slug (application source)
+    request.state.source_app_slug = request.headers.get("X-Slug")
+    
+    # Horodatage de début
+    request.state.start_time = time.time()
+    
+    # Exécuter la requête
+    response = await call_next(request)
+    
+    # Ajouter le request_id dans les headers de réponse (pour debug)
+    response.headers["X-Request-ID"] = request.state.request_id
+    
+    return response
+
+
+# =============================================================================
+# GESTIONNAIRE D'ERREURS GLOBAL
+# =============================================================================
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    """
+    Intercepte toutes les exceptions non gérées et les log dans error_logs.
+    Retourne une réponse JSON formatée.
+    """
+    from fastapi import HTTPException
+    
+    # Récupérer le contexte de la requête
+    request_id = getattr(request.state, "request_id", str(uuid.uuid4()))
+    source_app_slug = getattr(request.state, "source_app_slug", None)
+    start_time = getattr(request.state, "start_time", time.time())
+    duration_ms = int((time.time() - start_time) * 1000)
+    
+    # Déterminer le code d'erreur
+    if isinstance(exc, HTTPException):
+        error_code = exc.status_code
+        error_message = exc.detail if isinstance(exc.detail, str) else str(exc.detail)
+        error_type = _get_error_type(error_code)
+        stack = None  # Pas de stack trace pour les HTTPException (erreurs métier)
+    else:
+        error_code = 500
+        error_message = str(exc)
+        error_type = "internal"
+        stack = traceback.format_exc()
+    
+    # Logger l'erreur dans la base (async)
+    try:
+        async with async_session_maker() as db:
+            # Extraire user_id du token si disponible
+            user_id = None
+            service_account_id = None
+            
+            error_log = ErrorLog(
+                request_id=request_id,
+                error_code=error_code,
+                error_type=error_type,
+                error_message=error_message[:500] if error_message else None,
+                user_id=user_id,
+                service_account_id=service_account_id,
+                source_app_slug=source_app_slug,
+                request_method=request.method,
+                request_path=str(request.url.path)[:255],
+                ip_address=request.client.host if request.client else None,
+                user_agent=request.headers.get("User-Agent", "")[:255],
+                stack_trace=stack
+            )
+            db.add(error_log)
+            await db.commit()
+    except Exception as log_error:
+        print(f"⚠️ Erreur lors du logging d'erreur: {log_error}")
+    
+    # Retourner la réponse d'erreur
+    if isinstance(exc, HTTPException):
+        return JSONResponse(
+            status_code=error_code,
+            content={"detail": error_message, "request_id": request_id}
+        )
+    else:
+        return JSONResponse(
+            status_code=500,
+            content={
+                "detail": "Erreur interne du serveur",
+                "request_id": request_id
+            }
+        )
+
+
+def _get_error_type(status_code: int) -> str:
+    """Détermine le type d'erreur selon le code HTTP"""
+    if status_code == 401:
+        return "authentication"
+    elif status_code == 403:
+        return "authorization"
+    elif status_code == 404:
+        return "not_found"
+    elif status_code == 422:
+        return "validation"
+    elif status_code == 429:
+        return "rate_limit"
+    elif 400 <= status_code < 500:
+        return "client_error"
+    elif status_code >= 500:
+        return "internal"
+    return "unknown"
+
 
 # Routes
 app.include_router(auth.router)

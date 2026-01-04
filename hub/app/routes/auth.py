@@ -23,7 +23,7 @@ from app.auth import (
     get_password_hash,
     get_settings
 )
-from app.routes.audit import start_session, end_session
+from app.routes.audit import start_session, end_session, log_action
 
 router = APIRouter(prefix="/api/auth", tags=["Authentication"])
 settings = get_settings()
@@ -202,14 +202,14 @@ async def login_for_token(
         user_agent=request.headers.get("user-agent", "")
     )
     
-    # Log de l'action
-    audit = AuditLog(
+    # Log de l'action avec contexte enrichi
+    await log_action(
+        db,
         user_id=user.id,
         action="login",
-        ip_address=request.client.host if request.client else None,
-        user_agent=request.headers.get("user-agent", "")[:255]
+        request=request,
+        response_status=200
     )
-    db.add(audit)
     await db.commit()
     
     # Notifier SSE des stats mises à jour (nouvelle session)
@@ -275,15 +275,15 @@ async def login_with_redirect(
         user_agent=request.headers.get("user-agent", "")
     )
     
-    # Log
-    audit = AuditLog(
+    # Log avec contexte enrichi
+    await log_action(
+        db,
         user_id=user.id,
         action="login",
         target=login_data.redirect_to,
-        ip_address=request.client.host if request.client else None,
-        user_agent=request.headers.get("user-agent", "")[:255]
+        request=request,
+        response_status=200
     )
-    db.add(audit)
     await db.commit()
     
     # Si redirection demandée

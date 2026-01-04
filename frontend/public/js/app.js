@@ -15,11 +15,13 @@ let adminModal, appFormModal, userFormModal, serviceAccountFormModal, saCredenti
 
 // ===== Server-Sent Events (SSE) pour mises à jour temps réel =====
 let eventSource = null;
+let sseWasConnected = false; // Indique si on a déjà été connecté (pour détecter les reconnexions)
 
 /**
  * Initialise la connexion SSE pour recevoir les mises à jour en temps réel
+ * @param {boolean} isReconnect - true si c'est une reconnexion après une déconnexion
  */
-function initEventSource() {
+function initEventSource(isReconnect = false) {
     // Fermer toute connexion existante
     if (eventSource) {
         eventSource.close();
@@ -36,6 +38,14 @@ function initEventSource() {
         
         eventSource.onopen = () => {
             console.log('🔌 SSE connecté - mises à jour temps réel actives');
+            
+            // Si c'est une reconnexion après une déconnexion (ex: redémarrage serveur),
+            // rafraîchir les données pour synchroniser l'état
+            if (isReconnect && sseWasConnected) {
+                console.log('🔄 Reconnexion SSE détectée - rafraîchissement des données...');
+                refreshAfterReconnect();
+            }
+            sseWasConnected = true;
         };
         
         eventSource.onmessage = (event) => {
@@ -53,12 +63,61 @@ function initEventSource() {
             // Reconnexion automatique après 5 secondes
             setTimeout(() => {
                 if (api.token && currentUser) {
-                    initEventSource();
+                    initEventSource(true); // Marquer comme reconnexion
                 }
             }, 5000);
         };
     } catch (e) {
         console.warn('SSE: impossible de créer la connexion', e);
+    }
+}
+
+/**
+ * Rafraîchit les données après une reconnexion SSE (ex: après redémarrage serveur)
+ * Cela garantit que l'interface est synchronisée avec l'état du serveur
+ */
+async function refreshAfterReconnect() {
+    try {
+        // Vérifier d'abord que la session est toujours valide
+        const userValid = await api.getCurrentUser().catch(() => null);
+        if (!userValid) {
+            console.log('⚠️ Session invalide après reconnexion - redirection vers login');
+            handleSessionExpired('Votre session a expiré suite au redémarrage du serveur.');
+            return;
+        }
+        
+        // Mettre à jour currentUser
+        currentUser = userValid;
+        
+        // Rafraîchir les applications (page principale)
+        if (currentPage === 'dashboard' || currentPage === 'apps') {
+            await loadApps();
+        }
+        
+        // Rafraîchir selon la page courante
+        switch (currentPage) {
+            case 'users':
+                loadUsers();
+                break;
+            case 'service-accounts':
+                loadServiceAccounts();
+                break;
+            case 'audit':
+                loadAuditPageOverview();
+                break;
+            case 'apps-admin':
+                loadAllApps();
+                break;
+        }
+        
+        // Rafraîchir le compteur d'apps en attente si admin
+        if (currentUser?.is_admin) {
+            loadPendingAppsCount();
+        }
+        
+        console.log('✅ Données rafraîchies après reconnexion SSE');
+    } catch (e) {
+        console.error('Erreur lors du rafraîchissement après reconnexion:', e);
     }
 }
 
@@ -77,8 +136,13 @@ function closeEventSource() {
  * Gère les événements SSE reçus
  */
 function handleSSEEvent(data) {
-    if (data.type === 'ping' || data.type === 'connected') {
-        // Keep-alive ou connexion initiale, ignorer
+    if (data.type === 'ping') {
+        // Keep-alive, ignorer silencieusement
+        return;
+    }
+    
+    // L'événement 'connected' est maintenant géré par onopen + refreshAfterReconnect
+    if (data.type === 'connected') {
         return;
     }
     
@@ -250,6 +314,18 @@ document.addEventListener('DOMContentLoaded', () => {
     window.addEventListener('hub:sessionExpired', (event) => {
         console.log('Événement hub:sessionExpired reçu');
         handleSessionExpired(event.detail?.message);
+    });
+
+    // Écouter quand la page redevient visible (utilisateur revient sur l'onglet)
+    // Utile pour détecter un retour après un redémarrage serveur
+    document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible' && api.token && currentUser) {
+            // Vérifier si la connexion SSE est toujours active
+            if (!eventSource || eventSource.readyState !== EventSource.OPEN) {
+                console.log('👁️ Page redevenue visible - reconnexion SSE...');
+                initEventSource(true);  // Reconnexion avec rafraîchissement
+            }
+        }
     });
 
     // Vérifier les paramètres URL
@@ -670,17 +746,48 @@ async function handleChangePassword(event) {
 // ===== Applications Dashboard =====
 
 async function loadApps() {
+    console.log('📱 loadApps() appelé, currentPage:', currentPage);
     try {
         const apps = await api.getApps();
-        renderAppsGrid(apps);
+        console.log('📱 loadApps: réponse reçue, nombre d\'apps:', Array.isArray(apps) ? apps.length : 'pas un tableau');
+        // S'assurer que apps est un tableau
+        if (Array.isArray(apps)) {
+            renderAppsGrid(apps);
+        } else {
+            console.error('loadApps: réponse inattendue (pas un tableau):', apps);
+            renderAppsGrid([]);
+        }
     } catch (error) {
         console.error('Failed to load apps:', error);
+        // En cas d'erreur, afficher une grille vide plutôt que de laisser l'ancien contenu
+        const grid = document.getElementById('appsGrid');
+        if (grid) {
+            grid.innerHTML = `
+                <div class="col-12 empty-state">
+                    <i class="bi bi-exclamation-triangle text-warning"></i>
+                    <h4>Erreur de chargement</h4>
+                    <p>Impossible de charger les applications. <a href="#" onclick="loadApps(); return false;">Réessayer</a></p>
+                </div>
+            `;
+        }
         showToast('Erreur', 'Impossible de charger les applications', 'danger');
     }
 }
 
 function renderAppsGrid(apps) {
     const grid = document.getElementById('appsGrid');
+    
+    // Protection contre grid null (page pas encore chargée)
+    if (!grid) {
+        console.warn('renderAppsGrid: élément appsGrid non trouvé');
+        return;
+    }
+    
+    // Protection contre apps invalide
+    if (!Array.isArray(apps)) {
+        console.warn('renderAppsGrid: apps n\'est pas un tableau:', apps);
+        apps = [];
+    }
     
     if (apps.length === 0) {
         grid.innerHTML = `
@@ -4064,5 +4171,270 @@ async function deleteUserPage(id, username) {
         await loadUsersPageData();
     } catch (error) {
         showToast('Erreur', error.message, 'danger');
+    }
+}
+
+// ===== Vue Erreurs HTTP (Audit) =====
+
+let errorsPage = 1;
+
+async function loadAuditPageErrors() {
+    const hours = parseInt(document.getElementById('errorsFilterHours')?.value || 24);
+    const errorCode = document.getElementById('errorsFilterCode')?.value || null;
+    const errorType = document.getElementById('errorsFilterType')?.value || null;
+    const sourceApp = document.getElementById('errorsFilterApp')?.value || null;
+    const path = document.getElementById('errorsFilterPath')?.value || null;
+    
+    try {
+        // Charger les apps pour le filtre si pas encore fait
+        await loadErrorsAppFilter();
+        
+        // Charger stats et logs en parallèle
+        const [stats, errors] = await Promise.all([
+            api.getErrorStats(hours),
+            api.getErrorLogs({
+                page: errorsPage,
+                perPage: 50,
+                errorCode: errorCode ? parseInt(errorCode) : null,
+                errorType,
+                sourceApp,
+                path,
+                hours
+            })
+        ]);
+        
+        // Mettre à jour les stats
+        document.getElementById('errorStatTotal').textContent = stats.total || 0;
+        
+        // Calculer 4xx et 5xx
+        const count4xx = stats.by_code?.filter(c => c.code >= 400 && c.code < 500)
+            .reduce((sum, c) => sum + c.count, 0) || 0;
+        const count5xx = stats.by_code?.filter(c => c.code >= 500)
+            .reduce((sum, c) => sum + c.count, 0) || 0;
+        const countAuth = stats.by_code?.filter(c => c.code === 401 || c.code === 403)
+            .reduce((sum, c) => sum + c.count, 0) || 0;
+        
+        document.getElementById('errorStat4xx').textContent = count4xx;
+        document.getElementById('errorStat5xx').textContent = count5xx;
+        document.getElementById('errorStatAuth').textContent = countAuth;
+        
+        // Mettre à jour le badge dans l'onglet
+        const badge = document.getElementById('errorCountBadge');
+        if (stats.total > 0) {
+            badge.textContent = stats.total > 99 ? '99+' : stats.total;
+            badge.style.display = 'inline';
+        } else {
+            badge.style.display = 'none';
+        }
+        
+        // Afficher la table
+        renderErrorsTable(errors);
+        
+    } catch (error) {
+        console.error('Erreur chargement erreurs:', error);
+        showToast('Erreur', 'Impossible de charger les logs d\'erreurs', 'danger');
+    }
+}
+
+async function loadErrorsAppFilter() {
+    const appSelect = document.getElementById('errorsFilterApp');
+    if (appSelect.options.length <= 1) {
+        try {
+            const apps = allApps.length > 0 ? allApps : await api.getAllApps();
+            apps.forEach(app => {
+                const opt = document.createElement('option');
+                opt.value = app.slug;
+                opt.textContent = app.name;
+                appSelect.appendChild(opt);
+            });
+        } catch (e) {
+            console.warn('Impossible de charger les apps:', e);
+        }
+    }
+}
+
+function resetErrorsFilters() {
+    document.getElementById('errorsFilterCode').value = '';
+    document.getElementById('errorsFilterType').value = '';
+    document.getElementById('errorsFilterApp').value = '';
+    document.getElementById('errorsFilterPath').value = '';
+    document.getElementById('errorsFilterHours').value = '24';
+    errorsPage = 1;
+    loadAuditPageErrors();
+}
+
+function renderErrorsTable(data) {
+    const container = document.getElementById('pageErrorsTable');
+    const countSpan = document.getElementById('errorsCount');
+    const pagination = document.getElementById('errorsPagination');
+    
+    countSpan.textContent = `${data.total} erreurs`;
+    pagination.innerHTML = renderPagination(data.page, data.pages, 'changeErrorsPage');
+    
+    if (!data.errors || data.errors.length === 0) {
+        container.innerHTML = `
+            <div class="text-center py-5 text-muted">
+                <i class="bi bi-check-circle display-4 text-success"></i>
+                <p class="mt-2">Aucune erreur dans cette période 🎉</p>
+            </div>
+        `;
+        return;
+    }
+    
+    container.innerHTML = `
+        <table class="table table-sm table-hover mb-0">
+            <thead class="sticky-top bg-white">
+                <tr>
+                    <th>Date/Heure</th>
+                    <th>Code</th>
+                    <th>Type</th>
+                    <th>Méthode</th>
+                    <th>Chemin</th>
+                    <th>App Source</th>
+                    <th>Message</th>
+                    <th>IP</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                ${data.errors.map(e => `
+                    <tr class="${e.error_code >= 500 ? 'table-danger' : ''}">
+                        <td><small>${formatDateTime(e.created_at)}</small></td>
+                        <td>${getErrorCodeBadge(e.error_code)}</td>
+                        <td><small class="text-muted">${e.error_type || '-'}</small></td>
+                        <td><code class="small">${e.request_method || '-'}</code></td>
+                        <td><code class="small" title="${escapeHtml(e.request_path || '')}">${truncateText(e.request_path, 30)}</code></td>
+                        <td>${e.source_app_slug ? `<span class="badge bg-info">${escapeHtml(e.source_app_slug)}</span>` : '-'}</td>
+                        <td><small class="text-muted" title="${escapeHtml(e.error_message || '')}">${truncateText(e.error_message, 40)}</small></td>
+                        <td><code class="small">${e.ip_address || '-'}</code></td>
+                        <td>
+                            ${e.has_stack_trace ? `<button class="btn btn-outline-secondary btn-sm" onclick="showErrorDetail(${e.id})" title="Voir le détail"><i class="bi bi-eye"></i></button>` : ''}
+                        </td>
+                    </tr>
+                `).join('')}
+            </tbody>
+        </table>
+    `;
+}
+
+function getErrorCodeBadge(code) {
+    let bgClass = 'bg-secondary';
+    if (code === 401) bgClass = 'bg-warning text-dark';
+    else if (code === 403) bgClass = 'bg-danger';
+    else if (code === 404) bgClass = 'bg-info';
+    else if (code === 422) bgClass = 'bg-warning text-dark';
+    else if (code >= 500) bgClass = 'bg-danger';
+    
+    return `<span class="badge ${bgClass}">${code}</span>`;
+}
+
+function truncateText(text, maxLength) {
+    if (!text) return '-';
+    if (text.length <= maxLength) return escapeHtml(text);
+    return escapeHtml(text.substring(0, maxLength)) + '...';
+}
+
+async function changeErrorsPage(page) {
+    errorsPage = page;
+    await loadAuditPageErrors();
+}
+
+async function showErrorDetail(errorId) {
+    try {
+        const error = await api.getErrorDetail(errorId);
+        
+        const modal = `
+            <div class="modal fade" id="errorDetailModal" tabindex="-1">
+                <div class="modal-dialog modal-lg">
+                    <div class="modal-content">
+                        <div class="modal-header">
+                            <h5 class="modal-title">
+                                <i class="bi bi-exclamation-triangle me-2"></i>
+                                Erreur ${error.error_code} - ${error.error_type || 'Inconnu'}
+                            </h5>
+                            <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                        </div>
+                        <div class="modal-body">
+                            <div class="row mb-3">
+                                <div class="col-md-6">
+                                    <small class="text-muted">Date/Heure</small>
+                                    <div>${formatDateTime(error.created_at)}</div>
+                                </div>
+                                <div class="col-md-6">
+                                    <small class="text-muted">Request ID</small>
+                                    <div><code>${error.request_id || '-'}</code></div>
+                                </div>
+                            </div>
+                            <div class="row mb-3">
+                                <div class="col-md-4">
+                                    <small class="text-muted">Méthode</small>
+                                    <div><code>${error.request_method || '-'}</code></div>
+                                </div>
+                                <div class="col-md-8">
+                                    <small class="text-muted">Chemin</small>
+                                    <div><code>${escapeHtml(error.request_path || '-')}</code></div>
+                                </div>
+                            </div>
+                            <div class="row mb-3">
+                                <div class="col-md-4">
+                                    <small class="text-muted">App Source</small>
+                                    <div>${error.source_app_slug ? `<span class="badge bg-info">${escapeHtml(error.source_app_slug)}</span>` : '-'}</div>
+                                </div>
+                                <div class="col-md-4">
+                                    <small class="text-muted">Utilisateur</small>
+                                    <div>${error.username || (error.user_id ? `ID: ${error.user_id}` : '-')}</div>
+                                </div>
+                                <div class="col-md-4">
+                                    <small class="text-muted">IP</small>
+                                    <div><code>${error.ip_address || '-'}</code></div>
+                                </div>
+                            </div>
+                            <div class="mb-3">
+                                <small class="text-muted">Message d'erreur</small>
+                                <div class="alert alert-danger mb-0">${escapeHtml(error.error_message || 'Aucun message')}</div>
+                            </div>
+                            ${error.stack_trace ? `
+                                <div class="mb-3">
+                                    <small class="text-muted">Stack Trace</small>
+                                    <pre class="bg-dark text-light p-3 rounded small" style="max-height: 300px; overflow-y: auto;">${escapeHtml(error.stack_trace)}</pre>
+                                </div>
+                            ` : ''}
+                            <div class="mb-0">
+                                <small class="text-muted">User Agent</small>
+                                <div class="small text-muted">${escapeHtml(error.user_agent || '-')}</div>
+                            </div>
+                        </div>
+                        <div class="modal-footer">
+                            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Fermer</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+        
+        // Supprimer l'ancien modal s'il existe
+        const existing = document.getElementById('errorDetailModal');
+        if (existing) existing.remove();
+        
+        // Ajouter et afficher le modal
+        document.body.insertAdjacentHTML('beforeend', modal);
+        const modalEl = new bootstrap.Modal(document.getElementById('errorDetailModal'));
+        modalEl.show();
+        
+    } catch (error) {
+        console.error('Erreur chargement détail:', error);
+        showToast('Erreur', 'Impossible de charger le détail de l\'erreur', 'danger');
+    }
+}
+
+async function exportErrors() {
+    const hours = parseInt(document.getElementById('errorsFilterHours')?.value || 24);
+    const errorCode = document.getElementById('errorsFilterCode')?.value || null;
+    
+    try {
+        await api.exportErrors(hours, errorCode ? parseInt(errorCode) : null);
+        showToast('Succès', 'Export CSV téléchargé', 'success');
+    } catch (error) {
+        showToast('Erreur', 'Impossible d\'exporter les erreurs', 'danger');
     }
 }

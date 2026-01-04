@@ -163,6 +163,12 @@
                         <i class="bi bi-clock-history me-1"></i>Sessions
                     </button>
                 </li>
+                <li class="nav-item">
+                    <button class="nav-link" data-bs-toggle="tab" data-bs-target="#auditPageErrors" onclick="loadAuditPageErrors()">
+                        <i class="bi bi-exclamation-triangle me-1"></i>Erreurs
+                        <span class="badge bg-danger ms-1" id="errorCountBadge" style="display: none;">0</span>
+                    </button>
+                </li>
             </ul>
             
             <div class="tab-content">
@@ -367,6 +373,117 @@
                         </div>
                         <div class="card-body p-0">
                             <div id="pageSessionHistoryTable" class="table-responsive" style="max-height: 600px; overflow-y: auto;"></div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Erreurs HTTP -->
+                <div class="tab-pane fade" id="auditPageErrors">
+                    <!-- Stats erreurs -->
+                    <div class="row g-3 mb-4">
+                        <div class="col-md-3">
+                            <div class="card border-danger">
+                                <div class="card-body text-center">
+                                    <h3 id="errorStatTotal" class="text-danger">-</h3>
+                                    <small class="text-muted">Erreurs totales</small>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="card border-warning">
+                                <div class="card-body text-center">
+                                    <h3 id="errorStat4xx" class="text-warning">-</h3>
+                                    <small class="text-muted">Erreurs 4xx</small>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="card border-danger">
+                                <div class="card-body text-center">
+                                    <h3 id="errorStat5xx" class="text-danger">-</h3>
+                                    <small class="text-muted">Erreurs 5xx</small>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="card border-info">
+                                <div class="card-body text-center">
+                                    <h3 id="errorStatAuth" class="text-info">-</h3>
+                                    <small class="text-muted">Auth (401/403)</small>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Filtres erreurs -->
+                    <div class="card mb-4">
+                        <div class="card-body">
+                            <div class="row g-3 align-items-end">
+                                <div class="col-md-2">
+                                    <label class="form-label small">Code HTTP</label>
+                                    <select class="form-select form-select-sm" id="errorsFilterCode" onchange="loadAuditPageErrors()">
+                                        <option value="">Tous</option>
+                                        <option value="401">401 - Non authentifié</option>
+                                        <option value="403">403 - Interdit</option>
+                                        <option value="404">404 - Non trouvé</option>
+                                        <option value="422">422 - Validation</option>
+                                        <option value="500">500 - Erreur serveur</option>
+                                    </select>
+                                </div>
+                                <div class="col-md-2">
+                                    <label class="form-label small">Type</label>
+                                    <select class="form-select form-select-sm" id="errorsFilterType" onchange="loadAuditPageErrors()">
+                                        <option value="">Tous</option>
+                                        <option value="authentication">Authentification</option>
+                                        <option value="authorization">Autorisation</option>
+                                        <option value="validation">Validation</option>
+                                        <option value="not_found">Non trouvé</option>
+                                        <option value="internal">Interne</option>
+                                    </select>
+                                </div>
+                                <div class="col-md-2">
+                                    <label class="form-label small">App source</label>
+                                    <select class="form-select form-select-sm" id="errorsFilterApp" onchange="loadAuditPageErrors()">
+                                        <option value="">Toutes</option>
+                                    </select>
+                                </div>
+                                <div class="col-md-2">
+                                    <label class="form-label small">Chemin (contient)</label>
+                                    <input type="text" class="form-control form-control-sm" id="errorsFilterPath" placeholder="/api/..." onchange="loadAuditPageErrors()">
+                                </div>
+                                <div class="col-md-2">
+                                    <label class="form-label small">Période</label>
+                                    <select class="form-select form-select-sm" id="errorsFilterHours" onchange="loadAuditPageErrors()">
+                                        <option value="1">1 heure</option>
+                                        <option value="6">6 heures</option>
+                                        <option value="24" selected>24 heures</option>
+                                        <option value="72">3 jours</option>
+                                        <option value="168">7 jours</option>
+                                    </select>
+                                </div>
+                                <div class="col-md-2">
+                                    <button class="btn btn-sm btn-outline-secondary w-100" onclick="resetErrorsFilters()">
+                                        <i class="bi bi-x-circle me-1"></i>Réinitialiser
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Table des erreurs -->
+                    <div class="card">
+                        <div class="card-header d-flex justify-content-between align-items-center">
+                            <span><i class="bi bi-exclamation-triangle me-2"></i>Logs d'erreurs HTTP</span>
+                            <div class="d-flex align-items-center gap-2">
+                                <span class="text-muted small" id="errorsCount">0 erreurs</span>
+                                <nav id="errorsPagination"></nav>
+                                <button class="btn btn-outline-secondary btn-sm" onclick="exportErrors()">
+                                    <i class="bi bi-download me-1"></i>CSV
+                                </button>
+                            </div>
+                        </div>
+                        <div class="card-body p-0">
+                            <div id="pageErrorsTable" class="table-responsive" style="max-height: 500px; overflow-y: auto;"></div>
                         </div>
                     </div>
                 </div>

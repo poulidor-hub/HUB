@@ -527,6 +527,53 @@ class HubAPI {
     async getServiceAccountsStatus() {
         return this.request('/service-accounts/status');
     }
+
+    // ===== Error Logs =====
+    
+    // Liste les logs d'erreurs HTTP
+    async getErrorLogs(params = {}) {
+        const { page = 1, perPage = 50, errorCode, errorType, sourceApp, path, hours = 24 } = params;
+        let url = `/audit/errors?page=${page}&per_page=${perPage}&hours=${hours}`;
+        if (errorCode) url += `&error_code=${errorCode}`;
+        if (errorType) url += `&error_type=${encodeURIComponent(errorType)}`;
+        if (sourceApp) url += `&source_app=${encodeURIComponent(sourceApp)}`;
+        if (path) url += `&path=${encodeURIComponent(path)}`;
+        return this.request(url);
+    }
+    
+    // Statistiques des erreurs
+    async getErrorStats(hours = 24) {
+        return this.request(`/audit/errors/stats?hours=${hours}`);
+    }
+    
+    // Détail d'une erreur
+    async getErrorDetail(errorId) {
+        return this.request(`/audit/errors/${errorId}`);
+    }
+    
+    // Export CSV des erreurs
+    async exportErrors(hours = 24, errorCode = null) {
+        let url = `${API_BASE}/audit/export/errors?hours=${hours}`;
+        if (errorCode) url += `&error_code=${errorCode}`;
+        
+        const response = await fetch(url, {
+            headers: this.getHeaders()
+        });
+        
+        if (!response.ok) {
+            throw new Error('Erreur lors de l\'export');
+        }
+        
+        const blob = await response.blob();
+        const downloadUrl = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = downloadUrl;
+        a.download = `errors_${new Date().toISOString().split('T')[0]}.csv`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        window.URL.revokeObjectURL(downloadUrl);
+    }
 }
 
 const api = new HubAPI();

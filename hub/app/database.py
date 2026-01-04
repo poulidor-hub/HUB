@@ -103,3 +103,22 @@ async def apply_migrations():
                         except Exception as e:
                             logger.warning(f"Migration 002 statement ignoré: {e}")
                 logger.info("✅ Migration 002 appliquée")
+        
+        # Vérifier si la migration 003 est nécessaire (enrichissement audit_logs + error_logs)
+        result = await conn.execute(text("""
+            SELECT column_name FROM information_schema.columns 
+            WHERE table_name = 'audit_logs' AND column_name = 'request_id'
+        """))
+        if not result.fetchone():
+            logger.info("📦 Application de la migration 003_add_audit_enrichment...")
+            migration_file = migrations_dir / "003_add_audit_enrichment.sql"
+            if migration_file.exists():
+                sql = migration_file.read_text()
+                for statement in sql.split(';'):
+                    statement = statement.strip()
+                    if statement and not statement.startswith('--'):
+                        try:
+                            await conn.execute(text(statement))
+                        except Exception as e:
+                            logger.warning(f"Migration 003 statement ignoré: {e}")
+                logger.info("✅ Migration 003 appliquée")
