@@ -4,7 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import select
 
-from app.database import init_db, async_session_maker
+from app.database import init_db, async_session_maker, apply_migrations
 from app.models import User
 from app.auth import get_password_hash, cleanup_expired_tokens
 from app.config import get_settings
@@ -86,6 +86,7 @@ async def lifespan(app: FastAPI):
     # Startup
     print("🚀 Démarrage du Hub d'Authentification...")
     await init_db()
+    await apply_migrations()  # Appliquer les migrations SQL si nécessaires
     await create_default_admin()
     
     # Démarrer la tâche de nettoyage périodique

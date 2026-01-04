@@ -40,6 +40,7 @@ services:
     volumes:
       - ./hub/app:/code/app
       - ./hub/tests:/code/tests
+      - ./hub/migrations:/code/migrations
       - ./hub/app_tester.py:/code/app_tester.py
       - ./hub/pytest.ini:/code/pytest.ini
       - ./secrets:/code/secrets:rw

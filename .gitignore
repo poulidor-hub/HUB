@@ -29,6 +29,9 @@ ENV/
 *.log
 logs/
 
+#environement files
+.env
+
 # Database
 *.db
 *.sqlite3
