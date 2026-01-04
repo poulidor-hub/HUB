@@ -5,10 +5,11 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
-from typing import List
+from typing import List, Optional
 from pathlib import Path
 import re
 import logging
+import base64
 
 from app.database import get_db
 from app.routes.events import notify_event, notify_stats_update
@@ -19,13 +20,73 @@ from app.schemas import (
     ServiceAccountResponse,
     ServiceAccountCreated
 )
-from app.auth import get_current_admin, get_password_hash
+from app.auth import get_current_admin, get_password_hash, get_settings
 
 router = APIRouter(prefix="/api/service-accounts", tags=["Service Accounts"])
 
 # Répertoire des secrets pour les service accounts (en écriture)
 SECRETS_DIR = Path("/code/secrets/service_accounts")
 logger = logging.getLogger(__name__)
+settings = get_settings()
+
+
+# ===== Chiffrement des secrets =====
+
+def get_fernet_cipher():
+    """
+    Retourne une instance Fernet pour chiffrer/déchiffrer les secrets.
+    Retourne None si la clé n'est pas configurée.
+    """
+    if not settings.secrets_encryption_key:
+        return None
+    
+    try:
+        from cryptography.fernet import Fernet
+        return Fernet(settings.secrets_encryption_key.encode())
+    except Exception as e:
+        logger.warning(f"⚠️ Impossible d'initialiser le chiffrement Fernet: {e}")
+        return None
+
+
+def encrypt_secret(secret: str) -> str:
+    """
+    Chiffre un secret avec Fernet si la clé est configurée.
+    Retourne le secret en clair si pas de clé.
+    
+    Format chiffré: ENC:base64_encrypted_data
+    """
+    cipher = get_fernet_cipher()
+    if not cipher:
+        return secret
+    
+    try:
+        encrypted = cipher.encrypt(secret.encode())
+        return f"ENC:{encrypted.decode()}"
+    except Exception as e:
+        logger.warning(f"⚠️ Échec du chiffrement: {e}")
+        return secret
+
+
+def decrypt_secret(encrypted_secret: str) -> str:
+    """
+    Déchiffre un secret si il est préfixé par 'ENC:'.
+    Retourne le secret tel quel si non chiffré.
+    """
+    if not encrypted_secret.startswith("ENC:"):
+        return encrypted_secret
+    
+    cipher = get_fernet_cipher()
+    if not cipher:
+        logger.warning("⚠️ Secret chiffré trouvé mais pas de clé de déchiffrement configurée")
+        return encrypted_secret
+    
+    try:
+        encrypted_data = encrypted_secret[4:]  # Enlever "ENC:"
+        decrypted = cipher.decrypt(encrypted_data.encode())
+        return decrypted.decode()
+    except Exception as e:
+        logger.warning(f"⚠️ Échec du déchiffrement: {e}")
+        return encrypted_secret
 
 
 def delete_service_account_credentials(name: str) -> bool:
@@ -60,6 +121,9 @@ def save_service_account_credentials(name: str, client_id: str, client_secret: s
     Sauvegarde automatiquement les credentials d'un service account dans un fichier .env
     
     Le fichier sera créé dans /code/secrets/sa_<name>.env
+    
+    SÉCURITÉ: Si SECRETS_ENCRYPTION_KEY est configurée, le client_secret sera chiffré
+    avec Fernet et préfixé par 'ENC:'. Sinon, il sera stocké en clair.
     """
     try:
         # Créer le répertoire si nécessaire
@@ -69,22 +133,68 @@ def save_service_account_credentials(name: str, client_id: str, client_secret: s
         safe_name = re.sub(r'[^a-z0-9_-]', '_', name.lower())
         filename = SECRETS_DIR / f"sa_{safe_name}.env"
         
+        # Chiffrer le client_secret si la clé est configurée
+        encrypted_secret = encrypt_secret(client_secret)
+        is_encrypted = encrypted_secret.startswith("ENC:")
+        
         # Contenu du fichier
         content = f"""# Service Account: {name}
 # Généré automatiquement - NE PAS COMMITER CE FICHIER !
 # Ajoutez secrets/sa_*.env à votre .gitignore
-
+"""
+        if is_encrypted:
+            content += "# 🔐 CLIENT_SECRET est chiffré avec Fernet\n"
+        else:
+            content += "# ⚠️ CLIENT_SECRET est en CLAIR - Configurez SECRETS_ENCRYPTION_KEY pour le chiffrer\n"
+        
+        content += f"""
 CLIENT_ID={client_id}
-CLIENT_SECRET={client_secret}
+CLIENT_SECRET={encrypted_secret}
 """
         if app_slugs:
             content += f"# Applications autorisées: {', '.join(app_slugs)}\n"
         
         filename.write_text(content)
-        logger.info(f"✅ Credentials sauvegardés dans {filename}")
+        
+        if is_encrypted:
+            logger.info(f"✅ Credentials sauvegardés (chiffrés) dans {filename}")
+        else:
+            logger.warning(f"⚠️ Credentials sauvegardés EN CLAIR dans {filename} (configurez SECRETS_ENCRYPTION_KEY)")
+        
         return str(filename)
     except Exception as e:
         logger.warning(f"⚠️ Impossible de sauvegarder les credentials: {e}")
+        return None
+
+
+def read_service_account_credentials(name: str) -> Optional[dict]:
+    """
+    Lit et déchiffre les credentials d'un service account depuis un fichier .env
+    
+    Returns:
+        dict avec client_id et client_secret (déchiffré) ou None si non trouvé
+    """
+    try:
+        safe_name = re.sub(r'[^a-z0-9_-]', '_', name.lower())
+        filename = SECRETS_DIR / f"sa_{safe_name}.env"
+        
+        if not filename.exists():
+            return None
+        
+        content = filename.read_text()
+        credentials = {}
+        
+        for line in content.splitlines():
+            line = line.strip()
+            if line.startswith("CLIENT_ID="):
+                credentials["client_id"] = line.split("=", 1)[1]
+            elif line.startswith("CLIENT_SECRET="):
+                encrypted_secret = line.split("=", 1)[1]
+                credentials["client_secret"] = decrypt_secret(encrypted_secret)
+        
+        return credentials if "client_id" in credentials else None
+    except Exception as e:
+        logger.warning(f"⚠️ Impossible de lire les credentials: {e}")
         return None
 
 

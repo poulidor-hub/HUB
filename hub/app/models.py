@@ -1,9 +1,17 @@
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, ForeignKey, Text, Table
+from sqlalchemy import Column, Integer, String, Boolean, DateTime, ForeignKey, Text, Table, Enum as SQLEnum
 from sqlalchemy.orm import relationship
 from datetime import datetime
 from typing import Optional
 import secrets
+import enum
 from app.database import Base
+
+
+class ApprovalStatus(enum.Enum):
+    """Statut d'approbation des applications auto-enregistrées"""
+    pending = "pending"      # En attente de validation admin
+    approved = "approved"    # Approuvée par un admin
+    rejected = "rejected"    # Rejetée par un admin
 
 
 # Rôles par défaut disponibles
@@ -104,11 +112,19 @@ class Application(Base):
     is_active = Column(Boolean, default=True)
     requires_auth = Column(Boolean, default=True)
     is_shared_service = Column(Boolean, default=False)  # Si True, accessible par tous les service accounts
+    
+    # Système d'approbation pour l'auto-enregistrement
+    approval_status = Column(SQLEnum(ApprovalStatus), default=ApprovalStatus.approved)  # pending pour les auto-register
+    approved_by_id = Column(Integer, ForeignKey('users.id', ondelete='SET NULL'), nullable=True)
+    approved_at = Column(DateTime, nullable=True)
+    rejection_reason = Column(String(500), nullable=True)  # Raison du rejet si applicable
+    
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
     # Relations
     user_roles = relationship("UserAppRole", back_populates="application", cascade="all, delete-orphan")
+    approved_by = relationship("User", foreign_keys=[approved_by_id])
     available_roles = relationship("AppRole", back_populates="application", cascade="all, delete-orphan")
     service_accounts = relationship("ServiceAccount", secondary=service_account_app_access, back_populates="applications")
     

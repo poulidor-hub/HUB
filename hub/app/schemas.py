@@ -14,6 +14,13 @@ class GrantType(str, Enum):
     client_credentials = "client_credentials"
 
 
+class ApprovalStatusEnum(str, Enum):
+    """Statut d'approbation des applications auto-enregistrées"""
+    pending = "pending"      # En attente de validation admin
+    approved = "approved"    # Approuvée par un admin
+    rejected = "rejected"    # Rejetée par un admin
+
+
 # ===== User Schemas =====
 class UserBase(BaseModel):
     username: str = Field(..., min_length=3, max_length=50)
@@ -162,6 +169,7 @@ class AppResponse(AppBase):
     id: int
     is_active: bool
     is_shared_service: bool
+    approval_status: ApprovalStatusEnum = ApprovalStatusEnum.approved
     created_at: datetime
     
     class Config:
@@ -178,6 +186,8 @@ class AppResponseWithMyRole(AppResponse):
     @classmethod
     def from_app_with_role(cls, app, my_role: Optional[str] = None) -> "AppResponseWithMyRole":
         """Crée une réponse avec le rôle de l'utilisateur courant"""
+        # Gérer l'enum ApprovalStatus
+        approval_status = ApprovalStatusEnum(app.approval_status.value) if app.approval_status else ApprovalStatusEnum.approved
         return cls(
             id=app.id,
             name=app.name,
@@ -191,6 +201,7 @@ class AppResponseWithMyRole(AppResponse):
             is_active=app.is_active,
             requires_auth=app.requires_auth,
             is_shared_service=app.is_shared_service,
+            approval_status=approval_status,
             created_at=app.created_at,
             my_role=my_role
         )
@@ -222,6 +233,8 @@ class AppWithUsers(AppResponse):
             )
             for uar in app.user_roles
         ]
+        # Gérer l'enum ApprovalStatus
+        approval_status = ApprovalStatusEnum(app.approval_status.value) if app.approval_status else ApprovalStatusEnum.approved
         return cls(
             id=app.id,
             name=app.name,
@@ -235,6 +248,7 @@ class AppWithUsers(AppResponse):
             is_active=app.is_active,
             requires_auth=app.requires_auth,
             is_shared_service=app.is_shared_service,
+            approval_status=approval_status,
             created_at=app.created_at,
             users=users
         )
@@ -508,6 +522,27 @@ class AppRegisterResponse(BaseModel):
     application: "AppResponse"
     credentials: Optional[dict] = None  # client_id, client_secret (retourné une seule fois)
     is_new: bool  # True si nouvelle app, False si existante
+    pending_approval: bool = False  # True si l'app est en attente d'approbation admin
+
+
+class AppApprovalRequest(BaseModel):
+    """Requête d'approbation ou rejet d'une application"""
+    approve: bool = Field(..., description="True pour approuver, False pour rejeter")
+    reason: Optional[str] = Field(None, max_length=500, description="Raison du rejet (obligatoire si approve=False)")
+
+
+class AppApprovalResponse(BaseModel):
+    """Réponse après approbation/rejet d'une application"""
+    message: str
+    application: "AppResponse"
+    approved_by: Optional[str] = None
+    approved_at: Optional[datetime] = None
+
+
+class PendingAppsResponse(BaseModel):
+    """Liste des applications en attente d'approbation"""
+    pending_apps: List["AppResponse"]
+    total: int
 
 
 class AppCredentialsResponse(BaseModel):

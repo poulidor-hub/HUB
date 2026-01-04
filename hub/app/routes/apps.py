@@ -11,13 +11,14 @@ import logging
 from app.routes.events import notify_event, notify_stats_update
 
 from app.database import get_db
-from app.models import Application, User, ServiceAccount, UserAppRole
+from app.models import Application, User, ServiceAccount, UserAppRole, ApprovalStatus
 from app.schemas import (
     AppCreate, AppCreateSimplified, AppUpdate, AppResponse, AppWithUsers,
     AppResponseWithMyRole,
     DockerScanResponse, DockerContainerInfo, DockerPortInfo,
     AppRegisterRequest, AppRegisterResponse, AppCredentialsResponse,
-    AppDiscoveryItem, DiscoverResponse
+    AppDiscoveryItem, DiscoverResponse,
+    AppApprovalRequest, AppApprovalResponse, PendingAppsResponse
 )
 from app.auth import get_current_admin, get_current_user, get_password_hash, get_settings, verify_token_not_revoked, oauth2_scheme
 from app.routes.service_accounts import save_service_account_credentials, delete_service_account_credentials
@@ -118,6 +119,8 @@ async def remove_shared_service_from_all_service_accounts(db: AsyncSession, app:
 
 # ===== IP Whitelist pour auto-enregistrement =====
 # Réseaux Docker autorisés pour l'auto-enregistrement (sans authentification)
+# SÉCURITÉ : Restreint aux réseaux Docker internes uniquement
+# Les réseaux 192.168.* et 10.0.* sont exclus par sécurité
 DOCKER_NETWORK_PREFIXES = [
     "172.17.",      # docker0 (bridge par défaut)
     "172.18.",      # Réseaux Docker custom
@@ -134,8 +137,9 @@ DOCKER_NETWORK_PREFIXES = [
     "172.29.",
     "172.30.",
     "172.31.",
-    "10.0.",        # Réseaux Docker overlay
-    "192.168.",     # Réseaux locaux
+    # SÉCURITÉ : 10.0.* et 192.168.* sont exclus pour éviter les enregistrements malveillants
+    # Si vous avez besoin d'autoriser un réseau spécifique, ajoutez-le explicitement
+    # Exemple : "10.0.42." pour un réseau overlay spécifique
 ]
 
 
@@ -770,19 +774,20 @@ async def register_app(
     Auto-enregistrement d'une application depuis le réseau Docker.
     
     ⚠️ Accessible UNIQUEMENT depuis les réseaux Docker (IP whitelist).
+    ⚠️ SÉCURITÉ : Les apps auto-enregistrées sont en statut "pending" et
+       nécessitent une approbation admin via /api/apps/{slug}/approve
     
     L'application envoie son slug (défini dans son .env) et reçoit :
     - Ses credentials M2M (client_id, client_secret) si nouvelle app
-    - Remplacement automatique si l'app existe déjà (selon FORCE_REPLACE_APP)
+    - L'app reste en statut "pending" jusqu'à approbation admin
     
     Flux :
     1. L'app démarre et appelle cet endpoint avec son slug
-    2. Si l'app existe et FORCE_REPLACE_APP=true : suppression + recréation
-    3. Le Hub crée l'app + service account
-    4. L'app reçoit ses credentials et les stocke en mémoire (pas dans .env)
-    
-    Le remplacement automatique permet aux applications de se resynchroniser
-    après un redéploiement sans intervention manuelle de l'admin.
+    2. Le Hub crée l'app en statut "pending" + service account (inactifs)
+    3. L'app reçoit ses credentials (valides mais app inactive)
+    4. Un admin doit approuver l'app via l'interface ou l'API
+    5. Une fois approuvée, l'app et son SA deviennent actifs
+    6. Si is_shared=true, l'app sera ajoutée à tous les SA lors de l'approbation
     """
     client_ip = request.client.host if request.client else None
     
@@ -838,18 +843,24 @@ async def register_app(
     frontend_url = f"http://{host}:{app_data.frontend_port}" if app_data.frontend_port else None
     callback_url = f"{frontend_url}/callback" if frontend_url else None
     
+    # SÉCURITÉ : Les apps auto-enregistrées sont en statut "pending"
+    # L'admin doit approuver avant que l'app ne soit active
     app = Application(
         name=app_data.name or app_data.slug.replace("-", " ").title(),
         slug=app_data.slug,
-        description=app_data.description or f"Application {app_data.slug} (auto-enregistrée)",
+        description=app_data.description or f"Application {app_data.slug} (auto-enregistrée, en attente d'approbation)",
         api_url=api_url,
         frontend_url=frontend_url,
         callback_url=callback_url,
         requires_auth=True,
-        is_shared_service=app_data.is_shared  # Permet l'accès M2M si True
+        is_shared_service=app_data.is_shared,  # Permet l'accès M2M si True
+        approval_status=ApprovalStatus.pending,  # En attente d'approbation admin
+        is_active=False  # Inactive jusqu'à approbation
     )
     db.add(app)
     await db.flush()
+    
+    logger.info(f"🔒 Application '{app_data.slug}' créée en statut PENDING (en attente d'approbation admin)")
     
     # Créer le service account automatiquement
     client_id = ServiceAccount.generate_client_id()
@@ -857,9 +868,10 @@ async def register_app(
     
     service_account = ServiceAccount(
         name=f"SA - {app.name}",
-        description=f"Service account auto-créé pour {app.name}",
+        description=f"Service account auto-créé pour {app.name} (en attente d'approbation)",
         client_id=client_id,
-        client_secret_hash=get_password_hash(client_secret)
+        client_secret_hash=get_password_hash(client_secret),
+        is_active=False  # Inactif jusqu'à approbation de l'app
     )
     db.add(service_account)
     await db.flush()
@@ -873,16 +885,9 @@ async def register_app(
     service_account = result.scalar_one()
     service_account.applications.append(app)
     
-    # Ajouter automatiquement les applications partagées (is_shared_service=True)
-    shared_result = await db.execute(
-        select(Application).where(Application.is_shared_service == True)
-    )
-    shared_apps = shared_result.scalars().all()
+    # NOTE: Les services partagés seront ajoutés lors de l'approbation
+    # Pour l'instant, on note juste quels services sont disponibles
     shared_slugs = []
-    for shared_app in shared_apps:
-        if shared_app not in service_account.applications:
-            service_account.applications.append(shared_app)
-            shared_slugs.append(shared_app.slug)
     
     # Logger l'audit si c'est un remplacement (action système sans user_id)
     if replaced:
@@ -922,17 +927,13 @@ async def register_app(
         app_slugs=all_app_slugs
     )
     
-    # Message différent selon création ou remplacement
-    if replaced:
-        message = f"Application '{app_data.slug}' remplacée avec succès. Nouveaux credentials M2M générés."
-        logger.info(f"🔄 Application '{app_data.slug}' remplacée depuis {client_ip} (ancien SA supprimé: {old_app_info})")
-    else:
-        message = f"Application '{app_data.slug}' créée avec succès. Credentials M2M générés."
-        logger.info(f"✅ Nouvelle application '{app_data.slug}' auto-enregistrée depuis {client_ip}")
+    # Message indiquant l'attente d'approbation
+    message = f"⏳ Application '{app_data.slug}' enregistrée avec succès. EN ATTENTE D'APPROBATION ADMIN."
+    message += " Credentials M2M générés mais inactifs jusqu'à approbation."
+    if app_data.is_shared:
+        message += " Le mode service partagé sera activé après approbation."
     
-    # Ajouter info sur le partage si applicable
-    if app_data.is_shared and shared_added_count > 0:
-        message += f" Service partagé ajouté à {shared_added_count} SA existant(s)."
+    logger.info(f"📝 Application '{app_data.slug}' auto-enregistrée depuis {client_ip} (PENDING)")
     
     return AppRegisterResponse(
         message=message,
@@ -943,7 +944,8 @@ async def register_app(
             "hub_host": host,
             "hub_api_port": settings.hub_api_port if hasattr(settings, 'hub_api_port') else 8000
         },
-        is_new=True  # True aussi pour le remplacement car nouveaux credentials
+        is_new=True,
+        pending_approval=True  # Indique que l'app nécessite une approbation admin
     )
 
 
@@ -2066,3 +2068,229 @@ async def auto_sync_docker_applications(db: AsyncSession) -> dict:
         await db.commit()
     
     return {"message": "Sync auto terminée", "changes": changes}
+
+
+# ===== Endpoints d'Approbation Admin =====
+
+@router.get("/pending", response_model=PendingAppsResponse)
+async def list_pending_apps(
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(get_current_admin)
+):
+    """
+    🔒 Liste les applications en attente d'approbation (admin uniquement).
+    
+    Retourne toutes les applications avec approval_status='pending'.
+    """
+    result = await db.execute(
+        select(Application)
+        .where(Application.approval_status == ApprovalStatus.pending)
+        .order_by(Application.created_at.desc())
+    )
+    pending_apps = result.scalars().all()
+    
+    return PendingAppsResponse(
+        pending_apps=[AppResponse.model_validate(app) for app in pending_apps],
+        total=len(pending_apps)
+    )
+
+
+@router.post("/{slug}/approve", response_model=AppApprovalResponse)
+async def approve_or_reject_app(
+    slug: str,
+    approval: AppApprovalRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(get_current_admin)
+):
+    """
+    🔒 Approuve ou rejette une application en attente (admin uniquement).
+    
+    - **approve=true** : Active l'application et son Service Account
+      - Si is_shared_service=true, ajoute l'app à tous les SA existants
+      - Ajoute les services partagés existants au SA de l'app
+    - **approve=false** : Rejette l'application (reste inactive)
+      - Nécessite une raison de rejet
+    """
+    from datetime import datetime
+    
+    # Récupérer l'application avec ses relations
+    result = await db.execute(
+        select(Application)
+        .options(selectinload(Application.service_accounts))
+        .where(Application.slug == slug)
+    )
+    app = result.scalar_one_or_none()
+    
+    if not app:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Application '{slug}' non trouvée"
+        )
+    
+    if app.approval_status != ApprovalStatus.pending:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"L'application '{slug}' n'est pas en attente d'approbation (statut: {app.approval_status.value})"
+        )
+    
+    client_ip = request.client.host if request.client else None
+    
+    if approval.approve:
+        # APPROBATION
+        app.approval_status = ApprovalStatus.approved
+        app.approved_by_id = admin.id
+        app.approved_at = datetime.utcnow()
+        app.is_active = True
+        app.description = app.description.replace(" (en attente d'approbation)", "") if app.description else None
+        
+        # Activer le Service Account associé
+        for sa in app.service_accounts:
+            sa.is_active = True
+            sa.description = sa.description.replace(" (en attente d'approbation)", "") if sa.description else None
+            
+            # Ajouter les services partagés existants au SA de cette app
+            shared_result = await db.execute(
+                select(Application)
+                .where(Application.is_shared_service == True)
+                .where(Application.approval_status == ApprovalStatus.approved)
+                .where(Application.id != app.id)
+            )
+            shared_apps = shared_result.scalars().all()
+            
+            # Charger les applications du SA
+            sa_result = await db.execute(
+                select(ServiceAccount)
+                .options(selectinload(ServiceAccount.applications))
+                .where(ServiceAccount.id == sa.id)
+            )
+            sa_loaded = sa_result.scalar_one()
+            
+            for shared_app in shared_apps:
+                if shared_app not in sa_loaded.applications:
+                    sa_loaded.applications.append(shared_app)
+                    logger.info(f"🔗 Service partagé '{shared_app.slug}' ajouté au SA de '{app.slug}'")
+        
+        # Si l'app est un service partagé, l'ajouter à tous les SA existants
+        shared_added_count = 0
+        if app.is_shared_service:
+            shared_added_count = await add_shared_service_to_all_service_accounts(db, app)
+        
+        await db.commit()
+        await db.refresh(app)
+        
+        # Log audit
+        await log_action(
+            db=db,
+            user_id=admin.id,
+            action="approve_app",
+            target=slug,
+            ip_address=client_ip,
+            details=f"Application '{slug}' approuvée par {admin.username}. Shared: {app.is_shared_service}, SA activés: {len(app.service_accounts)}"
+        )
+        
+        # Notifier SSE
+        notify_event("apps_updated", {"action": "approved", "app_slug": slug, "approved_by": admin.username})
+        notify_stats_update()
+        
+        message = f"✅ Application '{slug}' approuvée et activée."
+        if app.is_shared_service and shared_added_count > 0:
+            message += f" Service partagé ajouté à {shared_added_count} SA existant(s)."
+        
+        logger.info(f"✅ Application '{slug}' approuvée par {admin.username}")
+        
+    else:
+        # REJET
+        if not approval.reason:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Une raison de rejet est obligatoire"
+            )
+        
+        app.approval_status = ApprovalStatus.rejected
+        app.approved_by_id = admin.id
+        app.approved_at = datetime.utcnow()
+        app.rejection_reason = approval.reason
+        app.is_active = False
+        
+        await db.commit()
+        await db.refresh(app)
+        
+        # Log audit
+        await log_action(
+            db=db,
+            user_id=admin.id,
+            action="reject_app",
+            target=slug,
+            ip_address=client_ip,
+            details=f"Application '{slug}' rejetée par {admin.username}. Raison: {approval.reason}"
+        )
+        
+        # Notifier SSE
+        notify_event("apps_updated", {"action": "rejected", "app_slug": slug, "rejected_by": admin.username})
+        
+        message = f"❌ Application '{slug}' rejetée. Raison: {approval.reason}"
+        logger.info(f"❌ Application '{slug}' rejetée par {admin.username}: {approval.reason}")
+    
+    return AppApprovalResponse(
+        message=message,
+        application=AppResponse.model_validate(app),
+        approved_by=admin.username,
+        approved_at=app.approved_at
+    )
+
+
+@router.delete("/{slug}/pending")
+async def delete_pending_app(
+    slug: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(get_current_admin)
+):
+    """
+    🔒 Supprime une application en attente ou rejetée (admin uniquement).
+    
+    Permet de nettoyer les applications non approuvées.
+    Les applications approuvées ne peuvent pas être supprimées via cet endpoint.
+    """
+    result = await db.execute(
+        select(Application)
+        .options(selectinload(Application.service_accounts))
+        .where(Application.slug == slug)
+    )
+    app = result.scalar_one_or_none()
+    
+    if not app:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Application '{slug}' non trouvée"
+        )
+    
+    if app.approval_status == ApprovalStatus.approved:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Impossible de supprimer une application approuvée via cet endpoint. Utilisez DELETE /api/apps/{slug}"
+        )
+    
+    client_ip = request.client.host if request.client else None
+    
+    # Supprimer l'application et ses dépendances
+    app_info = await delete_app_cascade(db, app, delete_credentials_file=True)
+    await db.commit()
+    
+    # Log audit
+    await log_action(
+        db=db,
+        user_id=admin.id,
+        action="delete_pending_app",
+        target=slug,
+        ip_address=client_ip,
+        details=f"Application en attente '{slug}' supprimée par {admin.username}"
+    )
+    
+    notify_event("apps_updated", {"action": "deleted", "app_slug": slug})
+    notify_stats_update()
+    
+    logger.info(f"🗑️ Application en attente '{slug}' supprimée par {admin.username}")
+    
+    return {"message": f"Application '{slug}' supprimée", "details": app_info}

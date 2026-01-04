@@ -447,6 +447,36 @@ class HubAPI {
         });
     }
 
+    // ===== Approbation des Applications =====
+    
+    // Liste les applications en attente d'approbation
+    async getPendingApps() {
+        return this.request('/apps/pending');
+    }
+    
+    // Approuver une application
+    async approveApp(slug) {
+        return this.request(`/apps/${encodeURIComponent(slug)}/approve`, {
+            method: 'POST',
+            body: JSON.stringify({ approve: true })
+        });
+    }
+    
+    // Rejeter une application
+    async rejectApp(slug, reason) {
+        return this.request(`/apps/${encodeURIComponent(slug)}/approve`, {
+            method: 'POST',
+            body: JSON.stringify({ approve: false, reason: reason })
+        });
+    }
+    
+    // Supprimer une application en attente/rejetée
+    async deletePendingApp(slug) {
+        return this.request(`/apps/${encodeURIComponent(slug)}/pending`, {
+            method: 'DELETE'
+        });
+    }
+
     // ===== Status Monitoring =====
     
     // Vérifie le statut de toutes les applications (connectivité)

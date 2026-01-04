@@ -150,6 +150,11 @@ class Settings(BaseSettings):
     # Si True : l'ancienne app et son M2M sont supprimés automatiquement
     force_replace_app: bool = False
     
+    # Clé de chiffrement des secrets (Fernet - 32 bytes base64)
+    # Générée avec: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+    # Si vide, les secrets seront stockés en clair (non recommandé en production)
+    secrets_encryption_key: str = ""
+    
     # Synchronisation automatique avec Docker (en secondes)
     # 0 = désactivé, 300 = toutes les 5 minutes
     docker_sync_interval: int = 300
