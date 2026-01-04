@@ -483,6 +483,7 @@ class AppRegisterRequest(BaseModel):
     description: Optional[str] = Field(None, description="Description de l'application")
     api_port: int = Field(..., ge=1, le=65535, description="Port de l'API backend")
     frontend_port: Optional[int] = Field(None, ge=1, le=65535, description="Port du frontend (optionnel)")
+    is_shared: bool = Field(False, description="Si True, l'application sera accessible par tous les service accounts (M2M)")
 
 
 class AppRegisterResponse(BaseModel):

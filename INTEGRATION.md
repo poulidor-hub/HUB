@@ -1,7 +1,7 @@
 # Guide d'Intégration - Hub d'Authentification
 
-> **Version** : 2.5.3  
-> **Dernière mise à jour** : 3 janvier 2026  
+> **Version** : 2.5.4  
+> **Dernière mise à jour** : 4 janvier 2026  
 > **Auteur** : Équipe Hub
 
 Ce document décrit comment intégrer vos applications avec le Hub d'authentification centralisé.
@@ -2544,7 +2544,7 @@ curl -X PATCH http://hub:8000/api/apps/$APP_ID \
   -d '{"is_shared_service": true}'
 ```
 
-> ⚠️ **Note** : Les Service Accounts créés **AVANT** l'activation de `is_shared_service` ne sont pas automatiquement mis à jour. Utilisez l'Option B pour les corriger.
+> ✅ **Depuis v2.5.4** : Les Service Accounts existants sont **automatiquement resynchronisés** lors d'un `regenerate_secret`. Le simple fait de redémarrer une application (qui appelle `regenerate_secret` via `hub_client.py`) synchronise ses accès aux APIs partagées.
 
 #### Option B : Ajouter l'accès manuellement au Service Account
 
@@ -2564,12 +2564,19 @@ curl -X PUT http://hub:8000/api/service-accounts/{sa_id}/apps \
   -d '[1, 5, 12]'  # IDs des apps: salarie(1), exemple-app(5), autre-app(12)
 ```
 
-#### Option C : Régénérer le Service Account après ajout du shared service
+#### Option C : Redémarrer l'application pour resynchroniser (v2.5.4+)
 
-Si vous venez d'activer `is_shared_service` sur l'API cible, le Service Account existant ne sera pas automatiquement mis à jour. Vous pouvez :
+Depuis la v2.5.4, le `regenerate_secret` resynchronise automatiquement les accès aux APIs partagées :
 
-1. Supprimer et recréer le Service Account (les shared services seront ajoutés automatiquement)
-2. Ou utiliser l'Option B pour ajouter manuellement l'accès
+```bash
+# Simple redémarrage de l'application
+docker restart mon-app
+
+# Le hub_client.py appelle automatiquement regenerate_secret au démarrage
+# → Les APIs is_shared_service=True sont ajoutées aux accès du SA
+```
+
+> 💡 **Avantage** : Aucune modification du code client n'est nécessaire. Le Hub gère tout côté serveur.
 
 ---
 

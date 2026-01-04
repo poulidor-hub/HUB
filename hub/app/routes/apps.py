@@ -645,7 +645,8 @@ async def register_app(
         api_url=api_url,
         frontend_url=frontend_url,
         callback_url=callback_url,
-        requires_auth=True
+        requires_auth=True,
+        is_shared_service=app_data.is_shared  # Permet l'accès M2M si True
     )
     db.add(app)
     await db.flush()
@@ -1024,18 +1025,33 @@ async def regenerate_app_secret(
     new_secret = ServiceAccount.generate_client_secret()
     sa.client_secret_hash = get_password_hash(new_secret)
     
+    # 🔄 Resynchroniser automatiquement les applications partagées (is_shared_service=True)
+    shared_result = await db.execute(
+        select(Application).where(Application.is_shared_service == True)
+    )
+    shared_apps = shared_result.scalars().all()
+    synced_slugs = []
+    for shared_app in shared_apps:
+        if shared_app not in sa.applications:
+            sa.applications.append(shared_app)
+            synced_slugs.append(shared_app.slug)
+    
     await db.commit()
     
-    # Mettre à jour le fichier de backup
+    # Mettre à jour le fichier de backup avec tous les accès (app + shared)
+    all_app_slugs = [a.slug for a in sa.applications]
     save_service_account_credentials(
         name=app.slug,
         client_id=sa.client_id,
         client_secret=new_secret,
-        app_slugs=[app.slug]
+        app_slugs=all_app_slugs
     )
     
     host = settings.get_hub_host()
-    logger.info(f"🔄 Secret régénéré pour '{app.slug}' depuis {client_ip}")
+    if synced_slugs:
+        logger.info(f"🔄 Secret régénéré pour '{app.slug}' depuis {client_ip} - Apps partagées resync: {synced_slugs}")
+    else:
+        logger.info(f"🔄 Secret régénéré pour '{app.slug}' depuis {client_ip}")
     
     return AppCredentialsResponse(
         app_slug=app.slug,
@@ -1046,6 +1062,62 @@ async def regenerate_app_secret(
         hub_api_port=8000,
         message="⚠️ NOUVEAU SECRET GÉNÉRÉ ! L'ancien secret est maintenant invalide. Stockez ce secret en mémoire, il ne sera plus affiché."
     )
+
+
+
+@router.put("/me/shared")
+async def update_app_shared(
+    request: Request,
+    is_shared: bool,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Met à jour le flag is_shared_service d'une application.
+    
+    ⚠️ Accessible UNIQUEMENT depuis les réseaux Docker (IP whitelist).
+    
+    L'application doit fournir le header `X-Slug` avec son slug.
+    
+    Si is_shared=True, l'application sera automatiquement accessible
+    par tous les nouveaux service accounts créés.
+    """
+    client_ip = request.client.host if request.client else None
+    
+    if not is_docker_network_ip(client_ip):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Accès autorisé uniquement depuis le réseau Docker (IP: {client_ip})"
+        )
+    
+    app_slug = request.headers.get("X-Slug")
+    if not app_slug:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Header X-Slug requis"
+        )
+    
+    result = await db.execute(
+        select(Application).where(Application.slug == app_slug)
+    )
+    app = result.scalar_one_or_none()
+    
+    if not app:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Application '{app_slug}' non trouvée"
+        )
+    
+    app.is_shared_service = is_shared
+    db.add(app)
+    await db.commit()
+    
+    logger.info(f"🔧 Application '{app_slug}' is_shared_service={is_shared} via X-Slug depuis {client_ip}")
+    
+    return {
+        "message": f"Application '{app_slug}' mise à jour",
+        "slug": app_slug,
+        "is_shared_service": is_shared
+    }
 
 
 @router.get("/{app_id}", response_model=AppWithUsers)

@@ -5,6 +5,34 @@
 
 ---
 
+## [2.5.4] - 4 janvier 2026
+
+### 🔄 Resync automatique des APIs partagées lors du `regenerate_secret`
+
+**Amélioration majeure** : Les Service Accounts sont maintenant automatiquement resynchronisés avec les APIs partagées (`is_shared_service=True`) lors de l'appel à `POST /api/apps/me/regenerate-secret`.
+
+| Fonctionnalité | Description |
+|----------------|-------------|
+| **Resync automatique** | Plus besoin de modifier les applications clientes |
+| **Accès aux shared services** | Ajoutés automatiquement au SA lors du regenerate |
+| **Fichier .env mis à jour** | Contient maintenant tous les slugs autorisés (app + shared) |
+
+### 🔧 Modifications techniques
+
+| Fichier | Modification |
+|---------|-------------|
+| `routes/apps.py` | `regenerate_secret` synchronise désormais les apps `is_shared_service=True` |
+| `INTEGRATION.md` | Documentation mise à jour pour refléter le comportement automatique |
+
+### ✅ Avantages
+
+- **Zéro modification** des applications clientes existantes
+- Le simple redémarrage d'une app resynchronise ses accès M2M
+- Plus besoin d'appeler manuellement `update_shared()` dans `hub_client.py`
+- Les nouveaux services partagés sont automatiquement accessibles après un redémarrage
+
+---
+
 ## [2.5.3] - 3 janvier 2026
 
 ### 🆕 Endpoint de découverte M2M
