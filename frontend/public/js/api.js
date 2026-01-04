@@ -415,6 +415,20 @@ class HubAPI {
     async scanDockerContainers(includeStopped = false, showAll = false) {
         return this.request(`/apps/docker/scan?include_stopped=${includeStopped}&show_all=${showAll}`);
     }
+
+    // Auto-register d'une application (crée app + service account automatiquement)
+    async autoRegisterApp(slug, name, apiPort, frontendPort = null, isShared = false) {
+        return this.request('/apps/auto-register', {
+            method: 'POST',
+            body: JSON.stringify({
+                slug: slug,
+                name: name,
+                api_port: apiPort,
+                frontend_port: frontendPort,
+                is_shared: isShared
+            })
+        });
+    }
 }
 
 const api = new HubAPI();

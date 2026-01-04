@@ -93,6 +93,11 @@ function handleSSEEvent(data) {
                              data.data?.action === 'deleted' ? 'supprimée' : 'modifiée';
             const appName = data.data?.app_name || 'Application';
             showToast('Mise à jour', `${appName} ${appAction}`, 'info');
+            
+            // Rafraîchir le token si une app a été créée ou modifiée (par un autre admin)
+            if (data.data?.action === 'created' || data.data?.action === 'updated') {
+                refreshTokenAfterAppChange(null, true); // silencieux via SSE
+            }
             break;
             
         case 'users_updated':
@@ -503,6 +508,63 @@ function renderAppsGrid(apps) {
 }
 
 /**
+ * Rafraîchit le token après une création/modification d'application
+ * Affiche un spinner discret pendant l'opération
+ * @param {string|null} actionType - Type d'action ('création', 'modification') ou null si silencieux
+ * @param {boolean} silent - Si true, pas de toast (pour les événements SSE)
+ */
+async function refreshTokenAfterAppChange(actionType = null, silent = false) {
+    // Créer et afficher un spinner discret dans la navbar
+    const navbar = document.querySelector('.navbar-nav') || document.querySelector('.navbar');
+    let spinner = null;
+    
+    if (navbar && !silent) {
+        spinner = document.createElement('span');
+        spinner.id = 'token-refresh-spinner';
+        spinner.className = 'ms-2 d-inline-flex align-items-center';
+        spinner.innerHTML = `
+            <span class="spinner-border spinner-border-sm text-light me-1" role="status"></span>
+            <small class="text-light opacity-75">Sync...</small>
+        `;
+        navbar.appendChild(spinner);
+    }
+    
+    try {
+        const tokenRefreshed = await api.tryRefreshToken();
+        
+        // Recharger aussi les données utilisateur pour synchroniser l'état local
+        if (tokenRefreshed) {
+            try {
+                currentUser = await api.getCurrentUser();
+            } catch (e) {
+                console.log('Impossible de recharger currentUser:', e);
+            }
+        }
+        
+        if (!silent && actionType) {
+            if (tokenRefreshed) {
+                showToast('Session synchronisée', `Vos accès ont été mis à jour après la ${actionType}.`, 'info');
+            } else {
+                showToast('Info', `La ${actionType} est enregistrée. Reconnectez-vous pour accéder à l'app.`, 'warning');
+            }
+        }
+        
+        return tokenRefreshed;
+    } catch (e) {
+        console.log('Refresh token non disponible:', e);
+        if (!silent && actionType) {
+            showToast('Info', `La ${actionType} est enregistrée. Le nouvel accès sera actif à la prochaine connexion.`, 'info');
+        }
+        return false;
+    } finally {
+        // Supprimer le spinner
+        if (spinner) {
+            spinner.remove();
+        }
+    }
+}
+
+/**
  * Met à jour le rôle de l'admin courant sur une application
  */
 async function updateMyAppRole(appSlug, role) {
@@ -662,7 +724,10 @@ function renderAppsTable(apps) {
                                 <span class="me-2 rounded p-1" style="background-color: ${app.color}; color: white;">
                                     <i class="${app.icon}"></i>
                                 </span>
-                                <strong>${escapeHtml(app.name)}</strong>
+                                <div>
+                                    <strong>${escapeHtml(app.name)}</strong>
+                                    ${app.is_shared_service ? '<span class="badge bg-info ms-1" title="API partagée accessible par tous les SA"><i class="bi bi-share"></i></span>' : ''}
+                                </div>
                             </div>
                         </td>
                         <td><code>${app.slug}</code></td>
@@ -932,6 +997,10 @@ async function handleSaveApp(event) {
             
             await api.updateApp(id, data);
             showToast('Succès', 'Application modifiée', 'success');
+            
+            // Rafraîchir le token pour refléter les modifications
+            await refreshTokenAfterAppChange('modification');
+            
             appFormModal.hide();
             await loadAdminData();
             adminModal.show();
@@ -939,6 +1008,7 @@ async function handleSaveApp(event) {
             // Mode création - utiliser les ports (schéma simplifié)
             // Le M2M sera créé automatiquement quand l'app s'auto-enregistre
             const customHost = document.getElementById('appCustomHost').checked;
+            const isSharedService = document.getElementById('appIsSharedService')?.checked || false;
             const data = {
                 name: document.getElementById('appName').value,
                 slug: document.getElementById('appSlug').value,
@@ -951,12 +1021,18 @@ async function handleSaveApp(event) {
                 frontend_https: document.getElementById('appFrontendHttps')?.checked || false,
                 custom_host: customHost ? document.getElementById('appCustomHostValue').value : null,
                 requires_auth: document.getElementById('appRequiresAuth').checked,
+                is_shared_service: isSharedService,
                 create_service_account: false  // L'app créera son M2M en s'auto-enregistrant
             };
             
             await api.createApp(data);
             appFormModal.hide();
-            showToast('Succès', 'Application créée - le M2M sera créé au démarrage de l\'app', 'success');
+            const sharedMsg = isSharedService ? ' (API partagée M2M)' : '';
+            showToast('Succès', `Application créée${sharedMsg} - le M2M sera créé au démarrage de l'app`, 'success');
+            
+            // Rafraîchir le token pour avoir accès à la nouvelle app immédiatement
+            await refreshTokenAfterAppChange('création');
+            
             await loadAdminData();
             adminModal.show();
         }
@@ -2503,6 +2579,7 @@ function selectDockerContainer(containerId, type) {
 function updateDockerSelectionSummary() {
     const summary = document.getElementById('dockerSelectionSummary');
     const importBtn = document.getElementById('dockerImportBtn');
+    const quickImportBtn = document.getElementById('dockerQuickImportBtn');
     
     if (!summary || !importBtn) return;
     
@@ -2512,6 +2589,7 @@ function updateDockerSelectionSummary() {
     if (!hasApi && !hasFrontend) {
         summary.innerHTML = '<span class="text-muted">Aucune sélection</span>';
         importBtn.disabled = true;
+        if (quickImportBtn) quickImportBtn.disabled = true;
     } else {
         let html = '';
         if (hasApi) {
@@ -2524,11 +2602,88 @@ function updateDockerSelectionSummary() {
         }
         summary.innerHTML = html;
         importBtn.disabled = !hasApi; // Au minimum une API est requise
+        if (quickImportBtn) quickImportBtn.disabled = !hasApi;
     }
 }
 
 /**
- * Importe la sélection Docker comme application
+ * Import rapide : enregistre automatiquement l'application avec son Service Account
+ */
+async function quickImportDockerSelection() {
+    if (!dockerSelection.api) {
+        showToast('Erreur', 'Veuillez sélectionner au moins un conteneur API', 'warning');
+        return;
+    }
+    
+    const apiContainer = dockerSelection.api;
+    const frontendContainer = dockerSelection.frontend;
+    const isShared = document.getElementById('dockerIsShared')?.checked || false;
+    
+    // Trouver les ports
+    const apiPort = apiContainer.ports[0]?.host_port || null;
+    const frontendPort = frontendContainer?.ports[0]?.host_port || null;
+    
+    if (!apiPort) {
+        showToast('Erreur', 'Le conteneur API doit avoir un port exposé sur l\'hôte', 'warning');
+        return;
+    }
+    
+    // Générer slug et nom
+    let appSlug = apiContainer.suggested_slug.replace(/-?(api|backend)$/i, '') || apiContainer.suggested_slug;
+    let appName = apiContainer.suggested_name.replace(/\s*(api|backend)\s*/gi, '').trim() || apiContainer.suggested_name;
+    
+    try {
+        // Désactiver le bouton pendant l'opération
+        const btn = document.getElementById('dockerQuickImportBtn');
+        const originalHtml = btn.innerHTML;
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Import...';
+        
+        // Appeler l'API auto-register
+        const result = await api.autoRegisterApp(appSlug, appName, apiPort, frontendPort, isShared);
+        
+        // Restaurer le bouton
+        btn.innerHTML = originalHtml;
+        btn.disabled = false;
+        
+        // Fermer la modal Docker
+        dockerScanModal.hide();
+        
+        // Afficher le résultat
+        const sharedMsg = isShared ? ' (API partagée M2M)' : '';
+        if (result.is_new) {
+            showToast('Succès', `Application "${appName}" créée${sharedMsg} avec Service Account !`, 'success');
+            
+            // Afficher les credentials si disponibles
+            if (result.credentials?.client_secret) {
+                setTimeout(() => {
+                    alert(`🔐 Credentials M2M générés pour ${appName}:\n\nClient ID: ${result.credentials.client_id}\nClient Secret: ${result.credentials.client_secret}\n\n⚠️ Le secret ne sera plus affiché ! Fichier sauvé: ${result.secrets_file || 'secrets/service_accounts/sa_' + appSlug + '.env'}`);
+                }, 500);
+            }
+        } else {
+            showToast('Info', `Application "${appName}" existe déjà`, 'info');
+        }
+        
+        // Rafraîchir les données admin
+        await loadAdminData();
+        loadApps();
+        adminModal.show();
+        
+    } catch (error) {
+        console.error('Erreur import rapide:', error);
+        showToast('Erreur', error.message, 'danger');
+        
+        // Restaurer le bouton
+        const btn = document.getElementById('dockerQuickImportBtn');
+        if (btn) {
+            btn.innerHTML = '<i class="bi bi-lightning-charge me-1"></i>Import rapide';
+            btn.disabled = false;
+        }
+    }
+}
+
+/**
+ * Importe la sélection Docker comme application (mode personnalisé)
  */
 function importDockerSelection() {
     if (!dockerSelection.api) {
@@ -2538,6 +2693,7 @@ function importDockerSelection() {
     
     const apiContainer = dockerSelection.api;
     const frontendContainer = dockerSelection.frontend;
+    const isShared = document.getElementById('dockerIsShared')?.checked || false;
     
     // Fermer la modal Docker
     dockerScanModal.hide();
@@ -2582,6 +2738,10 @@ function importDockerSelection() {
     document.getElementById('appRequiresAuth').checked = true;
     document.getElementById('appCustomHost').checked = false;
     document.getElementById('customHostGroup').classList.add('d-none');
+    
+    // Pré-remplir l'option is_shared depuis le scanner Docker
+    const appIsSharedCheckbox = document.getElementById('appIsSharedService');
+    if (appIsSharedCheckbox) appIsSharedCheckbox.checked = isShared;
     
     // Note: M2M est créé automatiquement lors de l'auto-enregistrement
     
