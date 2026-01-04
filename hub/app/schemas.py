@@ -179,13 +179,14 @@ class AppResponse(AppBase):
 class AppResponseWithMyRole(AppResponse):
     """Application avec le rôle de l'utilisateur courant (pour le dashboard admin)"""
     my_role: Optional[str] = None  # Rôle de l'utilisateur courant sur cette app (null si pas de rôle)
+    docker_status: Optional[str] = None  # Statut du conteneur Docker: 'running', 'stopped', 'unknown'
     
     class Config:
         from_attributes = True
     
     @classmethod
-    def from_app_with_role(cls, app, my_role: Optional[str] = None) -> "AppResponseWithMyRole":
-        """Crée une réponse avec le rôle de l'utilisateur courant"""
+    def from_app_with_role(cls, app, my_role: Optional[str] = None, docker_status: Optional[str] = None) -> "AppResponseWithMyRole":
+        """Crée une réponse avec le rôle de l'utilisateur courant et le statut Docker"""
         # Gérer l'enum ApprovalStatus
         approval_status = ApprovalStatusEnum(app.approval_status.value) if app.approval_status else ApprovalStatusEnum.approved
         return cls(
@@ -203,7 +204,8 @@ class AppResponseWithMyRole(AppResponse):
             is_shared_service=app.is_shared_service,
             approval_status=approval_status,
             created_at=app.created_at,
-            my_role=my_role
+            my_role=my_role,
+            docker_status=docker_status
         )
 
 

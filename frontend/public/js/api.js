@@ -11,6 +11,7 @@ class HubAPI {
         this.token = localStorage.getItem('hub_token');
         this.refreshToken = localStorage.getItem('hub_refresh_token');
         this._refreshPromise = null; // Pour éviter les appels concurrents
+        this._lastRefreshTime = 0; // Timestamp du dernier refresh réussi
     }
 
     setToken(token) {
@@ -49,7 +50,7 @@ class HubAPI {
      * @returns {Promise<boolean>} true si le refresh a réussi
      */
     async tryRefreshToken() {
-        // Éviter les appels concurrents
+        // Éviter les appels concurrents - retourner la promesse existante
         if (this._refreshPromise) {
             return this._refreshPromise;
         }
@@ -58,15 +59,37 @@ class HubAPI {
             return false;
         }
 
+        // Éviter les refreshs trop rapprochés (minimum 2 secondes entre chaque)
+        const now = Date.now();
+        if (now - this._lastRefreshTime < 2000) {
+            console.log('Refresh ignoré - trop récent');
+            return true; // Considérer comme succès si refresh récent
+        }
+
+        // Capturer le token actuel pour éviter les races conditions
+        const tokenToRefresh = this.refreshToken;
+
         this._refreshPromise = (async () => {
             try {
+                // Vérifier que le token n'a pas changé entre-temps
+                // (si un autre refresh a déjà mis à jour le token)
+                if (this.refreshToken !== tokenToRefresh) {
+                    console.log('Refresh token déjà mis à jour par un autre appel');
+                    return true; // Le token a déjà été rafraîchi
+                }
+
                 const response = await fetch(`${API_BASE}/auth/token/refresh`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ refresh_token: this.refreshToken })
+                    body: JSON.stringify({ refresh_token: tokenToRefresh })
                 });
 
                 if (!response.ok) {
+                    // Vérifier si le token a été mis à jour pendant la requête
+                    if (this.refreshToken !== tokenToRefresh) {
+                        console.log('Token rafraîchi par un autre appel pendant la requête');
+                        return true;
+                    }
                     // Refresh token expiré ou invalide
                     this.clearToken();
                     return false;
@@ -77,10 +100,14 @@ class HubAPI {
                 if (data.refresh_token) {
                     this.setRefreshToken(data.refresh_token);
                 }
+                this._lastRefreshTime = Date.now(); // Marquer le succès
                 return true;
             } catch (error) {
                 console.error('Refresh token failed:', error);
-                this.clearToken();
+                // Ne pas effacer si le token a été mis à jour entre-temps
+                if (this.refreshToken === tokenToRefresh) {
+                    this.clearToken();
+                }
                 return false;
             } finally {
                 this._refreshPromise = null;
@@ -111,15 +138,17 @@ class HubAPI {
                     config.headers['Authorization'] = `Bearer ${this.token}`;
                     response = await fetch(url, config);
                 } else {
-                    // Refresh échoué - nettoyer et laisser l'appelant gérer
+                    // Refresh échoué - déclencher l'événement de session expirée
                     this.clearToken();
+                    this._dispatchSessionExpired();
                     throw new Error('Session expirée');
                 }
             }
 
             if (response.status === 401) {
-                // Token invalide - nettoyer et laisser l'appelant gérer
+                // Token invalide - déclencher l'événement de session expirée
                 this.clearToken();
+                this._dispatchSessionExpired();
                 throw new Error('Session expirée');
             }
 
@@ -137,6 +166,16 @@ class HubAPI {
             console.error('API Error:', error);
             throw error;
         }
+    }
+
+    /**
+     * Déclenche un événement global quand la session expire
+     * Permet à app.js de réagir immédiatement pour déconnecter l'utilisateur
+     */
+    _dispatchSessionExpired() {
+        window.dispatchEvent(new CustomEvent('hub:sessionExpired', {
+            detail: { message: 'Votre session a expiré. Veuillez vous reconnecter.' }
+        }));
     }
 
     // Auth

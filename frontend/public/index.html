@@ -10,8 +10,18 @@
     <link href="css/style.css" rel="stylesheet">
 </head>
 <body>
+    <!-- Loading Screen - affiché pendant la vérification de l'authentification -->
+    <div id="loadingScreen" class="loading-screen">
+        <div class="loading-content">
+            <i class="bi bi-grid-3x3-gap-fill loading-icon"></i>
+            <div class="spinner-border text-primary mt-3" role="status">
+                <span class="visually-hidden">Chargement...</span>
+            </div>
+        </div>
+    </div>
+
     <!-- Navigation -->
-    <nav class="navbar navbar-expand-lg navbar-dark bg-dark fixed-top">
+    <nav class="navbar navbar-expand-lg navbar-dark bg-dark fixed-top d-none" id="mainNavbar">
         <div class="container">
             <a class="navbar-brand d-flex align-items-center" href="#" onclick="showPage('dashboard')">
                 <i class="bi bi-grid-3x3-gap-fill me-2"></i>
@@ -53,7 +63,7 @@
     </nav>
 
     <!-- Login Form -->
-    <div id="loginSection" class="container d-flex align-items-center justify-content-center min-vh-100">
+    <div id="loginSection" class="container d-flex align-items-center justify-content-center min-vh-100 d-none">
         <div class="card shadow-lg login-card">
             <div class="card-body p-5">
                 <div class="text-center mb-4">

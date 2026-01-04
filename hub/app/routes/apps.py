@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
-from typing import List, Optional, Union
+from typing import List, Optional, Union, Dict
 import re
 
 from pathlib import Path
@@ -23,10 +23,112 @@ from app.schemas import (
 from app.auth import get_current_admin, get_current_user, get_password_hash, get_settings, verify_token_not_revoked, oauth2_scheme
 from app.routes.service_accounts import save_service_account_credentials, delete_service_account_credentials
 from app.routes.audit import log_action
+from app.docker_scanner import docker_scanner
 
 router = APIRouter(prefix="/api/apps", tags=["Applications"])
 settings = get_settings()
 logger = logging.getLogger(__name__)
+
+
+def get_docker_status_map() -> Dict[str, str]:
+    """
+    Récupère le statut Docker de tous les conteneurs et crée une map port -> status.
+    Permet de déterminer si une application est en maintenance (conteneur arrêté).
+    
+    Utilise directement le client Docker pour inclure les conteneurs arrêtés
+    dont les ports ne sont plus visibles.
+    
+    Returns:
+        Dict[str, str]: Mapping port -> status ('running', 'exited', etc.)
+    """
+    port_status_map = {}
+    
+    if not docker_scanner.is_available:
+        return port_status_map
+    
+    try:
+        # Accéder directement au client Docker pour tous les conteneurs
+        client = docker_scanner.client
+        if not client:
+            return port_status_map
+            
+        # Lister tous les conteneurs (y compris arrêtés)
+        containers = client.containers.list(all=True)
+        
+        for container in containers:
+            status = container.status  # 'running', 'exited', 'paused', etc.
+            
+            # Extraire les ports depuis les attributs du conteneur
+            # Fonctionne même pour les conteneurs arrêtés
+            attrs = container.attrs
+            
+            # Méthode 1: Ports depuis NetworkSettings (fonctionne pour running)
+            ports_data = container.ports or {}
+            for port_str, bindings in ports_data.items():
+                if bindings:
+                    for binding in bindings:
+                        host_port = binding.get('HostPort')
+                        if host_port:
+                            port_status_map[host_port] = status
+            
+            # Méthode 2: Ports depuis HostConfig (fonctionne pour tous)
+            host_config = attrs.get('HostConfig', {})
+            port_bindings = host_config.get('PortBindings') or {}
+            for port_str, bindings in port_bindings.items():
+                if bindings:
+                    for binding in bindings:
+                        host_port = binding.get('HostPort')
+                        if host_port:
+                            # Ne pas écraser si déjà présent (préférer la méthode 1)
+                            if host_port not in port_status_map:
+                                port_status_map[host_port] = status
+                            
+    except Exception as e:
+        logger.warning(f"Impossible de récupérer le statut Docker: {e}")
+    
+    return port_status_map
+
+
+def get_docker_status_for_app(app: Application, port_status_map: Dict[str, str]) -> Optional[str]:
+    """
+    Détermine le statut Docker d'une application basé sur son URL API et frontend.
+    
+    Si l'un des deux services (API ou frontend) est arrêté, l'application est 
+    considérée comme en maintenance.
+    
+    Args:
+        app: Application à vérifier
+        port_status_map: Mapping des ports vers leurs statuts
+        
+    Returns:
+        'running' si tous les services sont en ligne,
+        'exited'/'stopped' si au moins un service est arrêté,
+        None si inconnu
+    """
+    import re
+    
+    statuses = []
+    
+    for url in [app.api_url, app.frontend_url]:
+        if not url:
+            continue
+        # Extraire le port de l'URL (format: http://host:port/...)
+        match = re.search(r':(\d+)', url)
+        if match:
+            port = match.group(1)
+            if port in port_status_map:
+                statuses.append(port_status_map[port])
+    
+    if not statuses:
+        return None
+    
+    # Si un des services est arrêté, l'app est en maintenance
+    for status in statuses:
+        if status != 'running':
+            return status
+    
+    # Tous les services sont running
+    return 'running'
 
 
 # ===== Fonctions Helper pour Services Partagés M2M =====
@@ -423,6 +525,7 @@ async def list_apps(
     """Liste les applications (admin voit tout, user voit les siennes)
     
     Retourne également le rôle de l'utilisateur courant sur chaque app (my_role)
+    et le statut Docker du conteneur (docker_status: 'running', 'stopped', ou null)
     """
     # Charger les rôles de l'utilisateur courant
     user_result = await db.execute(
@@ -433,17 +536,28 @@ async def list_apps(
     user = user_result.scalar_one()
     user_roles_map = {ar.application.slug: ar.role for ar in user.app_roles}
     
+    # Récupérer le statut Docker de tous les conteneurs
+    port_status_map = get_docker_status_map()
+    
     if current_user.is_admin:
         result = await db.execute(select(Application))
         apps = result.scalars().all()
         return [
-            AppResponseWithMyRole.from_app_with_role(app, user_roles_map.get(app.slug))
+            AppResponseWithMyRole.from_app_with_role(
+                app, 
+                user_roles_map.get(app.slug),
+                get_docker_status_for_app(app, port_status_map)
+            )
             for app in apps
         ]
     else:
         # Retourne uniquement les apps de l'utilisateur via app_roles
         return [
-            AppResponseWithMyRole.from_app_with_role(ar.application, ar.role)
+            AppResponseWithMyRole.from_app_with_role(
+                ar.application, 
+                ar.role,
+                get_docker_status_for_app(ar.application, port_status_map)
+            )
             for ar in user.app_roles
         ]
 
@@ -834,7 +948,7 @@ async def register_app(
     old_app_info = None
     
     if existing_app:
-        # Application existante - vérifier si on doit la remplacer
+        # Application existante - vérifier si on doit la remplacer ou mettre à jour
         if settings.force_replace_app:
             logger.info(f"🔄 Remplacement automatique de l'application '{app_data.slug}' (FORCE_REPLACE_APP=true)")
             
@@ -845,14 +959,84 @@ async def register_app(
             
             logger.info(f"✅ Ancienne application '{app_data.slug}' supprimée, recréation en cours...")
         else:
-            # Mode sans remplacement - retourner les infos sans le secret
-            logger.info(f"✅ Application '{app_data.slug}' déjà enregistrée (FORCE_REPLACE_APP=false)")
+            # Mode sans remplacement - MAIS mettre à jour les URLs et infos si nécessaire
+            logger.info(f"⚠️ Application '{app_data.slug}' déjà enregistrée, vérification des mises à jour...")
+            
+            updated_fields = []
+            host = settings.get_hub_host()
+            
+            # Mettre à jour les URLs si les ports ont changé
+            new_api_url = f"http://{host}:{app_data.api_port}"
+            if existing_app.api_url != new_api_url:
+                old_value = existing_app.api_url
+                existing_app.api_url = new_api_url
+                updated_fields.append(f"api_url: {old_value} → {new_api_url}")
+                logger.info(f"🔄 Mise à jour api_url: {old_value} → {new_api_url}")
+            
+            if app_data.frontend_port:
+                new_frontend_url = f"http://{host}:{app_data.frontend_port}"
+                if existing_app.frontend_url != new_frontend_url:
+                    old_value = existing_app.frontend_url
+                    existing_app.frontend_url = new_frontend_url
+                    existing_app.callback_url = f"{new_frontend_url}/callback"
+                    updated_fields.append(f"frontend_url: {old_value} → {new_frontend_url}")
+                    logger.info(f"🔄 Mise à jour frontend_url: {old_value} → {new_frontend_url}")
+            
+            # Mettre à jour is_shared_service si différent
+            if existing_app.is_shared_service != app_data.is_shared:
+                old_shared = existing_app.is_shared_service
+                existing_app.is_shared_service = app_data.is_shared
+                updated_fields.append(f"is_shared: {old_shared} → {app_data.is_shared}")
+                logger.info(f"🔄 Mise à jour is_shared_service: {old_shared} → {app_data.is_shared}")
+            
+            # Mettre à jour le nom si fourni et différent
+            if app_data.name and existing_app.name != app_data.name:
+                old_value = existing_app.name
+                existing_app.name = app_data.name
+                updated_fields.append(f"name: {old_value} → {app_data.name}")
+            
+            # Mettre à jour la description si fournie et différente
+            if app_data.description and existing_app.description != app_data.description:
+                existing_app.description = app_data.description
+                updated_fields.append("description mise à jour")
+            
+            # Commit les changements si nécessaire
+            if updated_fields:
+                await db.commit()
+                await db.refresh(existing_app)
+                
+                # Logger l'action de mise à jour
+                await log_action(
+                    db=db,
+                    user_id=None,  # Action système (auto-registration)
+                    action="update_app_urls",
+                    target=app_data.slug,
+                    ip_address=client_ip,
+                    user_agent=None,
+                    details=f"Mise à jour automatique via auto-registration: {', '.join(updated_fields)}"
+                )
+                await db.commit()
+                
+                # Notifier les clients SSE de la mise à jour
+                notify_event("apps_updated", {
+                    "action": "updated", 
+                    "app_slug": existing_app.slug, 
+                    "app_name": existing_app.name, 
+                    "source": "auto-register",
+                    "updates": updated_fields
+                })
+                
+                message = f"✅ Application '{app_data.slug}' mise à jour: {', '.join(updated_fields)}"
+                logger.info(message)
+            else:
+                message = f"Application '{app_data.slug}' déjà enregistrée (aucune modification nécessaire). Utilisez /api/apps/me/credentials pour récupérer vos credentials."
+                logger.info(f"✅ {message}")
             
             # Trouver le service account associé
             sa = next((sa for sa in existing_app.service_accounts), None)
             
             return AppRegisterResponse(
-                message=f"Application '{app_data.slug}' déjà enregistrée. Utilisez /api/apps/me/credentials pour récupérer vos credentials.",
+                message=message,
                 application=AppResponse.model_validate(existing_app),
                 credentials={"client_id": sa.client_id} if sa else None,
                 is_new=False

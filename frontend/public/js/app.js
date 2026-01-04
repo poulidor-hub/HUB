@@ -113,8 +113,13 @@ function handleSSEEvent(data) {
             showToast('Mise à jour', `${appName} ${appAction}`, toastType);
             
             // Rafraîchir le token si une app a été créée ou modifiée (par un autre admin)
+            // MAIS seulement si ce n'est pas l'utilisateur courant qui a fait l'action
+            // (pour éviter un double refresh qui invaliderait le token)
             if (data.data?.action === 'created' || data.data?.action === 'updated') {
-                refreshTokenAfterAppChange(null, true); // silencieux via SSE
+                // Vérifier si un refresh n'est pas déjà en cours (éviter double refresh)
+                if (!api._refreshPromise) {
+                    refreshTokenAfterAppChange(null, true); // silencieux via SSE
+                }
             }
             break;
             
@@ -239,6 +244,14 @@ document.addEventListener('DOMContentLoaded', () => {
     saCredentialsModal = new bootstrap.Modal(document.getElementById('saCredentialsModal'));
     toast = new bootstrap.Toast(document.getElementById('toast'));
 
+    // Écouter l'événement de session expirée depuis l'API
+    // Cela permet de déconnecter immédiatement l'utilisateur si sa session expire
+    // (par exemple après un reboot du serveur)
+    window.addEventListener('hub:sessionExpired', (event) => {
+        console.log('Événement hub:sessionExpired reçu');
+        handleSessionExpired(event.detail?.message);
+    });
+
     // Vérifier les paramètres URL
     const params = new URLSearchParams(window.location.search);
     const callbackUrl = params.get('callback');
@@ -289,8 +302,12 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // Check if already logged in
+    // Vérifier l'authentification au chargement
     if (api.token) {
         loadCurrentUser();
+    } else {
+        // Pas de token - afficher directement le login
+        showLoginScreen();
     }
 
     // Auto-generate slug from name
@@ -373,15 +390,39 @@ async function loadCurrentUser() {
         showDashboard();
     } catch (error) {
         console.error('Failed to load user:', error);
-        api.clearToken();
-        // Session expirée - afficher le formulaire de login
-        // Le callback SSO reste en sessionStorage pour après la reconnexion
-        console.log('Session expirée, affichage du formulaire de login');
-        // Rien à faire de plus, le formulaire de login est déjà visible par défaut
+        // Session invalide (ex: après un reboot du serveur)
+        // Déconnecter proprement l'utilisateur et afficher le formulaire de login
+        handleSessionExpired('Votre session a expiré. Veuillez vous reconnecter.');
+    }
+}
+
+/**
+ * Cache l'écran de chargement initial
+ */
+function hideLoadingScreen() {
+    const loadingScreen = document.getElementById('loadingScreen');
+    if (loadingScreen) {
+        loadingScreen.classList.add('hidden');
+        // Supprimer complètement après l'animation
+        setTimeout(() => loadingScreen.remove(), 300);
+    }
+}
+
+/**
+ * Affiche la navbar principale
+ */
+function showNavbar() {
+    const navbar = document.getElementById('mainNavbar');
+    if (navbar) {
+        navbar.classList.remove('d-none');
     }
 }
 
 function showDashboard() {
+    // Afficher la navbar et cacher le loading
+    showNavbar();
+    hideLoadingScreen();
+    
     document.getElementById('loginSection').classList.add('d-none');
     document.getElementById('dashboardSection').classList.remove('d-none');
     document.getElementById('userInfo').classList.remove('d-none');
@@ -466,18 +507,56 @@ async function logout() {
         console.error('Erreur lors du logout:', error);
         showToast('Déconnexion', 'À bientôt !', 'info');
     } finally {
-        currentUser = null;
-        currentPage = 'dashboard';
-        document.getElementById('loginSection').classList.remove('d-none');
-        document.getElementById('dashboardSection').classList.add('d-none');
-        document.getElementById('auditSection').classList.add('d-none');
-        document.getElementById('usersSection').classList.add('d-none');
-        document.getElementById('userInfo').classList.add('d-none');
-        document.getElementById('logoutBtn').classList.add('d-none');
-        document.getElementById('changePasswordBtn').classList.add('d-none');
-        document.getElementById('adminBtn').classList.add('d-none');
-        document.getElementById('adminNavigation').classList.add('d-none');
-        document.getElementById('loginForm').reset();
+        showLoginScreen();
+    }
+}
+
+/**
+ * Réinitialise l'interface pour afficher l'écran de login
+ * Utilisé lors de la déconnexion ou quand la session expire
+ */
+function showLoginScreen() {
+    // S'assurer que le loading screen est caché et la navbar visible
+    showNavbar();
+    hideLoadingScreen();
+    
+    currentUser = null;
+    currentPage = 'dashboard';
+    document.getElementById('loginSection').classList.remove('d-none');
+    document.getElementById('dashboardSection').classList.add('d-none');
+    document.getElementById('auditSection').classList.add('d-none');
+    document.getElementById('usersSection').classList.add('d-none');
+    document.getElementById('userInfo').classList.add('d-none');
+    document.getElementById('logoutBtn').classList.add('d-none');
+    document.getElementById('changePasswordBtn').classList.add('d-none');
+    document.getElementById('adminBtn').classList.add('d-none');
+    document.getElementById('adminNavigation').classList.add('d-none');
+    document.getElementById('loginForm').reset();
+}
+
+/**
+ * Gère l'expiration de session (ex: après reboot du serveur)
+ * Déconnecte proprement l'utilisateur et affiche un message
+ * @param {string} message - Message à afficher à l'utilisateur
+ */
+function handleSessionExpired(message) {
+    console.log('Session expirée, déconnexion...');
+    
+    // Fermer la connexion SSE si active
+    closeEventSource();
+    
+    // Fermer tous les onglets d'applications ouverts
+    closeAllAppWindows();
+    
+    // Effacer les tokens
+    api.clearToken();
+    
+    // Afficher l'écran de login
+    showLoginScreen();
+    
+    // Afficher le message d'expiration
+    if (message) {
+        showToast('Session expirée', message, 'warning');
     }
 }
 
@@ -506,18 +585,7 @@ function handleForceLogout(reason) {
     alert(message);
     
     // Réinitialiser l'interface
-    currentUser = null;
-    currentPage = 'dashboard';
-    document.getElementById('loginSection').classList.remove('d-none');
-    document.getElementById('dashboardSection').classList.add('d-none');
-    document.getElementById('auditSection').classList.add('d-none');
-    document.getElementById('usersSection').classList.add('d-none');
-    document.getElementById('userInfo').classList.add('d-none');
-    document.getElementById('logoutBtn').classList.add('d-none');
-    document.getElementById('changePasswordBtn').classList.add('d-none');
-    document.getElementById('adminBtn').classList.add('d-none');
-    document.getElementById('adminNavigation').classList.add('d-none');
-    document.getElementById('loginForm').reset();
+    showLoginScreen();
 }
 
 // ===== Gestion du changement de mot de passe =====
@@ -627,10 +695,15 @@ function renderAppsGrid(apps) {
 
     const isAdmin = currentUser?.is_admin;
 
-    grid.innerHTML = apps.map(app => `
+    grid.innerHTML = apps.map(app => {
+        // Déterminer si l'app est en maintenance (conteneur Docker arrêté)
+        const isInMaintenance = app.docker_status && app.docker_status !== 'running';
+        const isUnavailable = !app.is_active || isInMaintenance;
+        
+        return `
         <div class="col-sm-6 col-md-4 col-lg-3">
-            <div class="card app-card shadow-sm h-100 ${!app.is_active ? 'app-inactive' : ''}" 
-                 onclick="${app.is_active ? `openApp('${app.slug}', '${app.frontend_url || ''}')` : `showToast('Application hors ligne', 'Le conteneur Docker de cette application est arrêté.', 'warning')`}">
+            <div class="card app-card shadow-sm h-100 ${isUnavailable ? 'app-inactive' : ''}" 
+                 onclick="${!isUnavailable ? `openApp('${app.slug}', '${app.frontend_url || ''}')` : `showToast('Application en maintenance', 'Cette application est temporairement indisponible.', 'warning')`}">
                 <div class="card-body position-relative">
                     <div class="app-icon" style="background-color: ${app.color}">
                         <i class="${app.icon}"></i>
@@ -654,7 +727,7 @@ function renderAppsGrid(apps) {
                 </div>
             </div>
         </div>
-    `).join('');
+    `}).join('');
 }
 
 /**
@@ -816,13 +889,11 @@ async function showAdminPanel() {
         adminModal.show();
     } catch (error) {
         console.error('Erreur chargement admin:', error);
-        // Si session expirée, forcer la déconnexion
-        if (error.message === 'Session expirée') {
-            showToast('Session expirée', 'Veuillez vous reconnecter', 'warning');
-            await logout();
-            return;
+        // Si session expirée, l'événement hub:sessionExpired sera déclenché automatiquement
+        // On n'a plus besoin de gérer ça ici manuellement
+        if (error.message !== 'Session expirée') {
+            showToast('Erreur', 'Impossible de charger les données admin', 'danger');
         }
-        showToast('Erreur', 'Impossible de charger les données admin', 'danger');
     }
 }
 
@@ -992,12 +1063,23 @@ function renderAppsTable(apps) {
                     <th>URL Frontend</th>
                     <th>Utilisateurs</th>
                     <th>Config</th>
+                    <th>Docker</th>
                     <th>Connectivité</th>
                     <th class="text-end">Actions</th>
                 </tr>
             </thead>
             <tbody id="appsTableBody">
-                ${apps.map(app => `
+                ${apps.map(app => {
+                    // Déterminer le statut Docker
+                    const dockerStatus = app.docker_status;
+                    const isRunning = !dockerStatus || dockerStatus === 'running';
+                    const dockerBadge = !dockerStatus 
+                        ? '<span class="badge bg-light text-muted"><i class="bi bi-question-circle me-1"></i>Inconnu</span>'
+                        : dockerStatus === 'running'
+                            ? '<span class="badge bg-light text-dark"><i class="bi bi-play-circle text-success me-1"></i>Running</span>'
+                            : '<span class="badge bg-warning text-dark"><i class="bi bi-pause-circle me-1"></i>Maintenance</span>';
+                    
+                    return `
                     <tr data-app-id="${app.id}">
                         <td>
                             <div class="d-flex align-items-center">
@@ -1018,6 +1100,7 @@ function renderAppsTable(apps) {
                                 ? '<span class="badge bg-light text-dark"><i class="bi bi-check-circle text-success me-1"></i>Actif</span>' 
                                 : '<span class="badge bg-light text-dark"><i class="bi bi-x-circle text-danger me-1"></i>Inactif</span>'}
                         </td>
+                        <td>${dockerBadge}</td>
                         <td class="app-connectivity" data-app-slug="${app.slug}">
                             <span class="badge bg-light text-muted"><i class="bi bi-question-circle me-1"></i>Non testé</span>
                         </td>
@@ -1030,7 +1113,7 @@ function renderAppsTable(apps) {
                             </button>
                         </td>
                     </tr>
-                `).join('')}
+                `}).join('')}
             </tbody>
         </table>
     `;
