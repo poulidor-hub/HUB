@@ -1455,6 +1455,235 @@ async def update_app_shared(
     }
 
 
+# ===== Endpoints d'Approbation Admin =====
+# NOTE: Ces routes DOIVENT être avant /{app_id} pour éviter les conflits de routage
+
+@router.get("/pending", response_model=PendingAppsResponse)
+async def list_pending_apps(
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(get_current_admin)
+):
+    """
+    🔒 Liste les applications en attente d'approbation (admin uniquement).
+    
+    Retourne toutes les applications avec approval_status='pending'.
+    """
+    result = await db.execute(
+        select(Application)
+        .where(Application.approval_status == ApprovalStatus.pending)
+        .order_by(Application.created_at.desc())
+    )
+    pending_apps = result.scalars().all()
+    
+    return PendingAppsResponse(
+        pending_apps=[AppResponse.model_validate(app) for app in pending_apps],
+        total=len(pending_apps)
+    )
+
+
+@router.post("/{slug}/approve", response_model=AppApprovalResponse)
+async def approve_or_reject_app(
+    slug: str,
+    approval: AppApprovalRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(get_current_admin)
+):
+    """
+    🔒 Approuve ou rejette une application en attente (admin uniquement).
+    
+    - **approve=true** : Active l'application et son Service Account
+      - Si is_shared_service=true, ajoute l'app à tous les SA existants
+      - Ajoute les services partagés existants au SA de l'app
+    - **approve=false** : Rejette l'application (reste inactive)
+      - Nécessite une raison de rejet
+    """
+    from datetime import datetime
+    
+    # Récupérer l'application avec ses relations
+    result = await db.execute(
+        select(Application)
+        .options(selectinload(Application.service_accounts))
+        .where(Application.slug == slug)
+    )
+    app = result.scalar_one_or_none()
+    
+    if not app:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Application '{slug}' non trouvée"
+        )
+    
+    if app.approval_status != ApprovalStatus.pending:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"L'application '{slug}' n'est pas en attente d'approbation (statut: {app.approval_status.value})"
+        )
+    
+    client_ip = request.client.host if request.client else None
+    
+    if approval.approve:
+        # APPROBATION
+        app.approval_status = ApprovalStatus.approved
+        app.approved_by_id = admin.id
+        app.approved_at = datetime.utcnow()
+        app.is_active = True
+        app.description = app.description.replace(" (en attente d'approbation)", "") if app.description else None
+        
+        # Activer le Service Account associé
+        for sa in app.service_accounts:
+            sa.is_active = True
+            sa.description = sa.description.replace(" (en attente d'approbation)", "") if sa.description else None
+            
+            # Ajouter les services partagés existants au SA de cette app
+            shared_result = await db.execute(
+                select(Application)
+                .where(Application.is_shared_service == True)
+                .where(Application.approval_status == ApprovalStatus.approved)
+                .where(Application.id != app.id)
+            )
+            shared_apps = shared_result.scalars().all()
+            
+            # Charger les applications du SA
+            sa_result = await db.execute(
+                select(ServiceAccount)
+                .options(selectinload(ServiceAccount.applications))
+                .where(ServiceAccount.id == sa.id)
+            )
+            sa_loaded = sa_result.scalar_one()
+            
+            for shared_app in shared_apps:
+                if shared_app not in sa_loaded.applications:
+                    sa_loaded.applications.append(shared_app)
+                    logger.info(f"🔗 Service partagé '{shared_app.slug}' ajouté au SA de '{app.slug}'")
+        
+        # Si l'app est un service partagé, l'ajouter à tous les SA existants
+        shared_added_count = 0
+        if app.is_shared_service:
+            shared_added_count = await add_shared_service_to_all_service_accounts(db, app)
+        
+        await db.commit()
+        await db.refresh(app)
+        
+        # Log audit
+        await log_action(
+            db=db,
+            user_id=admin.id,
+            action="approve_app",
+            target=slug,
+            ip_address=client_ip,
+            details=f"Application '{slug}' approuvée par {admin.username}. Shared: {app.is_shared_service}, SA activés: {len(app.service_accounts)}"
+        )
+        
+        # Notifier SSE
+        notify_event("apps_updated", {"action": "approved", "app_slug": slug, "approved_by": admin.username})
+        notify_stats_update()
+        
+        message = f"✅ Application '{slug}' approuvée et activée."
+        if app.is_shared_service and shared_added_count > 0:
+            message += f" Service partagé ajouté à {shared_added_count} SA existant(s)."
+        
+        logger.info(f"✅ Application '{slug}' approuvée par {admin.username}")
+        
+    else:
+        # REJET
+        if not approval.reason:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Une raison de rejet est obligatoire"
+            )
+        
+        app.approval_status = ApprovalStatus.rejected
+        app.approved_by_id = admin.id
+        app.approved_at = datetime.utcnow()
+        app.rejection_reason = approval.reason
+        app.is_active = False
+        
+        await db.commit()
+        await db.refresh(app)
+        
+        # Log audit
+        await log_action(
+            db=db,
+            user_id=admin.id,
+            action="reject_app",
+            target=slug,
+            ip_address=client_ip,
+            details=f"Application '{slug}' rejetée par {admin.username}. Raison: {approval.reason}"
+        )
+        
+        # Notifier SSE
+        notify_event("apps_updated", {"action": "rejected", "app_slug": slug, "rejected_by": admin.username})
+        
+        message = f"❌ Application '{slug}' rejetée. Raison: {approval.reason}"
+        logger.info(f"❌ Application '{slug}' rejetée par {admin.username}: {approval.reason}")
+    
+    return AppApprovalResponse(
+        message=message,
+        application=AppResponse.model_validate(app),
+        approved_by=admin.username,
+        approved_at=app.approved_at
+    )
+
+
+@router.delete("/{slug}/pending")
+async def delete_pending_app(
+    slug: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(get_current_admin)
+):
+    """
+    🔒 Supprime une application en attente ou rejetée (admin uniquement).
+    
+    Permet de nettoyer les applications non approuvées.
+    Les applications approuvées ne peuvent pas être supprimées via cet endpoint.
+    """
+    result = await db.execute(
+        select(Application)
+        .options(selectinload(Application.service_accounts))
+        .where(Application.slug == slug)
+    )
+    app = result.scalar_one_or_none()
+    
+    if not app:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Application '{slug}' non trouvée"
+        )
+    
+    if app.approval_status == ApprovalStatus.approved:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Impossible de supprimer une application approuvée via cet endpoint. Utilisez DELETE /api/apps/{slug}"
+        )
+    
+    client_ip = request.client.host if request.client else None
+    
+    # Supprimer l'application et ses dépendances
+    app_info = await delete_app_cascade(db, app, delete_credentials_file=True)
+    await db.commit()
+    
+    # Log audit
+    await log_action(
+        db=db,
+        user_id=admin.id,
+        action="delete_pending_app",
+        target=slug,
+        ip_address=client_ip,
+        details=f"Application en attente '{slug}' supprimée par {admin.username}"
+    )
+    
+    notify_event("apps_updated", {"action": "deleted", "app_slug": slug})
+    notify_stats_update()
+    
+    logger.info(f"🗑️ Application en attente '{slug}' supprimée par {admin.username}")
+    
+    return {"message": f"Application '{slug}' supprimée", "details": app_info}
+
+
+# ===== Endpoints avec {app_id} =====
+
 @router.get("/{app_id}", response_model=AppWithUsers)
 async def get_app(
     app_id: int,
@@ -2089,229 +2318,3 @@ async def auto_sync_docker_applications(db: AsyncSession) -> dict:
         await db.commit()
     
     return {"message": "Sync auto terminée", "changes": changes}
-
-
-# ===== Endpoints d'Approbation Admin =====
-
-@router.get("/pending", response_model=PendingAppsResponse)
-async def list_pending_apps(
-    db: AsyncSession = Depends(get_db),
-    admin: User = Depends(get_current_admin)
-):
-    """
-    🔒 Liste les applications en attente d'approbation (admin uniquement).
-    
-    Retourne toutes les applications avec approval_status='pending'.
-    """
-    result = await db.execute(
-        select(Application)
-        .where(Application.approval_status == ApprovalStatus.pending)
-        .order_by(Application.created_at.desc())
-    )
-    pending_apps = result.scalars().all()
-    
-    return PendingAppsResponse(
-        pending_apps=[AppResponse.model_validate(app) for app in pending_apps],
-        total=len(pending_apps)
-    )
-
-
-@router.post("/{slug}/approve", response_model=AppApprovalResponse)
-async def approve_or_reject_app(
-    slug: str,
-    approval: AppApprovalRequest,
-    request: Request,
-    db: AsyncSession = Depends(get_db),
-    admin: User = Depends(get_current_admin)
-):
-    """
-    🔒 Approuve ou rejette une application en attente (admin uniquement).
-    
-    - **approve=true** : Active l'application et son Service Account
-      - Si is_shared_service=true, ajoute l'app à tous les SA existants
-      - Ajoute les services partagés existants au SA de l'app
-    - **approve=false** : Rejette l'application (reste inactive)
-      - Nécessite une raison de rejet
-    """
-    from datetime import datetime
-    
-    # Récupérer l'application avec ses relations
-    result = await db.execute(
-        select(Application)
-        .options(selectinload(Application.service_accounts))
-        .where(Application.slug == slug)
-    )
-    app = result.scalar_one_or_none()
-    
-    if not app:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Application '{slug}' non trouvée"
-        )
-    
-    if app.approval_status != ApprovalStatus.pending:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"L'application '{slug}' n'est pas en attente d'approbation (statut: {app.approval_status.value})"
-        )
-    
-    client_ip = request.client.host if request.client else None
-    
-    if approval.approve:
-        # APPROBATION
-        app.approval_status = ApprovalStatus.approved
-        app.approved_by_id = admin.id
-        app.approved_at = datetime.utcnow()
-        app.is_active = True
-        app.description = app.description.replace(" (en attente d'approbation)", "") if app.description else None
-        
-        # Activer le Service Account associé
-        for sa in app.service_accounts:
-            sa.is_active = True
-            sa.description = sa.description.replace(" (en attente d'approbation)", "") if sa.description else None
-            
-            # Ajouter les services partagés existants au SA de cette app
-            shared_result = await db.execute(
-                select(Application)
-                .where(Application.is_shared_service == True)
-                .where(Application.approval_status == ApprovalStatus.approved)
-                .where(Application.id != app.id)
-            )
-            shared_apps = shared_result.scalars().all()
-            
-            # Charger les applications du SA
-            sa_result = await db.execute(
-                select(ServiceAccount)
-                .options(selectinload(ServiceAccount.applications))
-                .where(ServiceAccount.id == sa.id)
-            )
-            sa_loaded = sa_result.scalar_one()
-            
-            for shared_app in shared_apps:
-                if shared_app not in sa_loaded.applications:
-                    sa_loaded.applications.append(shared_app)
-                    logger.info(f"🔗 Service partagé '{shared_app.slug}' ajouté au SA de '{app.slug}'")
-        
-        # Si l'app est un service partagé, l'ajouter à tous les SA existants
-        shared_added_count = 0
-        if app.is_shared_service:
-            shared_added_count = await add_shared_service_to_all_service_accounts(db, app)
-        
-        await db.commit()
-        await db.refresh(app)
-        
-        # Log audit
-        await log_action(
-            db=db,
-            user_id=admin.id,
-            action="approve_app",
-            target=slug,
-            ip_address=client_ip,
-            details=f"Application '{slug}' approuvée par {admin.username}. Shared: {app.is_shared_service}, SA activés: {len(app.service_accounts)}"
-        )
-        
-        # Notifier SSE
-        notify_event("apps_updated", {"action": "approved", "app_slug": slug, "approved_by": admin.username})
-        notify_stats_update()
-        
-        message = f"✅ Application '{slug}' approuvée et activée."
-        if app.is_shared_service and shared_added_count > 0:
-            message += f" Service partagé ajouté à {shared_added_count} SA existant(s)."
-        
-        logger.info(f"✅ Application '{slug}' approuvée par {admin.username}")
-        
-    else:
-        # REJET
-        if not approval.reason:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Une raison de rejet est obligatoire"
-            )
-        
-        app.approval_status = ApprovalStatus.rejected
-        app.approved_by_id = admin.id
-        app.approved_at = datetime.utcnow()
-        app.rejection_reason = approval.reason
-        app.is_active = False
-        
-        await db.commit()
-        await db.refresh(app)
-        
-        # Log audit
-        await log_action(
-            db=db,
-            user_id=admin.id,
-            action="reject_app",
-            target=slug,
-            ip_address=client_ip,
-            details=f"Application '{slug}' rejetée par {admin.username}. Raison: {approval.reason}"
-        )
-        
-        # Notifier SSE
-        notify_event("apps_updated", {"action": "rejected", "app_slug": slug, "rejected_by": admin.username})
-        
-        message = f"❌ Application '{slug}' rejetée. Raison: {approval.reason}"
-        logger.info(f"❌ Application '{slug}' rejetée par {admin.username}: {approval.reason}")
-    
-    return AppApprovalResponse(
-        message=message,
-        application=AppResponse.model_validate(app),
-        approved_by=admin.username,
-        approved_at=app.approved_at
-    )
-
-
-@router.delete("/{slug}/pending")
-async def delete_pending_app(
-    slug: str,
-    request: Request,
-    db: AsyncSession = Depends(get_db),
-    admin: User = Depends(get_current_admin)
-):
-    """
-    🔒 Supprime une application en attente ou rejetée (admin uniquement).
-    
-    Permet de nettoyer les applications non approuvées.
-    Les applications approuvées ne peuvent pas être supprimées via cet endpoint.
-    """
-    result = await db.execute(
-        select(Application)
-        .options(selectinload(Application.service_accounts))
-        .where(Application.slug == slug)
-    )
-    app = result.scalar_one_or_none()
-    
-    if not app:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Application '{slug}' non trouvée"
-        )
-    
-    if app.approval_status == ApprovalStatus.approved:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Impossible de supprimer une application approuvée via cet endpoint. Utilisez DELETE /api/apps/{slug}"
-        )
-    
-    client_ip = request.client.host if request.client else None
-    
-    # Supprimer l'application et ses dépendances
-    app_info = await delete_app_cascade(db, app, delete_credentials_file=True)
-    await db.commit()
-    
-    # Log audit
-    await log_action(
-        db=db,
-        user_id=admin.id,
-        action="delete_pending_app",
-        target=slug,
-        ip_address=client_ip,
-        details=f"Application en attente '{slug}' supprimée par {admin.username}"
-    )
-    
-    notify_event("apps_updated", {"action": "deleted", "app_slug": slug})
-    notify_stats_update()
-    
-    logger.info(f"🗑️ Application en attente '{slug}' supprimée par {admin.username}")
-    
-    return {"message": f"Application '{slug}' supprimée", "details": app_info}

@@ -155,8 +155,6 @@ function handleSSEEvent(data) {
                 handleForceLogout(data.data.reason);
             }
             break;
-            }
-            break;
     }
 }
 
