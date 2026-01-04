@@ -12,8 +12,9 @@ from app.routes import auth, users, apps, service_accounts, backup, audit, docs
 
 settings = get_settings()
 
-# Variable globale pour contrôler la tâche de nettoyage
+# Variables globales pour contrôler les tâches périodiques
 _cleanup_task = None
+_docker_sync_task = None
 
 
 async def create_default_admin():
@@ -48,9 +49,39 @@ async def periodic_token_cleanup():
             print(f"⚠️ Erreur lors du nettoyage des tokens: {e}")
 
 
+async def periodic_docker_sync():
+    """Tâche périodique pour synchroniser l'état des apps avec Docker"""
+    interval = settings.docker_sync_interval
+    
+    if interval <= 0:
+        print("🐳 Synchronisation Docker désactivée (DOCKER_SYNC_INTERVAL=0)")
+        return
+    
+    print(f"🐳 Synchronisation Docker activée (toutes les {interval}s)")
+    
+    # Attendre un peu avant le premier scan (laisser les apps démarrer)
+    await asyncio.sleep(30)
+    
+    while True:
+        try:
+            from app.routes.apps import auto_sync_docker_applications
+            async with async_session_maker() as db:
+                result = await auto_sync_docker_applications(db)
+                if result.get("changes", 0) > 0:
+                    print(f"🐳 Sync Docker: {result['changes']} application(s) mise(s) à jour")
+            
+            await asyncio.sleep(interval)
+        except asyncio.CancelledError:
+            print("🛑 Tâche de synchronisation Docker arrêtée")
+            break
+        except Exception as e:
+            print(f"⚠️ Erreur lors de la synchronisation Docker: {e}")
+            await asyncio.sleep(interval)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _cleanup_task
+    global _cleanup_task, _docker_sync_task
     
     # Startup
     print("🚀 Démarrage du Hub d'Authentification...")
@@ -61,6 +92,9 @@ async def lifespan(app: FastAPI):
     _cleanup_task = asyncio.create_task(periodic_token_cleanup())
     print("🧹 Tâche de nettoyage des tokens démarrée")
     
+    # Démarrer la tâche de synchronisation Docker
+    _docker_sync_task = asyncio.create_task(periodic_docker_sync())
+    
     print("✅ Hub prêt !")
     yield
     
@@ -70,6 +104,12 @@ async def lifespan(app: FastAPI):
         _cleanup_task.cancel()
         try:
             await _cleanup_task
+        except asyncio.CancelledError:
+            pass
+    if _docker_sync_task:
+        _docker_sync_task.cancel()
+        try:
+            await _docker_sync_task
         except asyncio.CancelledError:
             pass
 

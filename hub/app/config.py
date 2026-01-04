@@ -146,6 +146,14 @@ class Settings(BaseSettings):
     # Mode développement - Génération automatique des clés JWT
     auto_generate_keys: bool = False  # True uniquement en DEV !
     
+    # Auto-remplacement des applications existantes lors de l'enregistrement
+    # Si True : l'ancienne app et son M2M sont supprimés automatiquement
+    force_replace_app: bool = False
+    
+    # Synchronisation automatique avec Docker (en secondes)
+    # 0 = désactivé, 300 = toutes les 5 minutes
+    docker_sync_interval: int = 300
+    
     # Host du Hub (IP ou hostname accessible par les clients)
     # Si non défini, sera détecté automatiquement
     hub_host: str = ""

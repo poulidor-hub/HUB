@@ -27,6 +27,33 @@ SECRETS_DIR = Path("/code/secrets/service_accounts")
 logger = logging.getLogger(__name__)
 
 
+def delete_service_account_credentials(name: str) -> bool:
+    """
+    Supprime le fichier .env des credentials d'un service account.
+    
+    Args:
+        name: Nom/slug du service account (utilisé pour construire le nom du fichier)
+    
+    Returns:
+        True si le fichier a été supprimé, False sinon
+    """
+    try:
+        # Même logique de nommage que save_service_account_credentials
+        safe_name = re.sub(r'[^a-z0-9_-]', '_', name.lower())
+        filename = SECRETS_DIR / f"sa_{safe_name}.env"
+        
+        if filename.exists():
+            filename.unlink()
+            logger.info(f"🗑️ Fichier credentials supprimé: {filename}")
+            return True
+        else:
+            logger.debug(f"Fichier credentials non trouvé (déjà supprimé?): {filename}")
+            return False
+    except Exception as e:
+        logger.warning(f"⚠️ Impossible de supprimer le fichier credentials: {e}")
+        return False
+
+
 def save_service_account_credentials(name: str, client_id: str, client_secret: str, app_slugs: list = None):
     """
     Sauvegarde automatiquement les credentials d'un service account dans un fichier .env

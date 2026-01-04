@@ -18,7 +18,7 @@ from app.schemas import (
     AppDiscoveryItem, DiscoverResponse
 )
 from app.auth import get_current_admin, get_current_user, get_password_hash, get_settings, verify_token_not_revoked, oauth2_scheme
-from app.routes.service_accounts import save_service_account_credentials
+from app.routes.service_accounts import save_service_account_credentials, delete_service_account_credentials
 from app.routes.audit import log_action
 
 router = APIRouter(prefix="/api/apps", tags=["Applications"])
@@ -62,6 +62,77 @@ def generate_slug(name: str) -> str:
     slug = re.sub(r'[^a-z0-9]+', '-', slug)
     slug = slug.strip('-')
     return slug
+
+
+async def delete_app_cascade(
+    db: AsyncSession,
+    app: Application,
+    delete_credentials_file: bool = True
+) -> dict:
+    """
+    Supprime une application avec tous ses Service Accounts M2M associés.
+    
+    Cette fonction supprime :
+    1. Les Service Accounts dont cette app est le "propriétaire" (SA créé lors de l'auto-registration)
+    2. Les fichiers .env de credentials associés
+    3. L'application elle-même (avec cascade sur user_roles, app_roles via ORM)
+    
+    Args:
+        db: Session de base de données
+        app: Application à supprimer (doit être chargée avec selectinload(service_accounts))
+        delete_credentials_file: Si True, supprime aussi les fichiers sa_*.env
+    
+    Returns:
+        dict avec les détails de la suppression (pour audit)
+    """
+    app_slug = app.slug
+    app_name = app.name
+    deleted_service_accounts = []
+    
+    # Identifier les Service Accounts "propriétaires" de cette app
+    # Convention : le SA créé lors de l'auto-registration a un nom qui contient le slug de l'app
+    for sa in list(app.service_accounts):
+        # Vérifier si ce SA est le "principal" de cette app (créé lors de l'auto-registration)
+        # Le nom du SA suit le pattern "SA - <App Name>" ou contient le slug
+        sa_name_lower = sa.name.lower()
+        is_owner_sa = (
+            app_slug in sa_name_lower or 
+            app_name.lower() in sa_name_lower or
+            sa.name == f"SA - {app_name}"
+        )
+        
+        if is_owner_sa:
+            logger.info(f"🗑️ Suppression du Service Account '{sa.name}' (id={sa.id}) de l'app '{app_slug}'")
+            
+            # Supprimer le fichier credentials si demandé
+            if delete_credentials_file:
+                delete_service_account_credentials(app_slug)
+            
+            # Supprimer le SA (cascade SQL supprimera les entrées dans la table d'association)
+            await db.delete(sa)
+            deleted_service_accounts.append({
+                "id": sa.id,
+                "name": sa.name,
+                "client_id": sa.client_id
+            })
+        else:
+            # Ce SA a accès à cette app mais n'est pas son "propriétaire"
+            # On retire juste l'association
+            logger.debug(f"Retrait de l'accès de SA '{sa.name}' à l'app '{app_slug}' (SA non supprimé)")
+    
+    # Vider les associations restantes (pour les SA non supprimés)
+    app.service_accounts.clear()
+    
+    # Supprimer l'application (cascade ORM sur user_roles et available_roles)
+    await db.delete(app)
+    
+    logger.info(f"✅ Application '{app_name}' (slug: {app_slug}) supprimée avec {len(deleted_service_accounts)} SA(s)")
+    
+    return {
+        "app_slug": app_slug,
+        "app_name": app_name,
+        "deleted_service_accounts": deleted_service_accounts
+    }
 
 
 # ===== Découverte M2M =====
@@ -502,12 +573,16 @@ async def register_app(
     
     L'application envoie son slug (défini dans son .env) et reçoit :
     - Ses credentials M2M (client_id, client_secret) si nouvelle app
-    - Un message de confirmation si l'app existe déjà
+    - Remplacement automatique si l'app existe déjà (selon FORCE_REPLACE_APP)
     
     Flux :
     1. L'app démarre et appelle cet endpoint avec son slug
-    2. Le Hub crée l'app + service account si elle n'existe pas
-    3. L'app reçoit ses credentials et les stocke en mémoire (pas dans .env)
+    2. Si l'app existe et FORCE_REPLACE_APP=true : suppression + recréation
+    3. Le Hub crée l'app + service account
+    4. L'app reçoit ses credentials et les stocke en mémoire (pas dans .env)
+    
+    Le remplacement automatique permet aux applications de se resynchroniser
+    après un redéploiement sans intervention manuelle de l'admin.
     """
     client_ip = request.client.host if request.client else None
     
@@ -529,21 +604,35 @@ async def register_app(
     )
     existing_app = result.scalar_one_or_none()
     
-    if existing_app:
-        # Application existante - retourner les infos sans le secret
-        logger.info(f"✅ Application '{app_data.slug}' déjà enregistrée")
-        
-        # Trouver le service account associé
-        sa = next((sa for sa in existing_app.service_accounts), None)
-        
-        return AppRegisterResponse(
-            message=f"Application '{app_data.slug}' déjà enregistrée. Utilisez /api/apps/me/credentials pour récupérer vos credentials.",
-            application=AppResponse.model_validate(existing_app),
-            credentials={"client_id": sa.client_id} if sa else None,
-            is_new=False
-        )
+    replaced = False
+    old_app_info = None
     
-    # Nouvelle application - créer l'app et le service account
+    if existing_app:
+        # Application existante - vérifier si on doit la remplacer
+        if settings.force_replace_app:
+            logger.info(f"🔄 Remplacement automatique de l'application '{app_data.slug}' (FORCE_REPLACE_APP=true)")
+            
+            # Sauvegarder les infos pour l'audit
+            old_app_info = await delete_app_cascade(db, existing_app, delete_credentials_file=True)
+            await db.flush()  # Flush pour libérer le slug
+            replaced = True
+            
+            logger.info(f"✅ Ancienne application '{app_data.slug}' supprimée, recréation en cours...")
+        else:
+            # Mode sans remplacement - retourner les infos sans le secret
+            logger.info(f"✅ Application '{app_data.slug}' déjà enregistrée (FORCE_REPLACE_APP=false)")
+            
+            # Trouver le service account associé
+            sa = next((sa for sa in existing_app.service_accounts), None)
+            
+            return AppRegisterResponse(
+                message=f"Application '{app_data.slug}' déjà enregistrée. Utilisez /api/apps/me/credentials pour récupérer vos credentials.",
+                application=AppResponse.model_validate(existing_app),
+                credentials={"client_id": sa.client_id} if sa else None,
+                is_new=False
+            )
+    
+    # Nouvelle application (ou remplacement) - créer l'app et le service account
     host = settings.get_hub_host()
     api_url = f"http://{host}:{app_data.api_port}"
     frontend_url = f"http://{host}:{app_data.frontend_port}" if app_data.frontend_port else None
@@ -594,6 +683,19 @@ async def register_app(
             service_account.applications.append(shared_app)
             shared_slugs.append(shared_app.slug)
     
+    # Logger l'audit si c'est un remplacement (action système sans user_id)
+    if replaced:
+        deleted_sa_names = [sa["name"] for sa in old_app_info.get("deleted_service_accounts", [])]
+        await log_action(
+            db=db,
+            user_id=None,  # Action système (auto-registration)
+            action="replace_app",
+            target=app_data.slug,
+            ip_address=client_ip,
+            user_agent=None,
+            details=f"Remplacement automatique de l'application '{app_data.slug}' via auto-registration. Anciens SA supprimés: {deleted_sa_names}"
+        )
+    
     await db.commit()
     await db.refresh(app)
     
@@ -606,10 +708,16 @@ async def register_app(
         app_slugs=all_app_slugs
     )
     
-    logger.info(f"✅ Nouvelle application '{app_data.slug}' auto-enregistrée depuis {client_ip}")
+    # Message différent selon création ou remplacement
+    if replaced:
+        message = f"Application '{app_data.slug}' remplacée avec succès. Nouveaux credentials M2M générés."
+        logger.info(f"🔄 Application '{app_data.slug}' remplacée depuis {client_ip} (ancien SA supprimé: {old_app_info})")
+    else:
+        message = f"Application '{app_data.slug}' créée avec succès. Credentials M2M générés."
+        logger.info(f"✅ Nouvelle application '{app_data.slug}' auto-enregistrée depuis {client_ip}")
     
     return AppRegisterResponse(
-        message=f"Application '{app_data.slug}' créée avec succès. Credentials M2M générés.",
+        message=message,
         application=AppResponse.model_validate(app),
         credentials={
             "client_id": client_id,
@@ -617,7 +725,7 @@ async def register_app(
             "hub_host": host,
             "hub_api_port": settings.hub_api_port if hasattr(settings, 'hub_api_port') else 8000
         },
-        is_new=True
+        is_new=True  # True aussi pour le remplacement car nouveaux credentials
     )
 
 
@@ -1000,7 +1108,18 @@ async def delete_app(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_admin)
 ):
-    """Supprime une application (admin uniquement)"""
+    """
+    Supprime une application avec ses Service Accounts M2M associés (admin uniquement).
+    
+    Cette suppression inclut :
+    - L'application elle-même
+    - Le Service Account M2M créé lors de l'auto-registration
+    - Le fichier de credentials (.env) associé
+    - Les rôles utilisateurs et rôles applicatifs (cascade ORM)
+    
+    Les Service Accounts qui ont simplement accès à cette app (mais ne lui appartiennent pas)
+    conservent leurs accès aux autres applications.
+    """
     # Charger l'app avec ses relations pour pouvoir les nettoyer
     result = await db.execute(
         select(Application)
@@ -1018,11 +1137,11 @@ async def delete_app(
     app_name = app.name
     app_slug = app.slug
     
-    # Supprimer les associations avec les service accounts (table intermédiaire)
-    # Les cascades SQL devraient le faire, mais on s'assure explicitement
-    app.service_accounts.clear()
+    # Supprimer l'application avec cascade (SA + fichiers credentials)
+    deletion_info = await delete_app_cascade(db, app, delete_credentials_file=True)
     
-    # Logger l'action avant la suppression
+    # Logger l'action avant le commit
+    deleted_sa_names = [sa["name"] for sa in deletion_info.get("deleted_service_accounts", [])]
     await log_action(
         db=db,
         user_id=current_user.id,
@@ -1030,10 +1149,9 @@ async def delete_app(
         target=app_slug,
         ip_address=request.client.host if request.client else None,
         user_agent=request.headers.get("user-agent", ""),
-        details=f"Suppression de l'application {app_name} (slug: {app_slug})"
+        details=f"Suppression de l'application {app_name} (slug: {app_slug}) avec {len(deleted_sa_names)} SA(s): {deleted_sa_names}"
     )
     
-    await db.delete(app)
     await db.commit()
     
     logger.info(f"Application supprimée: {app_name} (slug: {app_slug}) par {current_user.username}")
@@ -1297,3 +1415,211 @@ async def set_app_shared(
         "slug": app.slug,
         "is_shared_service": is_shared
     }
+
+
+# ===== Docker Sync =====
+
+@router.post("/docker/sync")
+async def sync_docker_applications(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_admin)
+):
+    """
+    Synchronise l'état des applications avec les conteneurs Docker.
+    
+    - Désactive (is_active=False) les applications dont le conteneur est arrêté
+    - Réactive (is_active=True) les applications dont le conteneur est en cours d'exécution
+    
+    ⚠️ Admin uniquement - Nécessite l'accès au socket Docker.
+    
+    Returns:
+        Rapport de synchronisation avec les apps activées/désactivées
+    """
+    try:
+        from app.docker_scanner import docker_scanner
+    except ImportError as e:
+        logger.warning(f"Module docker_scanner non disponible: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Module Docker Scanner non disponible"
+        )
+    
+    if not docker_scanner.is_available:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Docker non accessible: {docker_scanner.last_error}"
+        )
+    
+    # Récupérer toutes les applications en base
+    result = await db.execute(
+        select(Application)
+    )
+    apps = result.scalars().all()
+    
+    if not apps:
+        return {
+            "message": "Aucune application à synchroniser",
+            "activated": [],
+            "deactivated": [],
+            "unchanged": []
+        }
+    
+    # Scanner tous les conteneurs Docker (y compris arrêtés)
+    containers = docker_scanner.scan_containers(include_stopped=True)
+    
+    # Extraire les ports hôte des conteneurs en cours d'exécution
+    running_ports = set()
+    stopped_ports = set()
+    
+    for container in containers:
+        for port in container.ports:
+            if port.host_port:
+                if container.status == "running":
+                    running_ports.add(port.host_port)
+                else:
+                    stopped_ports.add(port.host_port)
+    
+    activated = []
+    deactivated = []
+    unchanged = []
+    
+    for app in apps:
+        # Extraire le port depuis l'api_url de l'application
+        from urllib.parse import urlparse
+        app_port = None
+        if app.api_url:
+            try:
+                parsed = urlparse(app.api_url)
+                app_port = parsed.port
+            except Exception:
+                pass
+        
+        if not app_port:
+            # Pas de port identifiable, on ne touche pas à l'app
+            unchanged.append({
+                "slug": app.slug,
+                "reason": "Port non identifiable"
+            })
+            continue
+        
+        # Vérifier si le port est dans les conteneurs en cours d'exécution
+        if app_port in running_ports:
+            if not app.is_active:
+                # Réactiver l'application
+                app.is_active = True
+                activated.append(app.slug)
+                logger.info(f"✅ Application '{app.slug}' réactivée (conteneur en cours d'exécution sur port {app_port})")
+            else:
+                unchanged.append({
+                    "slug": app.slug,
+                    "reason": "Déjà active"
+                })
+        elif app_port in stopped_ports:
+            if app.is_active:
+                # Désactiver l'application
+                app.is_active = False
+                deactivated.append(app.slug)
+                logger.info(f"⏸️ Application '{app.slug}' désactivée (conteneur arrêté sur port {app_port})")
+            else:
+                unchanged.append({
+                    "slug": app.slug,
+                    "reason": "Déjà inactive"
+                })
+        else:
+            # Port non trouvé dans les conteneurs Docker
+            # On considère que l'app n'est plus disponible
+            if app.is_active:
+                app.is_active = False
+                deactivated.append(app.slug)
+                logger.info(f"⏸️ Application '{app.slug}' désactivée (aucun conteneur sur port {app_port})")
+            else:
+                unchanged.append({
+                    "slug": app.slug,
+                    "reason": "Conteneur introuvable, déjà inactive"
+                })
+    
+    await db.commit()
+    
+    # Log si des changements
+    if activated or deactivated:
+        await log_action(
+            db=db,
+            user_id=current_user.id if current_user else None,
+            action="docker_sync",
+            target="applications",
+            ip_address=None,
+            user_agent=None,
+            details=f"Sync Docker: {len(activated)} activées, {len(deactivated)} désactivées"
+        )
+    
+    return {
+        "message": f"Synchronisation terminée",
+        "activated": activated,
+        "deactivated": deactivated,
+        "unchanged_count": len(unchanged),
+        "docker_info": docker_scanner.get_docker_info()
+    }
+
+
+async def auto_sync_docker_applications(db: AsyncSession) -> dict:
+    """
+    Version interne de la synchronisation Docker (pour la tâche périodique).
+    
+    Ne nécessite pas d'authentification, utilisé uniquement en interne.
+    """
+    try:
+        from app.docker_scanner import docker_scanner
+    except ImportError:
+        return {"error": "Module Docker Scanner non disponible"}
+    
+    if not docker_scanner.is_available:
+        return {"error": f"Docker non accessible: {docker_scanner.last_error}"}
+    
+    # Récupérer toutes les applications en base
+    result = await db.execute(select(Application))
+    apps = result.scalars().all()
+    
+    if not apps:
+        return {"message": "Aucune application", "changes": 0}
+    
+    # Scanner tous les conteneurs Docker
+    containers = docker_scanner.scan_containers(include_stopped=True)
+    
+    # Extraire les ports hôte des conteneurs en cours d'exécution
+    running_ports = set()
+    for container in containers:
+        if container.status == "running":
+            for port in container.ports:
+                if port.host_port:
+                    running_ports.add(port.host_port)
+    
+    changes = 0
+    
+    for app in apps:
+        from urllib.parse import urlparse
+        app_port = None
+        if app.api_url:
+            try:
+                parsed = urlparse(app.api_url)
+                app_port = parsed.port
+            except Exception:
+                pass
+        
+        if not app_port:
+            continue
+        
+        should_be_active = app_port in running_ports
+        
+        if should_be_active and not app.is_active:
+            app.is_active = True
+            changes += 1
+            logger.info(f"✅ [Auto-Sync] Application '{app.slug}' réactivée")
+        elif not should_be_active and app.is_active:
+            app.is_active = False
+            changes += 1
+            logger.info(f"⏸️ [Auto-Sync] Application '{app.slug}' désactivée")
+    
+    if changes > 0:
+        await db.commit()
+    
+    return {"message": "Sync auto terminée", "changes": changes}

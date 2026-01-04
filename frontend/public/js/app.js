@@ -46,14 +46,39 @@ document.addEventListener('DOMContentLoaded', () => {
     const action = params.get('action');
     
     // Si action=logout, l'utilisateur a été déconnecté d'une application
-    // => Ne PAS rediriger automatiquement, afficher le portail
+    // => Fermer l'onglet automatiquement pour éviter d'accumuler les onglets Hub
     if (action === 'logout') {
-        // Nettoyer l'URL sans recharger la page
-        window.history.replaceState({}, '', window.location.pathname);
-        // Effacer tout callback en attente pour éviter une reconnexion automatique
+        console.log('Déconnexion depuis une application - fermeture de l\'onglet');
+        // Effacer tout callback en attente
         clearPendingCallback();
-        console.log('Déconnexion depuis une application - affichage du portail');
-        // Continuer normalement (afficher dashboard si connecté, sinon login)
+        
+        // Tenter de fermer l'onglet
+        // Note: window.close() fonctionne uniquement si l'onglet a été ouvert par script (window.open)
+        // ce qui est le cas quand on ouvre une app depuis le Hub
+        try {
+            window.close();
+        } catch (e) {
+            console.log('Impossible de fermer l\'onglet automatiquement');
+        }
+        
+        // Si l'onglet n'a pas pu être fermé (ex: ouvert manuellement), 
+        // afficher une page minimaliste indiquant la déconnexion
+        // avec un délai pour laisser le temps à window.close() de s'exécuter
+        setTimeout(() => {
+            // Si on arrive ici, c'est que l'onglet n'a pas été fermé
+            document.body.innerHTML = `
+                <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; font-family: system-ui, sans-serif; background: #f8f9fa;">
+                    <i class="bi bi-check-circle-fill" style="font-size: 4rem; color: #198754; margin-bottom: 1rem;"></i>
+                    <h2 style="color: #212529; margin-bottom: 0.5rem;">Déconnecté</h2>
+                    <p style="color: #6c757d;">Vous pouvez fermer cet onglet.</p>
+                    <button onclick="window.close()" style="margin-top: 1rem; padding: 0.5rem 1.5rem; background: #0d6efd; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 1rem;">
+                        Fermer l'onglet
+                    </button>
+                </div>
+            `;
+        }, 100);
+        
+        return; // Stopper l'initialisation normale
     }
     // Sinon, si un callback est présent, c'est une demande de connexion SSO
     // URL format: http://hub/?callback=http://app:port/callback
@@ -274,8 +299,9 @@ function renderAppsGrid(apps) {
 
     grid.innerHTML = apps.map(app => `
         <div class="col-sm-6 col-md-4 col-lg-3">
-            <div class="card app-card shadow-sm h-100" onclick="openApp('${app.slug}', '${app.frontend_url || ''}')">
-                <div class="card-body">
+            <div class="card app-card shadow-sm h-100 ${!app.is_active ? 'app-inactive' : ''}" 
+                 onclick="${app.is_active ? `openApp('${app.slug}', '${app.frontend_url || ''}')` : `showToast('Application hors ligne', 'Le conteneur Docker de cette application est arrêté.', 'warning')`}">
+                <div class="card-body position-relative">
                     <div class="app-icon" style="background-color: ${app.color}">
                         <i class="${app.icon}"></i>
                     </div>
@@ -1294,16 +1320,51 @@ function loadSaAppsCheckboxes(selectedIds) {
         return;
     }
 
-    container.innerHTML = allApps.map(app => `
-        <div class="form-check">
-            <input class="form-check-input" type="checkbox" value="${app.id}" 
-                id="saApp${app.id}" ${selectedIds.includes(app.id) ? 'checked' : ''}>
-            <label class="form-check-label" for="saApp${app.id}">
-                <i class="${app.icon} me-1" style="color: ${app.color}"></i>
-                ${escapeHtml(app.name)}
-            </label>
-        </div>
-    `).join('');
+    // Séparer les apps partagées des non-partagées
+    const sharedApps = allApps.filter(app => app.is_shared_service);
+    const nonSharedApps = allApps.filter(app => !app.is_shared_service);
+
+    let html = '';
+    
+    // Apps partagées (sélectionnables)
+    if (sharedApps.length > 0) {
+        html += '<div class="mb-2"><small class="text-success fw-bold"><i class="bi bi-share me-1"></i>Services partagés (accessibles)</small></div>';
+        html += sharedApps.map(app => `
+            <div class="form-check">
+                <input class="form-check-input" type="checkbox" value="${app.id}" 
+                    id="saApp${app.id}" ${selectedIds.includes(app.id) ? 'checked' : ''}>
+                <label class="form-check-label" for="saApp${app.id}">
+                    <i class="${app.icon} me-1" style="color: ${app.color}"></i>
+                    ${escapeHtml(app.name)}
+                    <span class="badge bg-success ms-1" style="font-size: 0.65em;">partagé</span>
+                </label>
+            </div>
+        `).join('');
+    }
+    
+    // Apps non partagées (grisées, non sélectionnables)
+    if (nonSharedApps.length > 0) {
+        html += '<div class="mt-3 mb-2"><small class="text-muted fw-bold"><i class="bi bi-lock me-1"></i>Applications privées (non accessibles en M2M)</small></div>';
+        html += nonSharedApps.map(app => `
+            <div class="form-check" data-bs-toggle="tooltip" data-bs-placement="right" 
+                 title="Cette application n'est pas un service partagé. Les Service Accounts ne peuvent accéder qu'aux APIs marquées comme 'partagées'.">
+                <input class="form-check-input" type="checkbox" value="${app.id}" 
+                    id="saApp${app.id}" disabled 
+                    style="opacity: 0.5; cursor: not-allowed;">
+                <label class="form-check-label text-muted" for="saApp${app.id}" style="opacity: 0.6;">
+                    <i class="${app.icon} me-1" style="color: ${app.color}; opacity: 0.5;"></i>
+                    ${escapeHtml(app.name)}
+                    <span class="badge bg-secondary ms-1" style="font-size: 0.65em;">privé</span>
+                </label>
+            </div>
+        `).join('');
+    }
+    
+    container.innerHTML = html;
+    
+    // Initialiser les tooltips Bootstrap
+    const tooltipTriggerList = container.querySelectorAll('[data-bs-toggle="tooltip"]');
+    tooltipTriggerList.forEach(el => new bootstrap.Tooltip(el));
 }
 
 async function handleSaveServiceAccount(event) {
@@ -1311,9 +1372,9 @@ async function handleSaveServiceAccount(event) {
     
     const id = document.getElementById('saId').value;
     
-    // Get selected apps
+    // Get selected apps (only shared services can be selected)
     const selectedAppIds = [];
-    allApps.forEach(app => {
+    allApps.filter(app => app.is_shared_service).forEach(app => {
         if (document.getElementById(`saApp${app.id}`)?.checked) {
             selectedAppIds.push(app.id);
         }

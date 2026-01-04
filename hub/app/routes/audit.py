@@ -35,7 +35,7 @@ settings = get_settings()
 
 async def log_action(
     db: AsyncSession,
-    user_id: int,
+    user_id: Optional[int],
     action: str,
     target: str = None,
     ip_address: str = None,
@@ -44,7 +44,10 @@ async def log_action(
 ):
     """
     Enregistre une action dans les logs d'audit.
-    Actions supportées: login, logout, access_app, etc.
+    Actions supportées: login, logout, access_app, replace_app, delete_app, etc.
+    
+    Args:
+        user_id: ID de l'utilisateur (None pour actions système/auto-registration)
     """
     log_entry = AuditLog(
         user_id=user_id,
