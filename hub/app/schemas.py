@@ -128,6 +128,7 @@ class AppCreateSimplified(BaseModel):
     custom_host: Optional[str] = Field(None, description="Host personnalisé si différent du Hub")
     requires_auth: bool = True
     create_service_account: bool = Field(False, description="Créer un service account M2M pour cette application")
+    is_shared_service: bool = Field(False, description="Si True, cette app est accessible par tous les service accounts (M2M)")
 
 
 class AppCreate(AppBase):

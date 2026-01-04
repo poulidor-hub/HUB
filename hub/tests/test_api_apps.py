@@ -317,3 +317,107 @@ class TestAppUserAssignment:
         assert response.status_code == 200
         apps = response.json()
         assert isinstance(apps, list)
+
+
+class TestIsSharedService:
+    """Tests pour le paramètre is_shared_service lors de la création d'applications"""
+    
+    @pytest.mark.asyncio
+    async def test_create_app_with_is_shared_service_true(self, client: AsyncClient, admin_user: User):
+        """Création d'une app avec is_shared_service=True via POST /api/apps/"""
+        token, _, _ = create_access_token(
+            username=admin_user.username,
+            roles=["admin"],
+            apps={}
+        )
+        
+        response = await client.post(
+            "/api/apps/",
+            json={
+                "name": "Shared API Test",
+                "slug": "shared-api-test",
+                "description": "API partagée pour test",
+                "api_port": 18099,
+                "is_shared_service": True
+            },
+            headers=get_auth_header(token)
+        )
+        
+        assert response.status_code == 201
+        data = response.json()
+        assert data["application"]["slug"] == "shared-api-test"
+        assert data["application"]["is_shared_service"] is True
+    
+    @pytest.mark.asyncio
+    async def test_create_app_with_is_shared_service_false(self, client: AsyncClient, admin_user: User):
+        """Création d'une app avec is_shared_service=False (défaut)"""
+        token, _, _ = create_access_token(
+            username=admin_user.username,
+            roles=["admin"],
+            apps={}
+        )
+        
+        response = await client.post(
+            "/api/apps/",
+            json={
+                "name": "Non Shared App Test",
+                "slug": "non-shared-app-test",
+                "description": "App non partagée",
+                "api_port": 18098,
+                "is_shared_service": False
+            },
+            headers=get_auth_header(token)
+        )
+        
+        assert response.status_code == 201
+        data = response.json()
+        assert data["application"]["is_shared_service"] is False
+    
+    @pytest.mark.asyncio
+    async def test_create_app_default_is_shared_service(self, client: AsyncClient, admin_user: User):
+        """Création d'une app sans spécifier is_shared_service (doit être False par défaut)"""
+        token, _, _ = create_access_token(
+            username=admin_user.username,
+            roles=["admin"],
+            apps={}
+        )
+        
+        response = await client.post(
+            "/api/apps/",
+            json={
+                "name": "Default Shared Test",
+                "slug": "default-shared-test",
+                "description": "Test valeur par défaut",
+                "api_port": 18097
+            },
+            headers=get_auth_header(token)
+        )
+        
+        assert response.status_code == 201
+        data = response.json()
+        assert data["application"]["is_shared_service"] is False
+    
+    @pytest.mark.asyncio
+    async def test_auto_register_with_is_shared(self, client: AsyncClient, admin_user: User):
+        """Auto-enregistrement admin avec is_shared=True via POST /api/apps/auto-register"""
+        token, _, _ = create_access_token(
+            username=admin_user.username,
+            roles=["admin"],
+            apps={}
+        )
+        
+        response = await client.post(
+            "/api/apps/auto-register",
+            json={
+                "slug": "auto-shared-test",
+                "name": "Auto Shared Test",
+                "api_port": 18096,
+                "is_shared": True
+            },
+            headers=get_auth_header(token)
+        )
+        
+        assert response.status_code == 200
+        data = response.json()
+        assert data["application"]["slug"] == "auto-shared-test"
+        assert data["application"]["is_shared_service"] is True

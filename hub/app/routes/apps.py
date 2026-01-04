@@ -471,7 +471,8 @@ async def create_app(
         api_url=api_url,
         frontend_url=frontend_url,
         callback_url=callback_url,
-        requires_auth=app_data.requires_auth
+        requires_auth=app_data.requires_auth,
+        is_shared_service=app_data.is_shared_service
     )
     db.add(app)
     await db.flush()  # Pour obtenir l'ID de l'app
@@ -552,6 +553,7 @@ async def create_app(
             "callback_url": app.callback_url,
             "is_active": app.is_active,
             "requires_auth": app.requires_auth,
+            "is_shared_service": app.is_shared_service,
             "created_at": app.created_at
         }
     }
@@ -794,7 +796,8 @@ async def admin_auto_register_app(
         api_url=api_url,
         frontend_url=frontend_url,
         callback_url=callback_url,
-        requires_auth=True
+        requires_auth=True,
+        is_shared_service=app_data.is_shared  # Permet l'accès M2M si True
     )
     db.add(app)
     await db.flush()
