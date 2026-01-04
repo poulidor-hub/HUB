@@ -90,6 +90,12 @@ class HubAPI {
                         console.log('Token rafraîchi par un autre appel pendant la requête');
                         return true;
                     }
+                    // 401 peut arriver si le token a été roté par un autre onglet/requête
+                    // Ne pas déconnecter si on a un token d'accès valide récent
+                    if (response.status === 401 && this._lastRefreshTime > 0 && (Date.now() - this._lastRefreshTime) < 60000) {
+                        console.log('Refresh 401 ignoré - token probablement déjà roté');
+                        return true;
+                    }
                     // Refresh token expiré ou invalide
                     this.clearToken();
                     return false;
