@@ -62,6 +62,7 @@ class User(Base):
     hashed_password = Column(String(255), nullable=False)
     is_active = Column(Boolean, default=True)
     is_admin = Column(Boolean, default=False)  # Admin du Hub (pas des apps)
+    must_change_password = Column(Boolean, default=False)  # Forcer le changement de mdp à la prochaine connexion
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     

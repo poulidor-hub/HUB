@@ -9,7 +9,7 @@ from app.database import get_db
 from app.routes.events import notify_event, notify_stats_update
 from app.models import User, Application, UserAppRole, AppRole, DEFAULT_ROLES
 from app.schemas import UserCreate, UserUpdate, UserResponse
-from app.auth import get_current_admin, get_password_hash
+from app.auth import get_current_admin, get_password_hash, revoke_all_user_tokens
 
 router = APIRouter(prefix="/api/users", tags=["Users"])
 
@@ -61,7 +61,8 @@ async def create_user(
         username=user_data.username,
         email=user_data.email,
         hashed_password=get_password_hash(user_data.password),
-        is_admin=user_data.is_admin
+        is_admin=user_data.is_admin,
+        must_change_password=user_data.must_change_password
     )
     db.add(user)
     await db.commit()
@@ -127,6 +128,9 @@ async def update_user(
     
     update_data = user_data.model_dump(exclude_unset=True)
     
+    # Détecter si l'utilisateur est en train d'être désactivé
+    is_being_deactivated = "is_active" in update_data and update_data["is_active"] == False and user.is_active == True
+    
     if "password" in update_data:
         update_data["hashed_password"] = get_password_hash(update_data.pop("password"))
     
@@ -134,6 +138,12 @@ async def update_user(
         setattr(user, field, value)
     
     await db.commit()
+    
+    # Si l'utilisateur est désactivé, révoquer tous ses tokens et notifier sa déconnexion forcée
+    if is_being_deactivated:
+        await revoke_all_user_tokens(db, user_id)
+        # Notifier via SSE pour forcer la déconnexion côté client
+        notify_event("force_logout", {"user_id": user_id, "username": user.username, "reason": "account_disabled"})
     
     # Recharger avec les relations
     result = await db.execute(
@@ -303,4 +313,44 @@ async def get_available_roles():
             "viewer": "Lecteur - Accès en lecture seule",
             "service": "Service - Accès M2M (service accounts uniquement)"
         }
+    }
+
+
+# === Gestion des sessions utilisateur ===
+
+@router.post("/{user_id}/revoke-sessions")
+async def revoke_user_sessions(
+    user_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_admin: User = Depends(get_current_admin)
+):
+    """
+    Révoque toutes les sessions d'un utilisateur (admin uniquement).
+    Force la déconnexion de l'utilisateur sur tous ses appareils.
+    """
+    result = await db.execute(select(User).where(User.id == user_id))
+    user = result.scalar_one_or_none()
+    
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Utilisateur non trouvé"
+        )
+    
+    # Révoquer tous les tokens
+    await revoke_all_user_tokens(db, user_id)
+    
+    # Notifier via SSE pour forcer la déconnexion côté client
+    notify_event("force_logout", {
+        "user_id": user_id,
+        "username": user.username,
+        "reason": "admin_revoked",
+        "revoked_by": current_admin.username
+    })
+    
+    notify_stats_update()
+    
+    return {
+        "message": f"Sessions révoquées pour {user.username}",
+        "user_id": user_id
     }

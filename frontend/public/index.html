@@ -39,6 +39,9 @@
                     <i class="bi bi-person-circle me-1"></i>
                     <span id="username"></span>
                 </span>
+                <button id="changePasswordBtn" class="btn btn-outline-light btn-sm me-2 d-none" onclick="showChangePasswordModal(false)" title="Changer le mot de passe">
+                    <i class="bi bi-key"></i>
+                </button>
                 <button id="adminBtn" class="btn btn-outline-light btn-sm me-2 d-none" onclick="showAdminPanel()">
                     <i class="bi bi-gear"></i> Admin
                 </button>
@@ -690,6 +693,14 @@
                                     <label class="form-check-label">Administrateur</label>
                                 </div>
                             </div>
+                            <div class="col-12">
+                                <div class="form-check form-switch">
+                                    <input class="form-check-input" type="checkbox" id="userMustChangePassword">
+                                    <label class="form-check-label">
+                                        <i class="bi bi-key me-1"></i>Doit changer son mot de passe à la prochaine connexion
+                                    </label>
+                                </div>
+                            </div>
                             <div class="col-12" id="userAppsSection">
                                 <label class="form-label">Applications autorisées</label>
                                 <div id="userAppsCheckboxes" class="border rounded p-2" style="max-height: 150px; overflow-y: auto;">
@@ -903,6 +914,46 @@
                         </div>
                     </div>
                 </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Change Password Modal -->
+    <div class="modal fade" id="changePasswordModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="bi bi-key me-2"></i>Changer le mot de passe</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <form id="changePasswordForm" onsubmit="handleChangePassword(event)">
+                    <div class="modal-body">
+                        <div id="changePasswordMandatory" class="alert alert-warning" style="display: none;">
+                            <i class="bi bi-exclamation-triangle me-2"></i>
+                            Vous devez changer votre mot de passe pour continuer.
+                        </div>
+                        <div id="changePasswordError" class="alert alert-danger d-none"></div>
+                        <div class="mb-3">
+                            <label for="currentPassword" class="form-label">Mot de passe actuel</label>
+                            <input type="password" class="form-control" id="currentPassword" required>
+                        </div>
+                        <div class="mb-3">
+                            <label for="newPassword" class="form-label">Nouveau mot de passe</label>
+                            <input type="password" class="form-control" id="newPassword" required minlength="8">
+                            <small class="text-muted">Minimum 8 caractères</small>
+                        </div>
+                        <div class="mb-3">
+                            <label for="confirmNewPassword" class="form-label">Confirmer le nouveau mot de passe</label>
+                            <input type="password" class="form-control" id="confirmNewPassword" required minlength="8">
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuler</button>
+                        <button type="submit" class="btn btn-primary">
+                            <i class="bi bi-check-lg me-1"></i>Changer le mot de passe
+                        </button>
+                    </div>
+                </form>
             </div>
         </div>
     </div>

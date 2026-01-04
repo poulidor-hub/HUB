@@ -130,6 +130,15 @@ function handleSSEEvent(data) {
                 updateStatsDisplay(data.data.stats);
             }
             break;
+            
+        case 'force_logout':
+            // Vérifier si c'est l'utilisateur courant qui doit être déconnecté
+            if (currentUser && data.data?.user_id === currentUser.id) {
+                handleForceLogout(data.data.reason);
+            }
+            break;
+            }
+            break;
     }
 }
 
@@ -297,7 +306,7 @@ async function handleLogin(event) {
 
     try {
         errorDiv.classList.add('d-none');
-        await api.login(username, password);
+        const loginResult = await api.login(username, password);
         
         // Si un callback SSO est en attente, rediriger vers l'application externe
         const pendingCallback = getPendingCallback();
@@ -314,6 +323,11 @@ async function handleLogin(event) {
         
         await loadCurrentUser();
         showToast('Connexion réussie', `Bienvenue ${username} !`, 'success');
+        
+        // Vérifier si l'utilisateur doit changer son mot de passe
+        if (loginResult.must_change_password) {
+            showChangePasswordModal(true);  // Mode obligatoire
+        }
     } catch (error) {
         console.error('Login error:', error);
         errorDiv.textContent = error.message || `Erreur de connexion à l'API (${API_BASE})`;
@@ -356,6 +370,7 @@ function showDashboard() {
     document.getElementById('dashboardSection').classList.remove('d-none');
     document.getElementById('userInfo').classList.remove('d-none');
     document.getElementById('logoutBtn').classList.remove('d-none');
+    document.getElementById('changePasswordBtn').classList.remove('d-none');
     document.getElementById('username').textContent = currentUser.username;
 
     if (currentUser.is_admin) {
@@ -443,9 +458,128 @@ async function logout() {
         document.getElementById('usersSection').classList.add('d-none');
         document.getElementById('userInfo').classList.add('d-none');
         document.getElementById('logoutBtn').classList.add('d-none');
+        document.getElementById('changePasswordBtn').classList.add('d-none');
         document.getElementById('adminBtn').classList.add('d-none');
         document.getElementById('adminNavigation').classList.add('d-none');
         document.getElementById('loginForm').reset();
+    }
+}
+
+/**
+ * Gère la déconnexion forcée par un administrateur
+ */
+function handleForceLogout(reason) {
+    // Fermer la connexion SSE
+    closeEventSource();
+    
+    // Fermer tous les onglets d'applications ouverts
+    closeAllAppWindows();
+    
+    // Effacer les tokens
+    api.clearToken();
+    
+    // Message explicatif selon la raison
+    let message = 'Votre session a été terminée.';
+    if (reason === 'account_disabled') {
+        message = 'Votre compte a été désactivé par un administrateur.';
+    } else if (reason === 'admin_revoked') {
+        message = 'Vos sessions ont été révoquées par un administrateur.';
+    }
+    
+    // Afficher un modal d'alerte
+    alert(message);
+    
+    // Réinitialiser l'interface
+    currentUser = null;
+    currentPage = 'dashboard';
+    document.getElementById('loginSection').classList.remove('d-none');
+    document.getElementById('dashboardSection').classList.add('d-none');
+    document.getElementById('auditSection').classList.add('d-none');
+    document.getElementById('usersSection').classList.add('d-none');
+    document.getElementById('userInfo').classList.add('d-none');
+    document.getElementById('logoutBtn').classList.add('d-none');
+    document.getElementById('changePasswordBtn').classList.add('d-none');
+    document.getElementById('adminBtn').classList.add('d-none');
+    document.getElementById('adminNavigation').classList.add('d-none');
+    document.getElementById('loginForm').reset();
+}
+
+// ===== Gestion du changement de mot de passe =====
+
+let changePasswordModal = null;
+
+/**
+ * Affiche le modal de changement de mot de passe
+ * @param {boolean} mandatory - Si true, l'utilisateur ne peut pas fermer le modal
+ */
+function showChangePasswordModal(mandatory = false) {
+    if (!changePasswordModal) {
+        changePasswordModal = new bootstrap.Modal(document.getElementById('changePasswordModal'), {
+            backdrop: mandatory ? 'static' : true,
+            keyboard: !mandatory
+        });
+    }
+    
+    // Réinitialiser le formulaire
+    document.getElementById('changePasswordForm').reset();
+    document.getElementById('changePasswordError').classList.add('d-none');
+    
+    // Masquer/afficher le bouton de fermeture selon le mode
+    const closeBtn = document.querySelector('#changePasswordModal .btn-close');
+    const cancelBtn = document.querySelector('#changePasswordModal .btn-secondary');
+    if (closeBtn) closeBtn.style.display = mandatory ? 'none' : 'block';
+    if (cancelBtn) cancelBtn.style.display = mandatory ? 'none' : 'block';
+    
+    // Afficher un message si obligatoire
+    const mandatoryAlert = document.getElementById('changePasswordMandatory');
+    if (mandatoryAlert) {
+        mandatoryAlert.style.display = mandatory ? 'block' : 'none';
+    }
+    
+    changePasswordModal.show();
+}
+
+/**
+ * Gère la soumission du formulaire de changement de mot de passe
+ */
+async function handleChangePassword(event) {
+    event.preventDefault();
+    
+    const currentPassword = document.getElementById('currentPassword').value;
+    const newPassword = document.getElementById('newPassword').value;
+    const confirmPassword = document.getElementById('confirmNewPassword').value;
+    const errorDiv = document.getElementById('changePasswordError');
+    
+    // Validation côté client
+    if (newPassword !== confirmPassword) {
+        errorDiv.textContent = 'Les mots de passe ne correspondent pas';
+        errorDiv.classList.remove('d-none');
+        return;
+    }
+    
+    if (newPassword.length < 8) {
+        errorDiv.textContent = 'Le mot de passe doit contenir au moins 8 caractères';
+        errorDiv.classList.remove('d-none');
+        return;
+    }
+    
+    try {
+        await api.changePassword(currentPassword, newPassword);
+        
+        // Fermer le modal
+        if (changePasswordModal) {
+            changePasswordModal.hide();
+        }
+        
+        // Mettre à jour l'état utilisateur
+        if (currentUser) {
+            currentUser.must_change_password = false;
+        }
+        
+        showToast('Succès', 'Mot de passe modifié avec succès', 'success');
+    } catch (error) {
+        errorDiv.textContent = error.message || 'Erreur lors du changement de mot de passe';
+        errorDiv.classList.remove('d-none');
     }
 }
 
@@ -696,6 +830,128 @@ async function loadAdminData() {
     }
 }
 
+// ===== Status Monitoring =====
+
+/**
+ * Rafraîchit le statut de connectivité des applications
+ */
+async function refreshAppsStatus() {
+    // Afficher le spinner sur toutes les cellules de connectivité
+    document.querySelectorAll('.app-connectivity').forEach(cell => {
+        cell.innerHTML = '<span class="spinner-border spinner-border-sm text-primary" role="status"></span>';
+    });
+    
+    try {
+        const status = await api.getAppsStatus();
+        console.log('📡 Statut des applications:', status);
+        
+        // Mettre à jour chaque cellule
+        status.apps.forEach(appStatus => {
+            const cell = document.querySelector(`.app-connectivity[data-app-slug="${appStatus.slug}"]`);
+            if (cell) {
+                let badge = '';
+                switch (appStatus.status) {
+                    case 'online':
+                        badge = `<span class="badge bg-success" title="Temps de réponse: ${appStatus.response_time_ms}ms">
+                            <i class="bi bi-wifi me-1"></i>En ligne
+                        </span>`;
+                        if (appStatus.response_time_ms) {
+                            badge += `<br><small class="text-muted">${appStatus.response_time_ms}ms</small>`;
+                        }
+                        break;
+                    case 'offline':
+                        badge = `<span class="badge bg-danger" title="${appStatus.error || 'Non joignable'}">
+                            <i class="bi bi-wifi-off me-1"></i>Hors ligne
+                        </span>`;
+                        break;
+                    case 'error':
+                        badge = `<span class="badge bg-warning text-dark" title="${appStatus.error || 'Erreur'}">
+                            <i class="bi bi-exclamation-triangle me-1"></i>Erreur
+                        </span>`;
+                        break;
+                    default:
+                        badge = `<span class="badge bg-light text-muted">
+                            <i class="bi bi-question-circle me-1"></i>Inconnu
+                        </span>`;
+                }
+                cell.innerHTML = badge;
+            }
+        });
+        
+        // Afficher un résumé dans un toast discret
+        const summary = status.summary;
+        if (summary.offline > 0 || summary.error > 0) {
+            showToast('Connectivité', 
+                `${summary.online}/${summary.total} applications en ligne`, 
+                summary.offline > 0 ? 'warning' : 'info');
+        }
+    } catch (error) {
+        console.error('Erreur lors du test de connectivité:', error);
+        // Afficher erreur dans les cellules
+        document.querySelectorAll('.app-connectivity').forEach(cell => {
+            cell.innerHTML = '<span class="badge bg-secondary"><i class="bi bi-x-circle me-1"></i>Erreur</span>';
+        });
+    }
+}
+
+/**
+ * Rafraîchit le statut des Service Accounts
+ */
+async function refreshServiceAccountsStatus() {
+    // Afficher le spinner sur toutes les cellules de statut SA
+    document.querySelectorAll('.sa-credentials-status').forEach(cell => {
+        cell.innerHTML = '<span class="spinner-border spinner-border-sm text-primary" role="status"></span>';
+    });
+    
+    try {
+        const status = await api.getServiceAccountsStatus();
+        console.log('📡 Statut des Service Accounts:', status);
+        
+        // Mettre à jour chaque cellule
+        status.service_accounts.forEach(saStatus => {
+            const cell = document.querySelector(`.sa-credentials-status[data-sa-id="${saStatus.id}"]`);
+            if (cell) {
+                let badge = '';
+                switch (saStatus.credentials_status) {
+                    case 'file_exists':
+                        badge = `<span class="badge bg-success" title="Fichier: ${saStatus.credentials_file}">
+                            <i class="bi bi-file-earmark-check me-1"></i>Credentials OK
+                        </span>`;
+                        break;
+                    case 'file_missing':
+                        badge = `<span class="badge bg-danger" title="Fichier de credentials manquant">
+                            <i class="bi bi-file-earmark-x me-1"></i>Fichier manquant
+                        </span>`;
+                        break;
+                    case 'no_app':
+                        badge = `<span class="badge bg-secondary" title="Pas d'application associée">
+                            <i class="bi bi-dash-circle me-1"></i>Pas d'app
+                        </span>`;
+                        break;
+                    default:
+                        badge = `<span class="badge bg-light text-muted">
+                            <i class="bi bi-question-circle me-1"></i>Inconnu
+                        </span>`;
+                }
+                cell.innerHTML = badge;
+            }
+        });
+        
+        // Afficher un résumé
+        const summary = status.summary;
+        if (summary.missing_credentials > 0) {
+            showToast('Service Accounts', 
+                `${summary.missing_credentials} SA sans fichier de credentials`, 
+                'warning');
+        }
+    } catch (error) {
+        console.error('Erreur lors de la vérification des SA:', error);
+        document.querySelectorAll('.sa-credentials-status').forEach(cell => {
+            cell.innerHTML = '<span class="badge bg-secondary"><i class="bi bi-x-circle me-1"></i>Erreur</span>';
+        });
+    }
+}
+
 function renderAppsTable(apps) {
     const container = document.getElementById('appsTable');
     
@@ -705,6 +961,12 @@ function renderAppsTable(apps) {
     }
 
     container.innerHTML = `
+        <div class="d-flex justify-content-between align-items-center mb-2">
+            <small class="text-muted">${apps.length} application(s)</small>
+            <button class="btn btn-sm btn-outline-secondary" onclick="refreshAppsStatus()" title="Vérifier la connectivité">
+                <i class="bi bi-arrow-clockwise me-1"></i>Tester connectivité
+            </button>
+        </div>
         <table class="table table-hover align-middle">
             <thead>
                 <tr>
@@ -712,13 +974,14 @@ function renderAppsTable(apps) {
                     <th>Slug</th>
                     <th>URL Frontend</th>
                     <th>Utilisateurs</th>
-                    <th>Statut</th>
+                    <th>Config</th>
+                    <th>Connectivité</th>
                     <th class="text-end">Actions</th>
                 </tr>
             </thead>
-            <tbody>
+            <tbody id="appsTableBody">
                 ${apps.map(app => `
-                    <tr>
+                    <tr data-app-id="${app.id}">
                         <td>
                             <div class="d-flex align-items-center">
                                 <span class="me-2 rounded p-1" style="background-color: ${app.color}; color: white;">
@@ -738,6 +1001,9 @@ function renderAppsTable(apps) {
                                 ? '<span class="badge bg-light text-dark"><i class="bi bi-check-circle text-success me-1"></i>Actif</span>' 
                                 : '<span class="badge bg-light text-dark"><i class="bi bi-x-circle text-danger me-1"></i>Inactif</span>'}
                         </td>
+                        <td class="app-connectivity" data-app-slug="${app.slug}">
+                            <span class="badge bg-light text-muted"><i class="bi bi-question-circle me-1"></i>Non testé</span>
+                        </td>
                         <td class="text-end">
                             <button class="btn btn-sm btn-outline-primary me-1" onclick="editApp(${app.id})">
                                 <i class="bi bi-pencil"></i>
@@ -751,6 +1017,9 @@ function renderAppsTable(apps) {
             </tbody>
         </table>
     `;
+    
+    // Lancer automatiquement le test de connectivité
+    refreshAppsStatus();
 }
 
 function renderUsersTable(users) {
@@ -911,6 +1180,7 @@ async function editApp(id) {
     document.getElementById('appCallbackUrl').value = app.callback_url || '';
     document.getElementById('appActive').checked = app.is_active;
     document.getElementById('appRequiresAuth').checked = app.requires_auth;
+    document.getElementById('appIsSharedService').checked = app.is_shared_service || false;
     
     // En mode édition, afficher les URLs directes
     document.getElementById('simplePortsSection').classList.add('d-none');
@@ -981,7 +1251,8 @@ async function handleSaveApp(event) {
                 icon: document.getElementById('appIcon').value,
                 color: document.getElementById('appColor').value,
                 is_active: document.getElementById('appActive').checked,
-                requires_auth: document.getElementById('appRequiresAuth').checked
+                requires_auth: document.getElementById('appRequiresAuth').checked,
+                is_shared_service: document.getElementById('appIsSharedService').checked
             };
             
             // Ajouter les URLs seulement si elles sont renseignées
@@ -1274,6 +1545,8 @@ function showAddUserForm() {
     document.getElementById('passwordHint').classList.add('d-none');
     document.getElementById('userActive').checked = true;
     document.getElementById('userAdmin').checked = false;
+    const mustChangePwdEl = document.getElementById('userMustChangePassword');
+    if (mustChangePwdEl) mustChangePwdEl.checked = false;
     loadUserAppsCheckboxes([]);
     adminModal.hide();
     userFormModal.show();
@@ -1294,6 +1567,12 @@ async function editUser(id) {
     document.getElementById('passwordHint').classList.remove('d-none');
     document.getElementById('userActive').checked = user.is_active;
     document.getElementById('userAdmin').checked = user.is_admin;
+    
+    // Charger must_change_password
+    const mustChangePwdEl = document.getElementById('userMustChangePassword');
+    if (mustChangePwdEl) {
+        mustChangePwdEl.checked = user.must_change_password || false;
+    }
     
     // Charger les apps avec leurs rôles
     const userAppRoles = user.app_roles || [];
@@ -1379,7 +1658,8 @@ async function handleSaveUser(event) {
         username: document.getElementById('userUsername').value,
         email: document.getElementById('userEmail').value || null,
         is_active: document.getElementById('userActive').checked,
-        is_admin: document.getElementById('userAdmin').checked
+        is_admin: document.getElementById('userAdmin').checked,
+        must_change_password: document.getElementById('userMustChangePassword')?.checked || false
     };
 
     const password = document.getElementById('userPassword').value;
@@ -1482,6 +1762,12 @@ function renderServiceAccountsTable(serviceAccounts) {
     }
 
     container.innerHTML = `
+        <div class="d-flex justify-content-between align-items-center mb-2">
+            <small class="text-muted">${serviceAccounts.length} service account(s)</small>
+            <button class="btn btn-sm btn-outline-secondary" onclick="refreshServiceAccountsStatus()" title="Vérifier les credentials">
+                <i class="bi bi-arrow-clockwise me-1"></i>Vérifier credentials
+            </button>
+        </div>
         <table class="table table-hover align-middle">
             <thead>
                 <tr>
@@ -1489,13 +1775,14 @@ function renderServiceAccountsTable(serviceAccounts) {
                     <th>Client ID</th>
                     <th>Applications</th>
                     <th>Dernière utilisation</th>
-                    <th>Statut</th>
+                    <th>Config</th>
+                    <th>Credentials</th>
                     <th class="text-end">Actions</th>
                 </tr>
             </thead>
             <tbody>
                 ${serviceAccounts.map(sa => `
-                    <tr>
+                    <tr data-sa-id="${sa.id}">
                         <td>
                             <div>
                                 <strong>${escapeHtml(sa.name)}</strong>
@@ -1508,13 +1795,16 @@ function renderServiceAccountsTable(serviceAccounts) {
                         </td>
                         <td>
                             ${sa.last_used_at 
-                                ? `<small class="text-muted">${new Date(sa.last_used_at).toLocaleString('fr-FR')}</small>`
-                                : '<small class="text-muted">Jamais</small>'}
+                                ? `<small class="text-success"><i class="bi bi-check2 me-1"></i>${new Date(sa.last_used_at).toLocaleString('fr-FR')}</small>`
+                                : '<small class="text-muted"><i class="bi bi-hourglass me-1"></i>Jamais</small>'}
                         </td>
                         <td>
                             ${sa.is_active 
                                 ? '<span class="badge bg-light text-dark"><i class="bi bi-check-circle text-success me-1"></i>Actif</span>' 
                                 : '<span class="badge bg-light text-dark"><i class="bi bi-x-circle text-danger me-1"></i>Inactif</span>'}
+                        </td>
+                        <td class="sa-credentials-status" data-sa-id="${sa.id}">
+                            <span class="badge bg-light text-muted"><i class="bi bi-question-circle me-1"></i>Non vérifié</span>
                         </td>
                         <td class="text-end">
                             <div class="btn-group btn-group-sm">
@@ -1534,6 +1824,9 @@ function renderServiceAccountsTable(serviceAccounts) {
             </tbody>
         </table>
     `;
+    
+    // Lancer automatiquement la vérification des credentials
+    refreshServiceAccountsStatus();
 }
 
 function showAddServiceAccountForm() {
@@ -2632,6 +2925,9 @@ async function quickImportDockerSelection() {
     let appSlug = apiContainer.suggested_slug.replace(/-?(api|backend)$/i, '') || apiContainer.suggested_slug;
     let appName = apiContainer.suggested_name.replace(/\s*(api|backend)\s*/gi, '').trim() || apiContainer.suggested_name;
     
+    // Récupérer la description depuis les variables d'environnement du conteneur si disponible
+    let appDescription = apiContainer.hub_description || `Importé depuis Docker: ${apiContainer.image}`;
+    
     try {
         // Désactiver le bouton pendant l'opération
         const btn = document.getElementById('dockerQuickImportBtn');
@@ -2640,7 +2936,7 @@ async function quickImportDockerSelection() {
         btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Import...';
         
         // Appeler l'API auto-register
-        const result = await api.autoRegisterApp(appSlug, appName, apiPort, frontendPort, isShared);
+        const result = await api.autoRegisterApp(appSlug, appName, apiPort, frontendPort, isShared, appDescription);
         
         // Restaurer le bouton
         btn.innerHTML = originalHtml;
@@ -2661,7 +2957,13 @@ async function quickImportDockerSelection() {
                 }, 500);
             }
         } else {
-            showToast('Info', `Application "${appName}" existe déjà`, 'info');
+            // Application existante - vérifier si des mises à jour ont été faites
+            if (result.message.includes('mise à jour')) {
+                showToast('Mise à jour', result.message, 'success');
+            } else {
+                const currentShared = result.credentials?.is_shared ? 'partagée' : 'privée';
+                showToast('Info', `Application "${appName}" existe déjà (${currentShared})`, 'info');
+            }
         }
         
         // Rafraîchir les données admin
@@ -3348,7 +3650,10 @@ function renderUsersPageTable(users) {
             <tbody>
                 ${users.map(user => `
                     <tr>
-                        <td><strong>${escapeHtml(user.username)}</strong></td>
+                        <td>
+                            <strong>${escapeHtml(user.username)}</strong>
+                            ${user.must_change_password ? '<i class="bi bi-key-fill text-warning ms-1" title="Doit changer son mot de passe"></i>' : ''}
+                        </td>
                         <td><small class="text-muted">${escapeHtml(user.email || '-')}</small></td>
                         <td>
                             ${user.is_admin 
@@ -3369,13 +3674,19 @@ function renderUsersPageTable(users) {
                                 : '<span class="badge bg-light text-dark"><i class="bi bi-x-circle text-danger me-1"></i>Inactif</span>'}
                         </td>
                         <td class="text-end">
-                            <button class="btn btn-sm btn-outline-secondary me-1" onclick="editUserPage(${user.id})">
-                                <i class="bi bi-pencil"></i>
-                            </button>
-                            <button class="btn btn-sm btn-outline-danger" onclick="deleteUserPage(${user.id}, '${escapeHtml(user.username)}')" 
-                                ${user.id === currentUser.id ? 'disabled' : ''}>
-                                <i class="bi bi-trash"></i>
-                            </button>
+                            <div class="btn-group">
+                                <button class="btn btn-sm btn-outline-secondary" onclick="editUserPage(${user.id})" title="Modifier">
+                                    <i class="bi bi-pencil"></i>
+                                </button>
+                                <button class="btn btn-sm btn-outline-warning" onclick="revokeUserSessions(${user.id}, '${escapeHtml(user.username)}')" 
+                                    title="Révoquer les sessions" ${user.id === currentUser.id ? 'disabled' : ''}>
+                                    <i class="bi bi-door-closed"></i>
+                                </button>
+                                <button class="btn btn-sm btn-outline-danger" onclick="deleteUserPage(${user.id}, '${escapeHtml(user.username)}')" 
+                                    title="Supprimer" ${user.id === currentUser.id ? 'disabled' : ''}>
+                                    <i class="bi bi-trash"></i>
+                                </button>
+                            </div>
                         </td>
                     </tr>
                 `).join('')}
@@ -3402,6 +3713,8 @@ function showAddUserFormPage() {
     document.getElementById('passwordHint').classList.add('d-none');
     document.getElementById('userActive').checked = true;
     document.getElementById('userAdmin').checked = false;
+    const mustChangePwdEl = document.getElementById('userMustChangePassword');
+    if (mustChangePwdEl) mustChangePwdEl.checked = false;
     loadUserAppsCheckboxes([]);
     userFormModal.show();
 }
@@ -3426,10 +3739,27 @@ async function editUserPage(id) {
     document.getElementById('userActive').checked = user.is_active;
     document.getElementById('userAdmin').checked = user.is_admin;
     
+    // Charger must_change_password
+    const mustChangePwdEl = document.getElementById('userMustChangePassword');
+    if (mustChangePwdEl) {
+        mustChangePwdEl.checked = user.must_change_password || false;
+    }
+    
     const userAppRoles = user.app_roles || [];
     loadUserAppsWithRoles(userAppRoles);
     
     userFormModal.show();
+}
+
+async function revokeUserSessions(userId, username) {
+    if (!confirm(`Révoquer toutes les sessions de "${username}" ?\n\nL'utilisateur sera déconnecté de tous ses appareils.`)) return;
+    
+    try {
+        await api.revokeUserSessions(userId);
+        showToast('Succès', `Sessions de ${username} révoquées`, 'success');
+    } catch (error) {
+        showToast('Erreur', error.message, 'danger');
+    }
 }
 
 async function deleteUserPage(id, username) {

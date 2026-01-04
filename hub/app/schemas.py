@@ -21,15 +21,23 @@ class UserBase(BaseModel):
 
 
 class UserCreate(UserBase):
-    password: str = Field(..., min_length=4)
+    password: str = Field(..., min_length=8)
     is_admin: bool = False
+    must_change_password: bool = False
 
 
 class UserUpdate(BaseModel):
     email: Optional[EmailStr] = None
-    password: Optional[str] = Field(None, min_length=4)
+    password: Optional[str] = Field(None, min_length=8)
     is_active: Optional[bool] = None
     is_admin: Optional[bool] = None
+    must_change_password: Optional[bool] = None
+
+
+class PasswordChangeRequest(BaseModel):
+    """Requête de changement de mot de passe par l'utilisateur"""
+    current_password: str = Field(..., description="Mot de passe actuel")
+    new_password: str = Field(..., min_length=8, description="Nouveau mot de passe (min 8 caractères)")
 
 
 # ===== User App Role Schema =====
@@ -57,6 +65,7 @@ class UserResponse(UserBase):
     id: int
     is_active: bool
     is_admin: bool
+    must_change_password: bool = False
     created_at: datetime
     app_roles: List[UserAppRoleResponse] = []
     
@@ -76,6 +85,7 @@ class UserResponse(UserBase):
             email=user.email,
             is_active=user.is_active,
             is_admin=user.is_admin,
+            must_change_password=user.must_change_password or False,
             created_at=user.created_at,
             app_roles=app_roles
         )
@@ -258,6 +268,7 @@ class Token(BaseModel):
     token_type: str = "bearer"
     expires_at: datetime
     refresh_token: Optional[str] = None  # Inclus seulement pour les logins utilisateur
+    must_change_password: bool = False  # Si True, l'utilisateur doit changer son mot de passe
 
 
 class TokenPayload(BaseModel):
@@ -464,6 +475,10 @@ class DockerContainerInfo(BaseModel):
     suggested_name: str
     labels: dict = {}
     is_registered: bool = False  # True si le conteneur est déjà enregistré comme app
+    # Labels Hub spécifiques (extraits des labels Docker hub.*)
+    hub_name: Optional[str] = None           # hub.name - Nom personnalisé pour l'app
+    hub_description: Optional[str] = None    # hub.description - Description de l'app
+    hub_shared: bool = False                  # hub.shared - Marquer comme service partagé M2M
 
 
 class DockerScanResponse(BaseModel):

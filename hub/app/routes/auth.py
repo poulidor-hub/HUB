@@ -8,7 +8,7 @@ from typing import Optional
 
 from app.database import get_db
 from app.models import User, AuditLog, ServiceAccount, UserAppRole, UserSession
-from app.schemas import Token, LoginRequest, TokenIntrospection, RefreshTokenRequest, LogoutRequest
+from app.schemas import Token, LoginRequest, TokenIntrospection, RefreshTokenRequest, LogoutRequest, PasswordChangeRequest
 from app.routes.events import notify_stats_update, notify_event
 from app.auth import (
     verify_password,
@@ -219,7 +219,8 @@ async def login_for_token(
     return Token(
         access_token=token,
         expires_at=expire,
-        refresh_token=new_refresh_token
+        refresh_token=new_refresh_token,
+        must_change_password=user.must_change_password or False
     )
 
 
@@ -310,6 +311,7 @@ async def get_current_user_info(
         "username": current_user.username,
         "email": current_user.email,
         "is_admin": current_user.is_admin,
+        "must_change_password": current_user.must_change_password or False,
         "applications": [
             {
                 "id": ar.application.id,
@@ -323,6 +325,51 @@ async def get_current_user_info(
             for ar in current_user.app_roles
         ]
     }
+
+
+@router.put("/change-password")
+async def change_password(
+    request: Request,
+    password_data: PasswordChangeRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Permet à un utilisateur de changer son mot de passe.
+    Vérifie l'ancien mot de passe avant de permettre le changement.
+    """
+    # Vérifier l'ancien mot de passe
+    if not verify_password(password_data.current_password, current_user.hashed_password):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Mot de passe actuel incorrect"
+        )
+    
+    # Vérifier que le nouveau mot de passe est différent
+    if verify_password(password_data.new_password, current_user.hashed_password):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Le nouveau mot de passe doit être différent de l'ancien"
+        )
+    
+    # Mettre à jour le mot de passe
+    current_user.hashed_password = get_password_hash(password_data.new_password)
+    current_user.must_change_password = False  # Réinitialiser le flag
+    
+    # Log de l'action
+    audit = AuditLog(
+        user_id=current_user.id,
+        action="password_changed",
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent", "")[:255]
+    )
+    db.add(audit)
+    await db.commit()
+    
+    # Notifier via SSE
+    notify_event("audit_updated", {"action": "password_changed", "username": current_user.username})
+    
+    return {"message": "Mot de passe modifié avec succès"}
 
 
 @router.post("/logout")

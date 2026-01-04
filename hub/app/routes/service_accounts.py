@@ -102,6 +102,75 @@ async def list_service_accounts(
     return result.scalars().all()
 
 
+@router.get("/status")
+async def get_service_accounts_status(
+    db: AsyncSession = Depends(get_db),
+    _admin = Depends(get_current_admin)
+):
+    """
+    🔍 Vérifie le statut des Service Accounts (admin uniquement).
+    
+    Pour chaque SA, vérifie :
+    - Si le fichier de credentials existe
+    - Si les credentials sont valides (test d'authentification)
+    """
+    from datetime import datetime
+    
+    result = await db.execute(
+        select(ServiceAccount)
+        .options(selectinload(ServiceAccount.applications))
+        .order_by(ServiceAccount.name)
+    )
+    service_accounts = result.scalars().all()
+    
+    status_results = []
+    
+    for sa in service_accounts:
+        status_data = {
+            "id": sa.id,
+            "name": sa.name,
+            "client_id": sa.client_id,
+            "is_active": sa.is_active,
+            "applications": [{"id": app.id, "slug": app.slug, "name": app.name} for app in sa.applications],
+            "last_used_at": sa.last_used_at.isoformat() if sa.last_used_at else None,
+            "credentials_file": None,
+            "credentials_status": "unknown",
+            "last_check": datetime.utcnow().isoformat()
+        }
+        
+        # Vérifier si le fichier credentials existe
+        if sa.applications:
+            app_slug = sa.applications[0].slug
+            safe_name = re.sub(r'[^a-z0-9_-]', '_', app_slug.lower())
+            credentials_path = SECRETS_DIR / f"sa_{safe_name}.env"
+            
+            if credentials_path.exists():
+                status_data["credentials_file"] = str(credentials_path)
+                status_data["credentials_status"] = "file_exists"
+            else:
+                status_data["credentials_status"] = "file_missing"
+        else:
+            status_data["credentials_status"] = "no_app"
+        
+        status_results.append(status_data)
+    
+    # Statistiques
+    active_count = sum(1 for s in status_results if s["is_active"])
+    file_exists_count = sum(1 for s in status_results if s["credentials_status"] == "file_exists")
+    
+    return {
+        "service_accounts": status_results,
+        "summary": {
+            "total": len(status_results),
+            "active": active_count,
+            "inactive": len(status_results) - active_count,
+            "with_credentials": file_exists_count,
+            "missing_credentials": len(status_results) - file_exists_count
+        },
+        "timestamp": datetime.utcnow().isoformat()
+    }
+
+
 @router.get("/{service_account_id}", response_model=ServiceAccountResponse)
 async def get_service_account(
     service_account_id: int,
@@ -282,6 +351,7 @@ async def regenerate_client_secret(
     
     ⚠️ L'ancien secret sera immédiatement invalidé !
     ⚠️ Le nouveau secret est retourné UNE SEULE FOIS.
+    ⚠️ Le fichier sa_*.env est automatiquement mis à jour.
     """
     result = await db.execute(
         select(ServiceAccount)
@@ -302,12 +372,27 @@ async def regenerate_client_secret(
     
     await db.commit()
     
+    # Mettre à jour le fichier de credentials si l'application principale existe
+    secrets_file = None
+    if sa.applications:
+        # Utiliser le slug de la première application comme nom de fichier
+        app_slug = sa.applications[0].slug
+        app_slugs = [app.slug for app in sa.applications]
+        secrets_file = save_service_account_credentials(
+            name=app_slug,
+            client_id=sa.client_id,
+            client_secret=new_secret,
+            app_slugs=app_slugs
+        )
+        logger.info(f"🔄 Secret régénéré pour SA '{sa.name}', fichier mis à jour: {secrets_file}")
+    
     return ServiceAccountCreated(
         id=sa.id,
         name=sa.name,
         description=sa.description,
         client_id=sa.client_id,
         client_secret=new_secret,  # ⚠️ Affiché une seule fois!
+        secrets_file=secrets_file,  # 📁 Fichier mis à jour
         is_active=sa.is_active,
         created_at=sa.created_at,
         last_used_at=sa.last_used_at,

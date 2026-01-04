@@ -175,6 +175,16 @@ class HubAPI {
         return this.request('/auth/me');
     }
 
+    async changePassword(currentPassword, newPassword) {
+        return this.request('/auth/change-password', {
+            method: 'PUT',
+            body: JSON.stringify({
+                current_password: currentPassword,
+                new_password: newPassword
+            })
+        });
+    }
+
     async logout() {
         // Sauvegarder les tokens avant de les effacer
         const accessToken = this.token;
@@ -264,6 +274,12 @@ class HubAPI {
     async deleteUser(id) {
         return this.request(`/users/${id}`, {
             method: 'DELETE'
+        });
+    }
+
+    async revokeUserSessions(userId) {
+        return this.request(`/users/${userId}/revoke-sessions`, {
+            method: 'POST'
         });
     }
 
@@ -417,17 +433,30 @@ class HubAPI {
     }
 
     // Auto-register d'une application (crée app + service account automatiquement)
-    async autoRegisterApp(slug, name, apiPort, frontendPort = null, isShared = false) {
+    async autoRegisterApp(slug, name, apiPort, frontendPort = null, isShared = false, description = null) {
         return this.request('/apps/auto-register', {
             method: 'POST',
             body: JSON.stringify({
                 slug: slug,
                 name: name,
+                description: description,
                 api_port: apiPort,
                 frontend_port: frontendPort,
                 is_shared: isShared
             })
         });
+    }
+
+    // ===== Status Monitoring =====
+    
+    // Vérifie le statut de toutes les applications (connectivité)
+    async getAppsStatus() {
+        return this.request('/apps/status');
+    }
+
+    // Vérifie le statut de tous les Service Accounts
+    async getServiceAccountsStatus() {
+        return this.request('/service-accounts/status');
     }
 }
 

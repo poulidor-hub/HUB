@@ -28,6 +28,94 @@ settings = get_settings()
 logger = logging.getLogger(__name__)
 
 
+# ===== Fonctions Helper pour Services Partagés M2M =====
+
+async def add_shared_service_to_all_service_accounts(db: AsyncSession, app: Application) -> int:
+    """
+    Ajoute une application partagée (is_shared_service=True) aux permissions de tous les Service Accounts existants.
+    
+    Appelé automatiquement quand :
+    - Une app est créée/enregistrée avec is_shared=True
+    - Une app existante est mise à jour pour devenir is_shared=True
+    
+    Args:
+        db: Session de base de données
+        app: Application à ajouter (doit avoir is_shared_service=True)
+        
+    Returns:
+        Nombre de Service Accounts mis à jour
+    """
+    if not app.is_shared_service:
+        return 0
+    
+    # Récupérer tous les Service Accounts avec leurs applications
+    result = await db.execute(
+        select(ServiceAccount)
+        .options(selectinload(ServiceAccount.applications))
+    )
+    service_accounts = result.scalars().all()
+    
+    updated_count = 0
+    for sa in service_accounts:
+        # Vérifier si l'app n'est pas déjà dans les permissions du SA
+        if app not in sa.applications:
+            sa.applications.append(app)
+            updated_count += 1
+            logger.info(f"🔗 Service partagé '{app.slug}' ajouté aux permissions de SA '{sa.name}'")
+    
+    if updated_count > 0:
+        logger.info(f"✅ Service partagé '{app.slug}' ajouté à {updated_count} Service Account(s)")
+    
+    return updated_count
+
+
+async def remove_shared_service_from_all_service_accounts(db: AsyncSession, app: Application) -> int:
+    """
+    Retire une application des permissions de tous les Service Accounts (sauf son SA propriétaire).
+    
+    Appelé automatiquement quand :
+    - Une app is_shared=True passe à is_shared=False
+    
+    Args:
+        db: Session de base de données
+        app: Application à retirer
+        
+    Returns:
+        Nombre de Service Accounts mis à jour
+    """
+    # Récupérer tous les Service Accounts avec leurs applications
+    result = await db.execute(
+        select(ServiceAccount)
+        .options(selectinload(ServiceAccount.applications))
+    )
+    service_accounts = result.scalars().all()
+    
+    updated_count = 0
+    for sa in service_accounts:
+        # Ne pas retirer l'app de son SA propriétaire (celui qui a le même slug dans le nom)
+        sa_name_lower = sa.name.lower()
+        is_owner_sa = (
+            app.slug in sa_name_lower or 
+            app.name.lower() in sa_name_lower or
+            sa.name == f"SA - {app.name}"
+        )
+        
+        if is_owner_sa:
+            # C'est le SA propriétaire de cette app, on ne retire pas
+            continue
+        
+        # Retirer l'app des permissions du SA si elle y est
+        if app in sa.applications:
+            sa.applications.remove(app)
+            updated_count += 1
+            logger.info(f"🔓 Service partagé '{app.slug}' retiré des permissions de SA '{sa.name}'")
+    
+    if updated_count > 0:
+        logger.info(f"✅ Service partagé '{app.slug}' retiré de {updated_count} Service Account(s)")
+    
+    return updated_count
+
+
 # ===== IP Whitelist pour auto-enregistrement =====
 # Réseaux Docker autorisés pour l'auto-enregistrement (sans authentification)
 DOCKER_NETWORK_PREFIXES = [
@@ -209,6 +297,97 @@ async def discover_shared_services(
         shared_services=shared_services,
         total_shared=len(shared_services)
     )
+
+
+@router.get("/status")
+async def get_apps_status(
+    db: AsyncSession = Depends(get_db),
+    _admin: User = Depends(get_current_admin)
+):
+    """
+    🔍 Vérifie le statut de connectivité de toutes les applications (admin uniquement).
+    
+    Retourne pour chaque application :
+    - `status`: 'online', 'offline', 'error'
+    - `response_time_ms`: temps de réponse en millisecondes
+    - `last_check`: timestamp de la vérification
+    """
+    import httpx
+    import asyncio
+    from datetime import datetime
+    
+    result = await db.execute(select(Application))
+    apps = result.scalars().all()
+    
+    async def check_app(app: Application) -> dict:
+        """Vérifie la connectivité d'une application"""
+        status_data = {
+            "id": app.id,
+            "slug": app.slug,
+            "name": app.name,
+            "api_url": app.api_url,
+            "frontend_url": app.frontend_url,
+            "is_active": app.is_active,
+            "status": "offline",
+            "response_time_ms": None,
+            "error": None,
+            "last_check": datetime.utcnow().isoformat()
+        }
+        
+        if not app.api_url:
+            status_data["error"] = "Pas d'URL API configurée"
+            return status_data
+        
+        try:
+            start = asyncio.get_event_loop().time()
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                # Essayer d'abord /health, puis / en fallback
+                for endpoint in ["/health", "/api/health", "/"]:
+                    try:
+                        url = app.api_url.rstrip('/') + endpoint
+                        response = await client.get(url)
+                        elapsed = (asyncio.get_event_loop().time() - start) * 1000
+                        
+                        if response.status_code < 500:
+                            status_data["status"] = "online"
+                            status_data["response_time_ms"] = round(elapsed, 2)
+                            return status_data
+                    except Exception:
+                        continue
+                
+                # Aucun endpoint n'a répondu correctement
+                status_data["status"] = "offline"
+                status_data["error"] = "Aucun endpoint accessible"
+        except httpx.TimeoutException:
+            status_data["status"] = "offline"
+            status_data["error"] = "Timeout (5s)"
+        except httpx.ConnectError as e:
+            status_data["status"] = "offline"
+            status_data["error"] = f"Connexion refusée"
+        except Exception as e:
+            status_data["status"] = "error"
+            status_data["error"] = str(e)[:100]
+        
+        return status_data
+    
+    # Vérifier toutes les apps en parallèle
+    status_results = await asyncio.gather(*[check_app(app) for app in apps])
+    
+    # Statistiques globales
+    online_count = sum(1 for s in status_results if s["status"] == "online")
+    offline_count = sum(1 for s in status_results if s["status"] == "offline")
+    error_count = sum(1 for s in status_results if s["status"] == "error")
+    
+    return {
+        "apps": status_results,
+        "summary": {
+            "total": len(status_results),
+            "online": online_count,
+            "offline": offline_count,
+            "error": error_count
+        },
+        "timestamp": datetime.utcnow().isoformat()
+    }
 
 
 @router.get("/", response_model=List[AppResponseWithMyRole])
@@ -536,6 +715,12 @@ async def create_app(
     await db.commit()
     await db.refresh(app)
     
+    # Si l'app est un service partagé, l'ajouter à tous les SA existants
+    shared_added_count = 0
+    if app_data.is_shared_service:
+        shared_added_count = await add_shared_service_to_all_service_accounts(db, app)
+        await db.commit()
+    
     # Notifier les clients SSE de la nouvelle application
     notify_event("apps_updated", {"action": "created", "app_slug": app.slug, "app_name": app.name})
     notify_stats_update()
@@ -557,6 +742,13 @@ async def create_app(
             "created_at": app.created_at
         }
     }
+    
+    # Ajouter info sur le partage M2M si applicable
+    if app_data.is_shared_service and shared_added_count > 0:
+        response["shared_service_info"] = {
+            "message": f"🔗 Service partagé ajouté aux permissions de {shared_added_count} Service Account(s)",
+            "service_accounts_updated": shared_added_count
+        }
     
     if service_account_info:
         response["service_account"] = service_account_info
@@ -708,6 +900,14 @@ async def register_app(
     await db.commit()
     await db.refresh(app)
     
+    # Si l'app est un service partagé (is_shared=True), l'ajouter à tous les SA existants
+    shared_added_count = 0
+    if app_data.is_shared:
+        shared_added_count = await add_shared_service_to_all_service_accounts(db, app)
+        if shared_added_count > 0:
+            await db.commit()
+            logger.info(f"🔗 Service partagé '{app.slug}' ajouté à {shared_added_count} Service Account(s) existants")
+    
     # Notifier les clients SSE (auto-registration)
     action = "replaced" if replaced else "created"
     notify_event("apps_updated", {"action": action, "app_slug": app.slug, "app_name": app.name, "source": "auto-register"})
@@ -729,6 +929,10 @@ async def register_app(
     else:
         message = f"Application '{app_data.slug}' créée avec succès. Credentials M2M générés."
         logger.info(f"✅ Nouvelle application '{app_data.slug}' auto-enregistrée depuis {client_ip}")
+    
+    # Ajouter info sur le partage si applicable
+    if app_data.is_shared and shared_added_count > 0:
+        message += f" Service partagé ajouté à {shared_added_count} SA existant(s)."
     
     return AppRegisterResponse(
         message=message,
@@ -758,6 +962,11 @@ async def admin_auto_register_app(
     
     L'admin fournit juste le slug et les ports, le Hub génère le reste.
     Les credentials sont sauvegardés dans `secrets/service_accounts/`.
+    
+    **Si l'application existe déjà** :
+    - Met à jour le statut `is_shared_service` si différent
+    - Met à jour les URLs si les ports ont changé
+    - Retourne les infos existantes (sans régénérer les credentials)
     """
     logger.info(f"📝 Auto-enregistrement admin pour '{app_data.slug}'")
     
@@ -770,16 +979,88 @@ async def admin_auto_register_app(
     existing_app = result.scalar_one_or_none()
     
     if existing_app:
-        # Application existante - retourner les infos sans le secret
-        logger.info(f"⚠️ Application '{app_data.slug}' déjà enregistrée")
+        # Application existante - mettre à jour si nécessaire
+        logger.info(f"⚠️ Application '{app_data.slug}' déjà enregistrée, vérification des mises à jour...")
+        
+        updated_fields = []
+        host = settings.get_hub_host()
+        shared_changed = False
+        old_shared_value = existing_app.is_shared_service
+        
+        # Mettre à jour is_shared_service si différent
+        if existing_app.is_shared_service != app_data.is_shared:
+            existing_app.is_shared_service = app_data.is_shared
+            updated_fields.append(f"is_shared: {old_shared_value} → {app_data.is_shared}")
+            shared_changed = True
+            logger.info(f"🔄 Mise à jour is_shared_service: {old_shared_value} → {app_data.is_shared}")
+        
+        # Mettre à jour les URLs si les ports ont changé
+        new_api_url = f"http://{host}:{app_data.api_port}"
+        if existing_app.api_url != new_api_url:
+            old_value = existing_app.api_url
+            existing_app.api_url = new_api_url
+            updated_fields.append(f"api_url: {old_value} → {new_api_url}")
+        
+        if app_data.frontend_port:
+            new_frontend_url = f"http://{host}:{app_data.frontend_port}"
+            if existing_app.frontend_url != new_frontend_url:
+                old_value = existing_app.frontend_url
+                existing_app.frontend_url = new_frontend_url
+                existing_app.callback_url = f"{new_frontend_url}/callback"
+                updated_fields.append(f"frontend_url: {old_value} → {new_frontend_url}")
+        
+        # Mettre à jour le nom si fourni et différent
+        if app_data.name and existing_app.name != app_data.name:
+            old_value = existing_app.name
+            existing_app.name = app_data.name
+            updated_fields.append(f"name: {old_value} → {app_data.name}")
+        
+        # Mettre à jour la description si fournie et différente
+        if app_data.description and existing_app.description != app_data.description:
+            existing_app.description = app_data.description
+            updated_fields.append("description mise à jour")
+        
+        # Commit les changements si nécessaire
+        if updated_fields:
+            await db.commit()
+            await db.refresh(existing_app)
+            
+            # Gérer les permissions M2M si is_shared a changé
+            if shared_changed:
+                if app_data.is_shared:
+                    # Passé à True → Ajouter aux permissions de tous les SA
+                    sa_count = await add_shared_service_to_all_service_accounts(db, existing_app)
+                    if sa_count > 0:
+                        await db.commit()
+                        updated_fields.append(f"ajouté à {sa_count} SA")
+                else:
+                    # Passé à False → Retirer des permissions des SA (sauf propriétaire)
+                    sa_count = await remove_shared_service_from_all_service_accounts(db, existing_app)
+                    if sa_count > 0:
+                        await db.commit()
+                        updated_fields.append(f"retiré de {sa_count} SA")
+            
+            # Notifier les clients SSE de la mise à jour
+            notify_event("apps_updated", {
+                "action": "updated", 
+                "app_slug": existing_app.slug, 
+                "app_name": existing_app.name, 
+                "source": "auto-register",
+                "updates": updated_fields
+            })
+            
+            message = f"Application '{app_data.slug}' mise à jour: {', '.join(updated_fields)}"
+            logger.info(f"✅ {message}")
+        else:
+            message = f"Application '{app_data.slug}' existe déjà (aucune modification nécessaire)."
         
         # Trouver le service account associé
         sa = next((sa for sa in existing_app.service_accounts), None)
         
         return AppRegisterResponse(
-            message=f"Application '{app_data.slug}' existe déjà.",
+            message=message,
             application=AppResponse.model_validate(existing_app),
-            credentials={"client_id": sa.client_id} if sa else None,
+            credentials={"client_id": sa.client_id, "is_shared": existing_app.is_shared_service} if sa else None,
             is_new=False
         )
     
@@ -838,6 +1119,14 @@ async def admin_auto_register_app(
     await db.commit()
     await db.refresh(app)
     
+    # Si l'app est un service partagé, l'ajouter à tous les SA existants
+    shared_added_count = 0
+    if app_data.is_shared:
+        shared_added_count = await add_shared_service_to_all_service_accounts(db, app)
+        if shared_added_count > 0:
+            await db.commit()
+            logger.info(f"🔗 Service partagé '{app.slug}' ajouté à {shared_added_count} Service Account(s) existants")
+    
     # Notifier les clients SSE (admin auto-register)
     notify_event("apps_updated", {"action": "created", "app_slug": app.slug, "app_name": app.name, "source": "admin-register"})
     notify_stats_update()
@@ -853,8 +1142,13 @@ async def admin_auto_register_app(
     
     logger.info(f"✅ Application '{app_data.slug}' pré-enregistrée par admin, credentials sauvés dans {secrets_file}")
     
+    # Message avec info sur le partage M2M si applicable
+    message = f"Application '{app_data.slug}' créée avec succès. Credentials M2M générés et sauvegardés."
+    if app_data.is_shared and shared_added_count > 0:
+        message += f" Service partagé ajouté à {shared_added_count} SA existant(s)."
+    
     return AppRegisterResponse(
-        message=f"Application '{app_data.slug}' créée avec succès. Credentials M2M générés et sauvegardés.",
+        message=message,
         application=AppResponse.model_validate(app),
         credentials={
             "client_id": client_id,
@@ -1182,11 +1476,31 @@ async def update_app(
     
     update_data = app_data.model_dump(exclude_unset=True)
     
+    # Vérifier si is_shared_service change
+    old_shared = app.is_shared_service
+    new_shared = update_data.get("is_shared_service")
+    shared_changed = new_shared is not None and old_shared != new_shared
+    
     for field, value in update_data.items():
         setattr(app, field, value)
     
     await db.commit()
     await db.refresh(app)
+    
+    # Gérer les permissions M2M si is_shared_service a changé
+    sa_updated_count = 0
+    if shared_changed:
+        if new_shared:
+            # Passé à True → Ajouter aux permissions de tous les SA
+            sa_updated_count = await add_shared_service_to_all_service_accounts(db, app)
+            logger.info(f"🔗 Service partagé '{app.slug}' activé - ajouté à {sa_updated_count} SA")
+        else:
+            # Passé à False → Retirer des permissions des SA (sauf propriétaire)
+            sa_updated_count = await remove_shared_service_from_all_service_accounts(db, app)
+            logger.info(f"🔓 Service partagé '{app.slug}' désactivé - retiré de {sa_updated_count} SA")
+        
+        if sa_updated_count > 0:
+            await db.commit()
     
     # Notifier les clients SSE de la modification
     notify_event("apps_updated", {"action": "updated", "app_slug": app.slug, "app_name": app.name})
@@ -1410,7 +1724,11 @@ async def scan_docker_containers(
                 suggested_slug=suggested_slug,
                 suggested_name=container.suggested_name,
                 labels=container.labels,
-                is_registered=getattr(container, 'is_registered', False)
+                is_registered=getattr(container, 'is_registered', False),
+                # Labels Hub spécifiques pour pré-remplir le formulaire
+                hub_name=container.hub_name,
+                hub_description=container.hub_description,
+                hub_shared=container.hub_shared
             ))
         
         logger.info(f"Scan Docker: {len(discovered)} conteneurs découverts par {current_user.username} (show_all={show_all})")
@@ -1484,10 +1802,12 @@ async def set_app_shared(
     """
     Marque une application comme service partagé (admin uniquement).
     
-    Si is_shared=True, cette application sera automatiquement accessible
-    par tous les nouveaux service accounts créés.
+    Si is_shared=True :
+    - Cette application sera automatiquement accessible par tous les nouveaux service accounts créés
+    - L'application est ajoutée aux permissions de tous les service accounts EXISTANTS
     
-    ⚠️ Les service accounts existants ne sont pas modifiés.
+    Si is_shared=False :
+    - L'application est retirée des permissions de tous les service accounts (sauf son SA propriétaire)
     """
     result = await db.execute(
         select(Application).where(Application.id == app_id)
@@ -1500,17 +1820,43 @@ async def set_app_shared(
             detail="Application non trouvée"
         )
     
+    # Vérifier si le statut change vraiment
+    old_shared = app.is_shared_service
+    if old_shared == is_shared:
+        return {
+            "message": f"Application '{app.slug}' déjà en mode is_shared_service={is_shared}",
+            "app_id": app.id,
+            "slug": app.slug,
+            "is_shared_service": is_shared,
+            "service_accounts_updated": 0
+        }
+    
     app.is_shared_service = is_shared
     db.add(app)
     await db.commit()
+    await db.refresh(app)
     
-    logger.info(f"🔧 Application '{app.slug}' is_shared_service={is_shared} par {current_user.username}")
+    # Gérer les permissions M2M automatiquement
+    sa_updated_count = 0
+    if is_shared:
+        # Passé à True → Ajouter aux permissions de tous les SA
+        sa_updated_count = await add_shared_service_to_all_service_accounts(db, app)
+    else:
+        # Passé à False → Retirer des permissions des SA (sauf propriétaire)
+        sa_updated_count = await remove_shared_service_from_all_service_accounts(db, app)
+    
+    if sa_updated_count > 0:
+        await db.commit()
+    
+    action = "ajoutée à" if is_shared else "retirée de"
+    logger.info(f"🔧 Application '{app.slug}' is_shared_service={is_shared} par {current_user.username} - {action} {sa_updated_count} SA")
     
     return {
-        "message": f"Application '{app.slug}' mise à jour",
+        "message": f"Application '{app.slug}' mise à jour - {action} {sa_updated_count} Service Account(s)",
         "app_id": app.id,
         "slug": app.slug,
-        "is_shared_service": is_shared
+        "is_shared_service": is_shared,
+        "service_accounts_updated": sa_updated_count
     }
 
 

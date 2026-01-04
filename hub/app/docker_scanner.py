@@ -55,6 +55,10 @@ class DiscoveredContainer:
     suggested_slug: str
     suggested_name: str
     labels: Dict[str, str]
+    # Labels Hub spécifiques (extraits des labels Docker hub.*)
+    hub_name: Optional[str] = None           # hub.name - Nom personnalisé
+    hub_description: Optional[str] = None    # hub.description - Description
+    hub_shared: bool = False                  # hub.shared - Service partagé M2M
 
 
 def generate_slug(name: str) -> str:
@@ -195,15 +199,43 @@ class DockerScanner:
                     # Image orpheline ou supprimée
                     image_name = container.attrs.get('Config', {}).get('Image', 'unknown')
                 
+                # Extraire les variables d'environnement APP_* du conteneur
+                env_vars = {}
+                try:
+                    env_list = container.attrs.get('Config', {}).get('Env', [])
+                    for env in env_list:
+                        if '=' in env and env.startswith('APP_'):
+                            key, value = env.split('=', 1)
+                            env_vars[key] = value
+                except Exception as e:
+                    logger.debug(f"Impossible de lire les variables d'env de {name}: {e}")
+                
+                # Extraire les labels hub.* spécifiques
+                hub_name = labels.get("hub.name")
+                hub_description = labels.get("hub.description")
+                hub_shared_str = labels.get("hub.shared", "").lower()
+                hub_shared = hub_shared_str in ("true", "1", "yes", "on")
+                
+                # Priorité: labels hub.* > variables APP_* > valeurs générées
+                # Pour le nom
+                final_suggested_name = hub_name or env_vars.get('APP_NAME') or format_container_name(name)
+                # Pour la description
+                final_description = hub_description or env_vars.get('APP_DESCRIPTION')
+                # Pour le slug
+                final_suggested_slug = env_vars.get('APP_SLUG') or generate_slug(name)
+                
                 discovered.append(DiscoveredContainer(
                     container_id=container.short_id,
                     name=name,
                     image=image_name,
                     status=container.status,
                     ports=ports,
-                    suggested_slug=generate_slug(name),
-                    suggested_name=format_container_name(name),
-                    labels={k: v for k, v in labels.items() if not k.startswith("com.")}
+                    suggested_slug=final_suggested_slug,
+                    suggested_name=final_suggested_name,
+                    labels={k: v for k, v in labels.items() if not k.startswith("com.")},
+                    hub_name=hub_name,
+                    hub_description=final_description,
+                    hub_shared=hub_shared
                 ))
                 
         except Exception as e:
