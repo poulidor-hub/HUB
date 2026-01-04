@@ -13,6 +13,175 @@ const openedAppWindows = new Map();
 // Bootstrap instances
 let adminModal, appFormModal, userFormModal, serviceAccountFormModal, saCredentialsModal, toast;
 
+// ===== Server-Sent Events (SSE) pour mises à jour temps réel =====
+let eventSource = null;
+
+/**
+ * Initialise la connexion SSE pour recevoir les mises à jour en temps réel
+ */
+function initEventSource() {
+    // Fermer toute connexion existante
+    if (eventSource) {
+        eventSource.close();
+        eventSource = null;
+    }
+    
+    // Ne pas connecter si pas authentifié
+    if (!api.token) {
+        return;
+    }
+    
+    try {
+        eventSource = new EventSource('/api/events/stream');
+        
+        eventSource.onopen = () => {
+            console.log('🔌 SSE connecté - mises à jour temps réel actives');
+        };
+        
+        eventSource.onmessage = (event) => {
+            try {
+                const data = JSON.parse(event.data);
+                handleSSEEvent(data);
+            } catch (e) {
+                console.warn('SSE: erreur parsing message', e);
+            }
+        };
+        
+        eventSource.onerror = (error) => {
+            console.warn('SSE: erreur de connexion, reconnexion dans 5s...', error);
+            eventSource.close();
+            // Reconnexion automatique après 5 secondes
+            setTimeout(() => {
+                if (api.token && currentUser) {
+                    initEventSource();
+                }
+            }, 5000);
+        };
+    } catch (e) {
+        console.warn('SSE: impossible de créer la connexion', e);
+    }
+}
+
+/**
+ * Ferme la connexion SSE
+ */
+function closeEventSource() {
+    if (eventSource) {
+        eventSource.close();
+        eventSource = null;
+        console.log('🔌 SSE déconnecté');
+    }
+}
+
+/**
+ * Gère les événements SSE reçus
+ */
+function handleSSEEvent(data) {
+    if (data.type === 'ping' || data.type === 'connected') {
+        // Keep-alive ou connexion initiale, ignorer
+        return;
+    }
+    
+    console.log('📡 SSE event:', data.type, data.data);
+    
+    switch (data.type) {
+        case 'apps_updated':
+            // Rafraîchir la liste des applications
+            loadApps();
+            // Notification discrète
+            const appAction = data.data?.action === 'created' ? 'ajoutée' : 
+                             data.data?.action === 'deleted' ? 'supprimée' : 'modifiée';
+            const appName = data.data?.app_name || 'Application';
+            showToast('Mise à jour', `${appName} ${appAction}`, 'info');
+            break;
+            
+        case 'users_updated':
+            // Rafraîchir la liste des utilisateurs si on est sur cette page
+            if (currentPage === 'users') {
+                loadUsers();
+            }
+            break;
+            
+        case 'service_accounts_updated':
+            // Rafraîchir la liste des service accounts si on est sur cette page
+            if (currentPage === 'service-accounts') {
+                loadServiceAccounts();
+            }
+            break;
+            
+        case 'stats_updated':
+            // Mettre à jour les statistiques affichées en temps réel
+            updateStatsDisplay(data.data);
+            break;
+            
+        case 'audit_updated':
+            // Rafraîchir les données d'audit si on est sur cette page
+            if (currentPage === 'audit') {
+                // Rafraîchir les données d'audit sans toast (pour éviter le spam)
+                loadAuditPageOverview();
+            }
+            // Mettre à jour aussi les stats si disponibles
+            if (data.data?.stats) {
+                updateStatsDisplay(data.data.stats);
+            }
+            break;
+    }
+}
+
+/**
+ * Met à jour l'affichage des statistiques en temps réel (sans recharger depuis l'API)
+ */
+function updateStatsDisplay(stats) {
+    // Mettre à jour les compteurs si les éléments existent sur la page
+    const statsElements = {
+        'stat-total-apps': stats.total_apps,
+        'stat-active-apps': stats.active_apps,
+        'stat-total-users': stats.total_users,
+        'stat-total-sa': stats.total_service_accounts,
+        'stat-active-sessions': stats.active_sessions,
+        'stat-sse-clients': stats.connected_sse_clients
+    };
+    
+    for (const [elementId, value] of Object.entries(statsElements)) {
+        const element = document.getElementById(elementId);
+        if (element && value !== undefined) {
+            // Animation de mise à jour
+            element.classList.add('stats-updating');
+            element.textContent = value;
+            setTimeout(() => element.classList.remove('stats-updating'), 300);
+        }
+    }
+    
+    // Mettre à jour aussi les cartes de stats du dashboard si présentes
+    updateDashboardStats(stats);
+}
+
+/**
+ * Met à jour les cartes de statistiques du dashboard
+ */
+function updateDashboardStats(stats) {
+    // Stats des applications sur le dashboard
+    const appsCountEl = document.querySelector('[data-stat="apps-count"]');
+    if (appsCountEl) {
+        appsCountEl.textContent = stats.total_apps || 0;
+    }
+    
+    const activeAppsEl = document.querySelector('[data-stat="active-apps"]');
+    if (activeAppsEl) {
+        activeAppsEl.textContent = stats.active_apps || 0;
+    }
+    
+    const usersCountEl = document.querySelector('[data-stat="users-count"]');
+    if (usersCountEl) {
+        usersCountEl.textContent = stats.total_users || 0;
+    }
+    
+    const sessionsEl = document.querySelector('[data-stat="active-sessions"]');
+    if (sessionsEl) {
+        sessionsEl.textContent = stats.active_sessions || 0;
+    }
+}
+
 /**
  * Gestion du callback SSO - persisté en sessionStorage pour survivre aux reloads
  */
@@ -189,6 +358,9 @@ function showDashboard() {
         document.getElementById('adminNavigation').classList.remove('d-none');
     }
 
+    // Initialiser les mises à jour temps réel via SSE
+    initEventSource();
+
     loadApps();
 }
 
@@ -236,6 +408,9 @@ function showPage(page) {
 
 async function logout() {
     try {
+        // Fermer la connexion SSE
+        closeEventSource();
+        
         // Fermer tous les onglets d'applications ouverts AVANT la déconnexion
         const closedCount = closeAllAppWindows();
         if (closedCount > 0) {

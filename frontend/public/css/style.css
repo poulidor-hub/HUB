@@ -444,3 +444,58 @@ body {
 .icon-picker-grid::-webkit-scrollbar-thumb:hover {
     background: #a8a8a8;
 }
+
+/* === SSE Stats Animation === */
+.stats-updating {
+    animation: stats-pulse 0.3s ease-out;
+}
+
+@keyframes stats-pulse {
+    0% {
+        transform: scale(1);
+        color: inherit;
+    }
+    50% {
+        transform: scale(1.15);
+        color: #0d6efd;
+    }
+    100% {
+        transform: scale(1);
+        color: inherit;
+    }
+}
+
+/* Badge de connexion SSE */
+.sse-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 0.75rem;
+    padding: 2px 8px;
+    border-radius: 12px;
+    background: #e8f5e9;
+    color: #2e7d32;
+}
+
+.sse-status.disconnected {
+    background: #ffebee;
+    color: #c62828;
+}
+
+.sse-status::before {
+    content: '';
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: currentColor;
+    animation: sse-blink 2s infinite;
+}
+
+.sse-status.disconnected::before {
+    animation: none;
+}
+
+@keyframes sse-blink {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
+}

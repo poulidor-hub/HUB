@@ -11,6 +11,7 @@ import re
 import logging
 
 from app.database import get_db
+from app.routes.events import notify_event, notify_stats_update
 from app.models import ServiceAccount, Application
 from app.schemas import (
     ServiceAccountCreate,
@@ -187,6 +188,10 @@ async def create_service_account(
     )
     sa = result.scalar_one()
     
+    # Notifier les clients SSE du nouveau service account
+    notify_event("service_accounts_updated", {"action": "created", "sa_id": sa.id, "sa_name": sa.name})
+    notify_stats_update()
+    
     # Retourner avec le secret en clair (une seule fois!)
     return ServiceAccountCreated(
         id=sa.id,
@@ -233,6 +238,9 @@ async def update_service_account(
     await db.commit()
     await db.refresh(sa)
     
+    # Notifier les clients SSE de la modification
+    notify_event("service_accounts_updated", {"action": "updated", "sa_id": sa.id, "sa_name": sa.name})
+    
     return sa
 
 
@@ -254,8 +262,13 @@ async def delete_service_account(
             detail="Service account non trouvé"
         )
     
+    sa_name = sa.name  # Sauvegarder avant suppression
     await db.delete(sa)
     await db.commit()
+    
+    # Notifier les clients SSE de la suppression
+    notify_event("service_accounts_updated", {"action": "deleted", "sa_id": service_account_id, "sa_name": sa_name})
+    notify_stats_update()
 
 
 @router.post("/{service_account_id}/regenerate-secret", response_model=ServiceAccountCreated)

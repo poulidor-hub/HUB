@@ -8,6 +8,8 @@ import re
 from pathlib import Path
 import logging
 
+from app.routes.events import notify_event, notify_stats_update
+
 from app.database import get_db
 from app.models import Application, User, ServiceAccount, UserAppRole
 from app.schemas import (
@@ -533,6 +535,10 @@ async def create_app(
     await db.commit()
     await db.refresh(app)
     
+    # Notifier les clients SSE de la nouvelle application
+    notify_event("apps_updated", {"action": "created", "app_slug": app.slug, "app_name": app.name})
+    notify_stats_update()
+    
     response = {
         "application": {
             "id": app.id,
@@ -700,6 +706,11 @@ async def register_app(
     await db.commit()
     await db.refresh(app)
     
+    # Notifier les clients SSE (auto-registration)
+    action = "replaced" if replaced else "created"
+    notify_event("apps_updated", {"action": action, "app_slug": app.slug, "app_name": app.name, "source": "auto-register"})
+    notify_stats_update()
+    
     # Sauvegarder les credentials dans le fichier (backup)
     all_app_slugs = [app_data.slug] + shared_slugs
     save_service_account_credentials(
@@ -823,6 +834,10 @@ async def admin_auto_register_app(
     
     await db.commit()
     await db.refresh(app)
+    
+    # Notifier les clients SSE (admin auto-register)
+    notify_event("apps_updated", {"action": "created", "app_slug": app.slug, "app_name": app.name, "source": "admin-register"})
+    notify_stats_update()
     
     # Sauvegarder les credentials dans le fichier
     all_app_slugs = [app_data.slug] + shared_slugs
@@ -1170,6 +1185,9 @@ async def update_app(
     await db.commit()
     await db.refresh(app)
     
+    # Notifier les clients SSE de la modification
+    notify_event("apps_updated", {"action": "updated", "app_slug": app.slug, "app_name": app.name})
+    
     return app
 
 
@@ -1225,6 +1243,10 @@ async def delete_app(
     )
     
     await db.commit()
+    
+    # Notifier les clients SSE de la suppression
+    notify_event("apps_updated", {"action": "deleted", "app_slug": app_slug, "app_name": app_name})
+    notify_stats_update()
     
     logger.info(f"Application supprimée: {app_name} (slug: {app_slug}) par {current_user.username}")
 

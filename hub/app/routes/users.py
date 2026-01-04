@@ -6,6 +6,7 @@ from typing import List
 from pydantic import BaseModel
 
 from app.database import get_db
+from app.routes.events import notify_event, notify_stats_update
 from app.models import User, Application, UserAppRole, AppRole, DEFAULT_ROLES
 from app.schemas import UserCreate, UserUpdate, UserResponse
 from app.auth import get_current_admin, get_password_hash
@@ -73,6 +74,10 @@ async def create_user(
     )
     user = result.scalar_one()
     
+    # Notifier les clients SSE du nouvel utilisateur
+    notify_event("users_updated", {"action": "created", "user_id": user.id, "username": user.username})
+    notify_stats_update()
+    
     return UserResponse.from_orm_model(user)
 
 
@@ -138,6 +143,9 @@ async def update_user(
     )
     user = result.scalar_one()
     
+    # Notifier les clients SSE de la modification
+    notify_event("users_updated", {"action": "updated", "user_id": user.id, "username": user.username})
+    
     return UserResponse.from_orm_model(user)
 
 
@@ -163,8 +171,13 @@ async def delete_user(
             detail="Utilisateur non trouvé"
         )
     
+    username = user.username  # Sauvegarder avant suppression
     await db.delete(user)
     await db.commit()
+    
+    # Notifier les clients SSE de la suppression
+    notify_event("users_updated", {"action": "deleted", "user_id": user_id, "username": username})
+    notify_stats_update()
 
 
 @router.post("/{user_id}/apps")

@@ -9,6 +9,7 @@ from typing import Optional
 from app.database import get_db
 from app.models import User, AuditLog, ServiceAccount, UserAppRole, UserSession
 from app.schemas import Token, LoginRequest, TokenIntrospection, RefreshTokenRequest, LogoutRequest
+from app.routes.events import notify_stats_update, notify_event
 from app.auth import (
     verify_password,
     create_access_token,
@@ -211,6 +212,10 @@ async def login_for_token(
     db.add(audit)
     await db.commit()
     
+    # Notifier SSE des stats mises à jour (nouvelle session)
+    notify_stats_update()
+    notify_event("audit_updated", {"action": "login", "username": user.username})
+    
     return Token(
         access_token=token,
         expires_at=expire,
@@ -375,6 +380,10 @@ async def logout(
     )
     db.add(audit)
     await db.commit()
+    
+    # Notifier SSE des stats mises à jour (session terminée)
+    notify_stats_update()
+    notify_event("audit_updated", {"action": "logout", "username": current_user.username})
     
     return {"message": "Déconnexion réussie"}
 

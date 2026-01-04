@@ -8,7 +8,7 @@ from app.database import init_db, async_session_maker
 from app.models import User
 from app.auth import get_password_hash, cleanup_expired_tokens
 from app.config import get_settings
-from app.routes import auth, users, apps, service_accounts, backup, audit, docs
+from app.routes import auth, users, apps, service_accounts, backup, audit, docs, events
 
 settings = get_settings()
 
@@ -139,6 +139,7 @@ app.include_router(service_accounts.router)
 app.include_router(backup.router)
 app.include_router(audit.router)
 app.include_router(docs.router)
+app.include_router(events.router)
 
 
 @app.get("/health")

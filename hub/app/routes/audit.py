@@ -20,6 +20,7 @@ from datetime import datetime, timedelta
 from typing import Optional, List
 import csv
 import io
+import time
 
 from app.database import get_db
 from app.models import User, UserSession, AuditLog, Application
@@ -27,6 +28,31 @@ from app.auth import get_current_user, get_settings
 
 router = APIRouter(prefix="/api/audit", tags=["Audit"])
 settings = get_settings()
+
+# Cooldown pour les notifications SSE d'audit (évite le spam lors de changements fréquents)
+_audit_last_notify = 0.0
+
+
+# Import différé pour éviter les imports circulaires
+def _notify_audit():
+    """
+    Notifie les clients SSE d'une mise à jour d'audit.
+    Utilise un cooldown configurable (AUDIT_SSE_COOLDOWN dans .env)
+    pour éviter les notifications trop fréquentes.
+    """
+    global _audit_last_notify
+    
+    current_time = time.time()
+    if current_time - _audit_last_notify < settings.audit_sse_cooldown:
+        return  # Cooldown actif, on skip la notification
+    
+    _audit_last_notify = current_time
+    
+    try:
+        from app.routes.events import notify_event
+        notify_event("audit_updated", {"action": "log_added"})
+    except ImportError:
+        pass  # Module events pas encore chargé
 
 
 # =============================================================================
@@ -40,7 +66,8 @@ async def log_action(
     target: str = None,
     ip_address: str = None,
     user_agent: str = None,
-    details: str = None
+    details: str = None,
+    notify_sse: bool = True
 ):
     """
     Enregistre une action dans les logs d'audit.
@@ -48,6 +75,7 @@ async def log_action(
     
     Args:
         user_id: ID de l'utilisateur (None pour actions système/auto-registration)
+        notify_sse: Si True, notifie les clients SSE de la nouvelle entrée
     """
     log_entry = AuditLog(
         user_id=user_id,
@@ -58,6 +86,11 @@ async def log_action(
         details=details
     )
     db.add(log_entry)
+    
+    # Notifier les clients SSE (sauf si désactivé pour éviter les doublons)
+    if notify_sse:
+        _notify_audit()
+    
     return log_entry
 
 
@@ -101,6 +134,9 @@ async def start_session(
     )
     db.add(new_session)
     
+    # Notifier les clients SSE
+    _notify_audit()
+    
     return new_session
 
 
@@ -125,6 +161,8 @@ async def end_session(
     if session:
         session.logout_at = datetime.utcnow()
         session.logout_reason = reason
+        # Notifier les clients SSE
+        _notify_audit()
     
     return session
 

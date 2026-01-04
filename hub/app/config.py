@@ -154,6 +154,10 @@ class Settings(BaseSettings):
     # 0 = désactivé, 300 = toutes les 5 minutes
     docker_sync_interval: int = 300
     
+    # Cooldown pour les notifications SSE d'audit (en secondes)
+    # Évite les rafraîchissements trop fréquents de la page audit
+    audit_sse_cooldown: float = 5.0
+    
     # Host du Hub (IP ou hostname accessible par les clients)
     # Si non défini, sera détecté automatiquement
     hub_host: str = ""
