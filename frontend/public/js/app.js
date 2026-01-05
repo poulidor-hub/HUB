@@ -5921,15 +5921,72 @@ async function handleCreateCert(event) {
 /**
  * Télécharge la CA
  */
-function downloadPkiCA(format) {
-    window.open(`/api/pki/ca/download?format=${format}`, '_blank');
+async function downloadPkiCA(format) {
+    try {
+        const response = await fetch(`/api/pki/ca/download?format=${format}`, {
+            headers: {
+                'Authorization': `Bearer ${localStorage.getItem('hub_token')}`
+            }
+        });
+        
+        if (!response.ok) {
+            throw new Error(`Erreur ${response.status}`);
+        }
+        
+        const blob = await response.blob();
+        const filename = format === 'pem' ? 'hub-ca.crt' : 'hub-ca.der';
+        
+        // Créer un lien de téléchargement
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        window.URL.revokeObjectURL(url);
+        a.remove();
+        
+        showToast('PKI', `CA téléchargée (${format.toUpperCase()})`, 'success');
+    } catch (error) {
+        console.error('Erreur téléchargement CA:', error);
+        showToast('Erreur', 'Impossible de télécharger la CA', 'danger');
+    }
 }
 
 /**
  * Télécharge un fichier de certificat
  */
-function downloadPkiCert(name, file) {
-    window.open(`/api/pki/certificates/${name}/download?file=${file}`, '_blank');
+async function downloadPkiCert(name, file) {
+    try {
+        const response = await fetch(`/api/pki/certificates/${name}/download?file=${file}`, {
+            headers: {
+                'Authorization': `Bearer ${localStorage.getItem('hub_token')}`
+            }
+        });
+        
+        if (!response.ok) {
+            throw new Error(`Erreur ${response.status}`);
+        }
+        
+        const blob = await response.blob();
+        const ext = file === 'cert' ? 'crt' : 'key';
+        const filename = `${name}.${ext}`;
+        
+        // Créer un lien de téléchargement
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        window.URL.revokeObjectURL(url);
+        a.remove();
+        
+        showToast('PKI', `${file === 'cert' ? 'Certificat' : 'Clé'} téléchargé(e)`, 'success');
+    } catch (error) {
+        console.error('Erreur téléchargement certificat:', error);
+        showToast('Erreur', 'Impossible de télécharger le fichier', 'danger');
+    }
 }
 
 /**
