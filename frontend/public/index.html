@@ -41,6 +41,11 @@
                             <i class="bi bi-people me-1"></i>Utilisateurs
                         </a>
                     </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="#" onclick="showPage('discovery')" id="navDiscovery">
+                            <i class="bi bi-diagram-3 me-1"></i>Discovery
+                        </a>
+                    </li>
                 </ul>
             </div>
             
@@ -486,6 +491,183 @@
                             <div id="pageErrorsTable" class="table-responsive" style="max-height: 500px; overflow-y: auto;"></div>
                         </div>
                     </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Section Discovery M2M (page dédiée) -->
+    <div id="discoverySection" class="container-fluid py-4 d-none" style="margin-top: 70px;">
+        <div class="container">
+            <!-- En-tête -->
+            <div class="d-flex justify-content-between align-items-center mb-4">
+                <div>
+                    <h1 class="h3 mb-1"><i class="bi bi-diagram-3 me-2"></i>Discovery M2M</h1>
+                    <p class="text-muted mb-0">Découverte et test des endpoints API via authentification Machine-to-Machine</p>
+                </div>
+                <button class="btn btn-outline-secondary btn-sm" onclick="loadDiscoveryPage()">
+                    <i class="bi bi-arrow-clockwise"></i> Actualiser
+                </button>
+            </div>
+            
+            <!-- Sélection du Service Account -->
+            <div class="row mb-4">
+                <div class="col-lg-6">
+                    <div class="card">
+                        <div class="card-header">
+                            <i class="bi bi-key me-2"></i>Authentification M2M
+                        </div>
+                        <div class="card-body">
+                            <div class="mb-3">
+                                <label class="form-label">Service Account</label>
+                                <select class="form-select" id="discoverySaSelect" onchange="onDiscoverySaChange()">
+                                    <option value="">-- Sélectionner un Service Account --</option>
+                                </select>
+                                <small class="text-muted">Sélectionnez un SA pour charger ses credentials</small>
+                            </div>
+                            <div class="row g-3">
+                                <div class="col-md-6">
+                                    <label class="form-label">Client ID</label>
+                                    <input type="text" class="form-control font-monospace" id="discoveryClientId" placeholder="sa_xxx" readonly>
+                                </div>
+                                <div class="col-md-6">
+                                    <label class="form-label">Client Secret</label>
+                                    <div class="input-group">
+                                        <input type="password" class="form-control font-monospace" id="discoveryClientSecret" placeholder="Secret...">
+                                        <button class="btn btn-outline-secondary" type="button" onclick="toggleDiscoverySecretVisibility()">
+                                            <i class="bi bi-eye" id="discoverySecretEyeIcon"></i>
+                                        </button>
+                                    </div>
+                                    <small class="text-muted">Entrez manuellement ou chargez depuis les secrets</small>
+                                </div>
+                            </div>
+                            <div class="mt-3">
+                                <button class="btn btn-primary" onclick="getM2MToken()" id="discoveryGetTokenBtn">
+                                    <i class="bi bi-shield-lock me-1"></i>Obtenir Token M2M
+                                </button>
+                                <span id="discoveryTokenStatus" class="ms-2"></span>
+                            </div>
+                            <!-- Token obtenu -->
+                            <div id="discoveryTokenInfo" class="d-none mt-3">
+                                <div class="alert alert-success mb-0">
+                                    <div class="d-flex justify-content-between align-items-center">
+                                        <div>
+                                            <i class="bi bi-check-circle me-1"></i>
+                                            <strong>Token M2M actif</strong>
+                                            <small class="ms-2 text-muted" id="discoveryTokenExpiry"></small>
+                                        </div>
+                                        <button class="btn btn-sm btn-outline-success" onclick="copyDiscoveryToken()">
+                                            <i class="bi bi-clipboard me-1"></i>Copier
+                                        </button>
+                                    </div>
+                                    <div class="mt-2">
+                                        <code class="small" id="discoveryTokenPreview" style="word-break: break-all;"></code>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Services partagés découverts -->
+                <div class="col-lg-6">
+                    <div class="card h-100">
+                        <div class="card-header d-flex justify-content-between align-items-center">
+                            <span><i class="bi bi-collection me-2"></i>Services Partagés</span>
+                            <span class="badge bg-primary" id="discoveryServicesCount">0</span>
+                        </div>
+                        <div class="card-body p-0" style="max-height: 300px; overflow-y: auto;">
+                            <div id="discoveryServicesList">
+                                <div class="text-center py-4 text-muted">
+                                    <i class="bi bi-arrow-left-circle display-4"></i>
+                                    <p class="mt-2">Obtenez un token M2M pour découvrir les services</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Test d'endpoint -->
+            <div class="card mb-4">
+                <div class="card-header">
+                    <i class="bi bi-terminal me-2"></i>Test d'Endpoint
+                </div>
+                <div class="card-body">
+                    <div class="row g-3 align-items-end">
+                        <div class="col-md-2">
+                            <label class="form-label">Méthode</label>
+                            <select class="form-select" id="discoveryMethod">
+                                <option value="GET" selected>GET</option>
+                                <option value="POST">POST</option>
+                                <option value="PUT">PUT</option>
+                                <option value="PATCH">PATCH</option>
+                                <option value="DELETE">DELETE</option>
+                            </select>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">URL de l'endpoint</label>
+                            <input type="text" class="form-control" id="discoveryUrl" placeholder="http://host:port/api/endpoint">
+                        </div>
+                        <div class="col-md-4">
+                            <button class="btn btn-success w-100" onclick="testDiscoveryEndpoint()" id="discoveryTestBtn">
+                                <i class="bi bi-play-fill me-1"></i>Exécuter
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <!-- Headers personnalisés -->
+                    <div class="mt-3">
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <label class="form-label mb-0">Headers personnalisés</label>
+                            <button class="btn btn-outline-secondary btn-sm" onclick="addDiscoveryHeader()">
+                                <i class="bi bi-plus"></i> Ajouter
+                            </button>
+                        </div>
+                        <div id="discoveryHeaders">
+                            <div class="row g-2 mb-2 discovery-header-row">
+                                <div class="col-5">
+                                    <input type="text" class="form-control form-control-sm" placeholder="Nom" value="Content-Type">
+                                </div>
+                                <div class="col-6">
+                                    <input type="text" class="form-control form-control-sm" placeholder="Valeur" value="application/json">
+                                </div>
+                                <div class="col-1">
+                                    <button class="btn btn-outline-danger btn-sm" onclick="removeDiscoveryHeader(this)">
+                                        <i class="bi bi-x"></i>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Body (pour POST/PUT/PATCH) -->
+                    <div class="mt-3" id="discoveryBodySection">
+                        <label class="form-label">Corps de la requête (JSON)</label>
+                        <textarea class="form-control font-monospace" id="discoveryBody" rows="4" placeholder='{"key": "value"}'></textarea>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Résultat -->
+            <div class="card" id="discoveryResultCard" style="display: none;">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <span>
+                        <i class="bi bi-code-slash me-2"></i>Résultat
+                        <span class="badge ms-2" id="discoveryResultStatus"></span>
+                        <small class="text-muted ms-2" id="discoveryResultTime"></small>
+                    </span>
+                    <div>
+                        <button class="btn btn-outline-secondary btn-sm" onclick="copyDiscoveryResult()">
+                            <i class="bi bi-clipboard me-1"></i>Copier
+                        </button>
+                        <button class="btn btn-outline-secondary btn-sm" onclick="clearDiscoveryResult()">
+                            <i class="bi bi-x-circle me-1"></i>Effacer
+                        </button>
+                    </div>
+                </div>
+                <div class="card-body p-0">
+                    <pre class="mb-0 p-3" id="discoveryResultBody" style="max-height: 400px; overflow: auto; background: #f8f9fa;"></pre>
                 </div>
             </div>
         </div>

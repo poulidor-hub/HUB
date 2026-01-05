@@ -593,6 +593,57 @@ class HubAPI {
         a.remove();
         window.URL.revokeObjectURL(downloadUrl);
     }
+
+    // ===== M2M / Discovery =====
+    
+    /**
+     * Obtient un token M2M via client_credentials grant
+     * @param {string} clientId - Le client_id du Service Account
+     * @param {string} clientSecret - Le client_secret du Service Account
+     * @returns {Promise<{access_token: string, token_type: string, expires_in: number}>}
+     */
+    async getM2MToken(clientId, clientSecret) {
+        const formData = new URLSearchParams();
+        formData.append('grant_type', 'client_credentials');
+        formData.append('client_id', clientId);
+        formData.append('client_secret', clientSecret);
+        
+        const response = await fetch(`${API_BASE}/auth/token`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded'
+            },
+            body: formData
+        });
+        
+        if (!response.ok) {
+            const error = await response.json().catch(() => ({ detail: 'Erreur d\'authentification M2M' }));
+            throw new Error(error.detail);
+        }
+        
+        return response.json();
+    }
+    
+    /**
+     * Découvre les services partagés via l'endpoint /api/apps/discover
+     * @param {string} m2mToken - Token M2M obtenu via getM2MToken
+     * @returns {Promise<{shared_services: Array, total_shared: number}>}
+     */
+    async discoverServices(m2mToken) {
+        const response = await fetch(`${API_BASE}/apps/discover`, {
+            headers: {
+                'Authorization': `Bearer ${m2mToken}`,
+                'Content-Type': 'application/json'
+            }
+        });
+        
+        if (!response.ok) {
+            const error = await response.json().catch(() => ({ detail: 'Erreur de découverte' }));
+            throw new Error(error.detail);
+        }
+        
+        return response.json();
+    }
 }
 
 const api = new HubAPI();

@@ -581,6 +581,7 @@ function showPage(page) {
     document.getElementById('dashboardSection').classList.add('d-none');
     document.getElementById('auditSection').classList.add('d-none');
     document.getElementById('usersSection').classList.add('d-none');
+    document.getElementById('discoverySection').classList.add('d-none');
     
     // Réinitialiser les styles de navigation
     document.querySelectorAll('#adminNavigation .nav-link').forEach(link => {
@@ -610,6 +611,15 @@ function showPage(page) {
             document.getElementById('usersSection').classList.remove('d-none');
             document.getElementById('navUsers')?.classList.add('active');
             loadUsersPageData();
+            break;
+        case 'discovery':
+            if (!currentUser?.is_admin) {
+                showToast('Accès refusé', 'Vous devez être administrateur', 'danger');
+                return;
+            }
+            document.getElementById('discoverySection').classList.remove('d-none');
+            document.getElementById('navDiscovery')?.classList.add('active');
+            loadDiscoveryPage();
             break;
     }
 }
@@ -657,6 +667,7 @@ function showLoginScreen() {
     document.getElementById('dashboardSection').classList.add('d-none');
     document.getElementById('auditSection').classList.add('d-none');
     document.getElementById('usersSection').classList.add('d-none');
+    document.getElementById('discoverySection').classList.add('d-none');
     document.getElementById('userInfo').classList.add('d-none');
     document.getElementById('logoutBtn').classList.add('d-none');
     document.getElementById('changePasswordBtn').classList.add('d-none');
@@ -4846,4 +4857,394 @@ async function exportErrors() {
     } catch (error) {
         showToast('Erreur', 'Impossible d\'exporter les erreurs', 'danger');
     }
+}
+
+
+// =============================================================================
+// DISCOVERY M2M - Test et exploration des endpoints
+// =============================================================================
+
+// État global Discovery
+let discoveryM2MToken = null;
+let discoveryM2MTokenExpiry = null;
+let discoveryServices = [];
+
+/**
+ * Charge la page Discovery - initialise les Service Accounts et l'état
+ */
+async function loadDiscoveryPage() {
+    try {
+        // Charger les Service Accounts pour le sélecteur
+        const sas = await api.getServiceAccounts();
+        const select = document.getElementById('discoverySaSelect');
+        
+        // Vider et repeupler
+        select.innerHTML = '<option value="">-- Sélectionner un Service Account --</option>';
+        sas.forEach(sa => {
+            const opt = document.createElement('option');
+            opt.value = sa.id;
+            opt.textContent = `${sa.name} (${sa.is_active ? 'Actif' : 'Inactif'})`;
+            opt.dataset.clientId = sa.client_id;
+            opt.dataset.name = sa.name;
+            select.appendChild(opt);
+        });
+        
+        // Pré-sélectionner "Mon application" si disponible
+        const monAppSa = sas.find(sa => sa.name.toLowerCase().includes('mon-app') || sa.name.toLowerCase().includes('mon application'));
+        if (monAppSa) {
+            select.value = monAppSa.id;
+            onDiscoverySaChange();
+        }
+        
+    } catch (error) {
+        console.error('Erreur chargement Discovery:', error);
+        showToast('Erreur', 'Impossible de charger les Service Accounts', 'danger');
+    }
+}
+
+/**
+ * Appelé quand on change le Service Account sélectionné
+ */
+function onDiscoverySaChange() {
+    const select = document.getElementById('discoverySaSelect');
+    const selected = select.options[select.selectedIndex];
+    
+    if (selected && selected.dataset.clientId) {
+        document.getElementById('discoveryClientId').value = selected.dataset.clientId;
+        document.getElementById('discoveryClientSecret').value = '';
+        
+        // Essayer de charger le secret depuis le fichier (via API)
+        loadDiscoverySecretForSa(selected.dataset.name);
+    } else {
+        document.getElementById('discoveryClientId').value = '';
+        document.getElementById('discoveryClientSecret').value = '';
+    }
+    
+    // Réinitialiser l'état du token
+    discoveryM2MToken = null;
+    discoveryM2MTokenExpiry = null;
+    document.getElementById('discoveryTokenInfo').classList.add('d-none');
+    document.getElementById('discoveryTokenStatus').innerHTML = '';
+}
+
+/**
+ * Tente de charger le secret depuis les fichiers secrets (si disponible)
+ */
+async function loadDiscoverySecretForSa(saName) {
+    // Le secret n'est pas stocké en base - il faut le saisir manuellement
+    // ou le lire depuis les fichiers secrets (non accessible depuis le frontend)
+    // On peut afficher une aide pour l'utilisateur
+    
+    const slug = saName.toLowerCase()
+        .replace(/[àâä]/g, 'a')
+        .replace(/[éèêë]/g, 'e')
+        .replace(/[îï]/g, 'i')
+        .replace(/[ôö]/g, 'o')
+        .replace(/[ùûü]/g, 'u')
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '');
+    
+    document.getElementById('discoveryClientSecret').placeholder = `Entrez le secret ou consultez secrets/service_accounts/sa_${slug}.env`;
+}
+
+/**
+ * Toggle visibility du champ secret
+ */
+function toggleDiscoverySecretVisibility() {
+    const input = document.getElementById('discoveryClientSecret');
+    const icon = document.getElementById('discoverySecretEyeIcon');
+    
+    if (input.type === 'password') {
+        input.type = 'text';
+        icon.classList.remove('bi-eye');
+        icon.classList.add('bi-eye-slash');
+    } else {
+        input.type = 'password';
+        icon.classList.remove('bi-eye-slash');
+        icon.classList.add('bi-eye');
+    }
+}
+
+/**
+ * Obtient un token M2M avec les credentials fournis
+ */
+async function getM2MToken() {
+    const clientId = document.getElementById('discoveryClientId').value.trim();
+    const clientSecret = document.getElementById('discoveryClientSecret').value.trim();
+    
+    if (!clientId || !clientSecret) {
+        showToast('Erreur', 'Client ID et Client Secret requis', 'warning');
+        return;
+    }
+    
+    const btn = document.getElementById('discoveryGetTokenBtn');
+    const statusSpan = document.getElementById('discoveryTokenStatus');
+    
+    btn.disabled = true;
+    statusSpan.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Authentification...';
+    
+    try {
+        const result = await api.getM2MToken(clientId, clientSecret);
+        
+        discoveryM2MToken = result.access_token;
+        // Calculer l'expiration (par défaut 1h si non spécifié)
+        const expiresIn = result.expires_in || 3600;
+        discoveryM2MTokenExpiry = new Date(Date.now() + expiresIn * 1000);
+        
+        // Afficher le succès
+        statusSpan.innerHTML = '<span class="text-success"><i class="bi bi-check-circle me-1"></i>Authentifié</span>';
+        
+        const tokenInfo = document.getElementById('discoveryTokenInfo');
+        tokenInfo.classList.remove('d-none');
+        document.getElementById('discoveryTokenExpiry').textContent = `Expire à ${discoveryM2MTokenExpiry.toLocaleTimeString()}`;
+        document.getElementById('discoveryTokenPreview').textContent = discoveryM2MToken.substring(0, 50) + '...';
+        
+        // Charger automatiquement les services partagés
+        await discoverSharedServices();
+        
+        showToast('Succès', 'Token M2M obtenu avec succès', 'success');
+        
+    } catch (error) {
+        console.error('Erreur obtention token M2M:', error);
+        statusSpan.innerHTML = `<span class="text-danger"><i class="bi bi-x-circle me-1"></i>${error.message}</span>`;
+        discoveryM2MToken = null;
+        discoveryM2MTokenExpiry = null;
+        document.getElementById('discoveryTokenInfo').classList.add('d-none');
+    } finally {
+        btn.disabled = false;
+    }
+}
+
+/**
+ * Découvre les services partagés via l'endpoint /api/apps/discover
+ */
+async function discoverSharedServices() {
+    if (!discoveryM2MToken) {
+        showToast('Erreur', 'Obtenez d\'abord un token M2M', 'warning');
+        return;
+    }
+    
+    const container = document.getElementById('discoveryServicesList');
+    container.innerHTML = '<div class="text-center py-3"><div class="spinner-border spinner-border-sm"></div> Découverte...</div>';
+    
+    try {
+        const result = await api.discoverServices(discoveryM2MToken);
+        discoveryServices = result.shared_services || [];
+        
+        document.getElementById('discoveryServicesCount').textContent = result.total_shared || 0;
+        
+        if (discoveryServices.length === 0) {
+            container.innerHTML = `
+                <div class="text-center py-4 text-muted">
+                    <i class="bi bi-inbox display-4"></i>
+                    <p class="mt-2">Aucun service partagé disponible</p>
+                    <small>Les applications marquées "is_shared_service" apparaîtront ici</small>
+                </div>
+            `;
+            return;
+        }
+        
+        container.innerHTML = `
+            <div class="list-group list-group-flush">
+                ${discoveryServices.map(svc => `
+                    <div class="list-group-item list-group-item-action" style="cursor: pointer;" onclick="selectDiscoveryService('${escapeHtml(svc.api_url)}')">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <div>
+                                <strong>${escapeHtml(svc.name)}</strong>
+                                <span class="badge bg-secondary ms-2">${escapeHtml(svc.slug)}</span>
+                            </div>
+                            <i class="bi bi-arrow-right text-muted"></i>
+                        </div>
+                        <small class="text-muted">${escapeHtml(svc.description || 'Aucune description')}</small>
+                        <div class="mt-1">
+                            <code class="small">${escapeHtml(svc.api_url)}</code>
+                        </div>
+                    </div>
+                `).join('')}
+            </div>
+        `;
+        
+    } catch (error) {
+        console.error('Erreur découverte services:', error);
+        container.innerHTML = `
+            <div class="text-center py-4 text-danger">
+                <i class="bi bi-exclamation-triangle display-4"></i>
+                <p class="mt-2">${escapeHtml(error.message)}</p>
+            </div>
+        `;
+    }
+}
+
+/**
+ * Sélectionne un service et pré-remplit l'URL
+ */
+function selectDiscoveryService(apiUrl) {
+    document.getElementById('discoveryUrl').value = apiUrl;
+    showToast('Service sélectionné', 'URL pré-remplie, ajoutez l\'endpoint souhaité', 'info');
+}
+
+/**
+ * Copie le token M2M dans le presse-papier
+ */
+function copyDiscoveryToken() {
+    if (discoveryM2MToken) {
+        navigator.clipboard.writeText(discoveryM2MToken);
+        showToast('Copié', 'Token M2M copié dans le presse-papier', 'success');
+    }
+}
+
+/**
+ * Ajoute une ligne de header personnalisé
+ */
+function addDiscoveryHeader() {
+    const container = document.getElementById('discoveryHeaders');
+    const row = document.createElement('div');
+    row.className = 'row g-2 mb-2 discovery-header-row';
+    row.innerHTML = `
+        <div class="col-5">
+            <input type="text" class="form-control form-control-sm" placeholder="Nom">
+        </div>
+        <div class="col-6">
+            <input type="text" class="form-control form-control-sm" placeholder="Valeur">
+        </div>
+        <div class="col-1">
+            <button class="btn btn-outline-danger btn-sm" onclick="removeDiscoveryHeader(this)">
+                <i class="bi bi-x"></i>
+            </button>
+        </div>
+    `;
+    container.appendChild(row);
+}
+
+/**
+ * Supprime une ligne de header
+ */
+function removeDiscoveryHeader(btn) {
+    btn.closest('.discovery-header-row').remove();
+}
+
+/**
+ * Teste un endpoint avec le token M2M
+ */
+async function testDiscoveryEndpoint() {
+    if (!discoveryM2MToken) {
+        showToast('Erreur', 'Obtenez d\'abord un token M2M', 'warning');
+        return;
+    }
+    
+    const method = document.getElementById('discoveryMethod').value;
+    const url = document.getElementById('discoveryUrl').value.trim();
+    
+    if (!url) {
+        showToast('Erreur', 'URL de l\'endpoint requise', 'warning');
+        return;
+    }
+    
+    // Récupérer les headers personnalisés
+    const headers = {};
+    document.querySelectorAll('.discovery-header-row').forEach(row => {
+        const inputs = row.querySelectorAll('input');
+        const name = inputs[0]?.value.trim();
+        const value = inputs[1]?.value.trim();
+        if (name) {
+            headers[name] = value;
+        }
+    });
+    
+    // Ajouter le token Authorization
+    headers['Authorization'] = `Bearer ${discoveryM2MToken}`;
+    
+    // Body pour POST/PUT/PATCH
+    let body = null;
+    if (['POST', 'PUT', 'PATCH'].includes(method)) {
+        const bodyText = document.getElementById('discoveryBody').value.trim();
+        if (bodyText) {
+            try {
+                body = JSON.parse(bodyText);
+            } catch (e) {
+                showToast('Erreur', 'Corps JSON invalide', 'danger');
+                return;
+            }
+        }
+    }
+    
+    const btn = document.getElementById('discoveryTestBtn');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Exécution...';
+    
+    const startTime = Date.now();
+    
+    try {
+        const response = await fetch(url, {
+            method: method,
+            headers: headers,
+            body: body ? JSON.stringify(body) : null
+        });
+        
+        const duration = Date.now() - startTime;
+        
+        // Afficher le résultat
+        document.getElementById('discoveryResultCard').style.display = 'block';
+        
+        const statusBadge = document.getElementById('discoveryResultStatus');
+        statusBadge.textContent = `${response.status} ${response.statusText}`;
+        statusBadge.className = `badge ${response.ok ? 'bg-success' : 'bg-danger'}`;
+        
+        document.getElementById('discoveryResultTime').textContent = `${duration}ms`;
+        
+        // Parser la réponse
+        let responseText;
+        const contentType = response.headers.get('content-type') || '';
+        
+        if (contentType.includes('application/json')) {
+            const json = await response.json();
+            responseText = JSON.stringify(json, null, 2);
+        } else {
+            responseText = await response.text();
+        }
+        
+        document.getElementById('discoveryResultBody').textContent = responseText;
+        
+        if (response.ok) {
+            showToast('Succès', `${method} ${response.status} - ${duration}ms`, 'success');
+        } else {
+            showToast('Erreur', `${method} ${response.status} ${response.statusText}`, 'warning');
+        }
+        
+    } catch (error) {
+        console.error('Erreur test endpoint:', error);
+        
+        document.getElementById('discoveryResultCard').style.display = 'block';
+        
+        const statusBadge = document.getElementById('discoveryResultStatus');
+        statusBadge.textContent = 'Erreur';
+        statusBadge.className = 'badge bg-danger';
+        
+        document.getElementById('discoveryResultTime').textContent = `${Date.now() - startTime}ms`;
+        document.getElementById('discoveryResultBody').textContent = `Erreur: ${error.message}\n\nCela peut être dû à:\n- CORS bloqué par le serveur distant\n- URL incorrecte\n- Serveur non accessible`;
+        
+        showToast('Erreur', error.message, 'danger');
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-play-fill me-1"></i>Exécuter';
+    }
+}
+
+/**
+ * Copie le résultat dans le presse-papier
+ */
+function copyDiscoveryResult() {
+    const result = document.getElementById('discoveryResultBody').textContent;
+    if (result) {
+        navigator.clipboard.writeText(result);
+        showToast('Copié', 'Résultat copié dans le presse-papier', 'success');
+    }
+}
+
+/**
+ * Efface le résultat
+ */
+function clearDiscoveryResult() {
+    document.getElementById('discoveryResultCard').style.display = 'none';
+    document.getElementById('discoveryResultBody').textContent = '';
 }

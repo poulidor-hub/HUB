@@ -4,9 +4,11 @@ import time
 import uuid
 import traceback
 from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy import select
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.database import init_db, async_session_maker, apply_migrations
 from app.models import User, ErrorLog
@@ -214,46 +216,30 @@ async def request_context_middleware(request: Request, call_next):
 # GESTIONNAIRE D'ERREURS GLOBAL
 # =============================================================================
 
-@app.exception_handler(Exception)
-async def global_exception_handler(request: Request, exc: Exception):
+
+async def _log_error_to_db(
+    request: Request,
+    error_code: int,
+    error_type: str,
+    error_message: str,
+    stack: str = None
+):
     """
-    Intercepte toutes les exceptions non gérées et les log dans error_logs.
-    Retourne une réponse JSON formatée.
+    Fonction helper pour logger une erreur dans la table error_logs.
+    Gère les erreurs silencieusement pour ne pas interférer avec la réponse.
     """
-    from fastapi import HTTPException
-    
-    # Récupérer le contexte de la requête
-    request_id = getattr(request.state, "request_id", str(uuid.uuid4()))
-    source_app_slug = getattr(request.state, "source_app_slug", None)
-    start_time = getattr(request.state, "start_time", time.time())
-    duration_ms = int((time.time() - start_time) * 1000)
-    
-    # Déterminer le code d'erreur
-    if isinstance(exc, HTTPException):
-        error_code = exc.status_code
-        error_message = exc.detail if isinstance(exc.detail, str) else str(exc.detail)
-        error_type = _get_error_type(error_code)
-        stack = None  # Pas de stack trace pour les HTTPException (erreurs métier)
-    else:
-        error_code = 500
-        error_message = str(exc)
-        error_type = "internal"
-        stack = traceback.format_exc()
-    
-    # Logger l'erreur dans la base (async)
     try:
+        request_id = getattr(request.state, "request_id", str(uuid.uuid4()))
+        source_app_slug = getattr(request.state, "source_app_slug", None)
+        
         async with async_session_maker() as db:
-            # Extraire user_id du token si disponible
-            user_id = None
-            service_account_id = None
-            
             error_log = ErrorLog(
                 request_id=request_id,
                 error_code=error_code,
                 error_type=error_type,
                 error_message=error_message[:500] if error_message else None,
-                user_id=user_id,
-                service_account_id=service_account_id,
+                user_id=None,
+                service_account_id=None,
                 source_app_slug=source_app_slug,
                 request_method=request.method,
                 request_path=str(request.url.path)[:255],
@@ -263,23 +249,85 @@ async def global_exception_handler(request: Request, exc: Exception):
             )
             db.add(error_log)
             await db.commit()
+            print(f"📝 Erreur {error_code} loggée: {request.url.path}")
     except Exception as log_error:
         print(f"⚠️ Erreur lors du logging d'erreur: {log_error}")
+
+
+@app.exception_handler(StarletteHTTPException)
+async def http_exception_handler(request: Request, exc: StarletteHTTPException):
+    """
+    Intercepte TOUTES les HTTPException (FastAPI et Starlette).
+    C'est ce handler qui capture les erreurs 4xx et 5xx.
+    """
+    request_id = getattr(request.state, "request_id", str(uuid.uuid4()))
+    error_code = exc.status_code
+    error_message = str(exc.detail) if exc.detail else "Erreur HTTP"
+    error_type = _get_error_type(error_code)
     
-    # Retourner la réponse d'erreur
-    if isinstance(exc, HTTPException):
-        return JSONResponse(
-            status_code=error_code,
-            content={"detail": error_message, "request_id": request_id}
-        )
-    else:
-        return JSONResponse(
-            status_code=500,
-            content={
-                "detail": "Erreur interne du serveur",
-                "request_id": request_id
-            }
-        )
+    # Logger toutes les erreurs HTTP (4xx et 5xx)
+    if error_code >= 400:
+        await _log_error_to_db(request, error_code, error_type, error_message)
+    
+    return JSONResponse(
+        status_code=error_code,
+        content={"detail": error_message, "request_id": request_id},
+        headers=exc.headers
+    )
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    """
+    Intercepte les erreurs de validation Pydantic (422) et les log.
+    """
+    request_id = getattr(request.state, "request_id", str(uuid.uuid4()))
+    error_code = 422
+    error_type = "validation"
+    
+    # Formater le message d'erreur
+    errors = exc.errors()
+    error_messages = []
+    for err in errors:
+        loc = ".".join(str(x) for x in err.get("loc", []))
+        msg = err.get("msg", "")
+        error_messages.append(f"{loc}: {msg}")
+    error_message = "; ".join(error_messages)
+    
+    # Logger l'erreur
+    await _log_error_to_db(request, error_code, error_type, error_message)
+    
+    return JSONResponse(
+        status_code=error_code,
+        content={
+            "detail": errors,
+            "request_id": request_id
+        }
+    )
+
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    """
+    Intercepte toutes les exceptions NON GÉRÉES (erreurs 500 internes).
+    Les HTTPException sont gérées par http_exception_handler ci-dessus.
+    """
+    request_id = getattr(request.state, "request_id", str(uuid.uuid4()))
+    error_code = 500
+    error_message = str(exc)
+    error_type = "internal"
+    stack = traceback.format_exc()
+    
+    # Logger l'erreur avec la stack trace
+    await _log_error_to_db(request, error_code, error_type, error_message, stack)
+    
+    return JSONResponse(
+        status_code=500,
+        content={
+            "detail": "Erreur interne du serveur",
+            "request_id": request_id
+        }
+    )
 
 
 def _get_error_type(status_code: int) -> str:
