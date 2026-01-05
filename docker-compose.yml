@@ -56,6 +56,12 @@ services:
       - ./INTEGRATION.md:/code/INTEGRATION.md:ro
       # Changelog pour agents IA (accessible via /api/docs/changelog)
       - ./CHANGELOG.md:/code/CHANGELOG.md:ro
+      # PKI - Script de gestion des certificats
+      - ./pki.py:/code/pki.py:ro
+      # PKI - Dossier des certificats
+      - ./certs:/code/certs:rw
+      # PKI - Fichier .env pour la configuration
+      - ./.env:/code/.env:ro
       # Socket Docker pour la détection automatique des conteneurs (lecture seule)
       - /var/run/docker.sock:/var/run/docker.sock:ro
     # Groupe docker pour accéder au socket
@@ -80,6 +86,11 @@ services:
     restart: unless-stopped
     ports:
       - "${HUB_FRONTEND_PORT:-80}:80"
+      - "${HUB_HTTPS_PORT:-443}:443"
+    volumes:
+      # Certificats SSL (montés depuis certs/server/hub/)
+      - ./certs/server/hub/hub.crt:/etc/nginx/ssl/hub.crt:ro
+      - ./certs/server/hub/hub.key:/etc/nginx/ssl/hub.key:ro
     depends_on:
       - hub-api
     networks:

@@ -14,7 +14,7 @@ from app.database import init_db, async_session_maker, apply_migrations
 from app.models import User, ErrorLog
 from app.auth import get_password_hash, cleanup_expired_tokens
 from app.config import get_settings
-from app.routes import auth, users, apps, service_accounts, backup, audit, docs, events
+from app.routes import auth, users, apps, service_accounts, backup, audit, docs, events, pki
 
 settings = get_settings()
 
@@ -276,6 +276,23 @@ async def http_exception_handler(request: Request, exc: StarletteHTTPException):
     )
 
 
+def _sanitize_error_for_json(obj):
+    """
+    Convertit récursivement les objets non-sérialisables en JSON.
+    Notamment les bytes qui apparaissent dans les erreurs de validation.
+    """
+    if isinstance(obj, bytes):
+        try:
+            return obj.decode('utf-8', errors='replace')
+        except Exception:
+            return "<binary data>"
+    elif isinstance(obj, dict):
+        return {k: _sanitize_error_for_json(v) for k, v in obj.items()}
+    elif isinstance(obj, (list, tuple)):
+        return [_sanitize_error_for_json(item) for item in obj]
+    return obj
+
+
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
     """
@@ -297,10 +314,14 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
     # Logger l'erreur
     await _log_error_to_db(request, error_code, error_type, error_message)
     
+    # Sanitize les erreurs pour éviter les problèmes de sérialisation JSON
+    # (bytes, etc. venant du body brut)
+    sanitized_errors = _sanitize_error_for_json(errors)
+    
     return JSONResponse(
         status_code=error_code,
         content={
-            "detail": errors,
+            "detail": sanitized_errors,
             "request_id": request_id
         }
     )
@@ -358,6 +379,7 @@ app.include_router(backup.router)
 app.include_router(audit.router)
 app.include_router(docs.router)
 app.include_router(events.router)
+app.include_router(pki.router)
 
 
 @app.get("/health")

@@ -181,11 +181,23 @@ class Settings(BaseSettings):
     # Si non défini, sera détecté automatiquement
     hub_host: str = ""
     
+    # ===== HTTPS / PKI Configuration =====
+    # Activer HTTPS (nécessite certificats dans /certs)
+    https_enabled: bool = False
+    
+    # Port HTTPS (443 par défaut)
+    https_port: int = 443
+    
     # Cookie settings pour le SSO
-    cookie_secure: bool = False  # True en production HTTPS
+    # cookie_secure: automatiquement True si https_enabled
     cookie_httponly: bool = True
     cookie_samesite: str = "lax"  # "strict", "lax", ou "none"
     cookie_domain: str = ""  # Laisser vide pour le domaine actuel
+    
+    @property
+    def cookie_secure(self) -> bool:
+        """Cookie secure est automatiquement activé avec HTTPS"""
+        return self.https_enabled
     
     # Cache des clés JWT (initialisé au premier accès)
     _jwt_keys_cache: tuple[str, str] | None = None

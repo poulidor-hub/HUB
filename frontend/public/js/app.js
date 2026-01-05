@@ -606,6 +606,7 @@ function showPage(page) {
     document.getElementById('auditSection').classList.add('d-none');
     document.getElementById('usersSection').classList.add('d-none');
     document.getElementById('discoverySection').classList.add('d-none');
+    document.getElementById('pkiSection')?.classList.add('d-none');
     
     // Réinitialiser les styles de navigation
     document.querySelectorAll('#adminNavigation .nav-link').forEach(link => {
@@ -644,6 +645,15 @@ function showPage(page) {
             document.getElementById('discoverySection').classList.remove('d-none');
             document.getElementById('navDiscovery')?.classList.add('active');
             loadDiscoveryPage();
+            break;
+        case 'pki':
+            if (!currentUser?.is_admin) {
+                showToast('Accès refusé', 'Vous devez être administrateur', 'danger');
+                return;
+            }
+            document.getElementById('pkiSection').classList.remove('d-none');
+            document.getElementById('navPki')?.classList.add('active');
+            loadPkiPage();
             break;
     }
 }
@@ -5571,4 +5581,410 @@ function displayImportResult(result) {
     }
     
     card.classList.remove('d-none');
+}
+
+
+// =============================================================================
+// PKI - GESTION DES CERTIFICATS SSL/TLS
+// =============================================================================
+
+let pkiCreateCertModal = null;
+let pkiInstallModal = null;
+
+/**
+ * Charge la page PKI avec toutes les informations
+ */
+async function loadPkiPage() {
+    try {
+        const status = await api.request('/pki/status');
+        
+        // Initialiser les modals Bootstrap si pas encore fait
+        if (!pkiCreateCertModal) {
+            pkiCreateCertModal = new bootstrap.Modal(document.getElementById('pkiCreateCertModal'));
+        }
+        if (!pkiInstallModal) {
+            pkiInstallModal = new bootstrap.Modal(document.getElementById('pkiInstallModal'));
+        }
+        
+        // Mettre à jour l'affichage CA
+        updatePkiCaDisplay(status);
+        
+        // Mettre à jour l'état HTTPS
+        updatePkiHttpsDisplay(status);
+        
+        // Mettre à jour la liste des certificats
+        updatePkiCertsTable(status.certificates);
+        
+        // Mettre à jour la configuration
+        updatePkiConfigDisplay(status.config);
+        
+    } catch (error) {
+        console.error('Erreur chargement PKI:', error);
+        showToast('Erreur', 'Impossible de charger les informations PKI', 'danger');
+    }
+}
+
+/**
+ * Met à jour l'affichage de la CA
+ */
+function updatePkiCaDisplay(status) {
+    const caStatusBadge = document.getElementById('pkiCaStatus');
+    const caNotInit = document.getElementById('pkiCaNotInitialized');
+    const caInit = document.getElementById('pkiCaInitialized');
+    const createCertBtn = document.getElementById('pkiCreateCertBtn');
+    
+    if (status.initialized && status.ca) {
+        const ca = status.ca;
+        
+        // Badge statut
+        if (ca.days_remaining > 365) {
+            caStatusBadge.className = 'badge bg-success';
+            caStatusBadge.textContent = '✅ Active';
+        } else if (ca.days_remaining > 30) {
+            caStatusBadge.className = 'badge bg-warning text-dark';
+            caStatusBadge.textContent = '⚠️ À renouveler';
+        } else if (ca.days_remaining > 0) {
+            caStatusBadge.className = 'badge bg-danger';
+            caStatusBadge.textContent = '🔴 Expire bientôt';
+        } else {
+            caStatusBadge.className = 'badge bg-danger';
+            caStatusBadge.textContent = '⛔ Expirée';
+        }
+        
+        // Infos CA
+        document.getElementById('pkiCaName').textContent = ca.common_name || '-';
+        document.getElementById('pkiCaOrg').textContent = ca.organization || '-';
+        document.getElementById('pkiCaCreated').textContent = ca.created ? new Date(ca.created).toLocaleDateString('fr-FR') : '-';
+        document.getElementById('pkiCaExpires').textContent = ca.expires ? new Date(ca.expires).toLocaleDateString('fr-FR') : '-';
+        
+        // Progress bar
+        const totalDays = status.config.ca_validity_years * 365;
+        const percent = Math.max(0, Math.min(100, (ca.days_remaining / totalDays) * 100));
+        const progressBar = document.getElementById('pkiCaProgressBar');
+        progressBar.style.width = percent + '%';
+        progressBar.className = 'progress-bar ' + (percent > 30 ? 'bg-success' : percent > 10 ? 'bg-warning' : 'bg-danger');
+        document.getElementById('pkiCaDaysLeft').textContent = ca.days_remaining + ' jours';
+        
+        caNotInit.classList.add('d-none');
+        caInit.classList.remove('d-none');
+        createCertBtn.disabled = false;
+    } else {
+        caStatusBadge.className = 'badge bg-secondary';
+        caStatusBadge.textContent = 'Non initialisée';
+        caNotInit.classList.remove('d-none');
+        caInit.classList.add('d-none');
+        createCertBtn.disabled = true;
+    }
+}
+
+/**
+ * Met à jour l'affichage de l'état HTTPS
+ */
+function updatePkiHttpsDisplay(status) {
+    const httpsBadge = document.getElementById('pkiHttpsStatus');
+    const currentProtocol = document.getElementById('pkiCurrentProtocol');
+    const hubCertStatus = document.getElementById('pkiHubCertStatus');
+    const actionsDiv = document.getElementById('pkiHttpsActions');
+    
+    // Protocole actuel
+    const isHttps = window.location.protocol === 'https:';
+    currentProtocol.innerHTML = isHttps 
+        ? '<i class="bi bi-lock-fill text-success me-1"></i>HTTPS' 
+        : '<i class="bi bi-unlock text-warning me-1"></i>HTTP';
+    
+    // Chercher le certificat "hub"
+    const hubCert = status.certificates.find(c => c.name === 'hub');
+    
+    if (hubCert) {
+        if (hubCert.status === 'valid' && hubCert.days_remaining > 0) {
+            httpsBadge.className = 'badge bg-success';
+            httpsBadge.textContent = isHttps ? '🔒 Sécurisé' : '✅ Prêt';
+            hubCertStatus.innerHTML = `<span class="text-success"><i class="bi bi-check-circle me-1"></i>Valide (${hubCert.days_remaining}j)</span>`;
+            
+            if (!isHttps) {
+                actionsDiv.innerHTML = `
+                    <div class="alert alert-info mb-0">
+                        <i class="bi bi-info-circle me-2"></i>
+                        Le certificat Hub est prêt. Redémarrez le conteneur <code>hub-frontend</code> pour activer HTTPS.
+                        <hr>
+                        <code>docker-compose up -d --build hub-frontend</code>
+                    </div>
+                `;
+            } else {
+                actionsDiv.innerHTML = `
+                    <div class="alert alert-success mb-0">
+                        <i class="bi bi-shield-check me-2"></i>
+                        Connexion sécurisée active. Vos communications sont chiffrées.
+                    </div>
+                `;
+            }
+        } else {
+            httpsBadge.className = 'badge bg-warning text-dark';
+            httpsBadge.textContent = '⚠️ Certificat expiré';
+            hubCertStatus.innerHTML = `<span class="text-danger"><i class="bi bi-exclamation-triangle me-1"></i>${hubCert.status}</span>`;
+            actionsDiv.innerHTML = `
+                <button class="btn btn-warning" onclick="renewPkiCert('hub')">
+                    <i class="bi bi-arrow-repeat me-1"></i>Renouveler le certificat Hub
+                </button>
+            `;
+        }
+    } else {
+        httpsBadge.className = 'badge bg-secondary';
+        httpsBadge.textContent = 'Non configuré';
+        hubCertStatus.innerHTML = '<span class="text-muted">Non créé</span>';
+        
+        if (status.initialized) {
+            actionsDiv.innerHTML = `
+                <button class="btn btn-primary" onclick="createHubCertificate()">
+                    <i class="bi bi-shield-plus me-1"></i>Créer le certificat Hub
+                </button>
+                <small class="text-muted d-block mt-2">Crée automatiquement un certificat pour le Hub</small>
+            `;
+        } else {
+            actionsDiv.innerHTML = `
+                <div class="alert alert-secondary mb-0">
+                    <i class="bi bi-arrow-left me-2"></i>
+                    Initialisez d'abord la CA pour pouvoir créer des certificats.
+                </div>
+            `;
+        }
+    }
+}
+
+/**
+ * Met à jour le tableau des certificats
+ */
+function updatePkiCertsTable(certificates) {
+    const tbody = document.getElementById('pkiCertsTableBody');
+    
+    if (!certificates || certificates.length === 0) {
+        tbody.innerHTML = `
+            <tr>
+                <td colspan="6" class="text-center text-muted py-4">
+                    <i class="bi bi-inbox display-4"></i>
+                    <p class="mt-2">Aucun certificat créé</p>
+                </td>
+            </tr>
+        `;
+        return;
+    }
+    
+    tbody.innerHTML = certificates.map(cert => {
+        // Status badge
+        let statusBadge;
+        if (cert.status === 'revoked') {
+            statusBadge = '<span class="badge bg-danger">Révoqué</span>';
+        } else if (cert.days_remaining <= 0) {
+            statusBadge = '<span class="badge bg-danger">Expiré</span>';
+        } else if (cert.days_remaining < 30) {
+            statusBadge = `<span class="badge bg-warning text-dark">${cert.days_remaining}j</span>`;
+        } else {
+            statusBadge = `<span class="badge bg-success">${cert.days_remaining}j</span>`;
+        }
+        
+        // Expire date
+        const expireDate = cert.expires ? new Date(cert.expires).toLocaleDateString('fr-FR') : '-';
+        
+        return `
+            <tr>
+                <td><strong>${cert.name}</strong></td>
+                <td><code class="small">${(cert.domains || []).join(', ')}</code></td>
+                <td><code class="small">${(cert.ips || []).join(', ')}</code></td>
+                <td>${expireDate}</td>
+                <td>${statusBadge}</td>
+                <td>
+                    <div class="btn-group btn-group-sm">
+                        <button class="btn btn-outline-primary" onclick="downloadPkiCert('${cert.name}', 'cert')" title="Télécharger certificat">
+                            <i class="bi bi-download"></i>
+                        </button>
+                        <button class="btn btn-outline-secondary" onclick="downloadPkiCert('${cert.name}', 'key')" title="Télécharger clé">
+                            <i class="bi bi-key"></i>
+                        </button>
+                        <button class="btn btn-outline-info" onclick="renewPkiCert('${cert.name}')" title="Renouveler">
+                            <i class="bi bi-arrow-repeat"></i>
+                        </button>
+                        <button class="btn btn-outline-danger" onclick="revokePkiCert('${cert.name}')" title="Révoquer">
+                            <i class="bi bi-x-circle"></i>
+                        </button>
+                    </div>
+                </td>
+            </tr>
+        `;
+    }).join('');
+}
+
+/**
+ * Met à jour l'affichage de la configuration
+ */
+function updatePkiConfigDisplay(config) {
+    document.getElementById('pkiConfigCaValidity').textContent = config.ca_validity_years + ' ans';
+    document.getElementById('pkiConfigCertValidity').textContent = config.cert_validity_days + ' jours';
+    document.getElementById('pkiConfigKeySize').textContent = config.key_size + ' bits';
+    document.getElementById('pkiConfigDomains').textContent = (config.cert_domains || []).join(', ');
+}
+
+/**
+ * Initialise la CA
+ */
+async function initializePkiCA() {
+    if (!confirm('Initialiser l\'Autorité de Certification ?\n\nCela créera une nouvelle CA qui sera utilisée pour signer tous les certificats.')) {
+        return;
+    }
+    
+    try {
+        const result = await api.request('/pki/init', {
+            method: 'POST',
+            body: JSON.stringify({ force: false })
+        });
+        
+        if (result.success) {
+            showToast('PKI', 'CA initialisée avec succès !', 'success');
+            loadPkiPage();
+        } else {
+            showToast('PKI', result.message, 'warning');
+        }
+    } catch (error) {
+        console.error('Erreur init CA:', error);
+        showToast('Erreur', error.message || 'Impossible d\'initialiser la CA', 'danger');
+    }
+}
+
+/**
+ * Crée automatiquement le certificat Hub
+ */
+async function createHubCertificate() {
+    try {
+        const result = await api.request('/pki/certificates', {
+            method: 'POST',
+            body: JSON.stringify({
+                name: 'hub',
+                domains: [],  // Utilise les domaines par défaut
+                ips: [],
+                force: false
+            })
+        });
+        
+        if (result.success) {
+            showToast('PKI', 'Certificat Hub créé avec succès !', 'success');
+            loadPkiPage();
+        } else {
+            showToast('PKI', result.message, 'warning');
+        }
+    } catch (error) {
+        console.error('Erreur création cert Hub:', error);
+        showToast('Erreur', error.message || 'Impossible de créer le certificat', 'danger');
+    }
+}
+
+/**
+ * Affiche le modal de création de certificat
+ */
+function showCreateCertModal() {
+    document.getElementById('pkiCreateCertForm').reset();
+    pkiCreateCertModal.show();
+}
+
+/**
+ * Gère la soumission du formulaire de création de certificat
+ */
+async function handleCreateCert(event) {
+    event.preventDefault();
+    
+    const name = document.getElementById('pkiCertName').value.trim().toLowerCase();
+    const domainsStr = document.getElementById('pkiCertDomains').value.trim();
+    const ipsStr = document.getElementById('pkiCertIps').value.trim();
+    const force = document.getElementById('pkiCertForce').checked;
+    
+    const domains = domainsStr ? domainsStr.split(',').map(d => d.trim()).filter(d => d) : [];
+    const ips = ipsStr ? ipsStr.split(',').map(ip => ip.trim()).filter(ip => ip) : [];
+    
+    try {
+        const result = await api.request('/pki/certificates', {
+            method: 'POST',
+            body: JSON.stringify({ name, domains, ips, force })
+        });
+        
+        pkiCreateCertModal.hide();
+        
+        if (result.success) {
+            showToast('PKI', `Certificat '${name}' créé avec succès !`, 'success');
+            loadPkiPage();
+        } else {
+            showToast('PKI', result.message, 'warning');
+        }
+    } catch (error) {
+        console.error('Erreur création certificat:', error);
+        showToast('Erreur', error.message || 'Impossible de créer le certificat', 'danger');
+    }
+}
+
+/**
+ * Télécharge la CA
+ */
+function downloadPkiCA(format) {
+    window.open(`/api/pki/ca/download?format=${format}`, '_blank');
+}
+
+/**
+ * Télécharge un fichier de certificat
+ */
+function downloadPkiCert(name, file) {
+    window.open(`/api/pki/certificates/${name}/download?file=${file}`, '_blank');
+}
+
+/**
+ * Renouvelle un certificat
+ */
+async function renewPkiCert(name) {
+    if (!confirm(`Renouveler le certificat '${name}' ?\n\nLe certificat actuel sera remplacé.`)) {
+        return;
+    }
+    
+    try {
+        const result = await api.request(`/pki/certificates/${name}/renew`, {
+            method: 'POST'
+        });
+        
+        if (result.success) {
+            showToast('PKI', `Certificat '${name}' renouvelé !`, 'success');
+            loadPkiPage();
+        } else {
+            showToast('PKI', result.message, 'warning');
+        }
+    } catch (error) {
+        console.error('Erreur renouvellement:', error);
+        showToast('Erreur', error.message || 'Impossible de renouveler', 'danger');
+    }
+}
+
+/**
+ * Révoque un certificat
+ */
+async function revokePkiCert(name) {
+    if (!confirm(`Révoquer le certificat '${name}' ?\n\n⚠️ Cette action est irréversible !`)) {
+        return;
+    }
+    
+    try {
+        const result = await api.request(`/pki/certificates/${name}/revoke`, {
+            method: 'POST'
+        });
+        
+        if (result.success) {
+            showToast('PKI', `Certificat '${name}' révoqué`, 'warning');
+            loadPkiPage();
+        } else {
+            showToast('PKI', result.message, 'warning');
+        }
+    } catch (error) {
+        console.error('Erreur révocation:', error);
+        showToast('Erreur', error.message || 'Impossible de révoquer', 'danger');
+    }
+}
+
+/**
+ * Affiche les instructions d'installation de la CA
+ */
+function showCaInstallInstructions() {
+    pkiInstallModal.show();
 }
