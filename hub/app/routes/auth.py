@@ -338,6 +338,13 @@ async def change_password(
     Permet à un utilisateur de changer son mot de passe.
     Vérifie l'ancien mot de passe avant de permettre le changement.
     """
+    # Vérifier si l'utilisateur peut changer son mot de passe
+    if current_user.can_change_password is False:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Vous n'êtes pas autorisé à modifier votre mot de passe. Contactez un administrateur."
+        )
+    
     # Vérifier l'ancien mot de passe
     if not verify_password(password_data.current_password, current_user.hashed_password):
         raise HTTPException(

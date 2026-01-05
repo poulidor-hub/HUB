@@ -62,7 +62,8 @@ async def create_user(
         email=user_data.email,
         hashed_password=get_password_hash(user_data.password),
         is_admin=user_data.is_admin,
-        must_change_password=user_data.must_change_password
+        must_change_password=user_data.must_change_password,
+        can_change_password=user_data.can_change_password
     )
     db.add(user)
     await db.commit()

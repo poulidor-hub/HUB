@@ -122,3 +122,22 @@ async def apply_migrations():
                         except Exception as e:
                             logger.warning(f"Migration 003 statement ignoré: {e}")
                 logger.info("✅ Migration 003 appliquée")
+        
+        # Vérifier si la migration 004 est nécessaire (can_change_password)
+        result = await conn.execute(text("""
+            SELECT column_name FROM information_schema.columns 
+            WHERE table_name = 'users' AND column_name = 'can_change_password'
+        """))
+        if not result.fetchone():
+            logger.info("📦 Application de la migration 004_add_can_change_password...")
+            migration_file = migrations_dir / "004_add_can_change_password.sql"
+            if migration_file.exists():
+                sql = migration_file.read_text()
+                for statement in sql.split(';'):
+                    statement = statement.strip()
+                    if statement and not statement.startswith('--'):
+                        try:
+                            await conn.execute(text(statement))
+                        except Exception as e:
+                            logger.warning(f"Migration 004 statement ignoré: {e}")
+                logger.info("✅ Migration 004 appliquée")

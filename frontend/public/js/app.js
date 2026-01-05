@@ -2261,7 +2261,8 @@ async function handleSaveUser(event) {
         username: document.getElementById('userUsername').value,
         email: document.getElementById('userEmail').value || null,
         is_admin: document.getElementById('userAdmin').checked,
-        must_change_password: document.getElementById('userMustChangePassword')?.checked || false
+        must_change_password: document.getElementById('userMustChangePassword')?.checked || false,
+        can_change_password: document.getElementById('userCanChangePassword')?.checked ?? true
     };
     
     // is_active n'est pas dans le schéma UserCreate, uniquement pour la mise à jour
@@ -4515,6 +4516,8 @@ function showAddUserFormPage() {
     document.getElementById('userAdmin').checked = false;
     const mustChangePwdEl = document.getElementById('userMustChangePassword');
     if (mustChangePwdEl) mustChangePwdEl.checked = false;
+    const canChangePwdEl = document.getElementById('userCanChangePassword');
+    if (canChangePwdEl) canChangePwdEl.checked = true;  // Par défaut, l'utilisateur peut changer son mdp
     loadUserAppsCheckboxes([]);
     userFormModal.show();
 }
@@ -4543,6 +4546,12 @@ async function editUserPage(id) {
     const mustChangePwdEl = document.getElementById('userMustChangePassword');
     if (mustChangePwdEl) {
         mustChangePwdEl.checked = user.must_change_password || false;
+    }
+    
+    // Charger can_change_password
+    const canChangePwdEl = document.getElementById('userCanChangePassword');
+    if (canChangePwdEl) {
+        canChangePwdEl.checked = user.can_change_password !== false;  // Par défaut true
     }
     
     const userAppRoles = user.app_roles || [];

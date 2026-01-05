@@ -31,6 +31,7 @@ class UserCreate(UserBase):
     password: str = Field(..., min_length=8)
     is_admin: bool = False
     must_change_password: bool = False
+    can_change_password: bool = True  # Autoriser le changement de mdp (False pour comptes partagés)
 
 
 class UserUpdate(BaseModel):
@@ -39,6 +40,7 @@ class UserUpdate(BaseModel):
     is_active: Optional[bool] = None
     is_admin: Optional[bool] = None
     must_change_password: Optional[bool] = None
+    can_change_password: Optional[bool] = None
 
 
 class PasswordChangeRequest(BaseModel):
@@ -73,6 +75,7 @@ class UserResponse(UserBase):
     is_active: bool
     is_admin: bool
     must_change_password: bool = False
+    can_change_password: bool = True
     created_at: datetime
     app_roles: List[UserAppRoleResponse] = []
     
@@ -93,6 +96,7 @@ class UserResponse(UserBase):
             is_active=user.is_active,
             is_admin=user.is_admin,
             must_change_password=user.must_change_password or False,
+            can_change_password=user.can_change_password if user.can_change_password is not None else True,
             created_at=user.created_at,
             app_roles=app_roles
         )
