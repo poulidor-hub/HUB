@@ -644,6 +644,64 @@ class HubAPI {
         
         return response.json();
     }
+    
+    // ===== Backup/Restore API =====
+    
+    /**
+     * Exporte l'environnement complet (backup)
+     * @param {boolean} includeJwtKeys - Inclure les clés JWT
+     * @param {boolean} includeSaSecrets - Inclure les secrets des service accounts
+     * @returns {Promise<Object>} Données du backup
+     */
+    async exportBackup(includeJwtKeys = true, includeSaSecrets = true) {
+        const params = new URLSearchParams();
+        params.append('include_jwt_keys', includeJwtKeys);
+        params.append('include_sa_secrets', includeSaSecrets);
+        
+        const response = await fetch(`${API_BASE}/admin/backup/export?${params}`, {
+            headers: this.getHeaders()
+        });
+        
+        if (!response.ok) {
+            const error = await response.json().catch(() => ({ detail: 'Erreur d\'export' }));
+            throw new Error(error.detail);
+        }
+        
+        return response.json();
+    }
+    
+    /**
+     * Importe un environnement depuis un backup
+     * @param {Object} backupData - Données du backup
+     * @param {string} importMode - Mode d'import: skip, update, error
+     * @param {boolean} restoreJwtKeys - Restaurer les clés JWT
+     * @returns {Promise<Object>} Résultat de l'import
+     */
+    async importBackup(backupData, importMode = 'skip', restoreJwtKeys = false) {
+        const payload = {
+            import_mode: importMode,
+            restore_jwt_keys: restoreJwtKeys,
+            users: backupData.users || [],
+            applications: backupData.applications || [],
+            user_app_roles: backupData.user_app_roles || [],
+            service_accounts: backupData.service_accounts || [],
+            jwt_private_key_b64: backupData.jwt_private_key_b64,
+            jwt_public_key_b64: backupData.jwt_public_key_b64
+        };
+        
+        const response = await fetch(`${API_BASE}/admin/backup/import`, {
+            method: 'POST',
+            headers: this.getHeaders(),
+            body: JSON.stringify(payload)
+        });
+        
+        if (!response.ok) {
+            const error = await response.json().catch(() => ({ detail: 'Erreur d\'import' }));
+            throw new Error(error.detail);
+        }
+        
+        return response.json();
+    }
 }
 
 const api = new HubAPI();

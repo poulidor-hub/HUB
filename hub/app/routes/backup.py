@@ -15,7 +15,7 @@ import base64
 from pathlib import Path
 
 from app.database import get_db
-from app.models import User, Application, UserAppRole, ServiceAccount, AppRole
+from app.models import User, Application, UserAppRole, ServiceAccount, AppRole, ApprovalStatus
 from app.auth import get_current_admin, get_password_hash
 from app.schemas import (
     BackupExport, BackupImport, ImportResult, ImportMode,
@@ -61,6 +61,8 @@ async def export_environment(
             hashed_password=user.hashed_password,
             is_active=user.is_active,
             is_admin=user.is_admin,
+            must_change_password=user.must_change_password or False,
+            can_change_password=user.can_change_password if user.can_change_password is not None else True,
             created_at=user.created_at
         )
         for user in users
@@ -68,7 +70,10 @@ async def export_environment(
     
     # 2. Export des applications
     apps_result = await db.execute(
-        select(Application).options(selectinload(Application.available_roles))
+        select(Application).options(
+            selectinload(Application.available_roles),
+            selectinload(Application.approved_by)
+        )
     )
     apps = apps_result.scalars().all()
     
@@ -85,6 +90,10 @@ async def export_environment(
             is_active=app.is_active,
             requires_auth=app.requires_auth,
             is_shared_service=app.is_shared_service,
+            approval_status=app.approval_status.value if app.approval_status else "approved",
+            approved_by_username=app.approved_by.username if app.approved_by else None,
+            approved_at=app.approved_at,
+            rejection_reason=app.rejection_reason,
             created_at=app.created_at,
             available_roles=[
                 AppRoleExport(name=role.name, description=role.description)
@@ -222,6 +231,11 @@ async def import_environment(
                     existing_app.is_active = app_data.is_active
                     existing_app.requires_auth = app_data.requires_auth
                     existing_app.is_shared_service = app_data.is_shared_service
+                    # Restaurer le statut d'approbation
+                    if app_data.approval_status:
+                        existing_app.approval_status = ApprovalStatus(app_data.approval_status)
+                    existing_app.approved_at = app_data.approved_at
+                    existing_app.rejection_reason = app_data.rejection_reason
                     result.apps_updated += 1
                     app_id_map[app_data.slug] = existing_app.id
             else:
@@ -237,7 +251,10 @@ async def import_environment(
                     callback_url=app_data.callback_url,
                     is_active=app_data.is_active,
                     requires_auth=app_data.requires_auth,
-                    is_shared_service=app_data.is_shared_service
+                    is_shared_service=app_data.is_shared_service,
+                    approval_status=ApprovalStatus(app_data.approval_status) if app_data.approval_status else ApprovalStatus.approved,
+                    approved_at=app_data.approved_at,
+                    rejection_reason=app_data.rejection_reason
                 )
                 db.add(new_app)
                 await db.flush()
@@ -276,6 +293,8 @@ async def import_environment(
                     existing_user.hashed_password = user_data.hashed_password
                     existing_user.is_active = user_data.is_active
                     existing_user.is_admin = user_data.is_admin
+                    existing_user.must_change_password = user_data.must_change_password
+                    existing_user.can_change_password = user_data.can_change_password
                     result.users_updated += 1
                     user_id_map[user_data.username] = existing_user.id
             else:
@@ -284,7 +303,9 @@ async def import_environment(
                     email=user_data.email,
                     hashed_password=user_data.hashed_password,
                     is_active=user_data.is_active,
-                    is_admin=user_data.is_admin
+                    is_admin=user_data.is_admin,
+                    must_change_password=user_data.must_change_password,
+                    can_change_password=user_data.can_change_password
                 )
                 db.add(new_user)
                 await db.flush()

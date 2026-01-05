@@ -467,6 +467,8 @@ class UserExport(BaseModel):
     hashed_password: str
     is_active: bool = True
     is_admin: bool = False
+    must_change_password: bool = False
+    can_change_password: bool = True
     created_at: Optional[datetime] = None
 
 
@@ -483,6 +485,10 @@ class AppExport(BaseModel):
     is_active: bool = True
     requires_auth: bool = True
     is_shared_service: bool = False
+    approval_status: str = "approved"  # pending, approved, rejected
+    approved_by_username: Optional[str] = None
+    approved_at: Optional[datetime] = None
+    rejection_reason: Optional[str] = None
     created_at: Optional[datetime] = None
     available_roles: List[AppRoleExport] = []
 

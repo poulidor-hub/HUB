@@ -6,11 +6,21 @@ Ce document décrit comment sauvegarder et restaurer un environnement HUB comple
 
 | Élément | Inclus | Sensible |
 |---------|--------|----------|
-| **Utilisateurs** | ✅ Username, email, hash mot de passe, flags admin/active | 🔐 Hash bcrypt |
-| **Applications** | ✅ Toute la configuration (URLs, icône, couleur, rôles) | - |
+| **Utilisateurs** | ✅ Username, email, hash mot de passe, flags admin/active, `must_change_password`, `can_change_password` | 🔐 Hash bcrypt |
+| **Applications** | ✅ Toute la configuration (URLs, icône, couleur, rôles), statut d'approbation | - |
 | **Associations User↔App** | ✅ Quel user a accès à quelle app avec quel rôle | - |
 | **Service Accounts** | ✅ Nom, client_id, hash secret, apps autorisées | 🔐 Secret en clair (optionnel) |
 | **Clés JWT RSA** | ✅ (optionnel) Clés privée et publique | 🔐 Clé privée |
+
+## 🖥️ Interface Web (Nouveau)
+
+L'interface d'administration du Hub dispose maintenant d'un onglet **Backup** permettant :
+
+1. **Export** : Télécharger un backup JSON avec options (clés JWT, secrets M2M)
+2. **Import** : Uploader un fichier de backup avec preview et choix du mode d'import
+3. **Visualisation** : Voir le résultat de l'import (créations, mises à jour, erreurs)
+
+Accès : Menu Admin → Onglet "Backup"
 
 ## 🚀 Utilisation rapide
 
@@ -116,6 +126,8 @@ rm hub_backup.json
       "hashed_password": "$2b$12$...",
       "is_active": true,
       "is_admin": true,
+      "must_change_password": false,
+      "can_change_password": true,
       "created_at": "2025-12-01T08:00:00"
     }
   ],
@@ -132,6 +144,11 @@ rm hub_backup.json
       "callback_url": "http://localhost:4178/callback",
       "is_active": true,
       "requires_auth": true,
+      "is_shared_service": false,
+      "approval_status": "approved",
+      "approved_by_username": "admin",
+      "approved_at": "2025-12-01T08:00:00",
+      "rejection_reason": null,
       "available_roles": [
         {"name": "admin", "description": "Administrateur"},
         {"name": "user", "description": "Utilisateur"}
@@ -163,6 +180,18 @@ rm hub_backup.json
   "jwt_public_key_b64": "base64_encoded_public_key..."
 }
 ```
+
+### Nouveaux champs (v1.1)
+
+| Champ | Type | Description |
+|-------|------|-------------|
+| `users[].must_change_password` | bool | Force le changement de mdp à la prochaine connexion |
+| `users[].can_change_password` | bool | Autorise l'utilisateur à changer son mdp (False pour comptes partagés) |
+| `applications[].is_shared_service` | bool | App accessible par tous les service accounts M2M |
+| `applications[].approval_status` | string | "pending", "approved", "rejected" |
+| `applications[].approved_by_username` | string | Username de l'admin ayant approuvé |
+| `applications[].approved_at` | datetime | Date d'approbation |
+| `applications[].rejection_reason` | string | Raison du rejet si applicable |
 
 ## 🔄 Scénarios d'utilisation
 

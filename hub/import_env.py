@@ -28,7 +28,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from app.database import async_session_maker, init_db
-from app.models import User, Application, UserAppRole, ServiceAccount, AppRole
+from app.models import User, Application, UserAppRole, ServiceAccount, AppRole, ApprovalStatus
 
 
 class ImportMode(str, Enum):
@@ -137,11 +137,26 @@ async def import_environment(
                             existing_app.callback_url = app_data.get("callback_url")
                             existing_app.is_active = app_data.get("is_active", True)
                             existing_app.requires_auth = app_data.get("requires_auth", True)
+                            existing_app.is_shared_service = app_data.get("is_shared_service", False)
+                            # Restaurer le statut d'approbation
+                            if app_data.get("approval_status"):
+                                existing_app.approval_status = ApprovalStatus(app_data["approval_status"])
+                            if app_data.get("approved_at"):
+                                from datetime import datetime
+                                existing_app.approved_at = datetime.fromisoformat(app_data["approved_at"].replace("Z", "+00:00")) if isinstance(app_data["approved_at"], str) else app_data["approved_at"]
+                            existing_app.rejection_reason = app_data.get("rejection_reason")
                         print(f"   🔄 Update: {app_data['name']} ({app_data['slug']})")
                         result["apps_updated"] += 1
                         app_id_map[app_data["slug"]] = existing_app.id
                 else:
                     if not dry_run:
+                        # Préparer le statut d'approbation
+                        approval_status = ApprovalStatus(app_data.get("approval_status", "approved"))
+                        approved_at = None
+                        if app_data.get("approved_at"):
+                            from datetime import datetime as dt
+                            approved_at = dt.fromisoformat(app_data["approved_at"].replace("Z", "+00:00")) if isinstance(app_data["approved_at"], str) else app_data["approved_at"]
+                        
                         new_app = Application(
                             name=app_data["name"],
                             slug=app_data["slug"],
@@ -152,7 +167,11 @@ async def import_environment(
                             frontend_url=app_data.get("frontend_url"),
                             callback_url=app_data.get("callback_url"),
                             is_active=app_data.get("is_active", True),
-                            requires_auth=app_data.get("requires_auth", True)
+                            requires_auth=app_data.get("requires_auth", True),
+                            is_shared_service=app_data.get("is_shared_service", False),
+                            approval_status=approval_status,
+                            approved_at=approved_at,
+                            rejection_reason=app_data.get("rejection_reason")
                         )
                         db.add(new_app)
                         await db.flush()
@@ -194,6 +213,8 @@ async def import_environment(
                             existing_user.hashed_password = user_data["hashed_password"]
                             existing_user.is_active = user_data.get("is_active", True)
                             existing_user.is_admin = user_data.get("is_admin", False)
+                            existing_user.must_change_password = user_data.get("must_change_password", False)
+                            existing_user.can_change_password = user_data.get("can_change_password", True)
                         print(f"   🔄 Update: {user_data['username']}")
                         result["users_updated"] += 1
                         user_id_map[user_data["username"]] = existing_user.id
@@ -204,7 +225,9 @@ async def import_environment(
                             email=user_data.get("email"),
                             hashed_password=user_data["hashed_password"],
                             is_active=user_data.get("is_active", True),
-                            is_admin=user_data.get("is_admin", False)
+                            is_admin=user_data.get("is_admin", False),
+                            must_change_password=user_data.get("must_change_password", False),
+                            can_change_password=user_data.get("can_change_password", True)
                         )
                         db.add(new_user)
                         await db.flush()

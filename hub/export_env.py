@@ -102,6 +102,8 @@ async def export_environment(
                 "hashed_password": user.hashed_password,
                 "is_active": user.is_active,
                 "is_admin": user.is_admin,
+                "must_change_password": user.must_change_password or False,
+                "can_change_password": user.can_change_password if user.can_change_password is not None else True,
                 "created_at": user.created_at.isoformat() if user.created_at else None
             }
             for user in users
@@ -109,7 +111,10 @@ async def export_environment(
         
         # 2. Export des applications
         apps_result = await db.execute(
-            select(Application).options(selectinload(Application.available_roles))
+            select(Application).options(
+                selectinload(Application.available_roles),
+                selectinload(Application.approved_by)
+            )
         )
         apps = apps_result.scalars().all()
         
@@ -125,6 +130,11 @@ async def export_environment(
                 "callback_url": app.callback_url,
                 "is_active": app.is_active,
                 "requires_auth": app.requires_auth,
+                "is_shared_service": app.is_shared_service,
+                "approval_status": app.approval_status.value if app.approval_status else "approved",
+                "approved_by_username": app.approved_by.username if app.approved_by else None,
+                "approved_at": app.approved_at.isoformat() if app.approved_at else None,
+                "rejection_reason": app.rejection_reason,
                 "created_at": app.created_at.isoformat() if app.created_at else None,
                 "available_roles": [
                     {"name": role.name, "description": role.description}
