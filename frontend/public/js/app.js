@@ -2255,13 +2255,19 @@ async function handleSaveUser(event) {
     event.preventDefault();
     
     const id = document.getElementById('userId').value;
+    const isCreating = !id;
+    
     const data = {
         username: document.getElementById('userUsername').value,
         email: document.getElementById('userEmail').value || null,
-        is_active: document.getElementById('userActive').checked,
         is_admin: document.getElementById('userAdmin').checked,
         must_change_password: document.getElementById('userMustChangePassword')?.checked || false
     };
+    
+    // is_active n'est pas dans le schéma UserCreate, uniquement pour la mise à jour
+    if (!isCreating) {
+        data.is_active = document.getElementById('userActive').checked;
+    }
 
     const password = document.getElementById('userPassword').value;
     if (password) {

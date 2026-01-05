@@ -156,7 +156,20 @@ class HubAPI {
 
             if (!response.ok) {
                 const error = await response.json().catch(() => ({ detail: 'Erreur serveur' }));
-                throw new Error(error.detail || 'Erreur serveur');
+                // Gérer les erreurs de validation Pydantic (detail peut être un tableau)
+                let errorMessage = 'Erreur serveur';
+                if (error.detail) {
+                    if (Array.isArray(error.detail)) {
+                        // Erreur de validation Pydantic
+                        errorMessage = error.detail.map(e => {
+                            const field = e.loc ? e.loc.slice(1).join('.') : '';
+                            return field ? `${field}: ${e.msg}` : e.msg;
+                        }).join(', ');
+                    } else {
+                        errorMessage = error.detail;
+                    }
+                }
+                throw new Error(errorMessage);
             }
 
             if (response.status === 204) {
