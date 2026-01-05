@@ -11,7 +11,7 @@ import logging
 from app.routes.events import notify_event, notify_stats_update
 
 from app.database import get_db
-from app.models import Application, User, ServiceAccount, UserAppRole, ApprovalStatus
+from app.models import Application, User, ServiceAccount, UserAppRole, ApprovalStatus, service_account_app_access
 from app.schemas import (
     AppCreate, AppCreateSimplified, AppUpdate, AppResponse, AppWithUsers, AppWithUsersAndDocker,
     AppResponseWithMyRole,
@@ -1640,16 +1640,67 @@ async def update_app_shared(
             detail=f"Application '{app_slug}' non trouvée"
         )
     
+    old_shared = app.is_shared_service
     app.is_shared_service = is_shared
+    
+    # Si l'app devient un service partagé et était en attente, l'approuver automatiquement
+    auto_approved = False
+    if is_shared and not old_shared and app.approval_status == ApprovalStatus.pending:
+        from datetime import datetime
+        app.approval_status = ApprovalStatus.approved
+        app.approved_at = datetime.utcnow()
+        app.is_active = True
+        if app.description:
+            app.description = app.description.replace(" (en attente d'approbation)", "")
+        
+        # Activer le(s) service account(s) associé(s)
+        sa_result = await db.execute(
+            select(ServiceAccount)
+            .join(service_account_app_access)
+            .where(service_account_app_access.c.app_id == app.id)
+        )
+        for sa in sa_result.scalars().all():
+            sa.is_active = True
+            if sa.description:
+                sa.description = sa.description.replace(" (en attente d'approbation)", "")
+        
+        auto_approved = True
+        logger.info(f"✅ Application '{app_slug}' auto-approuvée car devenue service partagé (M2M)")
+    
     db.add(app)
     await db.commit()
     
+    # Si l'app est maintenant un service partagé approuvé, l'ajouter à tous les SA
+    shared_added_count = 0
+    if is_shared and app.approval_status == ApprovalStatus.approved:
+        shared_added_count = await add_shared_service_to_all_service_accounts(db, app)
+        if shared_added_count > 0:
+            await db.commit()
+    
     logger.info(f"🔧 Application '{app_slug}' is_shared_service={is_shared} via X-Slug depuis {client_ip}")
     
+    message = f"Application '{app_slug}' mise à jour"
+    if auto_approved:
+        message += " et auto-approuvée (service partagé M2M)"
+    if shared_added_count > 0:
+        message += f". Ajoutée à {shared_added_count} service account(s)."
+    
+    # Notifier les clients SSE
+    notify_event("apps_updated", {
+        "action": "updated" if not auto_approved else "auto_approved",
+        "app_slug": app_slug,
+        "is_shared_service": is_shared,
+        "auto_approved": auto_approved
+    })
+    if auto_approved:
+        notify_stats_update()
+    
     return {
-        "message": f"Application '{app_slug}' mise à jour",
+        "message": message,
         "slug": app_slug,
-        "is_shared_service": is_shared
+        "is_shared_service": is_shared,
+        "auto_approved": auto_approved,
+        "shared_added_to_sa_count": shared_added_count
     }
 
 
@@ -1760,6 +1811,10 @@ async def approve_or_reject_app(
         if app.is_shared_service:
             shared_added_count = await add_shared_service_to_all_service_accounts(db, app)
         
+        # Stocker les infos avant commit (évite le lazy loading après refresh)
+        is_shared = app.is_shared_service
+        sa_count = len(app.service_accounts)
+        
         await db.commit()
         await db.refresh(app)
         
@@ -1770,7 +1825,7 @@ async def approve_or_reject_app(
             action="approve_app",
             target=slug,
             ip_address=client_ip,
-            details=f"Application '{slug}' approuvée par {admin.username}. Shared: {app.is_shared_service}, SA activés: {len(app.service_accounts)}"
+            details=f"Application '{slug}' approuvée par {admin.username}. Shared: {is_shared}, SA activés: {sa_count}"
         )
         
         # Notifier SSE
