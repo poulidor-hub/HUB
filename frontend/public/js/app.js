@@ -212,7 +212,7 @@ function handleSSEEvent(data) {
         case 'users_updated':
             // Rafraîchir la liste des utilisateurs si on est sur cette page
             if (currentPage === 'users') {
-                loadUsers();
+                loadUsersPageData();
             }
             break;
             
@@ -876,6 +876,7 @@ function renderAppsGrid(apps) {
         return `
         <div class="col-sm-6 col-md-4 col-lg-3">
             <div class="card app-card shadow-sm h-100 ${isUnavailable ? 'app-inactive' : ''}" 
+                 data-app-slug="${app.slug}"
                  onclick="${!isUnavailable ? `openApp('${app.slug}', '${app.frontend_url || ''}')` : `showToast('Application en maintenance', 'Cette application est temporairement indisponible.', 'warning')`}">
                 <div class="card-body position-relative">
                     <div class="app-icon" style="background-color: ${app.color}">
