@@ -13,9 +13,9 @@ from app.routes.events import notify_event, notify_stats_update
 from app.database import get_db
 from app.models import Application, User, ServiceAccount, UserAppRole, ApprovalStatus
 from app.schemas import (
-    AppCreate, AppCreateSimplified, AppUpdate, AppResponse, AppWithUsers,
+    AppCreate, AppCreateSimplified, AppUpdate, AppResponse, AppWithUsers, AppWithUsersAndDocker,
     AppResponseWithMyRole,
-    DockerScanResponse, DockerContainerInfo, DockerPortInfo,
+    DockerScanResponse, DockerContainerInfo, DockerPortInfo, DockerInfoResponse,
     AppRegisterRequest, AppRegisterResponse, AppCredentialsResponse,
     AppDiscoveryItem, DiscoverResponse,
     AppApprovalRequest, AppApprovalResponse, PendingAppsResponse
@@ -731,14 +731,23 @@ async def list_all_apps_with_users(
     db: AsyncSession = Depends(get_db),
     _: User = Depends(get_current_admin)
 ):
-    """Liste toutes les applications avec leurs utilisateurs et rôles (admin uniquement)"""
+    """Liste toutes les applications avec leurs utilisateurs et statut Docker (admin uniquement)"""
+    # Récupérer le statut Docker de tous les conteneurs
+    port_status_map = get_docker_status_map()
+    
     result = await db.execute(
         select(Application).options(
             selectinload(Application.user_roles).selectinload(UserAppRole.user)
         )
     )
     apps = result.scalars().all()
-    return [AppWithUsers.from_orm_model(app) for app in apps]
+    return [
+        AppWithUsersAndDocker.from_orm_model_with_docker(
+            app,
+            get_docker_status_for_app(app, port_status_map)
+        )
+        for app in apps
+    ]
 
 
 @router.post("/", status_code=status.HTTP_201_CREATED)
@@ -2231,6 +2240,233 @@ async def reconnect_docker(
             "message": "Erreur lors de la reconnexion",
             "error": str(e)
         }
+
+
+@router.get("/{slug}/docker-info", response_model=DockerInfoResponse)
+async def get_app_docker_info(
+    slug: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_admin)
+):
+    """
+    Récupère les informations Docker détaillées d'une application.
+    
+    Recherche le conteneur Docker correspondant à l'application via :
+    1. Le slug dans les variables d'environnement APP_SLUG
+    2. Le slug dans les labels hub.slug
+    3. Les ports correspondant aux URLs de l'application
+    
+    ⚠️ Admin uniquement - Utile pour les développeurs cherchant à intégrer l'API.
+    
+    Retourne :
+    - Informations du conteneur (ID, image, status, created_at)
+    - Ports exposés et mappings
+    - Labels hub.* configurés
+    - Variables d'environnement APP_*
+    - Réseaux Docker et adresses IP
+    - Infos pour développeurs (comment joindre l'API)
+    """
+    # Récupérer l'application
+    result = await db.execute(select(Application).where(Application.slug == slug))
+    app = result.scalar_one_or_none()
+    
+    if not app:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Application non trouvée"
+        )
+    
+    # Préparer la réponse de base
+    response = DockerInfoResponse(
+        app_slug=app.slug,
+        app_name=app.name,
+        app_api_url=app.api_url,
+        app_frontend_url=app.frontend_url,
+        container_found=False
+    )
+    
+    # Vérifier si Docker est disponible
+    if not docker_scanner.is_available:
+        response.developer_info = {
+            "warning": "Docker non accessible sur ce serveur",
+            "api_url": app.api_url,
+            "tip": "Utilisez l'URL API directement pour joindre ce service"
+        }
+        return response
+    
+    # Extraire le port de l'URL API pour identifier le conteneur
+    import re
+    from urllib.parse import urlparse
+    
+    target_ports = set()
+    for url in [app.api_url, app.frontend_url]:
+        if url:
+            try:
+                parsed = urlparse(url)
+                if parsed.port:
+                    target_ports.add(parsed.port)
+            except Exception:
+                pass
+    
+    # Scanner tous les conteneurs (y compris arrêtés)
+    try:
+        client = docker_scanner.client
+        if not client:
+            response.developer_info = {
+                "warning": "Client Docker non initialisé",
+                "api_url": app.api_url
+            }
+            return response
+        
+        containers = client.containers.list(all=True)
+        matching_container = None
+        
+        for container in containers:
+            # Méthode 1: Chercher par APP_SLUG dans les variables d'environnement
+            env_vars = {}
+            try:
+                env_list = container.attrs.get('Config', {}).get('Env', [])
+                for env in env_list:
+                    if '=' in env:
+                        key, value = env.split('=', 1)
+                        if key.startswith('APP_'):
+                            env_vars[key] = value
+            except Exception:
+                pass
+            
+            if env_vars.get('APP_SLUG') == slug:
+                matching_container = container
+                break
+            
+            # Méthode 2: Chercher par label hub.slug
+            labels = container.labels or {}
+            if labels.get('hub.slug') == slug:
+                matching_container = container
+                break
+            
+            # Méthode 3: Chercher par ports correspondants
+            container_ports = set()
+            try:
+                for port_str, bindings in (container.ports or {}).items():
+                    if bindings:
+                        for binding in bindings:
+                            host_port = binding.get('HostPort')
+                            if host_port:
+                                container_ports.add(int(host_port))
+            except Exception:
+                pass
+            
+            if target_ports and container_ports and target_ports & container_ports:
+                matching_container = container
+                break
+        
+        if not matching_container:
+            response.developer_info = {
+                "warning": "Conteneur Docker non trouvé pour cette application",
+                "api_url": app.api_url,
+                "tip": f"Le conteneur pourrait être arrêté ou ne pas avoir APP_SLUG={slug}",
+                "searched_ports": list(target_ports)
+            }
+            return response
+        
+        # Conteneur trouvé - extraire toutes les infos
+        response.container_found = True
+        response.container_id = matching_container.short_id
+        response.container_name = matching_container.name
+        response.container_status = matching_container.status
+        
+        # Image
+        try:
+            response.container_image = matching_container.image.tags[0] if matching_container.image.tags else "unknown"
+        except Exception:
+            response.container_image = matching_container.attrs.get('Config', {}).get('Image', 'unknown')
+        
+        # Dates
+        attrs = matching_container.attrs
+        response.container_created = attrs.get('Created', '')[:19]  # Format ISO sans timezone
+        state = attrs.get('State', {})
+        if state.get('StartedAt'):
+            response.container_started_at = state['StartedAt'][:19]
+        
+        # Ports
+        ports = []
+        try:
+            for port_str, bindings in (matching_container.ports or {}).items():
+                parts = port_str.split('/')
+                container_port = int(parts[0])
+                protocol = parts[1] if len(parts) > 1 else "tcp"
+                host_port = None
+                if bindings:
+                    for binding in bindings:
+                        if binding.get('HostPort'):
+                            host_port = int(binding['HostPort'])
+                            break
+                ports.append(DockerPortInfo(
+                    container_port=container_port,
+                    host_port=host_port,
+                    protocol=protocol
+                ))
+        except Exception as e:
+            logger.warning(f"Erreur extraction ports: {e}")
+        response.ports = ports
+        
+        # Labels hub.*
+        labels = matching_container.labels or {}
+        hub_labels = {k: v for k, v in labels.items() if k.startswith('hub.')}
+        response.hub_labels = hub_labels
+        
+        # Variables APP_*
+        env_vars = {}
+        try:
+            env_list = attrs.get('Config', {}).get('Env', [])
+            for env in env_list:
+                if '=' in env and env.startswith('APP_'):
+                    key, value = env.split('=', 1)
+                    env_vars[key] = value
+        except Exception:
+            pass
+        response.app_env_vars = env_vars
+        
+        # Réseaux
+        networks = []
+        ip_addresses = {}
+        try:
+            network_settings = attrs.get('NetworkSettings', {}).get('Networks', {})
+            for net_name, net_config in network_settings.items():
+                networks.append(net_name)
+                if net_config.get('IPAddress'):
+                    ip_addresses[net_name] = net_config['IPAddress']
+        except Exception:
+            pass
+        response.networks = networks
+        response.ip_addresses = ip_addresses
+        
+        # Informations pour développeurs
+        host_ports = [p.host_port for p in ports if p.host_port]
+        response.developer_info = {
+            "api_url": app.api_url,
+            "status": "running" if matching_container.status == "running" else "stopped",
+            "how_to_connect": f"Utilisez {app.api_url} pour joindre l'API",
+            "internal_ips": ip_addresses,
+            "exposed_ports": host_ports,
+            "container_command": f"docker exec -it {matching_container.name} /bin/bash",
+            "logs_command": f"docker logs {matching_container.name} --tail 100 -f",
+            "tip": "Utilisez le header X-Slug: " + slug + " pour vous identifier auprès du Hub"
+        }
+        
+        if app.frontend_url:
+            response.developer_info["frontend_url"] = app.frontend_url
+        
+        logger.info(f"🔍 Docker info pour '{slug}' consulté par {current_user.username}")
+        return response
+        
+    except Exception as e:
+        logger.error(f"Erreur récupération info Docker pour {slug}: {e}")
+        response.developer_info = {
+            "error": str(e),
+            "api_url": app.api_url
+        }
+        return response
 
 
 @router.put("/{app_id}/shared")

@@ -150,8 +150,17 @@ function handleSSEEvent(data) {
     
     switch (data.type) {
         case 'apps_updated':
-            // Rafraîchir la liste des applications
-            loadApps();
+            // Rafraîchir la liste des applications selon la page
+            if (currentPage === 'apps-admin') {
+                // Page admin : recharger tout le tableau et relancer les tests
+                loadAllApps().then(() => {
+                    // Relancer le test de connectivité après rechargement
+                    setTimeout(() => refreshAppsStatus(), 500);
+                });
+            } else {
+                loadApps();
+            }
+            
             // Notification adaptée selon l'action
             let appAction = 'modifiée';
             let toastType = 'info';
@@ -172,6 +181,10 @@ function handleSSEEvent(data) {
                     toastType = 'warning';
                     loadPendingAppsCount();  // Mettre à jour le badge
                     break;
+                case 'docker_status_changed':
+                    appAction = `Docker: ${data.data?.new_status || 'mis à jour'}`;
+                    toastType = data.data?.new_status === 'running' ? 'success' : 'warning';
+                    break;
             }
             const appName = data.data?.app_name || 'Application';
             showToast('Mise à jour', `${appName} ${appAction}`, toastType);
@@ -185,6 +198,15 @@ function handleSSEEvent(data) {
                     refreshTokenAfterAppChange(null, true); // silencieux via SSE
                 }
             }
+            break;
+            
+        case 'docker_status_changed':
+            // Événement dédié pour les changements de statut Docker
+            if (currentPage === 'apps-admin') {
+                updateAppDockerStatusInTable(data.data?.slug, data.data?.status);
+            }
+            // Aussi mettre à jour sur le dashboard
+            updateAppCardStatus(data.data?.slug, data.data?.status);
             break;
             
         case 'users_updated':
@@ -307,6 +329,39 @@ document.addEventListener('DOMContentLoaded', () => {
     serviceAccountFormModal = new bootstrap.Modal(document.getElementById('serviceAccountFormModal'));
     saCredentialsModal = new bootstrap.Modal(document.getElementById('saCredentialsModal'));
     toast = new bootstrap.Toast(document.getElementById('toast'));
+
+    // Démarrer/arrêter le rafraîchissement de connectivité selon l'état de la modal admin
+    const adminModalEl = document.getElementById('adminModal');
+    adminModalEl.addEventListener('shown.bs.modal', () => {
+        // La modal admin s'ouvre - on est par défaut sur l'onglet apps
+        currentPage = 'apps-admin';
+        startConnectivityRefresh();
+    });
+    adminModalEl.addEventListener('hidden.bs.modal', () => {
+        // La modal admin se ferme - arrêter le rafraîchissement
+        currentPage = 'dashboard';
+        stopConnectivityRefresh();
+    });
+    
+    // Gérer le changement d'onglet dans la modal admin
+    const adminTabsEl = document.getElementById('adminTabs');
+    if (adminTabsEl) {
+        adminTabsEl.addEventListener('shown.bs.tab', (event) => {
+            const targetId = event.target.getAttribute('data-bs-target');
+            if (targetId === '#tabApps') {
+                currentPage = 'apps-admin';
+                startConnectivityRefresh();
+            } else {
+                // Autre onglet (Approbations, Service Accounts)
+                stopConnectivityRefresh();
+                if (targetId === '#tabPendingApps') {
+                    currentPage = 'pending-apps';
+                } else if (targetId === '#tabServiceAccounts') {
+                    currentPage = 'service-accounts';
+                }
+            }
+        });
+    }
 
     // Écouter l'événement de session expirée depuis l'API
     // Cela permet de déconnecter immédiatement l'utilisateur si sa session expire
@@ -1090,6 +1145,97 @@ async function refreshAppsStatus() {
 }
 
 /**
+ * Met à jour le statut Docker d'une app dans le tableau admin
+ */
+function updateAppDockerStatusInTable(slug, dockerStatus) {
+    if (!slug) return;
+    
+    // Trouver la ligne correspondante
+    const row = document.querySelector(`tr[data-app-id] .app-connectivity[data-app-slug="${slug}"]`)?.closest('tr');
+    if (!row) return;
+    
+    // Trouver la cellule Docker (6ème colonne, index 5)
+    const dockerCell = row.children[5];
+    if (!dockerCell) return;
+    
+    // Mettre à jour le badge Docker
+    let dockerBadge;
+    if (!dockerStatus) {
+        dockerBadge = '<span class="badge bg-light text-muted"><i class="bi bi-question-circle me-1"></i>Inconnu</span>';
+    } else if (dockerStatus === 'running') {
+        dockerBadge = '<span class="badge bg-light text-dark"><i class="bi bi-play-circle text-success me-1"></i>Running</span>';
+    } else {
+        dockerBadge = '<span class="badge bg-warning text-dark"><i class="bi bi-pause-circle me-1"></i>Maintenance</span>';
+    }
+    dockerCell.innerHTML = dockerBadge;
+    
+    console.log(`🔄 Docker status mis à jour pour ${slug}: ${dockerStatus}`);
+}
+
+/**
+ * Met à jour le statut d'une carte d'app sur le dashboard
+ */
+function updateAppCardStatus(slug, dockerStatus) {
+    if (!slug) return;
+    
+    const card = document.querySelector(`.app-card[data-app-slug="${slug}"]`);
+    if (!card) return;
+    
+    const isInMaintenance = dockerStatus && dockerStatus !== 'running';
+    
+    if (isInMaintenance) {
+        card.classList.add('app-inactive');
+        // Ajouter un badge maintenance si pas déjà présent
+        if (!card.querySelector('.maintenance-badge')) {
+            const badge = document.createElement('span');
+            badge.className = 'badge bg-warning text-dark maintenance-badge position-absolute top-0 end-0 m-2';
+            badge.innerHTML = '<i class="bi bi-tools me-1"></i>Maintenance';
+            card.style.position = 'relative';
+            card.appendChild(badge);
+        }
+    } else {
+        card.classList.remove('app-inactive');
+        // Retirer le badge maintenance
+        const badge = card.querySelector('.maintenance-badge');
+        if (badge) badge.remove();
+    }
+}
+
+/**
+ * Intervalle de rafraîchissement automatique de la connectivité
+ */
+let connectivityRefreshInterval = null;
+const CONNECTIVITY_REFRESH_DELAY = 30000; // 30 secondes
+
+/**
+ * Démarre le rafraîchissement périodique de la connectivité
+ */
+function startConnectivityRefresh() {
+    if (connectivityRefreshInterval) return; // Déjà démarré
+    
+    connectivityRefreshInterval = setInterval(() => {
+        // Rafraîchir seulement si on est sur la page apps-admin
+        if (currentPage === 'apps-admin') {
+            console.log('🔄 Rafraîchissement automatique de la connectivité...');
+            refreshAppsStatus();
+        }
+    }, CONNECTIVITY_REFRESH_DELAY);
+    
+    console.log(`⏱️ Rafraîchissement connectivité activé (${CONNECTIVITY_REFRESH_DELAY/1000}s)`);
+}
+
+/**
+ * Arrête le rafraîchissement périodique
+ */
+function stopConnectivityRefresh() {
+    if (connectivityRefreshInterval) {
+        clearInterval(connectivityRefreshInterval);
+        connectivityRefreshInterval = null;
+        console.log('⏱️ Rafraîchissement connectivité désactivé');
+    }
+}
+
+/**
  * Rafraîchit le statut des Service Accounts
  */
 async function refreshServiceAccountsStatus() {
@@ -1212,6 +1358,9 @@ function renderAppsTable(apps) {
                             <span class="badge bg-light text-muted"><i class="bi bi-question-circle me-1"></i>Non testé</span>
                         </td>
                         <td class="text-end">
+                            <button class="btn btn-sm btn-outline-info me-1" onclick="showDockerDetails('${app.slug}')" title="Détails Docker">
+                                <i class="bi bi-eye"></i>
+                            </button>
                             <button class="btn btn-sm btn-outline-primary me-1" onclick="editApp(${app.id})">
                                 <i class="bi bi-pencil"></i>
                             </button>
@@ -1347,6 +1496,251 @@ async function showAddAppForm() {
     updateUrlPreview();
     adminModal.hide();
     appFormModal.show();
+}
+
+// ===== Docker Details Modal =====
+
+/**
+ * Affiche les détails Docker d'une application
+ */
+async function showDockerDetails(slug) {
+    // Créer la modal si elle n'existe pas
+    let modalEl = document.getElementById('dockerInfoModal');
+    if (!modalEl) {
+        modalEl = document.createElement('div');
+        modalEl.className = 'modal fade';
+        modalEl.id = 'dockerInfoModal';
+        modalEl.tabIndex = -1;
+        modalEl.innerHTML = `
+            <div class="modal-dialog modal-lg">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title">
+                            <i class="bi bi-box me-2"></i>Informations Docker
+                        </h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                    </div>
+                    <div class="modal-body" id="dockerInfoContent">
+                        <div class="text-center py-4">
+                            <div class="spinner-border text-primary" role="status"></div>
+                            <p class="mt-2 text-muted">Chargement...</p>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Fermer</button>
+                    </div>
+                </div>
+            </div>
+        `;
+        document.body.appendChild(modalEl);
+    }
+    
+    const modal = new bootstrap.Modal(modalEl);
+    modal.show();
+    
+    const content = document.getElementById('dockerInfoContent');
+    
+    try {
+        const info = await api.getAppDockerInfo(slug);
+        console.log('🐳 Docker info:', info);
+        
+        if (!info.container_found) {
+            content.innerHTML = `
+                <div class="alert alert-warning">
+                    <i class="bi bi-exclamation-triangle me-2"></i>
+                    <strong>Conteneur non trouvé</strong>
+                    <p class="mb-0 mt-2">${info.developer_info?.warning || 'Le conteneur Docker n\'a pas été trouvé.'}</p>
+                    ${info.developer_info?.tip ? `<small class="text-muted">${info.developer_info.tip}</small>` : ''}
+                </div>
+                <div class="card">
+                    <div class="card-header"><i class="bi bi-info-circle me-2"></i>Informations Application</div>
+                    <div class="card-body">
+                        <table class="table table-sm mb-0">
+                            <tr><th style="width: 150px;">Slug</th><td><code>${escapeHtml(info.app_slug)}</code></td></tr>
+                            <tr><th>Nom</th><td>${escapeHtml(info.app_name)}</td></tr>
+                            <tr><th>URL API</th><td><a href="${escapeHtml(info.app_api_url)}" target="_blank">${escapeHtml(info.app_api_url)}</a></td></tr>
+                            ${info.app_frontend_url ? `<tr><th>URL Frontend</th><td><a href="${escapeHtml(info.app_frontend_url)}" target="_blank">${escapeHtml(info.app_frontend_url)}</a></td></tr>` : ''}
+                        </table>
+                    </div>
+                </div>
+            `;
+            return;
+        }
+        
+        // Conteneur trouvé - afficher toutes les infos
+        const statusBadge = info.container_status === 'running' 
+            ? '<span class="badge bg-success"><i class="bi bi-play-circle me-1"></i>Running</span>'
+            : '<span class="badge bg-warning text-dark"><i class="bi bi-pause-circle me-1"></i>' + escapeHtml(info.container_status) + '</span>';
+        
+        content.innerHTML = `
+            <!-- Statut global -->
+            <div class="d-flex align-items-center mb-3">
+                <span class="me-2 fs-4"><i class="bi bi-box text-primary"></i></span>
+                <div>
+                    <h5 class="mb-0">${escapeHtml(info.container_name)}</h5>
+                    <small class="text-muted">ID: ${escapeHtml(info.container_id)}</small>
+                </div>
+                <span class="ms-auto">${statusBadge}</span>
+            </div>
+            
+            <div class="row g-3">
+                <!-- Colonne gauche -->
+                <div class="col-md-6">
+                    <!-- Info Conteneur -->
+                    <div class="card mb-3">
+                        <div class="card-header py-2"><i class="bi bi-box me-2"></i>Conteneur</div>
+                        <div class="card-body py-2">
+                            <table class="table table-sm mb-0">
+                                <tr><th style="width: 100px;">Image</th><td><code>${escapeHtml(info.container_image || 'N/A')}</code></td></tr>
+                                <tr><th>Créé</th><td>${info.container_created ? formatDateTime(info.container_created) : 'N/A'}</td></tr>
+                                <tr><th>Démarré</th><td>${info.container_started_at ? formatDateTime(info.container_started_at) : 'N/A'}</td></tr>
+                            </table>
+                        </div>
+                    </div>
+                    
+                    <!-- Ports -->
+                    <div class="card mb-3">
+                        <div class="card-header py-2"><i class="bi bi-plug me-2"></i>Ports exposés</div>
+                        <div class="card-body py-2">
+                            ${info.ports && info.ports.length > 0 ? `
+                                <table class="table table-sm mb-0">
+                                    <thead><tr><th>Conteneur</th><th>→</th><th>Hôte</th><th>Proto</th></tr></thead>
+                                    <tbody>
+                                        ${info.ports.map(p => `
+                                            <tr>
+                                                <td>${p.container_port}</td>
+                                                <td>→</td>
+                                                <td><strong>${p.host_port || '-'}</strong></td>
+                                                <td><span class="badge bg-light text-dark">${p.protocol}</span></td>
+                                            </tr>
+                                        `).join('')}
+                                    </tbody>
+                                </table>
+                            ` : '<p class="text-muted mb-0">Aucun port exposé</p>'}
+                        </div>
+                    </div>
+                    
+                    <!-- Réseaux -->
+                    <div class="card">
+                        <div class="card-header py-2"><i class="bi bi-diagram-3 me-2"></i>Réseaux Docker</div>
+                        <div class="card-body py-2">
+                            ${info.networks && info.networks.length > 0 ? `
+                                <table class="table table-sm mb-0">
+                                    <thead><tr><th>Réseau</th><th>IP</th></tr></thead>
+                                    <tbody>
+                                        ${info.networks.map(n => `
+                                            <tr>
+                                                <td><code>${escapeHtml(n)}</code></td>
+                                                <td><code>${info.ip_addresses[n] || '-'}</code></td>
+                                            </tr>
+                                        `).join('')}
+                                    </tbody>
+                                </table>
+                            ` : '<p class="text-muted mb-0">Aucun réseau</p>'}
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Colonne droite -->
+                <div class="col-md-6">
+                    <!-- Variables APP_* -->
+                    <div class="card mb-3">
+                        <div class="card-header py-2"><i class="bi bi-gear me-2"></i>Variables APP_*</div>
+                        <div class="card-body py-2">
+                            ${info.app_env_vars && Object.keys(info.app_env_vars).length > 0 ? `
+                                <table class="table table-sm mb-0">
+                                    ${Object.entries(info.app_env_vars).map(([k, v]) => `
+                                        <tr><th style="width: 120px;">${escapeHtml(k)}</th><td><code>${escapeHtml(v)}</code></td></tr>
+                                    `).join('')}
+                                </table>
+                            ` : '<p class="text-muted mb-0">Aucune variable APP_*</p>'}
+                        </div>
+                    </div>
+                    
+                    <!-- Labels Hub -->
+                    <div class="card mb-3">
+                        <div class="card-header py-2"><i class="bi bi-tag me-2"></i>Labels hub.*</div>
+                        <div class="card-body py-2">
+                            ${info.hub_labels && Object.keys(info.hub_labels).length > 0 ? `
+                                <table class="table table-sm mb-0">
+                                    ${Object.entries(info.hub_labels).map(([k, v]) => `
+                                        <tr><th style="width: 120px;">${escapeHtml(k)}</th><td><code>${escapeHtml(v)}</code></td></tr>
+                                    `).join('')}
+                                </table>
+                            ` : '<p class="text-muted mb-0">Aucun label hub.*</p>'}
+                        </div>
+                    </div>
+                    
+                    <!-- Info développeur -->
+                    <div class="card border-info">
+                        <div class="card-header py-2 bg-info text-white"><i class="bi bi-code-slash me-2"></i>Pour développeurs</div>
+                        <div class="card-body py-2">
+                            <table class="table table-sm mb-0">
+                                <tr>
+                                    <th style="width: 100px;">URL API</th>
+                                    <td>
+                                        <a href="${escapeHtml(info.app_api_url)}" target="_blank" class="text-break">
+                                            ${escapeHtml(info.app_api_url)}
+                                        </a>
+                                    </td>
+                                </tr>
+                                ${info.app_frontend_url ? `
+                                <tr>
+                                    <th>Frontend</th>
+                                    <td>
+                                        <a href="${escapeHtml(info.app_frontend_url)}" target="_blank" class="text-break">
+                                            ${escapeHtml(info.app_frontend_url)}
+                                        </a>
+                                    </td>
+                                </tr>
+                                ` : ''}
+                                <tr>
+                                    <th>Header</th>
+                                    <td><code>X-Slug: ${escapeHtml(info.app_slug)}</code></td>
+                                </tr>
+                            </table>
+                            
+                            <div class="mt-2">
+                                <small class="text-muted">Commandes utiles :</small>
+                                <div class="bg-dark text-light p-2 rounded mt-1" style="font-size: 0.8rem;">
+                                    <code class="text-info">docker logs ${escapeHtml(info.container_name)} --tail 100 -f</code><br>
+                                    <code class="text-warning">docker exec -it ${escapeHtml(info.container_name)} /bin/bash</code>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+    } catch (error) {
+        console.error('Erreur récupération Docker info:', error);
+        content.innerHTML = `
+            <div class="alert alert-danger">
+                <i class="bi bi-x-circle me-2"></i>
+                <strong>Erreur</strong>
+                <p class="mb-0">${escapeHtml(error.message || 'Impossible de récupérer les informations Docker')}</p>
+            </div>
+        `;
+    }
+}
+
+/**
+ * Formate une date ISO pour l'affichage
+ */
+function formatDateTime(isoString) {
+    if (!isoString) return 'N/A';
+    try {
+        const date = new Date(isoString);
+        return date.toLocaleString('fr-FR', {
+            day: '2-digit',
+            month: '2-digit',
+            year: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit'
+        });
+    } catch (e) {
+        return isoString;
+    }
 }
 
 async function editApp(id) {

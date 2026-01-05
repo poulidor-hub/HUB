@@ -256,6 +256,78 @@ class AppWithUsers(AppResponse):
         )
 
 
+class AppWithUsersAndDocker(AppWithUsers):
+    """Application avec utilisateurs et statut Docker pour l'admin"""
+    docker_status: Optional[str] = None  # 'running', 'exited', 'stopped', None
+    
+    @classmethod
+    def from_orm_model_with_docker(cls, app, docker_status: Optional[str] = None) -> "AppWithUsersAndDocker":
+        """Convertit une Application ORM avec user_roles en AppWithUsersAndDocker"""
+        users = [
+            UserBriefWithRole(
+                id=uar.user.id,
+                username=uar.user.username,
+                is_active=uar.user.is_active,
+                role=uar.role
+            )
+            for uar in app.user_roles
+        ]
+        # Gérer l'enum ApprovalStatus
+        approval_status = ApprovalStatusEnum(app.approval_status.value) if app.approval_status else ApprovalStatusEnum.approved
+        return cls(
+            id=app.id,
+            name=app.name,
+            slug=app.slug,
+            description=app.description,
+            icon=app.icon,
+            color=app.color,
+            api_url=app.api_url,
+            frontend_url=app.frontend_url,
+            callback_url=app.callback_url,
+            is_active=app.is_active,
+            requires_auth=app.requires_auth,
+            is_shared_service=app.is_shared_service,
+            approval_status=approval_status,
+            created_at=app.created_at,
+            users=users,
+            docker_status=docker_status
+        )
+
+
+class DockerInfoResponse(BaseModel):
+    """Informations détaillées Docker d'une application pour développeurs"""
+    # Info application Hub
+    app_slug: str
+    app_name: str
+    app_api_url: str
+    app_frontend_url: Optional[str] = None
+    
+    # Info conteneur Docker
+    container_found: bool = False
+    container_id: Optional[str] = None
+    container_name: Optional[str] = None
+    container_status: Optional[str] = None  # 'running', 'exited', etc.
+    container_image: Optional[str] = None
+    container_created: Optional[str] = None
+    container_started_at: Optional[str] = None
+    
+    # Ports exposés
+    ports: List["DockerPortInfo"] = []
+    
+    # Labels Hub (utiles pour config)
+    hub_labels: dict = {}  # Labels hub.* du conteneur
+    
+    # Variables d'environnement APP_*
+    app_env_vars: dict = {}  # Variables APP_* du conteneur
+    
+    # Informations réseau
+    networks: List[str] = []  # Noms des réseaux Docker
+    ip_addresses: dict = {}  # network_name -> ip_address
+    
+    # Message d'aide pour développeur
+    developer_info: dict = {}
+
+
 # ===== Découverte M2M Schemas =====
 class AppDiscoveryItem(BaseModel):
     """Informations d'une application pour la découverte M2M"""
@@ -562,3 +634,4 @@ class AppCredentialsResponse(BaseModel):
 UserResponse.model_rebuild()
 ServiceAccountResponse.model_rebuild()
 ServiceAccountCreated.model_rebuild()
+DockerInfoResponse.model_rebuild()

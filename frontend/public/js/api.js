@@ -293,6 +293,10 @@ class HubAPI {
         });
     }
 
+    async getAppDockerInfo(slug) {
+        return this.request(`/apps/${encodeURIComponent(slug)}/docker-info`);
+    }
+
     // Users
     async getUsers() {
         return this.request('/users/');
