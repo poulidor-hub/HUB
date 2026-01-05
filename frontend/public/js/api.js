@@ -90,14 +90,12 @@ class HubAPI {
                         console.log('Token rafraîchi par un autre appel pendant la requête');
                         return true;
                     }
-                    // 401 peut arriver si le token a été roté par un autre onglet/requête
-                    // Ne pas déconnecter si on a un token d'accès valide récent
-                    if (response.status === 401 && this._lastRefreshTime > 0 && (Date.now() - this._lastRefreshTime) < 60000) {
-                        console.log('Refresh 401 ignoré - token probablement déjà roté');
-                        return true;
-                    }
-                    // Refresh token expiré ou invalide
-                    this.clearToken();
+                    // Refresh token invalide - supprimer UNIQUEMENT le refresh token
+                    // On garde le token d'accès qui peut encore être valide
+                    console.warn('Refresh token invalide, suppression du refresh token uniquement');
+                    this.setRefreshToken(null);
+                    // Retourner false pour indiquer l'échec du refresh
+                    // Mais ne pas effacer le token d'accès - il sera invalidé naturellement
                     return false;
                 }
 
@@ -110,10 +108,7 @@ class HubAPI {
                 return true;
             } catch (error) {
                 console.error('Refresh token failed:', error);
-                // Ne pas effacer si le token a été mis à jour entre-temps
-                if (this.refreshToken === tokenToRefresh) {
-                    this.clearToken();
-                }
+                // En cas d'erreur réseau, garder les tokens existants
                 return false;
             } finally {
                 this._refreshPromise = null;
@@ -143,16 +138,17 @@ class HubAPI {
                     // Réessayer avec le nouveau token
                     config.headers['Authorization'] = `Bearer ${this.token}`;
                     response = await fetch(url, config);
-                } else {
-                    // Refresh échoué - déclencher l'événement de session expirée
-                    this.clearToken();
-                    this._dispatchSessionExpired();
-                    throw new Error('Session expirée');
+                } else if (this.token) {
+                    // Refresh échoué mais on a encore un token d'accès - réessayer avec
+                    // (le token pourrait encore être valide quelques secondes)
+                    config.headers['Authorization'] = `Bearer ${this.token}`;
+                    response = await fetch(url, config);
                 }
             }
 
             if (response.status === 401) {
-                // Token invalide - déclencher l'événement de session expirée
+                // Token d'accès invalide ET pas de refresh possible
+                // Maintenant on peut vraiment déconnecter
                 this.clearToken();
                 this._dispatchSessionExpired();
                 throw new Error('Session expirée');
