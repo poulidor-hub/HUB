@@ -280,9 +280,13 @@ class UserSession(Base):
     user_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), nullable=False, index=True)
     login_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     logout_at = Column(DateTime, nullable=True)  # NULL = session active
-    logout_reason = Column(String(50))  # explicit, timeout, token_revoked
+    logout_reason = Column(String(50))  # explicit, timeout, token_revoked, browser_closed, sse_disconnect
     ip_address = Column(String(45))
     user_agent = Column(String(255))
+    
+    # Tracking de l'activité en temps réel
+    last_activity_at = Column(DateTime, nullable=False, default=datetime.utcnow)  # Dernière activité (SSE ping, refresh, accès app)
+    current_app_slug = Column(String(50), nullable=True)  # Application actuellement active (dernière accédée)
     
     # Relations
     user = relationship("User", backref="sessions")
@@ -298,6 +302,11 @@ class UserSession(Base):
     def is_active(self) -> bool:
         """Session considérée active si pas de logout"""
         return self.logout_at is None
+    
+    @property
+    def idle_seconds(self) -> int:
+        """Temps d'inactivité en secondes depuis la dernière activité"""
+        return int((datetime.utcnow() - self.last_activity_at).total_seconds())
     
     def __repr__(self):
         status = "active" if self.is_active else f"closed ({self.duration_seconds}s)"

@@ -200,8 +200,10 @@ async def start_session(
     Démarre une nouvelle session pour un utilisateur.
     Ferme automatiquement les sessions orphelines (sans logout).
     """
+    now = datetime.utcnow()
+    
     # Fermer les éventuelles sessions orphelines de cet utilisateur
-    timeout = datetime.utcnow() - timedelta(minutes=settings.session_timeout_minutes)
+    timeout = now - timedelta(minutes=settings.session_timeout_minutes)
     result = await db.execute(
         select(UserSession).where(
             and_(
@@ -213,14 +215,16 @@ async def start_session(
     orphan_sessions = result.scalars().all()
     
     for session in orphan_sessions:
-        # Si dernière activité > timeout, fermer comme timeout
-        session.logout_at = session.login_at + timedelta(minutes=settings.session_timeout_minutes)
+        # Utiliser last_activity_at pour déterminer le moment réel du timeout
+        last_activity = getattr(session, 'last_activity_at', None) or session.login_at
+        session.logout_at = last_activity + timedelta(minutes=settings.session_timeout_minutes)
         session.logout_reason = "timeout"
     
     # Créer la nouvelle session
     new_session = UserSession(
         user_id=user_id,
-        login_at=datetime.utcnow(),
+        login_at=now,
+        last_activity_at=now,
         ip_address=ip_address,
         user_agent=user_agent[:255] if user_agent else None
     )
@@ -232,6 +236,27 @@ async def start_session(
     return new_session
 
 
+async def get_active_session_for_user(
+    db: AsyncSession,
+    user_id: int
+) -> Optional[UserSession]:
+    """
+    Récupère la session active d'un utilisateur (s'il en a une).
+    
+    Returns:
+        La session active ou None
+    """
+    result = await db.execute(
+        select(UserSession).where(
+            and_(
+                UserSession.user_id == user_id,
+                UserSession.logout_at == None
+            )
+        ).order_by(UserSession.login_at.desc())
+    )
+    return result.scalar_one_or_none()
+
+
 async def end_session(
     db: AsyncSession,
     user_id: int,
@@ -239,6 +264,15 @@ async def end_session(
 ) -> Optional[UserSession]:
     """
     Termine la session active d'un utilisateur.
+    
+    Args:
+        user_id: ID de l'utilisateur
+        reason: Raison de fin de session:
+            - explicit: logout volontaire
+            - timeout: inactivité
+            - token_revoked: révocation admin
+            - browser_closed: fermeture navigateur (via beforeunload)
+            - sse_disconnect: déconnexion SSE détectée
     """
     result = await db.execute(
         select(UserSession).where(
@@ -253,33 +287,74 @@ async def end_session(
     if session:
         session.logout_at = datetime.utcnow()
         session.logout_reason = reason
+        session.current_app_slug = None  # Plus d'app active
         # Notifier les clients SSE
         _notify_audit()
     
     return session
 
 
+async def update_session_activity(
+    db: AsyncSession,
+    user_id: int,
+    app_slug: str = None
+) -> Optional[UserSession]:
+    """
+    Met à jour l'activité d'une session (heartbeat).
+    
+    Args:
+        user_id: ID de l'utilisateur
+        app_slug: Si fourni, met à jour l'application courante
+    
+    Returns:
+        La session mise à jour ou None si pas de session active
+    """
+    result = await db.execute(
+        select(UserSession).where(
+            and_(
+                UserSession.user_id == user_id,
+                UserSession.logout_at == None
+            )
+        ).order_by(UserSession.login_at.desc())
+    )
+    session = result.scalar_one_or_none()
+    
+    if session:
+        session.last_activity_at = datetime.utcnow()
+        if app_slug is not None:
+            session.current_app_slug = app_slug
+    
+    return session
+
+
 async def cleanup_stale_sessions(db: AsyncSession) -> int:
     """
-    Ferme les sessions inactives (pas de refresh depuis session_timeout_minutes).
-    À appeler périodiquement (ex: toutes les heures).
+    Ferme les sessions inactives basé sur last_activity_at.
+    Appelé périodiquement par le système SSE.
     Retourne le nombre de sessions fermées.
     """
     timeout = datetime.utcnow() - timedelta(minutes=settings.session_timeout_minutes)
     
+    # Sélectionner les sessions dont la dernière activité dépasse le timeout
     result = await db.execute(
         select(UserSession).where(
             and_(
                 UserSession.logout_at == None,
-                UserSession.login_at < timeout
+                UserSession.last_activity_at < timeout
             )
         )
     )
     stale_sessions = result.scalars().all()
     
     for session in stale_sessions:
-        session.logout_at = session.login_at + timedelta(minutes=settings.session_timeout_minutes)
+        # Utiliser last_activity_at pour le logout_at réel
+        session.logout_at = session.last_activity_at + timedelta(minutes=settings.session_timeout_minutes)
         session.logout_reason = "timeout"
+        session.current_app_slug = None
+    
+    if stale_sessions:
+        await db.commit()
+        _notify_audit()
     
     return len(stale_sessions)
 
@@ -296,6 +371,13 @@ async def get_active_sessions(
     """
     Liste les utilisateurs actuellement connectés.
     Requiert: admin Hub
+    
+    Retourne pour chaque session:
+    - user_id, username
+    - login_at, duration_minutes
+    - last_activity_at, idle_minutes (temps depuis dernière activité)
+    - current_app_slug, current_app_name (application active)
+    - ip_address
     """
     if not current_user.is_admin:
         raise HTTPException(status_code=403, detail="Accès admin requis")
@@ -311,6 +393,17 @@ async def get_active_sessions(
     )
     active_sessions = result.scalars().all()
     
+    # Récupérer les noms des applications pour les sessions qui ont une app active
+    app_slugs = [s.current_app_slug for s in active_sessions if s.current_app_slug]
+    app_names = {}
+    if app_slugs:
+        apps_result = await db.execute(
+            select(Application).where(Application.slug.in_(app_slugs))
+        )
+        for app in apps_result.scalars():
+            app_names[app.slug] = app.name
+    
+    now = datetime.utcnow()
     return {
         "stale_sessions_cleaned": cleaned,
         "active_count": len(active_sessions),
@@ -319,7 +412,11 @@ async def get_active_sessions(
                 "user_id": s.user_id,
                 "username": s.user.username if s.user else None,
                 "login_at": s.login_at.isoformat(),
-                "duration_minutes": int((datetime.utcnow() - s.login_at).total_seconds() / 60),
+                "duration_minutes": int((now - s.login_at).total_seconds() / 60),
+                "last_activity_at": s.last_activity_at.isoformat() if s.last_activity_at else s.login_at.isoformat(),
+                "idle_minutes": int((now - (s.last_activity_at or s.login_at)).total_seconds() / 60),
+                "current_app_slug": s.current_app_slug,
+                "current_app_name": app_names.get(s.current_app_slug) if s.current_app_slug else None,
                 "ip_address": s.ip_address
             }
             for s in active_sessions
@@ -360,6 +457,17 @@ async def get_session_history(
     result = await db.execute(query)
     sessions = result.scalars().all()
     
+    # Récupérer les noms des applications pour les sessions qui ont une app
+    app_slugs = [s.current_app_slug for s in sessions if s.current_app_slug]
+    app_names = {}
+    if app_slugs:
+        apps_result = await db.execute(
+            select(Application).where(Application.slug.in_(app_slugs))
+        )
+        for app in apps_result.scalars():
+            app_names[app.slug] = app.name
+    
+    now = datetime.utcnow()
     return {
         "period_days": days,
         "total_sessions": len(sessions),
@@ -373,6 +481,10 @@ async def get_session_history(
                 "logout_reason": s.logout_reason,
                 "duration_seconds": s.duration_seconds,
                 "duration_display": format_duration(s.duration_seconds) if s.duration_seconds else "en cours",
+                "duration_minutes": int((now - s.login_at).total_seconds() / 60) if not s.logout_at else None,
+                "idle_minutes": int((now - (s.last_activity_at or s.login_at)).total_seconds() / 60) if not s.logout_at else None,
+                "current_app_slug": s.current_app_slug,
+                "current_app_name": app_names.get(s.current_app_slug) if s.current_app_slug else None,
                 "ip_address": s.ip_address
             }
             for s in sessions

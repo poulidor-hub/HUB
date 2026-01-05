@@ -577,6 +577,7 @@ async def log_app_access(
     """
     Enregistre l'accès d'un utilisateur à une application.
     Appelé par le frontend avant de rediriger vers l'application.
+    Met à jour current_app_slug dans la session pour le tracking.
     """
     # Vérifier que l'app existe
     result = await db.execute(select(Application).where(Application.slug == app_slug))
@@ -595,6 +596,10 @@ async def log_app_access(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Accès non autorisé à cette application"
         )
+    
+    # Mettre à jour la session avec l'app courante
+    from app.routes.audit import update_session_activity
+    await update_session_activity(db, current_user.id, app_slug=app_slug)
     
     # Logger l'accès
     await log_action(

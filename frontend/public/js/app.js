@@ -19,6 +19,7 @@ let sseWasConnected = false; // Indique si on a déjà été connecté (pour dé
 
 /**
  * Initialise la connexion SSE pour recevoir les mises à jour en temps réel
+ * Passe l'user_id en query param pour le tracking de session côté serveur
  * @param {boolean} isReconnect - true si c'est une reconnexion après une déconnexion
  */
 function initEventSource(isReconnect = false) {
@@ -34,7 +35,10 @@ function initEventSource(isReconnect = false) {
     }
     
     try {
-        eventSource = new EventSource('/api/events/stream');
+        // Passer l'user_id pour le tracking de session
+        const userId = currentUser?.id || '';
+        const sseUrl = userId ? `/api/events/stream?user_id=${userId}` : '/api/events/stream';
+        eventSource = new EventSource(sseUrl);
         
         eventSource.onopen = () => {
             console.log('🔌 SSE connecté - mises à jour temps réel actives');
@@ -379,6 +383,26 @@ document.addEventListener('DOMContentLoaded', () => {
             if (!eventSource || eventSource.readyState !== EventSource.OPEN) {
                 console.log('👁️ Page redevenue visible - reconnexion SSE...');
                 initEventSource(true);  // Reconnexion avec rafraîchissement
+            }
+        }
+    });
+
+    // Gérer la fermeture du navigateur/onglet - tenter un logout synchrone
+    // Utilise sendBeacon pour envoyer la requête même si la page se ferme
+    window.addEventListener('beforeunload', (event) => {
+        if (api.token && currentUser) {
+            // Utiliser sendBeacon pour tenter de fermer la session côté serveur
+            // Note: sendBeacon ne peut pas inclure de headers Authorization
+            // On utilise donc un endpoint dédié avec le token en body
+            try {
+                const data = JSON.stringify({
+                    reason: 'browser_closed',
+                    user_id: currentUser.id
+                });
+                navigator.sendBeacon('/api/auth/beacon-logout', data);
+                console.log('📤 Beacon logout envoyé');
+            } catch (e) {
+                console.warn('Beacon logout failed:', e);
             }
         }
     });
@@ -2997,8 +3021,9 @@ function renderActiveSessions(data) {
             <thead>
                 <tr>
                     <th>Utilisateur</th>
+                    <th>Application active</th>
                     <th>Connecté depuis</th>
-                    <th>Durée</th>
+                    <th>Inactivité</th>
                     <th>IP</th>
                 </tr>
             </thead>
@@ -3009,8 +3034,17 @@ function renderActiveSessions(data) {
                             <span class="badge bg-success me-2"><i class="bi bi-circle-fill" style="font-size: 0.5rem;"></i></span>
                             <strong>${escapeHtml(s.username || 'Unknown')}</strong>
                         </td>
-                        <td><small>${formatDateTime(s.login_at)}</small></td>
-                        <td><span class="badge bg-light text-dark">${s.duration_minutes} min</span></td>
+                        <td>
+                            ${s.current_app_name 
+                                ? `<span class="badge bg-primary"><i class="bi bi-app me-1"></i>${escapeHtml(s.current_app_name)}</span>` 
+                                : '<span class="text-muted small">Hub</span>'}
+                        </td>
+                        <td><small>${formatDateTime(s.login_at)}</small> <span class="badge bg-light text-dark">${s.duration_minutes} min</span></td>
+                        <td>
+                            ${s.idle_minutes > 5 
+                                ? `<span class="badge bg-warning text-dark" title="Inactif depuis ${s.idle_minutes} min"><i class="bi bi-hourglass-split me-1"></i>${s.idle_minutes} min</span>`
+                                : '<span class="badge bg-success"><i class="bi bi-activity me-1"></i>Actif</span>'}
+                        </td>
                         <td><code class="small">${s.ip_address || '-'}</code></td>
                     </tr>
                 `).join('')}
@@ -3024,39 +3058,154 @@ function renderSessionHistory(data) {
     
     if (!data.sessions || data.sessions.length === 0) {
         container.innerHTML = `
-            <div class="text-center py-4 text-muted">
-                <i class="bi bi-clock-history display-6"></i>
-                <p class="mt-2">Aucune session dans cette période</p>
+            <div class="text-center py-5 text-muted">
+                <i class="bi bi-clock-history display-4 mb-3"></i>
+                <p class="mb-0">Aucune session dans cette période</p>
+                <small class="text-muted">Les sessions apparaîtront ici une fois que des utilisateurs se connecteront</small>
             </div>
         `;
         return;
     }
     
+    // Séparer sessions actives et terminées
+    const activeSessions = data.sessions.filter(s => !s.logout_at);
+    const closedSessions = data.sessions.filter(s => s.logout_at);
+    
     container.innerHTML = `
-        <table class="table table-sm table-hover mb-0">
-            <thead class="sticky-top bg-white">
-                <tr>
-                    <th>Utilisateur</th>
-                    <th>Connexion</th>
-                    <th>Déconnexion</th>
-                    <th>Durée</th>
-                    <th>Raison</th>
-                    <th>IP</th>
-                </tr>
-            </thead>
-            <tbody>
-                ${data.sessions.map(s => `
-                    <tr>
-                        <td><strong>${escapeHtml(s.username || 'Unknown')}</strong></td>
-                        <td><small>${formatDateTime(s.login_at)}</small></td>
-                        <td><small>${s.logout_at ? formatDateTime(s.logout_at) : '<span class="badge bg-secondary">En cours</span>'}</small></td>
-                        <td><span class="badge bg-light text-dark">${s.duration_display || '-'}</span></td>
-                        <td>${getLogoutReasonBadge(s.logout_reason)}</td>
-                        <td><code class="small">${s.ip_address || '-'}</code></td>
-                    </tr>
-                `).join('')}
-            </tbody>
-        </table>
+        <!-- Sessions actives -->
+        ${activeSessions.length > 0 ? `
+        <div class="mb-4">
+            <div class="d-flex align-items-center mb-2">
+                <span class="badge bg-success me-2">${activeSessions.length}</span>
+                <h6 class="mb-0 text-success"><i class="bi bi-broadcast me-1"></i>Sessions actives</h6>
+            </div>
+            <div class="table-responsive">
+                <table class="table table-sm table-hover align-middle mb-0 border rounded">
+                    <thead class="table-light">
+                        <tr>
+                            <th style="width: 20%">Utilisateur</th>
+                            <th style="width: 20%">Application</th>
+                            <th style="width: 20%">Connecté depuis</th>
+                            <th style="width: 15%">Durée</th>
+                            <th style="width: 10%">Activité</th>
+                            <th style="width: 15%">IP</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${activeSessions.map(s => `
+                            <tr class="table-success table-active">
+                                <td>
+                                    <div class="d-flex align-items-center">
+                                        <span class="position-relative me-2">
+                                            <i class="bi bi-person-circle fs-5 text-success"></i>
+                                            <span class="position-absolute bottom-0 end-0 translate-middle-x">
+                                                <i class="bi bi-circle-fill text-success" style="font-size: 0.5rem;"></i>
+                                            </span>
+                                        </span>
+                                        <strong>${escapeHtml(s.username || 'Unknown')}</strong>
+                                    </div>
+                                </td>
+                                <td>
+                                    ${s.current_app_name 
+                                        ? `<span class="badge bg-primary bg-gradient"><i class="bi bi-app me-1"></i>${escapeHtml(s.current_app_name)}</span>` 
+                                        : '<span class="badge bg-secondary bg-gradient"><i class="bi bi-house me-1"></i>Hub</span>'}
+                                </td>
+                                <td>
+                                    <small class="text-muted">${formatDateTime(s.login_at)}</small>
+                                </td>
+                                <td>
+                                    <span class="badge bg-light text-dark border">
+                                        <i class="bi bi-clock me-1"></i>${s.duration_display || 'en cours'}
+                                    </span>
+                                </td>
+                                <td>
+                                    ${s.idle_minutes !== undefined && s.idle_minutes > 5 
+                                        ? `<span class="badge bg-warning text-dark" title="Inactif depuis ${s.idle_minutes} min">
+                                            <i class="bi bi-hourglass-split me-1"></i>${s.idle_minutes}m
+                                           </span>`
+                                        : '<span class="badge bg-success"><i class="bi bi-activity"></i></span>'}
+                                </td>
+                                <td><code class="small bg-light px-2 py-1 rounded">${s.ip_address || '-'}</code></td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        ` : ''}
+        
+        <!-- Sessions terminées -->
+        ${closedSessions.length > 0 ? `
+        <div>
+            <div class="d-flex align-items-center mb-2">
+                <span class="badge bg-secondary me-2">${closedSessions.length}</span>
+                <h6 class="mb-0 text-muted"><i class="bi bi-clock-history me-1"></i>Sessions terminées</h6>
+            </div>
+            <div class="table-responsive" style="max-height: 400px; overflow-y: auto;">
+                <table class="table table-sm table-hover align-middle mb-0 border rounded">
+                    <thead class="table-light sticky-top">
+                        <tr>
+                            <th style="width: 18%">Utilisateur</th>
+                            <th style="width: 15%">Application</th>
+                            <th style="width: 17%">Connexion</th>
+                            <th style="width: 17%">Déconnexion</th>
+                            <th style="width: 10%">Durée</th>
+                            <th style="width: 13%">Raison</th>
+                            <th style="width: 10%">IP</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${closedSessions.map(s => `
+                            <tr>
+                                <td>
+                                    <div class="d-flex align-items-center">
+                                        <i class="bi bi-person-circle fs-5 text-muted me-2"></i>
+                                        <span class="text-muted">${escapeHtml(s.username || 'Unknown')}</span>
+                                    </div>
+                                </td>
+                                <td>
+                                    ${s.current_app_name 
+                                        ? `<span class="badge bg-primary bg-opacity-50"><i class="bi bi-app me-1"></i>${escapeHtml(s.current_app_name)}</span>` 
+                                        : '<span class="text-muted small"><i class="bi bi-house me-1"></i>Hub</span>'}
+                                </td>
+                                <td><small class="text-muted">${formatDateTime(s.login_at)}</small></td>
+                                <td><small class="text-muted">${formatDateTime(s.logout_at)}</small></td>
+                                <td>
+                                    <span class="badge bg-light text-dark border">
+                                        ${s.duration_display || '-'}
+                                    </span>
+                                </td>
+                                <td>${getLogoutReasonBadge(s.logout_reason)}</td>
+                                <td><code class="small text-muted">${s.ip_address || '-'}</code></td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        ` : ''}
+        
+        <!-- Résumé -->
+        <div class="mt-3 pt-3 border-top">
+            <div class="row text-center">
+                <div class="col">
+                    <div class="text-muted small">Total sessions</div>
+                    <strong class="fs-5">${data.total_sessions}</strong>
+                </div>
+                <div class="col">
+                    <div class="text-muted small">Actives</div>
+                    <strong class="fs-5 text-success">${activeSessions.length}</strong>
+                </div>
+                <div class="col">
+                    <div class="text-muted small">Terminées</div>
+                    <strong class="fs-5 text-secondary">${closedSessions.length}</strong>
+                </div>
+                <div class="col">
+                    <div class="text-muted small">Période</div>
+                    <strong class="fs-5">${data.period_days}j</strong>
+                </div>
+            </div>
+        </div>
     `;
 }
 
@@ -3118,10 +3267,12 @@ function getLogoutReasonBadge(reason) {
     if (!reason) return '<span class="badge bg-secondary">Actif</span>';
     
     const badges = {
-        'explicit': '<span class="badge bg-light text-dark">Déconnexion</span>',
-        'timeout': '<span class="badge bg-light text-dark">Timeout</span>',
-        'token_revoked': '<span class="badge bg-light text-dark">Révoqué</span>',
-        'forced': '<span class="badge bg-light text-dark">Forcé</span>'
+        'explicit': '<span class="badge bg-light text-dark"><i class="bi bi-box-arrow-right me-1"></i>Déconnexion</span>',
+        'timeout': '<span class="badge bg-warning text-dark"><i class="bi bi-hourglass-bottom me-1"></i>Timeout</span>',
+        'token_revoked': '<span class="badge bg-danger"><i class="bi bi-x-circle me-1"></i>Révoqué</span>',
+        'forced': '<span class="badge bg-danger"><i class="bi bi-exclamation-triangle me-1"></i>Forcé</span>',
+        'browser_closed': '<span class="badge bg-info text-dark"><i class="bi bi-window-x me-1"></i>Navigateur fermé</span>',
+        'sse_disconnect': '<span class="badge bg-secondary"><i class="bi bi-wifi-off me-1"></i>Connexion perdue</span>'
     };
     
     return badges[reason] || `<span class="badge bg-secondary">${reason}</span>`;

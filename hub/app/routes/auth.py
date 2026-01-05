@@ -75,6 +75,10 @@ async def login_for_token(
             roles = ["admin"] if user.is_admin else ["user"]
             apps = user.get_apps_with_roles()  # Dict {app_slug: role}
             sub = user.username
+            
+            # Mettre à jour l'activité de la session (le refresh = activité)
+            from app.routes.audit import update_session_activity
+            await update_session_activity(db, user.id)
         else:
             sa = refresh_obj.service_account
             roles = ["service_account"]
@@ -88,6 +92,8 @@ async def login_for_token(
             apps=apps,
             is_service_account=refresh_obj.service_account_id is not None
         )
+        
+        await db.commit()
         
         return Token(
             access_token=token,
@@ -303,9 +309,31 @@ async def login_with_redirect(
 
 @router.get("/me")
 async def get_current_user_info(
-    current_user: User = Depends(get_current_user)
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
 ):
-    """Récupère les infos de l'utilisateur connecté"""
+    """
+    Récupère les infos de l'utilisateur connecté.
+    Crée automatiquement une nouvelle session si aucune n'est active
+    (cas de reconnexion après fermeture navigateur avec token encore valide).
+    """
+    from app.routes.audit import start_session, get_active_session_for_user
+    
+    # Vérifier si l'utilisateur a une session active
+    active_session = await get_active_session_for_user(db, current_user.id)
+    
+    if not active_session:
+        # Pas de session active - en créer une nouvelle (reconnexion)
+        await start_session(
+            db,
+            user_id=current_user.id,
+            ip_address=request.client.host if request.client else None,
+            user_agent=request.headers.get("user-agent", "")
+        )
+        await db.commit()
+        notify_stats_update()
+    
     return {
         "id": current_user.id,
         "username": current_user.username,
@@ -440,6 +468,46 @@ async def logout(
     notify_event("audit_updated", {"action": "logout", "username": current_user.username})
     
     return {"message": "Déconnexion réussie"}
+
+
+@router.post("/beacon-logout")
+async def beacon_logout(
+    request: Request,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Endpoint pour le logout via navigator.sendBeacon() lors de la fermeture du navigateur.
+    
+    Ne nécessite pas d'authentification car sendBeacon ne peut pas envoyer de headers.
+    Reçoit le user_id dans le body JSON pour fermer la session.
+    
+    Note: Ce endpoint est moins sécurisé car il n'authentifie pas l'utilisateur,
+    mais il permet de fermer proprement les sessions lors de la fermeture du navigateur.
+    """
+    try:
+        body = await request.body()
+        data = {}
+        if body:
+            import json
+            data = json.loads(body.decode('utf-8'))
+        
+        user_id = data.get('user_id')
+        reason = data.get('reason', 'browser_closed')
+        
+        if not user_id:
+            return {"message": "user_id manquant"}
+        
+        # Fermer la session de l'utilisateur
+        session = await end_session(db, user_id, reason=reason)
+        
+        if session:
+            await db.commit()
+            notify_stats_update()
+            return {"message": "Session fermée", "user_id": user_id}
+        
+        return {"message": "Pas de session active"}
+    except Exception as e:
+        return {"message": f"Erreur: {str(e)}"}
 
 
 @router.get("/public-key")
