@@ -143,9 +143,11 @@ class AppCreateSimplified(BaseModel):
     description: Optional[str] = None
     icon: str = "bi-app"
     color: str = "#0d6efd"
-    api_port: int = Field(..., ge=1, le=65535, description="Port de l'API backend")
-    frontend_port: Optional[int] = Field(None, ge=1, le=65535, description="Port du frontend")
-    frontend_https: bool = Field(False, description="Activer https:// pour le frontend")
+    api_port: int = Field(..., ge=1, le=65535, description="Port de l'API backend HTTP")
+    api_https_port: Optional[int] = Field(None, ge=1, le=65535, description="Port de l'API backend HTTPS (prioritaire sur api_port)")
+    frontend_port: Optional[int] = Field(None, ge=1, le=65535, description="Port du frontend HTTP")
+    frontend_https: bool = Field(False, description="Activer https:// pour le frontend (deprecated, utiliser frontend_https_port)")
+    frontend_https_port: Optional[int] = Field(None, ge=1, le=65535, description="Port du frontend HTTPS (prioritaire sur frontend_port)")
     custom_host: Optional[str] = Field(None, description="Host personnalisé si différent du Hub")
     requires_auth: bool = True
     create_service_account: bool = Field(False, description="Créer un service account M2M pour cette application")
@@ -595,8 +597,10 @@ class AppRegisterRequest(BaseModel):
     slug: str = Field(..., min_length=2, max_length=50, pattern=r'^[a-z0-9-]+$', description="Slug unique de l'application (défini dans .env)")
     name: Optional[str] = Field(None, max_length=100, description="Nom de l'application (optionnel, utilise le slug si absent)")
     description: Optional[str] = Field(None, description="Description de l'application")
-    api_port: int = Field(..., ge=1, le=65535, description="Port de l'API backend")
-    frontend_port: Optional[int] = Field(None, ge=1, le=65535, description="Port du frontend (optionnel)")
+    api_port: int = Field(..., ge=1, le=65535, description="Port de l'API backend HTTP")
+    api_https_port: Optional[int] = Field(None, ge=1, le=65535, description="Port de l'API backend HTTPS (prioritaire sur api_port)")
+    frontend_port: Optional[int] = Field(None, ge=1, le=65535, description="Port du frontend HTTP (optionnel)")
+    frontend_https_port: Optional[int] = Field(None, ge=1, le=65535, description="Port du frontend HTTPS (prioritaire sur frontend_port)")
     is_shared: bool = Field(False, description="Si True, l'application sera accessible par tous les service accounts (M2M)")
 
 
