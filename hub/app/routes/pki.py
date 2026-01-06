@@ -186,6 +186,7 @@ async def renew_cert(name: str, admin=Depends(get_current_admin)):
 async def download_ca(format: str = "pem", admin=Depends(get_current_admin)):
     """
     Télécharge le certificat CA pour installation sur les clients.
+    (Endpoint protégé - nécessite authentification admin)
     
     Formats disponibles :
     - pem : Linux/Mac/Firefox
@@ -221,6 +222,38 @@ async def download_ca(format: str = "pem", admin=Depends(get_current_admin)):
             media_type="application/x-pem-file",
             filename=f"{ca_name}.pem"
         )
+
+
+@router.get("/ca.crt")
+async def get_ca_certificate_public():
+    """
+    Endpoint PUBLIC pour télécharger le certificat CA du Hub.
+    
+    Cet endpoint ne nécessite PAS d'authentification car le certificat CA
+    est une information publique (comme les CA publiques sur Internet).
+    
+    Il permet aux applications distantes de récupérer automatiquement
+    le certificat CA pour établir des connexions HTTPS sécurisées avec le Hub.
+    
+    Usage:
+        curl http://hub:8000/api/pki/ca.crt > hub-ca.crt
+    
+    Returns:
+        Le certificat CA au format PEM
+    """
+    ca_cert_path = CA_DIR / "ca.crt"
+    
+    if not ca_cert_path.exists():
+        raise HTTPException(
+            status_code=404, 
+            detail="CA non initialisée. Exécutez 'python pki.py init' sur le Hub."
+        )
+    
+    return FileResponse(
+        ca_cert_path,
+        media_type="application/x-pem-file",
+        filename="hub-ca.crt"
+    )
 
 
 @router.get("/certificates/{name}/download")
