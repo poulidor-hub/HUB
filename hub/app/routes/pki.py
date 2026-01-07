@@ -307,6 +307,7 @@ async def get_or_create_app_certificate(
     
     # Vérifier si le certificat existe et est valide avec la CA actuelle
     need_regeneration = False
+    reason = ""
     
     if not cert_path.exists() or not key_path.exists():
         need_regeneration = True
@@ -328,6 +329,21 @@ async def get_or_create_app_certificate(
             if app_cert.not_valid_after_utc < datetime.now(timezone.utc):
                 need_regeneration = True
                 reason = "certificat expiré"
+            
+            # Vérifier si l'IP demandée est dans les SANs du certificat
+            if ip and not need_regeneration:
+                try:
+                    san_ext = app_cert.extensions.get_extension_for_class(x509.SubjectAlternativeName)
+                    san_ips = [
+                        str(name.value) for name in san_ext.value 
+                        if isinstance(name, x509.IPAddress)
+                    ]
+                    if ip not in san_ips:
+                        need_regeneration = True
+                        reason = f"IP {ip} absente des SANs (présents: {san_ips})"
+                except x509.ExtensionNotFound:
+                    need_regeneration = True
+                    reason = "pas d'extension SAN dans le certificat"
         except Exception as e:
             need_regeneration = True
             reason = f"erreur lecture certificat: {e}"

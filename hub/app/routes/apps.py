@@ -9,6 +9,7 @@ from pathlib import Path
 import logging
 
 from app.routes.events import notify_event, notify_stats_update
+from app.routes.app_backups import reassociate_orphan_backups
 
 from app.database import get_db
 from app.models import Application, User, ServiceAccount, UserAppRole, ApprovalStatus, service_account_app_access
@@ -881,6 +882,11 @@ async def create_app(
     await db.commit()
     await db.refresh(app)
     
+    # Réassocier les backups orphelins qui ont le même slug
+    orphan_count = await reassociate_orphan_backups(db, app)
+    if orphan_count > 0:
+        logger.info(f"📦 {orphan_count} backup(s) orphelin(s) réassocié(s) à l'application '{app.slug}'")
+    
     # Si l'app est un service partagé, l'ajouter à tous les SA existants
     shared_added_count = 0
     if app_data.is_shared_service:
@@ -1189,6 +1195,12 @@ async def register_app(
     await db.commit()
     await db.refresh(app)
     
+    # Réassocier les backups orphelins qui ont le même slug
+    # Cela permet de récupérer les sauvegardes d'une app précédemment supprimée
+    orphan_count = await reassociate_orphan_backups(db, app)
+    if orphan_count > 0:
+        logger.info(f"📦 {orphan_count} backup(s) orphelin(s) réassocié(s) à l'application '{app.slug}'")
+    
     # Si l'app est un service partagé (is_shared=True), l'ajouter à tous les SA existants
     shared_added_count = 0
     if app_data.is_shared:
@@ -1435,6 +1447,11 @@ async def admin_auto_register_app(
     
     await db.commit()
     await db.refresh(app)
+    
+    # Réassocier les backups orphelins qui ont le même slug
+    orphan_count = await reassociate_orphan_backups(db, app)
+    if orphan_count > 0:
+        logger.info(f"📦 {orphan_count} backup(s) orphelin(s) réassocié(s) à l'application '{app.slug}'")
     
     # Si l'app est un service partagé, l'ajouter à tous les SA existants
     shared_added_count = 0

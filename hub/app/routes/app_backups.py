@@ -63,6 +63,42 @@ JWT_PRIVATE_KEY_PATH = SECRETS_DIR / "jwt_private_key.pem"
 router = APIRouter(tags=["App Backups"])
 
 
+async def reassociate_orphan_backups(db: AsyncSession, app: Application) -> int:
+    """
+    Réassocie les backups orphelins à une application.
+    
+    Quand une application est créée avec un slug qui a des backups existants
+    (par exemple après une suppression/recréation), cette fonction réassocie
+    ces backups à la nouvelle application.
+    
+    Args:
+        db: Session de base de données
+        app: Application nouvellement créée/modifiée
+        
+    Returns:
+        Nombre de backups réassociés
+    """
+    # Trouver les backups avec ce slug mais sans app_id (orphelins)
+    result = await db.execute(
+        select(AppBackup).where(
+            AppBackup.app_slug == app.slug,
+            AppBackup.app_id.is_(None)
+        )
+    )
+    orphan_backups = result.scalars().all()
+    
+    count = 0
+    for backup in orphan_backups:
+        backup.app_id = app.id
+        count += 1
+    
+    if count > 0:
+        await db.commit()
+        logger.info(f"🔗 {count} backup(s) orphelin(s) réassocié(s) à l'application '{app.slug}'")
+    
+    return count
+
+
 def ensure_storage_dir(app_slug: str) -> Path:
     """Crée et retourne le dossier de stockage pour une application"""
     app_dir = STORAGE_BASE_DIR / app_slug
@@ -1312,4 +1348,166 @@ async def get_backup_storage_stats(
         "disk_size_bytes": disk_size,
         "disk_size_human": human_readable_size(disk_size),
         "storage_path": str(STORAGE_BASE_DIR)
+    }
+
+
+@router.get("/api/admin/backups/orphans")
+async def get_orphan_backups(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_admin)
+):
+    """
+    Liste les backups orphelins (sans application associée).
+    
+    Ces backups appartiennent à des applications qui ont été supprimées.
+    Ils peuvent être réassociés automatiquement si une application avec
+    le même slug est recréée.
+    """
+    # Backups sans app_id
+    result = await db.execute(
+        select(AppBackup)
+        .where(AppBackup.app_id.is_(None))
+        .order_by(AppBackup.app_slug, AppBackup.created_at.desc())
+    )
+    orphan_backups = result.scalars().all()
+    
+    # Grouper par app_slug
+    by_slug = {}
+    for backup in orphan_backups:
+        if backup.app_slug not in by_slug:
+            by_slug[backup.app_slug] = {
+                "app_slug": backup.app_slug,
+                "backups": [],
+                "total_size_bytes": 0
+            }
+        by_slug[backup.app_slug]["backups"].append({
+            "backup_id": backup.backup_id,
+            "created_at": backup.created_at.isoformat() if backup.created_at else None,
+            "total_size_bytes": backup.total_size_bytes or 0,
+            "total_size_human": human_readable_size(backup.total_size_bytes or 0),
+            "created_by": backup.created_by,
+            "description": backup.description
+        })
+        by_slug[backup.app_slug]["total_size_bytes"] += backup.total_size_bytes or 0
+    
+    # Ajouter la taille lisible et le count
+    orphan_groups = []
+    for slug, data in by_slug.items():
+        data["backups_count"] = len(data["backups"])
+        data["total_size_human"] = human_readable_size(data["total_size_bytes"])
+        orphan_groups.append(data)
+    
+    return {
+        "orphan_groups": orphan_groups,
+        "total_orphan_backups": len(orphan_backups),
+        "total_slugs": len(by_slug),
+        "message": "Ces backups seront automatiquement réassociés si une application avec le même slug est créée."
+    }
+
+
+@router.delete("/api/admin/backups/orphans/{app_slug}")
+async def delete_orphan_backups_by_slug(
+    app_slug: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_admin)
+):
+    """
+    Supprime tous les backups orphelins pour un slug donné.
+    
+    Utile pour nettoyer les backups d'applications qui ne seront plus recréées.
+    """
+    # Trouver les backups orphelins pour ce slug
+    result = await db.execute(
+        select(AppBackup).where(
+            AppBackup.app_slug == app_slug,
+            AppBackup.app_id.is_(None)
+        )
+    )
+    orphan_backups = result.scalars().all()
+    
+    if not orphan_backups:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Aucun backup orphelin trouvé pour le slug '{app_slug}'"
+        )
+    
+    deleted_count = 0
+    total_size_freed = 0
+    
+    for backup in orphan_backups:
+        # Supprimer les fichiers physiques
+        storage_path = STORAGE_BASE_DIR / backup.storage_path
+        if storage_path.exists():
+            total_size_freed += storage_path.stat().st_size
+            storage_path.unlink()
+        
+        if backup.encrypted_path:
+            encrypted_path = STORAGE_BASE_DIR / backup.encrypted_path
+            if encrypted_path.exists():
+                encrypted_path.unlink()
+        
+        await db.delete(backup)
+        deleted_count += 1
+    
+    # Supprimer le dossier de l'app s'il est vide
+    app_dir = STORAGE_BASE_DIR / app_slug
+    if app_dir.exists() and not any(app_dir.iterdir()):
+        app_dir.rmdir()
+    
+    await db.commit()
+    
+    logger.info(f"🗑️ {deleted_count} backup(s) orphelin(s) supprimé(s) pour '{app_slug}' ({human_readable_size(total_size_freed)} libérés)")
+    
+    return {
+        "message": f"{deleted_count} backup(s) orphelin(s) supprimé(s) pour '{app_slug}'",
+        "deleted_count": deleted_count,
+        "size_freed_bytes": total_size_freed,
+        "size_freed_human": human_readable_size(total_size_freed)
+    }
+
+
+@router.get("/api/apps/{slug}/backup/orphans")
+async def get_orphan_backups_for_slug(
+    slug: str,
+    db: AsyncSession = Depends(get_db),
+    current_user = Depends(get_current_entity)
+):
+    """
+    Liste les backups disponibles pour un slug, même si l'application n'existe pas encore.
+    
+    Utile pour une application qui veut savoir si des sauvegardes existent
+    avant de s'enregistrer sur le HUB.
+    """
+    # Vérifier si l'application existe
+    result = await db.execute(
+        select(Application).where(Application.slug == slug)
+    )
+    app = result.scalar_one_or_none()
+    
+    # Récupérer tous les backups pour ce slug
+    backups_result = await db.execute(
+        select(AppBackup)
+        .where(AppBackup.app_slug == slug)
+        .order_by(AppBackup.created_at.desc())
+    )
+    backups = backups_result.scalars().all()
+    
+    return {
+        "app_slug": slug,
+        "app_exists": app is not None,
+        "app_name": app.name if app else None,
+        "backups": [
+            {
+                "backup_id": b.backup_id,
+                "created_at": b.created_at.isoformat() if b.created_at else None,
+                "total_size_bytes": b.total_size_bytes or 0,
+                "total_size_human": human_readable_size(b.total_size_bytes or 0),
+                "is_orphan": b.app_id is None,
+                "app_version": b.app_version,
+                "description": b.description
+            }
+            for b in backups
+        ],
+        "total_backups": len(backups),
+        "orphan_backups": sum(1 for b in backups if b.app_id is None)
     }

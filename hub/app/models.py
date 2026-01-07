@@ -141,7 +141,8 @@ class Application(Base):
     approved_by = relationship("User", foreign_keys=[approved_by_id])
     available_roles = relationship("AppRole", back_populates="application", cascade="all, delete-orphan")
     service_accounts = relationship("ServiceAccount", secondary=service_account_app_access, back_populates="applications")
-    backups = relationship("AppBackup", back_populates="application", cascade="all, delete-orphan")
+    # Note: pas de cascade delete-orphan pour conserver les backups même si l'app est supprimée
+    backups = relationship("AppBackup", back_populates="application")
     
     @property
     def users(self):
@@ -345,15 +346,19 @@ class AppBackup(Base):
     """
     Sauvegardes centralisées des applications.
     Stocke les métadonnées et références vers les fichiers ZIP.
+    
+    IMPORTANT: Les sauvegardes sont liées au app_slug (identifiant unique de l'application)
+    et non à l'app_id. Cela permet de conserver les sauvegardes même si l'application
+    est supprimée puis recréée (changement de serveur, réinstallation, etc.).
     """
     __tablename__ = "app_backups"
     
     id = Column(Integer, primary_key=True, index=True)
     backup_id = Column(String(36), unique=True, index=True, nullable=False)  # UUID
     
-    # Référence à l'application
-    app_id = Column(Integer, ForeignKey('applications.id', ondelete='CASCADE'))
-    app_slug = Column(String(50), index=True, nullable=False)
+    # Référence à l'application - SET NULL pour conserver les backups si l'app est supprimée
+    app_id = Column(Integer, ForeignKey('applications.id', ondelete='SET NULL'), nullable=True)
+    app_slug = Column(String(50), index=True, nullable=False)  # Clé de rattachement principale
     app_version = Column(String(50))  # Version de l'app au moment du backup
     
     # Métadonnées du backup
