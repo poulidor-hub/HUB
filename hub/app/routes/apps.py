@@ -467,7 +467,8 @@ async def get_apps_status(
         
         try:
             start = asyncio.get_event_loop().time()
-            async with httpx.AsyncClient(timeout=5.0) as client:
+            # verify=False pour accepter les certificats auto-signés (PKI interne)
+            async with httpx.AsyncClient(timeout=5.0, verify=False) as client:
                 # Essayer d'abord /health, puis / en fallback
                 for endpoint in ["/health", "/api/health", "/"]:
                     try:
