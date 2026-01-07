@@ -64,6 +64,8 @@ services:
       - ./.env:/code/.env:ro
       # Socket Docker pour la détection automatique des conteneurs (lecture seule)
       - /var/run/docker.sock:/var/run/docker.sock:ro
+      # Stockage des sauvegardes d'applications
+      - ./storage/backups:/code/storage/backups:rw
     # Groupe docker pour accéder au socket
     # ⚠️ Le GID varie selon les systèmes : 986 (Arch), 999 (Debian), 998, etc.
     # Vérifiez avec: getent group docker

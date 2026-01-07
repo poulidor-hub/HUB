@@ -1084,8 +1084,13 @@ sudo update-ca-trust</code></pre>
                             </button>
                         </li>
                         <li class="nav-item">
+                            <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tabAppBackups" onclick="loadAppBackupsOverview()">
+                                <i class="bi bi-hdd-stack me-1"></i>Sauvegardes
+                            </button>
+                        </li>
+                        <li class="nav-item">
                             <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tabBackup" onclick="loadBackupInfo()">
-                                <i class="bi bi-cloud-download me-1"></i>Backup
+                                <i class="bi bi-cloud-download me-1"></i>Backup HUB
                             </button>
                         </li>
                     </ul>
@@ -1276,6 +1281,89 @@ sudo update-ca-trust</code></pre>
                                             </ul>
                                         </div>
                                     </div>
+                                </div>
+                            </div>
+                        </div>
+                        <!-- App Backups Tab - Sauvegardes des Applications -->
+                        <div class="tab-pane fade" id="tabAppBackups">
+                            <div class="d-flex justify-content-between align-items-center mb-3">
+                                <div>
+                                    <h5 class="mb-0"><i class="bi bi-hdd-stack me-2"></i>Sauvegardes des Applications</h5>
+                                    <small class="text-muted">Gestion centralisée des backups de toutes les applications</small>
+                                </div>
+                                <button class="btn btn-outline-secondary btn-sm" onclick="loadAppBackupsOverview()">
+                                    <i class="bi bi-arrow-clockwise me-1"></i>Actualiser
+                                </button>
+                            </div>
+                            
+                            <!-- Stats globales -->
+                            <div class="row mb-4" id="appBackupsStats">
+                                <div class="col-md-3">
+                                    <div class="card bg-light">
+                                        <div class="card-body text-center py-3">
+                                            <h3 class="mb-0" id="statsAppsCount">0</h3>
+                                            <small class="text-muted">Applications</small>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="col-md-3">
+                                    <div class="card bg-light">
+                                        <div class="card-body text-center py-3">
+                                            <h3 class="mb-0" id="statsTotalBackups">0</h3>
+                                            <small class="text-muted">Sauvegardes</small>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="col-md-3">
+                                    <div class="card bg-light">
+                                        <div class="card-body text-center py-3">
+                                            <h3 class="mb-0" id="statsTotalSize">0 B</h3>
+                                            <small class="text-muted">Stockage total</small>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="col-md-3">
+                                    <div class="card bg-light">
+                                        <div class="card-body text-center py-3">
+                                            <h3 class="mb-0" id="statsScheduledApps">0</h3>
+                                            <small class="text-muted">Planifiées</small>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <!-- Tableau des applications avec leurs backups -->
+                            <div class="table-responsive" id="appBackupsTable">
+                                <table class="table table-hover align-middle">
+                                    <thead class="table-dark">
+                                        <tr>
+                                            <th>Application</th>
+                                            <th>Mode</th>
+                                            <th>Dernier backup</th>
+                                            <th>Prochain</th>
+                                            <th>Backups</th>
+                                            <th>Taille</th>
+                                            <th class="text-end">Actions</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="appBackupsTableBody">
+                                        <tr>
+                                            <td colspan="7" class="text-center text-muted py-4">
+                                                <i class="bi bi-hourglass-split me-2"></i>Chargement...
+                                            </td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                            
+                            <!-- Légende des modes -->
+                            <div class="row mt-3">
+                                <div class="col-12">
+                                    <small class="text-muted">
+                                        <span class="badge bg-secondary me-2">Désactivé</span> Pas de sauvegarde
+                                        <span class="badge bg-info ms-3 me-2">Manuel</span> Sauvegarde déclenchée manuellement par l'application
+                                        <span class="badge bg-success ms-3 me-2">Planifié</span> Sauvegarde automatique selon le cron
+                                    </small>
                                 </div>
                             </div>
                         </div>
@@ -1785,6 +1873,113 @@ sudo update-ca-trust</code></pre>
                         </button>
                     </div>
                 </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- App Backup Config Modal -->
+    <div class="modal fade" id="appBackupConfigModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header bg-primary text-white">
+                    <h5 class="modal-title"><i class="bi bi-gear me-2"></i>Configuration sauvegarde</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <form id="appBackupConfigForm" onsubmit="saveAppBackupConfig(event)">
+                    <div class="modal-body">
+                        <input type="hidden" id="backupConfigAppSlug">
+                        <h6 class="mb-3"><i class="bi bi-app me-1"></i><span id="backupConfigAppName">Application</span></h6>
+                        
+                        <div class="mb-3">
+                            <label class="form-label">Mode de sauvegarde</label>
+                            <select class="form-select" id="backupConfigMode" onchange="toggleCronInput()">
+                                <option value="disabled">Désactivé - Pas de sauvegarde</option>
+                                <option value="manual">Manuel - L'application déclenche ses sauvegardes</option>
+                                <option value="scheduled">Planifié - Sauvegarde automatique</option>
+                            </select>
+                        </div>
+                        
+                        <div class="mb-3" id="cronInputGroup" style="display: none;">
+                            <label class="form-label">Expression Cron</label>
+                            <input type="text" class="form-control" id="backupConfigCron" placeholder="0 2 * * *">
+                            <small class="text-muted">
+                                Exemples : <code>0 2 * * *</code> (2h chaque jour), 
+                                <code>0 3 * * 0</code> (dimanche 3h), 
+                                <code>0 0 1 * *</code> (1er du mois)
+                            </small>
+                        </div>
+                        
+                        <div class="mb-3">
+                            <label class="form-label">Rétention (nombre de backups à conserver)</label>
+                            <input type="number" class="form-control" id="backupConfigRetention" min="0" value="5">
+                            <small class="text-muted">0 = illimité (attention à l'espace disque)</small>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuler</button>
+                        <button type="submit" class="btn btn-primary">
+                            <i class="bi bi-check-lg me-1"></i>Enregistrer
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- App Backups List Modal -->
+    <div class="modal fade" id="appBackupsListModal" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header bg-dark text-white">
+                    <h5 class="modal-title"><i class="bi bi-hdd-stack me-2"></i>Sauvegardes de <span id="backupsListAppName">-</span></h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <input type="hidden" id="backupsListAppSlug">
+                    
+                    <!-- Config résumé -->
+                    <div class="card bg-light mb-3">
+                        <div class="card-body py-2">
+                            <div class="row small">
+                                <div class="col-4">
+                                    <strong>Mode :</strong> <span id="backupsListMode">-</span>
+                                </div>
+                                <div class="col-4">
+                                    <strong>Cron :</strong> <span id="backupsListCron">-</span>
+                                </div>
+                                <div class="col-4">
+                                    <strong>Rétention :</strong> <span id="backupsListRetention">-</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Liste des backups -->
+                    <div class="table-responsive">
+                        <table class="table table-sm table-hover">
+                            <thead class="table-light">
+                                <tr>
+                                    <th>Date</th>
+                                    <th>Version</th>
+                                    <th>Contenu</th>
+                                    <th>Taille</th>
+                                    <th>Par</th>
+                                    <th class="text-end">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="backupsListBody">
+                                <tr>
+                                    <td colspan="6" class="text-center text-muted py-3">
+                                        <i class="bi bi-hourglass-split me-1"></i>Chargement...
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Fermer</button>
+                </div>
             </div>
         </div>
     </div>

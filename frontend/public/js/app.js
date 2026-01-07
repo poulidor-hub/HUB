@@ -5585,6 +5585,370 @@ function displayImportResult(result) {
 
 
 // =============================================================================
+// APP BACKUPS - SAUVEGARDES CENTRALISÉES DES APPLICATIONS
+// =============================================================================
+
+let appBackupConfigModal = null;
+let appBackupsListModal = null;
+
+/**
+ * Charge la vue d'ensemble des sauvegardes de toutes les applications
+ */
+async function loadAppBackupsOverview() {
+    try {
+        const data = await api.request('/admin/backups');
+        
+        // Mettre à jour les stats globales
+        document.getElementById('statsAppsCount').textContent = data.total_apps || 0;
+        document.getElementById('statsTotalBackups').textContent = data.total_backups || 0;
+        document.getElementById('statsTotalSize').textContent = data.total_size_human || '0 B';
+        
+        // Compter les apps planifiées
+        const scheduledCount = (data.apps || []).filter(a => a.backup_mode === 'scheduled').length;
+        document.getElementById('statsScheduledApps').textContent = scheduledCount;
+        
+        // Générer le tableau
+        const tbody = document.getElementById('appBackupsTableBody');
+        
+        if (!data.apps || data.apps.length === 0) {
+            tbody.innerHTML = `
+                <tr>
+                    <td colspan="7" class="text-center text-muted py-4">
+                        <i class="bi bi-inbox me-2"></i>Aucune application trouvée
+                    </td>
+                </tr>
+            `;
+            return;
+        }
+        
+        tbody.innerHTML = data.apps.map(app => {
+            // Badge du mode
+            let modeBadge;
+            switch (app.backup_mode) {
+                case 'disabled':
+                    modeBadge = '<span class="badge bg-secondary">Désactivé</span>';
+                    break;
+                case 'manual':
+                    modeBadge = '<span class="badge bg-info">Manuel</span>';
+                    break;
+                case 'scheduled':
+                    modeBadge = `<span class="badge bg-success">Planifié</span>`;
+                    break;
+                default:
+                    modeBadge = '<span class="badge bg-secondary">Manuel</span>';
+            }
+            
+            // Dernier backup
+            let lastBackupInfo = '-';
+            if (app.last_backup_at) {
+                const lastDate = new Date(app.last_backup_at);
+                const statusIcon = app.last_backup_status === 'success' ? '✅' : 
+                                   app.last_backup_status === 'failed' ? '❌' : '⏳';
+                lastBackupInfo = `${statusIcon} ${lastDate.toLocaleDateString('fr-FR')} ${lastDate.toLocaleTimeString('fr-FR', {hour: '2-digit', minute: '2-digit'})}`;
+            }
+            
+            // Prochain backup
+            let nextBackupInfo = '-';
+            if (app.backup_mode === 'scheduled' && app.next_backup_at) {
+                const nextDate = new Date(app.next_backup_at);
+                nextBackupInfo = `${nextDate.toLocaleDateString('fr-FR')} ${nextDate.toLocaleTimeString('fr-FR', {hour: '2-digit', minute: '2-digit'})}`;
+            } else if (app.backup_mode === 'scheduled' && app.backup_cron) {
+                nextBackupInfo = `<code class="small">${app.backup_cron}</code>`;
+            }
+            
+            return `
+                <tr>
+                    <td>
+                        <strong>${escapeHtml(app.app_name)}</strong>
+                        <br><small class="text-muted">${escapeHtml(app.app_slug)}</small>
+                    </td>
+                    <td>${modeBadge}</td>
+                    <td><small>${lastBackupInfo}</small></td>
+                    <td><small>${nextBackupInfo}</small></td>
+                    <td>
+                        <span class="badge bg-light text-dark">${app.backups_count}</span>
+                    </td>
+                    <td>${app.total_size_human}</td>
+                    <td class="text-end">
+                        <div class="btn-group btn-group-sm">
+                            <button class="btn btn-outline-primary" onclick="showAppBackupsList('${app.app_slug}')" title="Voir les sauvegardes">
+                                <i class="bi bi-hdd-stack"></i>
+                            </button>
+                            <button class="btn btn-outline-secondary" onclick="showAppBackupConfig('${app.app_slug}', '${escapeHtml(app.app_name)}')" title="Configurer">
+                                <i class="bi bi-gear"></i>
+                            </button>
+                        </div>
+                    </td>
+                </tr>
+            `;
+        }).join('');
+        
+    } catch (error) {
+        console.error('Erreur chargement backups apps:', error);
+        showToast('Erreur', 'Impossible de charger les sauvegardes', 'danger');
+    }
+}
+
+/**
+ * Affiche la modale de configuration de backup pour une application
+ */
+async function showAppBackupConfig(slug, name) {
+    // Initialiser la modale si nécessaire
+    if (!appBackupConfigModal) {
+        appBackupConfigModal = new bootstrap.Modal(document.getElementById('appBackupConfigModal'));
+    }
+    
+    document.getElementById('backupConfigAppSlug').value = slug;
+    document.getElementById('backupConfigAppName').textContent = name;
+    
+    try {
+        // Charger la config actuelle
+        const config = await api.request(`/apps/${slug}/backup/config`);
+        
+        document.getElementById('backupConfigMode').value = config.backup_mode || 'manual';
+        document.getElementById('backupConfigCron').value = config.backup_cron || '';
+        document.getElementById('backupConfigRetention').value = config.backup_retention ?? 5;
+        
+        toggleCronInput();
+        appBackupConfigModal.show();
+        
+    } catch (error) {
+        console.error('Erreur chargement config backup:', error);
+        showToast('Erreur', 'Impossible de charger la configuration', 'danger');
+    }
+}
+
+/**
+ * Affiche/masque le champ cron selon le mode
+ */
+function toggleCronInput() {
+    const mode = document.getElementById('backupConfigMode').value;
+    const cronGroup = document.getElementById('cronInputGroup');
+    cronGroup.style.display = mode === 'scheduled' ? 'block' : 'none';
+}
+
+/**
+ * Enregistre la configuration de backup
+ */
+async function saveAppBackupConfig(event) {
+    event.preventDefault();
+    
+    const slug = document.getElementById('backupConfigAppSlug').value;
+    const config = {
+        backup_mode: document.getElementById('backupConfigMode').value,
+        backup_cron: document.getElementById('backupConfigCron').value || null,
+        backup_retention: parseInt(document.getElementById('backupConfigRetention').value) || 5
+    };
+    
+    try {
+        await api.request(`/apps/${slug}/backup/config`, {
+            method: 'PUT',
+            body: JSON.stringify(config)
+        });
+        
+        showToast('Succès', 'Configuration de sauvegarde mise à jour', 'success');
+        appBackupConfigModal.hide();
+        loadAppBackupsOverview();
+        
+    } catch (error) {
+        console.error('Erreur sauvegarde config:', error);
+        showToast('Erreur', error.message || 'Impossible de sauvegarder', 'danger');
+    }
+}
+
+/**
+ * Affiche la liste des backups d'une application
+ */
+async function showAppBackupsList(slug) {
+    // Initialiser la modale si nécessaire
+    if (!appBackupsListModal) {
+        appBackupsListModal = new bootstrap.Modal(document.getElementById('appBackupsListModal'));
+    }
+    
+    document.getElementById('backupsListAppSlug').value = slug;
+    
+    try {
+        const data = await api.request(`/apps/${slug}/backup`);
+        
+        document.getElementById('backupsListAppName').textContent = data.app_name;
+        
+        // Config résumé
+        const modeLabels = {
+            'disabled': 'Désactivé',
+            'manual': 'Manuel',
+            'scheduled': 'Planifié'
+        };
+        document.getElementById('backupsListMode').textContent = modeLabels[data.backup_config?.backup_mode] || 'Manuel';
+        document.getElementById('backupsListCron').textContent = data.backup_config?.backup_cron || '-';
+        document.getElementById('backupsListRetention').textContent = data.backup_config?.backup_retention ?? 5;
+        
+        // Liste des backups
+        const tbody = document.getElementById('backupsListBody');
+        
+        if (!data.backups || data.backups.length === 0) {
+            tbody.innerHTML = `
+                <tr>
+                    <td colspan="6" class="text-center text-muted py-3">
+                        <i class="bi bi-inbox me-1"></i>Aucune sauvegarde disponible
+                    </td>
+                </tr>
+            `;
+        } else {
+            tbody.innerHTML = data.backups.map(backup => {
+                const date = new Date(backup.created_at);
+                return `
+                    <tr>
+                        <td>
+                            <small>${date.toLocaleDateString('fr-FR')} ${date.toLocaleTimeString('fr-FR', {hour: '2-digit', minute: '2-digit'})}</small>
+                        </td>
+                        <td><small>${backup.app_version || '-'}</small></td>
+                        <td>
+                            <small class="text-muted">
+                                ${backup.total_items} items, ${backup.total_files} fichiers
+                            </small>
+                        </td>
+                        <td><small>${backup.total_size_human}</small></td>
+                        <td>
+                            <span class="badge bg-light text-dark">${backup.created_by_type}</span>
+                        </td>
+                        <td class="text-end">
+                            <div class="btn-group btn-group-sm">
+                                <button class="btn btn-outline-primary" onclick="downloadAppBackup('${slug}', '${backup.backup_id}')" title="Télécharger">
+                                    <i class="bi bi-download"></i>
+                                </button>
+                                <button class="btn btn-outline-success" onclick="exportEncryptedBackup('${slug}', '${backup.backup_id}')" title="Exporter chiffré">
+                                    <i class="bi bi-shield-lock"></i>
+                                </button>
+                                <button class="btn btn-outline-danger" onclick="deleteAppBackup('${slug}', '${backup.backup_id}')" title="Supprimer">
+                                    <i class="bi bi-trash"></i>
+                                </button>
+                            </div>
+                        </td>
+                    </tr>
+                `;
+            }).join('');
+        }
+        
+        appBackupsListModal.show();
+        
+    } catch (error) {
+        console.error('Erreur chargement backups:', error);
+        showToast('Erreur', 'Impossible de charger les sauvegardes', 'danger');
+    }
+}
+
+/**
+ * Télécharge un backup (non chiffré)
+ */
+async function downloadAppBackup(slug, backupId) {
+    try {
+        showToast('Téléchargement', 'Préparation du fichier...', 'info');
+        
+        // Utiliser un lien direct pour le téléchargement
+        const url = `/api/apps/${slug}/backup/${backupId}/download`;
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `backup_${slug}_${backupId}.zip`;
+        
+        // Ajouter le token d'auth
+        const response = await fetch(url, {
+            headers: {
+                'Authorization': `Bearer ${api.token}`
+            }
+        });
+        
+        if (!response.ok) {
+            throw new Error('Erreur lors du téléchargement');
+        }
+        
+        const blob = await response.blob();
+        const downloadUrl = URL.createObjectURL(blob);
+        a.href = downloadUrl;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(downloadUrl);
+        
+        showToast('Succès', 'Backup téléchargé', 'success');
+        
+    } catch (error) {
+        console.error('Erreur téléchargement:', error);
+        showToast('Erreur', 'Impossible de télécharger le backup', 'danger');
+    }
+}
+
+/**
+ * Exporte et télécharge un backup chiffré
+ */
+async function exportEncryptedBackup(slug, backupId) {
+    try {
+        showToast('Chiffrement', 'Chiffrement du backup en cours...', 'info');
+        
+        // D'abord, chiffrer le backup
+        const exportResult = await api.request(`/apps/${slug}/backup/${backupId}/export`);
+        
+        if (!exportResult.success) {
+            throw new Error(exportResult.message || 'Erreur de chiffrement');
+        }
+        
+        // Ensuite, télécharger le fichier chiffré
+        const url = `/api/apps/${slug}/backup/${backupId}/export/download`;
+        const response = await fetch(url, {
+            headers: {
+                'Authorization': `Bearer ${api.token}`
+            }
+        });
+        
+        if (!response.ok) {
+            throw new Error('Erreur lors du téléchargement');
+        }
+        
+        const blob = await response.blob();
+        const downloadUrl = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = downloadUrl;
+        a.download = exportResult.encrypted_filename || `backup_${slug}_${backupId}.encrypted`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(downloadUrl);
+        
+        showToast('Succès', `Backup chiffré exporté (${exportResult.encrypted_size_human})`, 'success');
+        
+        // Rafraîchir la liste pour voir le statut is_encrypted
+        showAppBackupsList(slug);
+        
+    } catch (error) {
+        console.error('Erreur export chiffré:', error);
+        showToast('Erreur', error.message || 'Impossible d\'exporter le backup', 'danger');
+    }
+}
+
+/**
+ * Supprime un backup
+ */
+async function deleteAppBackup(slug, backupId) {
+    if (!confirm('Supprimer ce backup ?\n\nCette action est irréversible.')) {
+        return;
+    }
+    
+    try {
+        await api.request(`/apps/${slug}/backup/${backupId}`, {
+            method: 'DELETE'
+        });
+        
+        showToast('Succès', 'Backup supprimé', 'success');
+        showAppBackupsList(slug);
+        loadAppBackupsOverview();
+        
+    } catch (error) {
+        console.error('Erreur suppression:', error);
+        showToast('Erreur', 'Impossible de supprimer le backup', 'danger');
+    }
+}
+
+
+// =============================================================================
 // PKI - GESTION DES CERTIFICATS SSL/TLS
 // =============================================================================
 

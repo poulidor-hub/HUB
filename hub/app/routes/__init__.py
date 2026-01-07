@@ -1,2 +1,2 @@
 # Routes package
-from app.routes import auth, users, apps, service_accounts, backup, audit, pki
+from app.routes import auth, users, apps, service_accounts, backup, audit, docs, events, pki, app_backups
