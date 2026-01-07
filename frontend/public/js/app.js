@@ -5822,8 +5822,8 @@ async function showAppBackupsList(slug) {
                         </td>
                         <td class="text-end">
                             <div class="btn-group btn-group-sm">
-                                <button class="btn btn-outline-primary" onclick="downloadAppBackup('${slug}', '${backup.backup_id}')" title="Télécharger">
-                                    <i class="bi bi-download"></i>
+                                <button class="btn btn-outline-warning" onclick="showRestoreBackupModal('${slug}', '${backup.backup_id}', '${data.app_name}')" title="Restaurer">
+                                    <i class="bi bi-arrow-counterclockwise"></i>
                                 </button>
                                 <button class="btn btn-outline-success" onclick="exportEncryptedBackup('${slug}', '${backup.backup_id}')" title="Exporter chiffré">
                                     <i class="bi bi-shield-lock"></i>
@@ -5846,43 +5846,214 @@ async function showAppBackupsList(slug) {
     }
 }
 
+// =============================================================================
+// RESTAURATION DE BACKUPS
+// =============================================================================
+
+let restoreBackupModal = null;
+let importRestoreModal = null;
+
 /**
- * Télécharge un backup (non chiffré)
+ * Affiche le modal de restauration pour un backup existant
  */
-async function downloadAppBackup(slug, backupId) {
+function showRestoreBackupModal(slug, backupId, appName) {
+    if (!restoreBackupModal) {
+        restoreBackupModal = new bootstrap.Modal(document.getElementById('restoreBackupModal'));
+    }
+    
+    document.getElementById('restoreBackupSlug').value = slug;
+    document.getElementById('restoreBackupId').value = backupId;
+    document.getElementById('restoreAppName').textContent = appName;
+    
+    // Réinitialiser les options
+    document.getElementById('restoreClearExisting').checked = false;
+    document.getElementById('restoreItems').checked = true;
+    document.getElementById('restorePreferences').checked = true;
+    document.getElementById('restoreFiles').checked = true;
+    document.getElementById('restoreTestData').checked = true;
+    
+    restoreBackupModal.show();
+}
+
+/**
+ * Exécute la restauration d'un backup existant vers l'application
+ */
+async function executeRestore() {
+    const slug = document.getElementById('restoreBackupSlug').value;
+    const backupId = document.getElementById('restoreBackupId').value;
+    
+    if (!slug || !backupId) return;
+    
+    const options = {
+        clear_existing: document.getElementById('restoreClearExisting').checked,
+        restore_items: document.getElementById('restoreItems').checked,
+        restore_preferences: document.getElementById('restorePreferences').checked,
+        restore_files: document.getElementById('restoreFiles').checked,
+        restore_test_data: document.getElementById('restoreTestData').checked
+    };
+    
+    // Confirmation si clear_existing
+    if (options.clear_existing) {
+        if (!confirm('⚠️ ATTENTION : Toutes les données existantes de l\'application seront SUPPRIMÉES avant la restauration.\n\nContinuer ?')) {
+            return;
+        }
+    }
+    
+    restoreBackupModal.hide();
+    showToast('Restauration', 'Restauration en cours...', 'info');
+    
     try {
-        showToast('Téléchargement', 'Préparation du fichier...', 'info');
+        const result = await api.request(`/apps/${slug}/backup/${backupId}/restore`, {
+            method: 'POST',
+            body: JSON.stringify(options)
+        });
         
-        // Utiliser un lien direct pour le téléchargement
-        const url = `/api/apps/${slug}/backup/${backupId}/download`;
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `backup_${slug}_${backupId}.zip`;
+        if (result.success) {
+            let message = `Restauration terminée : ${result.items_restored} items, ${result.preferences_restored} prefs, ${result.files_restored} fichiers`;
+            if (result.warnings && result.warnings.length > 0) {
+                message += `\n⚠️ ${result.warnings.length} avertissement(s)`;
+            }
+            showToast('Succès', message, 'success');
+        } else {
+            showToast('Attention', result.message || 'Restauration avec erreurs', 'warning');
+        }
         
-        // Ajouter le token d'auth
-        const response = await fetch(url, {
+        // Afficher les erreurs éventuelles
+        if (result.errors && result.errors.length > 0) {
+            console.warn('Erreurs de restauration:', result.errors);
+        }
+        
+    } catch (error) {
+        console.error('Erreur restauration:', error);
+        showToast('Erreur', error.message || 'Impossible de restaurer le backup', 'danger');
+    }
+}
+
+/**
+ * Affiche le modal d'import et restauration depuis fichier
+ */
+function showImportRestoreModal() {
+    if (!importRestoreModal) {
+        importRestoreModal = new bootstrap.Modal(document.getElementById('importRestoreModal'));
+    }
+    
+    const slug = document.getElementById('backupsListAppSlug').value;
+    document.getElementById('importRestoreSlug').value = slug;
+    
+    // Réinitialiser
+    document.getElementById('importRestoreFile').value = '';
+    document.getElementById('importRestorePreview').classList.add('d-none');
+    document.getElementById('executeImportRestoreBtn').disabled = true;
+    document.getElementById('importClearExisting').checked = false;
+    document.getElementById('importRestoreItems').checked = true;
+    document.getElementById('importRestorePreferences').checked = true;
+    document.getElementById('importRestoreFiles').checked = true;
+    document.getElementById('importRestoreTestData').checked = true;
+    
+    importRestoreModal.show();
+}
+
+/**
+ * Prévisualise le fichier d'import sélectionné
+ */
+function previewImportRestoreFile() {
+    const fileInput = document.getElementById('importRestoreFile');
+    const file = fileInput.files[0];
+    
+    if (!file) {
+        document.getElementById('importRestorePreview').classList.add('d-none');
+        document.getElementById('executeImportRestoreBtn').disabled = true;
+        return;
+    }
+    
+    // Vérifier l'extension
+    if (!file.name.endsWith('.zip')) {
+        showToast('Erreur', 'Le fichier doit être un ZIP', 'warning');
+        fileInput.value = '';
+        document.getElementById('importRestorePreview').classList.add('d-none');
+        document.getElementById('executeImportRestoreBtn').disabled = true;
+        return;
+    }
+    
+    // Afficher l'aperçu
+    document.getElementById('importRestoreFilename').textContent = file.name;
+    document.getElementById('importRestoreFilesize').textContent = formatFileSize(file.size);
+    document.getElementById('importRestorePreview').classList.remove('d-none');
+    document.getElementById('executeImportRestoreBtn').disabled = false;
+}
+
+/**
+ * Formate une taille de fichier
+ */
+function formatFileSize(bytes) {
+    if (bytes === 0) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+}
+
+/**
+ * Exécute l'import et restauration depuis fichier
+ */
+async function executeImportRestore() {
+    const slug = document.getElementById('importRestoreSlug').value;
+    const fileInput = document.getElementById('importRestoreFile');
+    const file = fileInput.files[0];
+    
+    if (!slug || !file) return;
+    
+    const clearExisting = document.getElementById('importClearExisting').checked;
+    
+    // Confirmation si clear_existing
+    if (clearExisting) {
+        if (!confirm('⚠️ ATTENTION : Toutes les données existantes de l\'application seront SUPPRIMÉES avant la restauration.\n\nContinuer ?')) {
+            return;
+        }
+    }
+    
+    importRestoreModal.hide();
+    showToast('Import', 'Envoi et restauration en cours...', 'info');
+    
+    try {
+        // Préparer le FormData
+        const formData = new FormData();
+        formData.append('file', file);
+        formData.append('clear_existing', clearExisting);
+        formData.append('restore_items', document.getElementById('importRestoreItems').checked);
+        formData.append('restore_preferences', document.getElementById('importRestorePreferences').checked);
+        formData.append('restore_files', document.getElementById('importRestoreFiles').checked);
+        formData.append('restore_test_data', document.getElementById('importRestoreTestData').checked);
+        
+        // Envoyer la requête
+        const response = await fetch(`/api/apps/${slug}/backup/restore/upload`, {
+            method: 'POST',
             headers: {
                 'Authorization': `Bearer ${api.token}`
-            }
+            },
+            body: formData
         });
         
         if (!response.ok) {
-            throw new Error('Erreur lors du téléchargement');
+            const error = await response.json();
+            throw new Error(error.detail || 'Erreur lors de l\'import');
         }
         
-        const blob = await response.blob();
-        const downloadUrl = URL.createObjectURL(blob);
-        a.href = downloadUrl;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(downloadUrl);
+        const result = await response.json();
         
-        showToast('Succès', 'Backup téléchargé', 'success');
+        if (result.success) {
+            let message = `Restauration terminée : ${result.items_restored} items, ${result.preferences_restored} prefs, ${result.files_restored} fichiers`;
+            showToast('Succès', message, 'success');
+        } else {
+            showToast('Attention', result.message || 'Restauration avec erreurs', 'warning');
+        }
+        
+        // Rafraîchir la liste des backups
+        showAppBackupsList(slug);
         
     } catch (error) {
-        console.error('Erreur téléchargement:', error);
-        showToast('Erreur', 'Impossible de télécharger le backup', 'danger');
+        console.error('Erreur import restauration:', error);
+        showToast('Erreur', error.message || 'Impossible d\'importer le backup', 'danger');
     }
 }
 
