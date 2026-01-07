@@ -256,10 +256,164 @@ async def get_ca_certificate_public():
     )
 
 
+@router.get("/app-cert/{app_slug}")
+async def get_or_create_app_certificate(
+    app_slug: str,
+    file: str = "cert",
+    ip: Optional[str] = None
+):
+    """
+    Endpoint PUBLIC pour obtenir le certificat d'une application.
+    
+    Si le certificat n'existe pas ou n'est plus valide avec la CA actuelle,
+    il sera automatiquement généré/régénéré.
+    
+    Cet endpoint permet aux applications de télécharger automatiquement
+    leur certificat SSL au démarrage, garantissant qu'elles utilisent
+    toujours un certificat valide signé par la CA actuelle.
+    
+    Args:
+        app_slug: Identifiant de l'application
+        file: Type de fichier (cert, key, fullchain, bundle)
+        ip: IP de l'application (utilisée pour les SANs si le cert doit être généré)
+    
+    Returns:
+        - cert: Le certificat de l'application
+        - key: La clé privée
+        - fullchain: Certificat + CA
+        - bundle: Archive ZIP avec cert + key + ca
+    
+    Note:
+        La clé privée est retournée car c'est un environnement interne.
+        Pour plus de sécurité, utilisez un stockage centralisé des secrets.
+    """
+    from cryptography import x509
+    from cryptography.hazmat.backends import default_backend
+    import zipfile
+    import io
+    
+    # Vérifier que la CA existe
+    ca_cert_path = CA_DIR / "ca.crt"
+    if not ca_cert_path.exists():
+        raise HTTPException(
+            status_code=503,
+            detail="CA non initialisée. Le Hub doit d'abord initialiser sa PKI."
+        )
+    
+    cert_dir = SERVER_DIR / app_slug
+    cert_path = cert_dir / f"{app_slug}.crt"
+    key_path = cert_dir / f"{app_slug}.key"
+    fullchain_path = cert_dir / f"{app_slug}-fullchain.crt"
+    
+    # Vérifier si le certificat existe et est valide avec la CA actuelle
+    need_regeneration = False
+    
+    if not cert_path.exists() or not key_path.exists():
+        need_regeneration = True
+        reason = "certificat inexistant"
+    else:
+        # Vérifier que le certificat est signé par la CA actuelle
+        try:
+            with open(cert_path, 'rb') as f:
+                app_cert = x509.load_pem_x509_certificate(f.read(), default_backend())
+            with open(ca_cert_path, 'rb') as f:
+                ca_cert = x509.load_pem_x509_certificate(f.read(), default_backend())
+            
+            # Comparer l'issuer du certificat avec le subject de la CA
+            if app_cert.issuer != ca_cert.subject:
+                need_regeneration = True
+                reason = "certificat signé par une ancienne CA"
+            # Vérifier si le certificat n'est pas expiré
+            from datetime import datetime, timezone
+            if app_cert.not_valid_after_utc < datetime.now(timezone.utc):
+                need_regeneration = True
+                reason = "certificat expiré"
+        except Exception as e:
+            need_regeneration = True
+            reason = f"erreur lecture certificat: {e}"
+    
+    # Régénérer le certificat si nécessaire
+    if need_regeneration:
+        config = load_env_config()
+        
+        # Déterminer les IPs à inclure
+        ips_list = ["127.0.0.1"]
+        if ip:
+            ips_list.insert(0, ip)
+        
+        # Domaines par défaut
+        domains_list = ["localhost", app_slug]
+        
+        try:
+            success = create_server_certificate(
+                name=app_slug,
+                domains=domains_list,
+                ips=ips_list,
+                config=config,
+                force=True  # Toujours écraser
+            )
+            if not success:
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Impossible de générer le certificat pour '{app_slug}'"
+                )
+            # Log pour debug
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.info(f"🔐 Certificat auto-généré pour '{app_slug}' (raison: {reason})")
+        except FileNotFoundError as e:
+            raise HTTPException(status_code=503, detail=str(e))
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Erreur génération certificat: {e}")
+    
+    # Retourner le fichier demandé
+    if file == "key":
+        if not key_path.exists():
+            raise HTTPException(status_code=404, detail="Clé privée non trouvée")
+        return FileResponse(
+            key_path,
+            media_type="application/x-pem-file",
+            filename=f"{app_slug}.key"
+        )
+    elif file == "fullchain":
+        if not fullchain_path.exists():
+            raise HTTPException(status_code=404, detail="Fullchain non trouvé")
+        return FileResponse(
+            fullchain_path,
+            media_type="application/x-x509-ca-cert",
+            filename=f"{app_slug}-fullchain.crt"
+        )
+    elif file == "bundle":
+        # Créer un ZIP avec tous les fichiers
+        zip_buffer = io.BytesIO()
+        with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
+            if cert_path.exists():
+                zf.write(cert_path, f"{app_slug}.crt")
+            if key_path.exists():
+                zf.write(key_path, f"{app_slug}.key")
+            if ca_cert_path.exists():
+                zf.write(ca_cert_path, "hub-ca.crt")
+        zip_buffer.seek(0)
+        return Response(
+            content=zip_buffer.getvalue(),
+            media_type="application/zip",
+            headers={"Content-Disposition": f"attachment; filename={app_slug}-certs.zip"}
+        )
+    else:
+        # Par défaut: certificat
+        if not cert_path.exists():
+            raise HTTPException(status_code=404, detail="Certificat non trouvé")
+        return FileResponse(
+            cert_path,
+            media_type="application/x-x509-ca-cert",
+            filename=f"{app_slug}.crt"
+        )
+
+
 @router.get("/certificates/{name}/download")
 async def download_certificate(name: str, file: str = "cert", admin=Depends(get_current_admin)):
     """
-    Télécharge les fichiers d'un certificat.
+    Télécharge les fichiers d'un certificat (authentification admin requise).
     
     Fichiers disponibles :
     - cert : Certificat (.crt)
