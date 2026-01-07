@@ -175,6 +175,8 @@ class AppResponse(AppBase):
     id: int
     is_active: bool
     is_shared_service: bool
+    is_remote: bool = False  # True si hébergée sur un serveur distant
+    registered_from_ip: Optional[str] = None  # IP source lors de l'auto-enregistrement
     approval_status: ApprovalStatusEnum = ApprovalStatusEnum.approved
     created_at: datetime
     
@@ -208,6 +210,8 @@ class AppResponseWithMyRole(AppResponse):
             is_active=app.is_active,
             requires_auth=app.requires_auth,
             is_shared_service=app.is_shared_service,
+            is_remote=getattr(app, 'is_remote', False) or False,
+            registered_from_ip=getattr(app, 'registered_from_ip', None),
             approval_status=approval_status,
             created_at=app.created_at,
             my_role=my_role,
@@ -256,6 +260,8 @@ class AppWithUsers(AppResponse):
             is_active=app.is_active,
             requires_auth=app.requires_auth,
             is_shared_service=app.is_shared_service,
+            is_remote=getattr(app, 'is_remote', False) or False,
+            registered_from_ip=getattr(app, 'registered_from_ip', None),
             approval_status=approval_status,
             created_at=app.created_at,
             users=users
@@ -293,6 +299,8 @@ class AppWithUsersAndDocker(AppWithUsers):
             is_active=app.is_active,
             requires_auth=app.requires_auth,
             is_shared_service=app.is_shared_service,
+            is_remote=getattr(app, 'is_remote', False) or False,
+            registered_from_ip=getattr(app, 'registered_from_ip', None),
             approval_status=approval_status,
             created_at=app.created_at,
             users=users,
@@ -601,6 +609,7 @@ class AppRegisterRequest(BaseModel):
     api_https_port: Optional[int] = Field(None, ge=1, le=65535, description="Port de l'API backend HTTPS (prioritaire sur api_port)")
     frontend_port: Optional[int] = Field(None, ge=1, le=65535, description="Port du frontend HTTP (optionnel)")
     frontend_https_port: Optional[int] = Field(None, ge=1, le=65535, description="Port du frontend HTTPS (prioritaire sur frontend_port)")
+    custom_host: Optional[str] = Field(None, description="Host/IP de l'application si hébergée sur un serveur distant (ex: 192.168.1.200)")
     is_shared: bool = Field(False, description="Si True, l'application sera accessible par tous les service accounts (M2M)")
 
 

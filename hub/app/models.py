@@ -114,6 +114,10 @@ class Application(Base):
     requires_auth = Column(Boolean, default=True)
     is_shared_service = Column(Boolean, default=False)  # Si True, accessible par tous les service accounts
     
+    # Informations sur l'hébergement de l'application
+    is_remote = Column(Boolean, default=False)  # True si hébergée sur un serveur distant (pas le même que le HUB)
+    registered_from_ip = Column(String(45), nullable=True)  # IP source lors de l'auto-enregistrement
+    
     # Système d'approbation pour l'auto-enregistrement
     approval_status = Column(SQLEnum(ApprovalStatus), default=ApprovalStatus.approved)  # pending pour les auto-register
     approved_by_id = Column(Integer, ForeignKey('users.id', ondelete='SET NULL'), nullable=True)
