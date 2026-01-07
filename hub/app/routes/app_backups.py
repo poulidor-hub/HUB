@@ -162,6 +162,88 @@ def create_encrypted_package(backup_data: bytes, backup_id: str, app_slug: str) 
     return header_length + header_json + encrypted_data
 
 
+def decrypt_encrypted_package(encrypted_package: bytes) -> tuple[bytes, dict]:
+    """
+    Déchiffre un package .encrypted créé par create_encrypted_package.
+    
+    Args:
+        encrypted_package: Contenu du fichier .encrypted
+        
+    Returns:
+        tuple: (données_déchiffrées, header_dict)
+        
+    Raises:
+        HTTPException: Si le déchiffrement échoue
+    """
+    import base64
+    
+    try:
+        # 1. Lire la longueur de l'en-tête (4 premiers bytes)
+        header_length = int.from_bytes(encrypted_package[:4], byteorder='big')
+        
+        # 2. Extraire et parser l'en-tête JSON
+        header_json = encrypted_package[4:4 + header_length]
+        header = json.loads(header_json.decode())
+        
+        # 3. Extraire les données chiffrées
+        encrypted_data = encrypted_package[4 + header_length:]
+        
+        # 4. Charger la clé privée RSA
+        if not JWT_PRIVATE_KEY_PATH.exists():
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Clé de déchiffrement non trouvée"
+            )
+        
+        private_key_pem = JWT_PRIVATE_KEY_PATH.read_bytes()
+        private_key = serialization.load_pem_private_key(private_key_pem, password=None)
+        
+        # 5. Décoder la clé AES chiffrée et le nonce depuis base64
+        encrypted_key = base64.b64decode(header["encrypted_key_b64"])
+        nonce = base64.b64decode(header["nonce_b64"])
+        
+        # 6. Déchiffrer la clé AES avec RSA
+        aes_key = private_key.decrypt(
+            encrypted_key,
+            padding.OAEP(
+                mgf=padding.MGF1(algorithm=hashes.SHA256()),
+                algorithm=hashes.SHA256(),
+                label=None
+            )
+        )
+        
+        # 7. Déchiffrer les données avec AES-GCM
+        aesgcm = AESGCM(aes_key)
+        decrypted_data = aesgcm.decrypt(nonce, encrypted_data, None)
+        
+        # 8. Vérifier le checksum si présent
+        if "original_checksum" in header:
+            computed_checksum = compute_checksum(decrypted_data)
+            if computed_checksum != header["original_checksum"]:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Checksum invalide - le fichier est peut-être corrompu"
+                )
+        
+        logger.info(f"🔓 Package déchiffré: backup_id={header.get('backup_id')}, app_slug={header.get('app_slug')}")
+        
+        return decrypted_data, header
+        
+    except HTTPException:
+        raise
+    except json.JSONDecodeError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Format de fichier .encrypted invalide - en-tête JSON corrompu"
+        )
+    except Exception as e:
+        logger.error(f"❌ Erreur de déchiffrement: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Erreur lors du déchiffrement: {str(e)}"
+        )
+
+
 async def get_app_or_404(db: AsyncSession, slug: str) -> Application:
     """Récupère une application par son slug ou lève une 404"""
     result = await db.execute(
@@ -1008,7 +1090,9 @@ async def restore_uploaded_backup_to_app(
     Permet d'importer un fichier de backup externe (depuis un autre environnement)
     et de le restaurer directement vers l'application.
     
-    Le fichier doit être un ZIP valide au format de backup de l'application.
+    Le fichier peut être:
+    - Un fichier .encrypted (exporté depuis le HUB, sera déchiffré automatiquement)
+    - Un fichier .zip (backup brut non chiffré)
     """
     import httpx
     from app.auth import create_access_token
@@ -1023,10 +1107,14 @@ async def restore_uploaded_backup_to_app(
         )
     
     # Vérifier le type de fichier
-    if not file.filename.endswith('.zip'):
+    filename = file.filename or ""
+    is_encrypted = filename.endswith('.encrypted')
+    is_zip = filename.endswith('.zip')
+    
+    if not is_encrypted and not is_zip:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Le fichier doit être un ZIP"
+            detail="Le fichier doit être un .encrypted (exporté depuis le HUB) ou un .zip"
         )
     
     # Obtenir un token M2M pour l'application
@@ -1063,13 +1151,26 @@ async def restore_uploaded_backup_to_app(
     
     try:
         # Lire le fichier uploadé
-        backup_content = await file.read()
+        raw_content = await file.read()
+        
+        # Si c'est un fichier .encrypted, le déchiffrer
+        if is_encrypted:
+            logger.info(f"🔓 Déchiffrement du fichier .encrypted...")
+            backup_content, header = decrypt_encrypted_package(raw_content)
+            # Utiliser le nom du backup original si disponible
+            backup_id_from_header = header.get("backup_id", "uploaded")
+            output_filename = f"backup_{backup_id_from_header}.zip"
+            logger.info(f"✅ Fichier déchiffré: {human_readable_size(len(backup_content))}")
+        else:
+            backup_content = raw_content
+            output_filename = filename
+            backup_id_from_header = "uploaded"
         
         async with httpx.AsyncClient(timeout=300.0, verify=ssl_verify) as client:
             restore_url = f"{app.api_url.rstrip('/')}/api/admin/restore"
             
             files = {
-                "file": (file.filename, backup_content, "application/zip")
+                "file": (output_filename, backup_content, "application/zip")
             }
             data = {
                 "clear_existing": str(clear_existing).lower(),
@@ -1102,7 +1203,7 @@ async def restore_uploaded_backup_to_app(
                 success=result.get("success", True),
                 message=result.get("message", "Restauration terminée"),
                 app_slug=slug,
-                backup_id="uploaded",
+                backup_id=backup_id_from_header,
                 items_restored=result.get("items_restored", 0),
                 preferences_restored=result.get("preferences_restored", 0),
                 files_restored=result.get("files_restored", 0),
