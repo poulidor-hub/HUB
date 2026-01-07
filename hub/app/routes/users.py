@@ -260,6 +260,14 @@ async def set_user_apps(
     
     await db.commit()
     
+    # Notifier SSE que les droits de l'utilisateur ont changé
+    # Permet au frontend de rafraîchir automatiquement le token
+    notify_event("user_permissions_changed", {
+        "user_id": user_id,
+        "username": user.username,
+        "apps_count": len(result_assignments)
+    })
+    
     return {
         "message": f"Applications mises à jour pour {user.username}",
         "assignments": result_assignments

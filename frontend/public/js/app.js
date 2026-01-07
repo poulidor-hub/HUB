@@ -4976,6 +4976,8 @@ async function exportErrors() {
 let discoveryM2MToken = null;
 let discoveryM2MTokenExpiry = null;
 let discoveryServices = [];
+let discoveryOpenApiSpecs = {}; // Cache des specs OpenAPI par service slug
+let discoverySelectedEndpoint = null; // Endpoint actuellement sélectionné
 
 /**
  * Charge la page Discovery - initialise les Service Accounts et l'état
@@ -5141,6 +5143,9 @@ async function discoverSharedServices() {
         
         document.getElementById('discoveryServicesCount').textContent = result.total_shared || 0;
         
+        // Mettre à jour le sélecteur de services pour le test d'endpoint
+        updateDiscoveryServiceSelect();
+        
         if (discoveryServices.length === 0) {
             container.innerHTML = `
                 <div class="text-center py-4 text-muted">
@@ -5189,6 +5194,413 @@ async function discoverSharedServices() {
 function selectDiscoveryService(apiUrl) {
     document.getElementById('discoveryUrl').value = apiUrl;
     showToast('Service sélectionné', 'URL pré-remplie, ajoutez l\'endpoint souhaité', 'info');
+}
+
+/**
+ * Met à jour le sélecteur de services après découverte
+ */
+function updateDiscoveryServiceSelect() {
+    const select = document.getElementById('discoveryServiceSelect');
+    select.innerHTML = '<option value="">-- Sélectionner un service --</option>';
+    
+    discoveryServices.forEach(svc => {
+        const opt = document.createElement('option');
+        opt.value = svc.slug;
+        opt.textContent = `${svc.name} (${svc.slug})`;
+        opt.dataset.apiUrl = svc.api_url;
+        opt.dataset.name = svc.name;
+        select.appendChild(opt);
+    });
+    
+    // Réinitialiser le sélecteur d'endpoints
+    const endpointSelect = document.getElementById('discoveryEndpointSelect');
+    endpointSelect.innerHTML = '<option value="">-- Sélectionnez d\'abord un service --</option>';
+    endpointSelect.disabled = true;
+    document.getElementById('discoveryEndpointInfo').classList.add('d-none');
+    document.getElementById('discoveryParamsSection').classList.add('d-none');
+}
+
+/**
+ * Appelé quand on change le service sélectionné
+ */
+async function onDiscoveryServiceChange() {
+    const select = document.getElementById('discoveryServiceSelect');
+    const selected = select.options[select.selectedIndex];
+    const endpointSelect = document.getElementById('discoveryEndpointSelect');
+    
+    if (!selected || !selected.value) {
+        endpointSelect.innerHTML = '<option value="">-- Sélectionnez d\'abord un service --</option>';
+        endpointSelect.disabled = true;
+        document.getElementById('discoveryEndpointInfo').classList.add('d-none');
+        document.getElementById('discoveryParamsSection').classList.add('d-none');
+        return;
+    }
+    
+    const slug = selected.value;
+    const apiUrl = selected.dataset.apiUrl;
+    
+    // Pré-remplir l'URL de base
+    document.getElementById('discoveryUrl').value = apiUrl;
+    
+    // Charger la spec OpenAPI du service
+    endpointSelect.innerHTML = '<option value="">⏳ Chargement des endpoints...</option>';
+    endpointSelect.disabled = true;
+    
+    try {
+        const spec = await loadServiceOpenApiSpec(slug, apiUrl);
+        
+        if (spec && spec.paths) {
+            populateEndpointSelect(spec, apiUrl);
+        } else {
+            endpointSelect.innerHTML = '<option value="">❌ Spec OpenAPI non disponible</option>';
+            showToast('Info', 'Ce service ne fournit pas de spécification OpenAPI', 'warning');
+        }
+    } catch (error) {
+        console.error('Erreur chargement spec OpenAPI:', error);
+        endpointSelect.innerHTML = '<option value="">❌ Erreur chargement</option>';
+        showToast('Erreur', 'Impossible de charger les endpoints: ' + error.message, 'danger');
+    }
+}
+
+/**
+ * Charge la spécification OpenAPI d'un service
+ */
+async function loadServiceOpenApiSpec(slug, apiUrl) {
+    // Vérifier le cache
+    if (discoveryOpenApiSpecs[slug]) {
+        return discoveryOpenApiSpecs[slug];
+    }
+    
+    // Essayer différents chemins pour OpenAPI
+    const openApiPaths = ['/openapi.json', '/api/openapi.json', '/docs/openapi.json', '/swagger.json'];
+    
+    for (const path of openApiPaths) {
+        try {
+            const url = apiUrl.replace(/\/$/, '') + path;
+            const response = await fetch(url, {
+                headers: {
+                    'Authorization': `Bearer ${discoveryM2MToken}`,
+                    'Accept': 'application/json'
+                }
+            });
+            
+            if (response.ok) {
+                const spec = await response.json();
+                discoveryOpenApiSpecs[slug] = spec;
+                console.log(`✅ Spec OpenAPI chargée depuis ${url}`);
+                return spec;
+            }
+        } catch (e) {
+            // Continuer avec le chemin suivant
+        }
+    }
+    
+    return null;
+}
+
+/**
+ * Remplit le sélecteur d'endpoints depuis la spec OpenAPI
+ */
+function populateEndpointSelect(spec, baseUrl) {
+    const select = document.getElementById('discoveryEndpointSelect');
+    select.innerHTML = '<option value="">-- Sélectionner un endpoint --</option>';
+    
+    // Grouper par tag
+    const endpointsByTag = {};
+    const methodColors = {
+        'get': 'success',
+        'post': 'primary',
+        'put': 'warning',
+        'patch': 'info',
+        'delete': 'danger'
+    };
+    
+    for (const [path, methods] of Object.entries(spec.paths || {})) {
+        for (const [method, details] of Object.entries(methods)) {
+            if (['get', 'post', 'put', 'patch', 'delete'].includes(method.toLowerCase())) {
+                const tags = details.tags || ['Autre'];
+                const tag = tags[0];
+                
+                if (!endpointsByTag[tag]) {
+                    endpointsByTag[tag] = [];
+                }
+                
+                endpointsByTag[tag].push({
+                    method: method.toUpperCase(),
+                    path: path,
+                    summary: details.summary || '',
+                    description: details.description || '',
+                    operationId: details.operationId || '',
+                    parameters: details.parameters || [],
+                    requestBody: details.requestBody || null,
+                    responses: details.responses || {},
+                    tags: tags
+                });
+            }
+        }
+    }
+    
+    // Créer les optgroups
+    for (const [tag, endpoints] of Object.entries(endpointsByTag)) {
+        const optgroup = document.createElement('optgroup');
+        optgroup.label = `📁 ${tag}`;
+        
+        endpoints.forEach((ep, idx) => {
+            const opt = document.createElement('option');
+            const methodBadge = `[${ep.method}]`;
+            opt.value = JSON.stringify(ep);
+            opt.textContent = `${methodBadge} ${ep.path} - ${ep.summary || ep.operationId || 'Sans description'}`;
+            opt.dataset.method = ep.method;
+            opt.dataset.path = ep.path;
+            optgroup.appendChild(opt);
+        });
+        
+        select.appendChild(optgroup);
+    }
+    
+    select.disabled = false;
+    showToast('Endpoints chargés', `${Object.values(endpointsByTag).flat().length} endpoints disponibles`, 'success');
+}
+
+/**
+ * Appelé quand on sélectionne un endpoint
+ */
+function onDiscoveryEndpointChange() {
+    const select = document.getElementById('discoveryEndpointSelect');
+    const selected = select.options[select.selectedIndex];
+    
+    if (!selected || !selected.value) {
+        document.getElementById('discoveryEndpointInfo').classList.add('d-none');
+        document.getElementById('discoveryParamsSection').classList.add('d-none');
+        discoverySelectedEndpoint = null;
+        return;
+    }
+    
+    try {
+        const endpoint = JSON.parse(selected.value);
+        discoverySelectedEndpoint = endpoint;
+        
+        // Afficher les infos de l'endpoint
+        const infoDiv = document.getElementById('discoveryEndpointInfo');
+        infoDiv.classList.remove('d-none');
+        
+        // Méthode avec couleur
+        const methodBadge = document.getElementById('discoveryEndpointMethod');
+        const methodColors = {
+            'GET': 'bg-success',
+            'POST': 'bg-primary',
+            'PUT': 'bg-warning text-dark',
+            'PATCH': 'bg-info',
+            'DELETE': 'bg-danger'
+        };
+        methodBadge.className = `badge ${methodColors[endpoint.method] || 'bg-secondary'}`;
+        methodBadge.textContent = endpoint.method;
+        
+        document.getElementById('discoveryEndpointPath').textContent = endpoint.path;
+        document.getElementById('discoveryEndpointDescription').textContent = 
+            endpoint.description || endpoint.summary || 'Pas de description disponible';
+        document.getElementById('discoveryEndpointTags').textContent = endpoint.tags.join(', ');
+        
+        // Mettre à jour la méthode et l'URL
+        document.getElementById('discoveryMethod').value = endpoint.method;
+        
+        // Construire l'URL complète
+        const serviceSelect = document.getElementById('discoveryServiceSelect');
+        const baseUrl = serviceSelect.options[serviceSelect.selectedIndex]?.dataset.apiUrl || '';
+        document.getElementById('discoveryUrl').value = baseUrl.replace(/\/$/, '') + endpoint.path;
+        
+        // Générer les paramètres s'il y en a
+        generateEndpointParams(endpoint);
+        
+        // Générer le body exemple si POST/PUT/PATCH
+        if (['POST', 'PUT', 'PATCH'].includes(endpoint.method) && endpoint.requestBody) {
+            generateRequestBodyExample(endpoint.requestBody);
+        } else {
+            document.getElementById('discoveryBody').value = '';
+        }
+        
+    } catch (e) {
+        console.error('Erreur parsing endpoint:', e);
+    }
+}
+
+/**
+ * Génère les champs de paramètres pour l'endpoint
+ */
+function generateEndpointParams(endpoint) {
+    const paramsSection = document.getElementById('discoveryParamsSection');
+    const paramsContainer = document.getElementById('discoveryParams');
+    
+    const params = endpoint.parameters || [];
+    
+    if (params.length === 0) {
+        paramsSection.classList.add('d-none');
+        return;
+    }
+    
+    paramsSection.classList.remove('d-none');
+    paramsContainer.innerHTML = '';
+    
+    params.forEach(param => {
+        const row = document.createElement('div');
+        row.className = 'row g-2 mb-2 align-items-center';
+        
+        const isRequired = param.required || false;
+        const paramType = param.in; // path, query, header
+        const typeIcon = {
+            'path': 'bi-link-45deg',
+            'query': 'bi-question-circle',
+            'header': 'bi-card-heading'
+        }[paramType] || 'bi-tag';
+        
+        row.innerHTML = `
+            <div class="col-md-3">
+                <div class="input-group input-group-sm">
+                    <span class="input-group-text"><i class="bi ${typeIcon}"></i></span>
+                    <input type="text" class="form-control" value="${escapeHtml(param.name)}" readonly>
+                </div>
+            </div>
+            <div class="col-md-5">
+                <input type="text" class="form-control form-control-sm discovery-param-value" 
+                       data-param-name="${escapeHtml(param.name)}" 
+                       data-param-in="${paramType}"
+                       placeholder="${escapeHtml(param.description || param.schema?.type || 'valeur')}"
+                       ${isRequired ? 'required' : ''}>
+            </div>
+            <div class="col-md-4">
+                <small class="text-muted">
+                    ${isRequired ? '<span class="badge bg-danger me-1">Requis</span>' : ''}
+                    <span class="badge bg-secondary">${paramType}</span>
+                    ${param.schema?.type ? `<span class="badge bg-light text-dark">${param.schema.type}</span>` : ''}
+                </small>
+            </div>
+        `;
+        
+        paramsContainer.appendChild(row);
+    });
+    
+    // Ajouter listener pour mettre à jour l'URL en temps réel
+    paramsContainer.querySelectorAll('.discovery-param-value').forEach(input => {
+        input.addEventListener('input', updateDiscoveryUrlWithParams);
+    });
+}
+
+/**
+ * Met à jour l'URL avec les paramètres remplis
+ */
+function updateDiscoveryUrlWithParams() {
+    if (!discoverySelectedEndpoint) return;
+    
+    const serviceSelect = document.getElementById('discoveryServiceSelect');
+    const baseUrl = serviceSelect.options[serviceSelect.selectedIndex]?.dataset.apiUrl || '';
+    let path = discoverySelectedEndpoint.path;
+    
+    const queryParams = [];
+    
+    document.querySelectorAll('.discovery-param-value').forEach(input => {
+        const paramName = input.dataset.paramName;
+        const paramIn = input.dataset.paramIn;
+        const value = input.value.trim();
+        
+        if (value) {
+            if (paramIn === 'path') {
+                // Remplacer {param} dans le path
+                path = path.replace(`{${paramName}}`, encodeURIComponent(value));
+            } else if (paramIn === 'query') {
+                queryParams.push(`${encodeURIComponent(paramName)}=${encodeURIComponent(value)}`);
+            }
+        }
+    });
+    
+    let fullUrl = baseUrl.replace(/\/$/, '') + path;
+    if (queryParams.length > 0) {
+        fullUrl += '?' + queryParams.join('&');
+    }
+    
+    document.getElementById('discoveryUrl').value = fullUrl;
+}
+
+/**
+ * Génère un exemple de body pour les requêtes POST/PUT/PATCH
+ */
+function generateRequestBodyExample(requestBody) {
+    const bodyTextarea = document.getElementById('discoveryBody');
+    
+    try {
+        const content = requestBody.content;
+        const jsonContent = content?.['application/json'];
+        
+        if (jsonContent?.schema) {
+            const example = generateSchemaExample(jsonContent.schema);
+            bodyTextarea.value = JSON.stringify(example, null, 2);
+        } else if (jsonContent?.example) {
+            bodyTextarea.value = JSON.stringify(jsonContent.example, null, 2);
+        }
+    } catch (e) {
+        console.warn('Impossible de générer exemple body:', e);
+    }
+}
+
+/**
+ * Génère un exemple à partir d'un schéma JSON
+ */
+function generateSchemaExample(schema, depth = 0) {
+    if (depth > 5) return null; // Éviter la récursion infinie
+    
+    if (schema.example !== undefined) {
+        return schema.example;
+    }
+    
+    if (schema.$ref) {
+        // Référence à un composant - retourner un placeholder
+        return { "_ref": schema.$ref.split('/').pop() };
+    }
+    
+    switch (schema.type) {
+        case 'object':
+            const obj = {};
+            if (schema.properties) {
+                for (const [key, prop] of Object.entries(schema.properties)) {
+                    obj[key] = generateSchemaExample(prop, depth + 1);
+                }
+            }
+            return obj;
+        case 'array':
+            if (schema.items) {
+                return [generateSchemaExample(schema.items, depth + 1)];
+            }
+            return [];
+        case 'string':
+            if (schema.enum) return schema.enum[0];
+            if (schema.format === 'date') return '2024-01-01';
+            if (schema.format === 'date-time') return '2024-01-01T00:00:00Z';
+            if (schema.format === 'email') return 'user@example.com';
+            return schema.default || 'string';
+        case 'integer':
+        case 'number':
+            return schema.default || schema.minimum || 0;
+        case 'boolean':
+            return schema.default || true;
+        default:
+            return null;
+    }
+}
+
+/**
+ * Affiche la spec OpenAPI complète de l'endpoint sélectionné
+ */
+function loadEndpointOpenApiSpec() {
+    if (!discoverySelectedEndpoint) {
+        showToast('Info', 'Sélectionnez d\'abord un endpoint', 'info');
+        return;
+    }
+    
+    // Afficher dans le résultat
+    document.getElementById('discoveryResultCard').style.display = 'block';
+    document.getElementById('discoveryResultStatus').textContent = 'OpenAPI Spec';
+    document.getElementById('discoveryResultStatus').className = 'badge bg-info';
+    document.getElementById('discoveryResultTime').textContent = '';
+    document.getElementById('discoveryResultBody').textContent = JSON.stringify(discoverySelectedEndpoint, null, 2);
 }
 
 /**
