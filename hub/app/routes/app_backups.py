@@ -49,7 +49,7 @@ from app.schemas import (
     AppBackupConfig, AppBackupConfigUpdate, AppBackupReceive,
     AppBackupResponse, AppBackupListResponse, AppBackupStatusResponse,
     AllBackupsResponse, BackupTriggerResponse, BackupExportResponse,
-    BackupModeEnum
+    BackupModeEnum, RestoreToAppRequest, RestoreToAppResponse
 )
 
 logger = logging.getLogger(__name__)
@@ -371,9 +371,10 @@ async def get_latest_backup(
     current_user = Depends(get_current_entity)
 ):
     """
-    Récupère et télécharge le dernier backup d'une application.
+    Récupère les informations du dernier backup d'une application.
     
-    Utilisé par les applications pour sync-from-hub.
+    ⚠️ Le téléchargement direct des backups non chiffrés a été désactivé pour des raisons de sécurité.
+    Utilisez l'endpoint /export pour télécharger une version chiffrée.
     """
     app = await get_app_or_404(db, slug)
     
@@ -391,24 +392,8 @@ async def get_latest_backup(
             detail=f"Aucun backup trouvé pour l'application '{slug}'"
         )
     
-    # Chemin du fichier
-    file_path = STORAGE_BASE_DIR / backup.storage_path
-    if not file_path.exists():
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Fichier de backup non trouvé sur le serveur"
-        )
-    
-    return FileResponse(
-        path=str(file_path),
-        filename=f"backup_{slug}_{backup.backup_id}.zip",
-        media_type="application/zip",
-        headers={
-            "X-Backup-ID": backup.backup_id,
-            "X-Backup-Checksum": backup.checksum or "",
-            "X-Backup-Created-At": backup.created_at.isoformat()
-        }
-    )
+    # Retourner les infos du backup sans le fichier
+    return AppBackupResponse.from_orm_model(backup)
 
 
 @router.get("/api/apps/{slug}/backup/{backup_id}/download")
@@ -419,29 +404,18 @@ async def download_backup(
     current_user: User = Depends(get_current_admin)
 ):
     """
-    Télécharge un backup spécifique (non chiffré).
+    ⚠️ DÉSACTIVÉ - Téléchargement des backups non chiffrés interdit.
     
-    Réservé aux administrateurs du HUB.
+    Pour des raisons de sécurité, le téléchargement direct des backups 
+    non chiffrés a été désactivé.
+    
+    Utilisez plutôt:
+    - GET /api/apps/{slug}/backup/{backup_id}/export : pour créer une version chiffrée
+    - GET /api/apps/{slug}/backup/{backup_id}/export/download : pour télécharger la version chiffrée
     """
-    backup = await get_backup_or_404(db, backup_id)
-    
-    if backup.app_slug != slug:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Le backup ne correspond pas à l'application"
-        )
-    
-    file_path = STORAGE_BASE_DIR / backup.storage_path
-    if not file_path.exists():
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Fichier de backup non trouvé"
-        )
-    
-    return FileResponse(
-        path=str(file_path),
-        filename=f"backup_{slug}_{backup_id}.zip",
-        media_type="application/zip"
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="Téléchargement des backups non chiffrés désactivé. Utilisez /export pour obtenir une version chiffrée."
     )
 
 
@@ -684,9 +658,12 @@ async def trigger_backup(
     Déclenche manuellement un backup pour une application.
     
     Le HUB appelle l'endpoint POST /api/admin/backup de l'application
-    puis récupère le résultat via GET /api/admin/backup/download.
+    puis récupère le résultat via GET /api/admin/backup/download
+    et stocke le fichier localement.
     """
     import httpx
+    from app.auth import create_access_token
+    from datetime import timedelta
     
     app = await get_app_or_404(db, slug)
     
@@ -694,6 +671,12 @@ async def trigger_backup(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Les sauvegardes sont désactivées pour cette application"
+        )
+    
+    if not app.api_url:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="L'application n'a pas d'URL d'API configurée"
         )
     
     # Marquer comme en cours
@@ -712,30 +695,428 @@ async def trigger_backup(
         sa = sa_result.scalar_one_or_none()
         
         if not sa:
+            app.last_backup_status = "failed"
+            await db.commit()
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Aucun service account trouvé pour cette application"
+                detail="Aucun service account trouvé pour cette application. Créez-en un avec accès à l'app."
             )
         
-        # TODO: Implémenter l'appel réel à l'application
-        # Pour l'instant, on retourne un message d'information
+        # Créer un token M2M avec rôle admin pour l'application cible
+        m2m_token, _, _ = create_access_token(
+            username=sa.client_id,
+            roles=["service_account"],
+            apps={slug: "admin"},  # Rôle admin pour pouvoir déclencher le backup
+            expires_delta=timedelta(minutes=10),
+            is_service_account=True
+        )
+        
+        # Configuration SSL - utiliser le même certificat CA que l'app utilise
+        ssl_verify: str | bool = True
+        ca_cert_path = Path("/code/certs/ca/ca.crt")
+        if ca_cert_path.exists():
+            ssl_verify = str(ca_cert_path)
+        
+        logger.info(f"🔄 Déclenchement backup pour {slug} via {app.api_url}")
+        
+        async with httpx.AsyncClient(timeout=120.0, verify=ssl_verify) as client:
+            # 1. Appeler POST /api/admin/backup pour créer le backup
+            create_url = f"{app.api_url.rstrip('/')}/api/admin/backup"
+            logger.debug(f"📡 POST {create_url}")
+            
+            create_response = await client.post(
+                create_url,
+                headers={"Authorization": f"Bearer {m2m_token}"}
+            )
+            
+            if create_response.status_code != 200:
+                error_detail = create_response.text[:200] if create_response.text else "Pas de détails"
+                logger.error(f"❌ Erreur création backup: {create_response.status_code} - {error_detail}")
+                app.last_backup_status = "failed"
+                await db.commit()
+                raise HTTPException(
+                    status_code=status.HTTP_502_BAD_GATEWAY,
+                    detail=f"L'application a retourné une erreur: {create_response.status_code}"
+                )
+            
+            backup_info = create_response.json()
+            # Le backup_id peut être à la racine ou dans metadata selon l'implémentation de l'app
+            remote_backup_id = backup_info.get("backup_id") or backup_info.get("metadata", {}).get("backup_id")
+            logger.info(f"✅ Backup créé sur l'app: {remote_backup_id}")
+            
+            # 2. Télécharger le fichier ZIP
+            download_url = f"{app.api_url.rstrip('/')}/api/admin/backup/download?backup_id={remote_backup_id}"
+            logger.debug(f"📡 GET {download_url}")
+            
+            download_response = await client.get(
+                download_url,
+                headers={"Authorization": f"Bearer {m2m_token}"}
+            )
+            
+            if download_response.status_code != 200:
+                logger.error(f"❌ Erreur téléchargement backup: {download_response.status_code}")
+                app.last_backup_status = "failed"
+                await db.commit()
+                raise HTTPException(
+                    status_code=status.HTTP_502_BAD_GATEWAY,
+                    detail=f"Impossible de télécharger le backup: {download_response.status_code}"
+                )
+            
+            zip_content = download_response.content
+            file_size = len(zip_content)
+            logger.info(f"📥 Backup téléchargé: {human_readable_size(file_size)}")
+        
+        # 3. Stocker le backup localement (comme receive_backup)
+        backup_id = remote_backup_id or str(uuid.uuid4())
+        checksum = compute_checksum(zip_content)
+        
+        # Créer le dossier de stockage
+        app_dir = ensure_storage_dir(slug)
+        
+        # Nom du fichier
+        filename = f"backup_{backup_id}.zip"
+        storage_path = f"{slug}/{filename}"
+        full_path = app_dir / filename
+        
+        # Sauvegarder le fichier
+        with open(full_path, "wb") as f:
+            f.write(zip_content)
+        
+        # Extraire les métadonnées du backup_info
+        app_version = backup_info.get("app_version")
+        total_items = backup_info.get("total_items", 0)
+        total_preferences = backup_info.get("total_preferences", 0)
+        total_files = backup_info.get("total_files", 0)
+        
+        # Créer l'enregistrement en base
+        backup = AppBackup(
+            backup_id=backup_id,
+            app_id=app.id,
+            app_slug=slug,
+            app_version=app_version,
+            total_items=total_items,
+            total_preferences=total_preferences,
+            total_files=total_files,
+            total_size_bytes=file_size,
+            checksum=checksum,
+            storage_path=storage_path,
+            created_by=current_user.username,
+            created_by_type="hub",  # Indique que c'est le HUB qui a déclenché
+            description=f"Backup déclenché manuellement depuis le HUB par {current_user.username}"
+        )
+        
+        db.add(backup)
+        
+        # Mettre à jour l'application
+        app.last_backup_at = datetime.utcnow()
+        app.last_backup_id = backup_id
+        app.last_backup_status = "success"
+        
+        await db.commit()
+        await db.refresh(backup)
+        
+        # Appliquer la politique de rétention
+        await apply_retention_policy(db, slug, app.backup_retention)
+        
+        logger.info(f"✅ Backup {backup_id} stocké pour {slug} ({human_readable_size(file_size)})")
         
         return BackupTriggerResponse(
-            success=False,
-            message="Déclenchement manuel non encore implémenté. L'application doit pousser ses backups via sync-to-hub.",
-            backup_id=None,
+            success=True,
+            message=f"Backup créé avec succès ({human_readable_size(file_size)})",
+            backup_id=backup_id,
             app_slug=slug
         )
         
     except HTTPException:
         raise
+    except httpx.RequestError as e:
+        app.last_backup_status = "failed"
+        await db.commit()
+        logger.error(f"❌ Erreur réseau lors du backup pour {slug}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Impossible de contacter l'application: {str(e)}"
+        )
     except Exception as e:
         app.last_backup_status = "failed"
         await db.commit()
-        logger.error(f"Erreur lors du déclenchement du backup pour {slug}: {e}")
+        logger.error(f"❌ Erreur lors du déclenchement du backup pour {slug}: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=str(e)
+        )
+
+
+# =============================================================================
+# RESTAURATION VERS UNE APPLICATION
+# =============================================================================
+
+@router.post("/api/apps/{slug}/backup/{backup_id}/restore", response_model=RestoreToAppResponse)
+async def restore_backup_to_app(
+    slug: str,
+    backup_id: str,
+    options: RestoreToAppRequest = RestoreToAppRequest(),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_admin)
+):
+    """
+    Restaure un backup existant vers une application.
+    
+    Le HUB envoie le fichier de backup à l'application via POST /api/admin/restore.
+    
+    Options:
+    - **clear_existing**: Supprimer toutes les données existantes avant restauration
+    - **restore_items**: Restaurer les items
+    - **restore_preferences**: Restaurer les préférences utilisateur  
+    - **restore_files**: Restaurer les fichiers uploadés
+    - **restore_test_data**: Restaurer les données de test
+    """
+    import httpx
+    from app.auth import create_access_token
+    from datetime import timedelta
+    
+    app = await get_app_or_404(db, slug)
+    backup = await get_backup_or_404(db, backup_id)
+    
+    if backup.app_slug != slug:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Le backup ne correspond pas à l'application"
+        )
+    
+    if not app.api_url:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="L'application n'a pas d'URL d'API configurée"
+        )
+    
+    # Vérifier que le fichier existe
+    file_path = STORAGE_BASE_DIR / backup.storage_path
+    if not file_path.exists():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Fichier de backup non trouvé sur le serveur"
+        )
+    
+    # Obtenir un token M2M pour l'application
+    sa_result = await db.execute(
+        select(ServiceAccount)
+        .join(ServiceAccount.applications)
+        .where(Application.slug == slug)
+        .limit(1)
+    )
+    sa = sa_result.scalar_one_or_none()
+    
+    if not sa:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Aucun service account trouvé pour cette application"
+        )
+    
+    # Créer un token M2M avec rôle admin
+    m2m_token, _, _ = create_access_token(
+        username=sa.client_id,
+        roles=["service_account"],
+        apps={slug: "admin"},
+        expires_delta=timedelta(minutes=10),
+        is_service_account=True
+    )
+    
+    # Configuration SSL
+    ssl_verify: str | bool = True
+    ca_cert_path = Path("/code/certs/ca/ca.crt")
+    if ca_cert_path.exists():
+        ssl_verify = str(ca_cert_path)
+    
+    logger.info(f"🔄 Restauration backup {backup_id} vers {slug}")
+    
+    try:
+        # Lire le fichier de backup
+        backup_content = file_path.read_bytes()
+        
+        async with httpx.AsyncClient(timeout=300.0, verify=ssl_verify) as client:
+            # Envoyer le backup à l'application via multipart/form-data
+            restore_url = f"{app.api_url.rstrip('/')}/api/admin/restore"
+            
+            files = {
+                "file": (f"backup_{backup_id}.zip", backup_content, "application/zip")
+            }
+            data = {
+                "clear_existing": str(options.clear_existing).lower(),
+                "restore_items": str(options.restore_items).lower(),
+                "restore_preferences": str(options.restore_preferences).lower(),
+                "restore_files": str(options.restore_files).lower(),
+                "restore_test_data": str(options.restore_test_data).lower()
+            }
+            
+            response = await client.post(
+                restore_url,
+                headers={"Authorization": f"Bearer {m2m_token}"},
+                files=files,
+                data=data
+            )
+            
+            if response.status_code != 200:
+                error_detail = response.text[:200] if response.text else "Pas de détails"
+                logger.error(f"❌ Erreur restauration: {response.status_code} - {error_detail}")
+                raise HTTPException(
+                    status_code=status.HTTP_502_BAD_GATEWAY,
+                    detail=f"L'application a retourné une erreur: {response.status_code} - {error_detail}"
+                )
+            
+            result = response.json()
+            
+            logger.info(f"✅ Restauration terminée pour {slug}: {result.get('items_restored', 0)} items")
+            
+            return RestoreToAppResponse(
+                success=result.get("success", True),
+                message=result.get("message", "Restauration terminée"),
+                app_slug=slug,
+                backup_id=backup_id,
+                items_restored=result.get("items_restored", 0),
+                preferences_restored=result.get("preferences_restored", 0),
+                files_restored=result.get("files_restored", 0),
+                items_skipped=result.get("items_skipped", 0),
+                files_skipped=result.get("files_skipped", 0),
+                errors=result.get("errors", []),
+                warnings=result.get("warnings", [])
+            )
+            
+    except httpx.RequestError as e:
+        logger.error(f"❌ Erreur réseau lors de la restauration: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Impossible de contacter l'application: {str(e)}"
+        )
+
+
+@router.post("/api/apps/{slug}/backup/restore/upload", response_model=RestoreToAppResponse)
+async def restore_uploaded_backup_to_app(
+    slug: str,
+    file: UploadFile = File(...),
+    clear_existing: bool = False,
+    restore_items: bool = True,
+    restore_preferences: bool = True,
+    restore_files: bool = True,
+    restore_test_data: bool = True,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_admin)
+):
+    """
+    Restaure un backup uploadé vers une application.
+    
+    Permet d'importer un fichier de backup externe (depuis un autre environnement)
+    et de le restaurer directement vers l'application.
+    
+    Le fichier doit être un ZIP valide au format de backup de l'application.
+    """
+    import httpx
+    from app.auth import create_access_token
+    from datetime import timedelta
+    
+    app = await get_app_or_404(db, slug)
+    
+    if not app.api_url:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="L'application n'a pas d'URL d'API configurée"
+        )
+    
+    # Vérifier le type de fichier
+    if not file.filename.endswith('.zip'):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Le fichier doit être un ZIP"
+        )
+    
+    # Obtenir un token M2M pour l'application
+    sa_result = await db.execute(
+        select(ServiceAccount)
+        .join(ServiceAccount.applications)
+        .where(Application.slug == slug)
+        .limit(1)
+    )
+    sa = sa_result.scalar_one_or_none()
+    
+    if not sa:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Aucun service account trouvé pour cette application"
+        )
+    
+    # Créer un token M2M avec rôle admin
+    m2m_token, _, _ = create_access_token(
+        username=sa.client_id,
+        roles=["service_account"],
+        apps={slug: "admin"},
+        expires_delta=timedelta(minutes=10),
+        is_service_account=True
+    )
+    
+    # Configuration SSL
+    ssl_verify: str | bool = True
+    ca_cert_path = Path("/code/certs/ca/ca.crt")
+    if ca_cert_path.exists():
+        ssl_verify = str(ca_cert_path)
+    
+    logger.info(f"🔄 Restauration fichier uploadé vers {slug} par {current_user.username}")
+    
+    try:
+        # Lire le fichier uploadé
+        backup_content = await file.read()
+        
+        async with httpx.AsyncClient(timeout=300.0, verify=ssl_verify) as client:
+            restore_url = f"{app.api_url.rstrip('/')}/api/admin/restore"
+            
+            files = {
+                "file": (file.filename, backup_content, "application/zip")
+            }
+            data = {
+                "clear_existing": str(clear_existing).lower(),
+                "restore_items": str(restore_items).lower(),
+                "restore_preferences": str(restore_preferences).lower(),
+                "restore_files": str(restore_files).lower(),
+                "restore_test_data": str(restore_test_data).lower()
+            }
+            
+            response = await client.post(
+                restore_url,
+                headers={"Authorization": f"Bearer {m2m_token}"},
+                files=files,
+                data=data
+            )
+            
+            if response.status_code != 200:
+                error_detail = response.text[:200] if response.text else "Pas de détails"
+                logger.error(f"❌ Erreur restauration upload: {response.status_code} - {error_detail}")
+                raise HTTPException(
+                    status_code=status.HTTP_502_BAD_GATEWAY,
+                    detail=f"L'application a retourné une erreur: {response.status_code} - {error_detail}"
+                )
+            
+            result = response.json()
+            
+            logger.info(f"✅ Restauration upload terminée pour {slug}")
+            
+            return RestoreToAppResponse(
+                success=result.get("success", True),
+                message=result.get("message", "Restauration terminée"),
+                app_slug=slug,
+                backup_id="uploaded",
+                items_restored=result.get("items_restored", 0),
+                preferences_restored=result.get("preferences_restored", 0),
+                files_restored=result.get("files_restored", 0),
+                items_skipped=result.get("items_skipped", 0),
+                files_skipped=result.get("files_skipped", 0),
+                errors=result.get("errors", []),
+                warnings=result.get("warnings", [])
+            )
+            
+    except httpx.RequestError as e:
+        logger.error(f"❌ Erreur réseau lors de la restauration: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Impossible de contacter l'application: {str(e)}"
         )
 
 

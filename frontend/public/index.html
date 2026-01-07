@@ -1361,7 +1361,7 @@ sudo update-ca-trust</code></pre>
                                 <div class="col-12">
                                     <small class="text-muted">
                                         <span class="badge bg-secondary me-2">Désactivé</span> Pas de sauvegarde
-                                        <span class="badge bg-info ms-3 me-2">Manuel</span> Sauvegarde déclenchée manuellement par l'application
+                                        <span class="badge bg-info ms-3 me-2">Manuel</span> Sauvegarde déclenchée à la demande via le HUB
                                         <span class="badge bg-success ms-3 me-2">Planifié</span> Sauvegarde automatique selon le cron
                                     </small>
                                 </div>
@@ -1894,7 +1894,7 @@ sudo update-ca-trust</code></pre>
                             <label class="form-label">Mode de sauvegarde</label>
                             <select class="form-select" id="backupConfigMode" onchange="toggleCronInput()">
                                 <option value="disabled">Désactivé - Pas de sauvegarde</option>
-                                <option value="manual">Manuel - L'application déclenche ses sauvegardes</option>
+                                <option value="manual">Manuel - Sauvegarde à la demande via le HUB</option>
                                 <option value="scheduled">Planifié - Sauvegarde automatique</option>
                             </select>
                         </div>
@@ -1978,7 +1978,36 @@ sudo update-ca-trust</code></pre>
                     </div>
                 </div>
                 <div class="modal-footer">
+                    <button type="button" class="btn btn-success" id="triggerBackupBtn" onclick="triggerAppBackup()" style="display: none;">
+                        <i class="bi bi-play-circle me-1"></i>Déclencher une sauvegarde
+                    </button>
                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Fermer</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Confirmation Modal for Backup Trigger -->
+    <div class="modal fade" id="confirmBackupTriggerModal" tabindex="-1">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header bg-warning">
+                    <h5 class="modal-title"><i class="bi bi-exclamation-triangle me-2"></i>Confirmation</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <p>Êtes-vous sûr de vouloir déclencher une sauvegarde pour <strong id="confirmBackupAppName">-</strong> ?</p>
+                    <small class="text-muted">
+                        <i class="bi bi-info-circle me-1"></i>
+                        Le HUB va contacter l'application pour créer une sauvegarde complète.
+                        Cette opération peut prendre quelques minutes selon la taille des données.
+                    </small>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuler</button>
+                    <button type="button" class="btn btn-success" onclick="confirmTriggerBackup()">
+                        <i class="bi bi-play-circle me-1"></i>Confirmer
+                    </button>
                 </div>
             </div>
         </div>

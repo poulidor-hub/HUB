@@ -811,6 +811,30 @@ class BackupExportResponse(BaseModel):
     encrypted_size_human: str
 
 
+class RestoreToAppRequest(BaseModel):
+    """Options de restauration vers une application"""
+    clear_existing: bool = False
+    restore_items: bool = True
+    restore_preferences: bool = True
+    restore_files: bool = True
+    restore_test_data: bool = True
+
+
+class RestoreToAppResponse(BaseModel):
+    """Réponse après restauration vers une application"""
+    success: bool
+    message: str
+    app_slug: str
+    backup_id: str
+    items_restored: int = 0
+    preferences_restored: int = 0
+    files_restored: int = 0
+    items_skipped: int = 0
+    files_skipped: int = 0
+    errors: List[str] = []
+    warnings: List[str] = []
+
+
 # Forward references
 UserResponse.model_rebuild()
 ServiceAccountResponse.model_rebuild()

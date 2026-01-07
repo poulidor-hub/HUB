@@ -5671,6 +5671,9 @@ async function loadAppBackupsOverview() {
                     <td>${app.total_size_human}</td>
                     <td class="text-end">
                         <div class="btn-group btn-group-sm">
+                            <button class="btn btn-outline-success" onclick="showTriggerBackupConfirm('${app.app_slug}', '${escapeHtml(app.app_name)}')" title="Déclencher sauvegarde" ${app.backup_mode === 'disabled' ? 'style="display: none;"' : ''}>
+                                <i class="bi bi-play-circle"></i>
+                            </button>
                             <button class="btn btn-outline-primary" onclick="showAppBackupsList('${app.app_slug}')" title="Voir les sauvegardes">
                                 <i class="bi bi-hdd-stack"></i>
                             </button>
@@ -5781,6 +5784,12 @@ async function showAppBackupsList(slug) {
         document.getElementById('backupsListMode').textContent = modeLabels[data.backup_config?.backup_mode] || 'Manuel';
         document.getElementById('backupsListCron').textContent = data.backup_config?.backup_cron || '-';
         document.getElementById('backupsListRetention').textContent = data.backup_config?.backup_retention ?? 5;
+        
+        // Afficher/masquer le bouton de déclenchement selon le mode
+        const triggerBtn = document.getElementById('triggerBackupBtn');
+        if (triggerBtn) {
+            triggerBtn.style.display = data.backup_config?.backup_mode !== 'disabled' ? '' : 'none';
+        }
         
         // Liste des backups
         const tbody = document.getElementById('backupsListBody');
@@ -5944,6 +5953,87 @@ async function deleteAppBackup(slug, backupId) {
     } catch (error) {
         console.error('Erreur suppression:', error);
         showToast('Erreur', 'Impossible de supprimer le backup', 'danger');
+    }
+}
+
+
+// Variables pour le déclenchement de backup
+let confirmBackupTriggerModal = null;
+let pendingBackupSlug = null;
+let pendingBackupAppName = null;
+
+/**
+ * Affiche le modal de confirmation pour déclencher un backup
+ */
+function showTriggerBackupConfirm(slug, appName) {
+    if (!confirmBackupTriggerModal) {
+        confirmBackupTriggerModal = new bootstrap.Modal(document.getElementById('confirmBackupTriggerModal'));
+    }
+    
+    pendingBackupSlug = slug;
+    pendingBackupAppName = appName;
+    
+    document.getElementById('confirmBackupAppName').textContent = appName;
+    confirmBackupTriggerModal.show();
+}
+
+/**
+ * Déclenche le backup après confirmation (depuis le modal de confirmation)
+ */
+async function confirmTriggerBackup() {
+    if (!pendingBackupSlug) return;
+    
+    // Fermer le modal de confirmation
+    confirmBackupTriggerModal.hide();
+    
+    await doTriggerBackup(pendingBackupSlug, pendingBackupAppName);
+    
+    pendingBackupSlug = null;
+    pendingBackupAppName = null;
+}
+
+/**
+ * Déclenche le backup depuis le modal de liste des backups
+ */
+async function triggerAppBackup() {
+    const slug = document.getElementById('backupsListAppSlug').value;
+    const appName = document.getElementById('backupsListAppName').textContent;
+    
+    if (!slug) return;
+    
+    // Afficher le modal de confirmation
+    showTriggerBackupConfirm(slug, appName);
+}
+
+/**
+ * Effectue le déclenchement du backup
+ */
+async function doTriggerBackup(slug, appName) {
+    // Toast de progression
+    showToast('Sauvegarde', `Déclenchement de la sauvegarde pour ${appName}...`, 'info');
+    
+    try {
+        const response = await api.request(`/apps/${slug}/backup/trigger`, {
+            method: 'POST'
+        });
+        
+        if (response.success) {
+            showToast('Succès', response.message || `Sauvegarde créée pour ${appName}`, 'success');
+            
+            // Rafraîchir les données
+            loadAppBackupsOverview();
+            
+            // Si le modal de liste est ouvert, le rafraîchir
+            if (appBackupsListModal && document.getElementById('backupsListAppSlug').value === slug) {
+                showAppBackupsList(slug);
+            }
+        } else {
+            showToast('Information', response.message || 'Backup non créé', 'warning');
+        }
+        
+    } catch (error) {
+        console.error('Erreur déclenchement backup:', error);
+        showToast('Erreur', error.message || 'Impossible de déclencher la sauvegarde', 'danger');
     }
 }
 
