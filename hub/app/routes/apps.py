@@ -1029,6 +1029,14 @@ async def register_app(
                 updated_fields.append(f"is_shared: {old_shared} → {app_data.is_shared}")
                 logger.info(f"🔄 Mise à jour is_shared_service: {old_shared} → {app_data.is_shared}")
             
+            # Mettre à jour is_remote si custom_host est fourni et différent
+            is_now_remote = bool(app_data.custom_host)
+            if existing_app.is_remote != is_now_remote:
+                old_remote = existing_app.is_remote
+                existing_app.is_remote = is_now_remote
+                updated_fields.append(f"is_remote: {old_remote} → {is_now_remote}")
+                logger.info(f"🔄 Mise à jour is_remote: {old_remote} → {is_now_remote}")
+            
             # Mettre à jour le nom si fourni et différent
             if app_data.name and existing_app.name != app_data.name:
                 old_value = existing_app.name
