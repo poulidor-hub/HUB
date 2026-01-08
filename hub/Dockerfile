@@ -5,6 +5,9 @@ ENV PYTHONUNBUFFERED=1
 
 WORKDIR /code
 
+# UID de l'utilisateur hôte pour matcher les permissions des volumes montés
+ARG HOST_UID=1000
+
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     libpq-dev \
@@ -18,8 +21,9 @@ COPY ./app /code/app
 COPY ./export_env.py /code/export_env.py
 COPY ./import_env.py /code/import_env.py
 
-# Créer l'utilisateur appuser
-RUN adduser --disabled-password --gecos '' appuser
+# Créer l'utilisateur appuser avec le même UID que l'utilisateur hôte
+# Cela permet d'accéder aux fichiers des volumes montés (ex: certs/ca/ca.key)
+RUN adduser --disabled-password --gecos '' --uid ${HOST_UID} appuser
 
 # Copier et configurer l'entrypoint
 COPY entrypoint.sh /code/entrypoint.sh

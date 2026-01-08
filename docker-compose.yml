@@ -22,7 +22,12 @@ services:
 
   # ===== HUB API (FastAPI) =====
   hub-api:
-    build: ./hub
+    build:
+      context: ./hub
+      args:
+        # UID de l'utilisateur hôte pour accéder aux fichiers montés (certs/ca/ca.key)
+        # Définir HOST_UID=$(id -u) dans .env ou exporter avant docker compose up
+        HOST_UID: ${HOST_UID:-1000}
     container_name: hub-api
     restart: unless-stopped
     ports:
