@@ -829,15 +829,9 @@ async def trigger_backup(
             is_service_account=True
         )
         
-        # Configuration SSL - utiliser le même certificat CA que l'app utilise
-        ssl_verify: str | bool = True
-        ca_cert_path = Path("/code/certs/ca/ca.crt")
-        if ca_cert_path.exists():
-            ssl_verify = str(ca_cert_path)
-        
         logger.info(f"🔄 Déclenchement backup pour {slug} via {app.api_url}")
         
-        async with httpx.AsyncClient(timeout=120.0, verify=ssl_verify) as client:
+        async with httpx.AsyncClient(timeout=120.0) as client:
             # 1. Appeler POST /api/admin/backup pour créer le backup
             create_url = f"{app.api_url.rstrip('/')}/api/admin/backup"
             logger.debug(f"📡 POST {create_url}")
@@ -1040,19 +1034,13 @@ async def restore_backup_to_app(
         is_service_account=True
     )
     
-    # Configuration SSL
-    ssl_verify: str | bool = True
-    ca_cert_path = Path("/code/certs/ca/ca.crt")
-    if ca_cert_path.exists():
-        ssl_verify = str(ca_cert_path)
-    
     logger.info(f"🔄 Restauration backup {backup_id} vers {slug}")
     
     try:
         # Lire le fichier de backup
         backup_content = file_path.read_bytes()
         
-        async with httpx.AsyncClient(timeout=300.0, verify=ssl_verify) as client:
+        async with httpx.AsyncClient(timeout=300.0) as client:
             # Envoyer le backup à l'application via multipart/form-data
             restore_url = f"{app.api_url.rstrip('/')}/api/admin/restore"
             
@@ -1177,12 +1165,6 @@ async def restore_uploaded_backup_to_app(
         is_service_account=True
     )
     
-    # Configuration SSL
-    ssl_verify: str | bool = True
-    ca_cert_path = Path("/code/certs/ca/ca.crt")
-    if ca_cert_path.exists():
-        ssl_verify = str(ca_cert_path)
-    
     logger.info(f"🔄 Restauration fichier uploadé vers {slug} par {current_user.username}")
     
     try:
@@ -1202,7 +1184,7 @@ async def restore_uploaded_backup_to_app(
             output_filename = filename
             backup_id_from_header = "uploaded"
         
-        async with httpx.AsyncClient(timeout=300.0, verify=ssl_verify) as client:
+        async with httpx.AsyncClient(timeout=300.0) as client:
             restore_url = f"{app.api_url.rstrip('/')}/api/admin/restore"
             
             files = {

@@ -790,21 +790,13 @@ async def create_app(
         # Utiliser le host configuré ou auto-détecté
         host = settings.get_hub_host()
     
-    # Construire les URLs à partir des ports - Priorité HTTPS
-    if app_data.api_https_port:
-        api_url = f"https://{host}:{app_data.api_https_port}"
-    else:
-        api_url = f"http://{host}:{app_data.api_port}"
+    # Construire les URLs à partir des ports
+    api_url = f"http://{host}:{app_data.api_port}"
     
     frontend_url = None
     callback_url = None
-
-    if app_data.frontend_https_port:
-        frontend_url = f"https://{host}:{app_data.frontend_https_port}"
-        callback_url = f"{frontend_url}/callback"
-    elif app_data.frontend_port:
-        frontend_protocol = "https" if app_data.frontend_https else "http"
-        frontend_url = f"{frontend_protocol}://{host}:{app_data.frontend_port}"
+    if app_data.frontend_port:
+        frontend_url = f"http://{host}:{app_data.frontend_port}"
         callback_url = f"{frontend_url}/callback"
     
     # Créer l'application avec les URLs construites
@@ -1002,21 +994,16 @@ async def register_app(
             else:
                 host = settings.get_hub_host()
             
-            # Mettre à jour les URLs si les ports ont changé - Priorité HTTPS
-            if app_data.api_https_port:
-                new_api_url = f"https://{host}:{app_data.api_https_port}"
-            else:
-                new_api_url = f"http://{host}:{app_data.api_port}"
+            # Mettre à jour les URLs si les ports ont changé
+            new_api_url = f"http://{host}:{app_data.api_port}"
             if existing_app.api_url != new_api_url:
                 old_value = existing_app.api_url
                 existing_app.api_url = new_api_url
                 updated_fields.append(f"api_url: {old_value} → {new_api_url}")
                 logger.info(f"🔄 Mise à jour api_url: {old_value} → {new_api_url}")
             
-            # Utiliser le port HTTPS si fourni, sinon le port HTTP
-            if app_data.frontend_https_port:
-                new_frontend_url = f"https://{host}:{app_data.frontend_https_port}"
-            elif app_data.frontend_port:
+            # Mettre à jour frontend URL si port fourni
+            if app_data.frontend_port:
                 new_frontend_url = f"http://{host}:{app_data.frontend_port}"
             else:
                 new_frontend_url = None
@@ -1105,16 +1092,11 @@ async def register_app(
     else:
         host = settings.get_hub_host()
     
-    # Construire l'URL API - Priorité HTTPS
-    if app_data.api_https_port:
-        api_url = f"https://{host}:{app_data.api_https_port}"
-    else:
-        api_url = f"http://{host}:{app_data.api_port}"
+    # Construire l'URL API
+    api_url = f"http://{host}:{app_data.api_port}"
     
-    # Utiliser le port HTTPS si fourni, sinon le port HTTP
-    if app_data.frontend_https_port:
-        frontend_url = f"https://{host}:{app_data.frontend_https_port}"
-    elif app_data.frontend_port:
+    # Construire l'URL frontend si port fourni
+    if app_data.frontend_port:
         frontend_url = f"http://{host}:{app_data.frontend_port}"
     else:
         frontend_url = None
@@ -1302,20 +1284,15 @@ async def admin_auto_register_app(
             shared_changed = True
             logger.info(f"🔄 Mise à jour is_shared_service: {old_shared_value} → {app_data.is_shared}")
         
-        # Mettre à jour les URLs si les ports ont changé - Priorité HTTPS
-        if app_data.api_https_port:
-            new_api_url = f"https://{host}:{app_data.api_https_port}"
-        else:
-            new_api_url = f"http://{host}:{app_data.api_port}"
+        # Mettre à jour les URLs si les ports ont changé
+        new_api_url = f"http://{host}:{app_data.api_port}"
         if existing_app.api_url != new_api_url:
             old_value = existing_app.api_url
             existing_app.api_url = new_api_url
             updated_fields.append(f"api_url: {old_value} → {new_api_url}")
         
-        # Utiliser le port HTTPS si fourni, sinon le port HTTP
-        if app_data.frontend_https_port:
-            new_frontend_url = f"https://{host}:{app_data.frontend_https_port}"
-        elif app_data.frontend_port:
+        # Mettre à jour frontend URL si port fourni
+        if app_data.frontend_port:
             new_frontend_url = f"http://{host}:{app_data.frontend_port}"
         else:
             new_frontend_url = None
@@ -1384,16 +1361,11 @@ async def admin_auto_register_app(
     # Nouvelle application - créer l'app et le service account
     host = settings.get_hub_host()
     
-    # Construire l'URL API - Priorité HTTPS
-    if app_data.api_https_port:
-        api_url = f"https://{host}:{app_data.api_https_port}"
-    else:
-        api_url = f"http://{host}:{app_data.api_port}"
+    # Construire l'URL API
+    api_url = f"http://{host}:{app_data.api_port}"
     
-    # Utiliser le port HTTPS si fourni, sinon le port HTTP
-    if app_data.frontend_https_port:
-        frontend_url = f"https://{host}:{app_data.frontend_https_port}"
-    elif app_data.frontend_port:
+    # Construire l'URL frontend si port fourni
+    if app_data.frontend_port:
         frontend_url = f"http://{host}:{app_data.frontend_port}"
     else:
         frontend_url = None

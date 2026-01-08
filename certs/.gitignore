@@ -1,9 +1,0 @@
-# Ignorer les clés privées et certificats générés
-*.key
-*.pem
-*.crt
-*.der
-registry.json
-
-# Mais garder les dossiers
-!.gitkeep
