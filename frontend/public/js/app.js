@@ -6217,10 +6217,12 @@ async function showAppBackupsList(slug) {
         } else {
             tbody.innerHTML = data.backups.map(backup => {
                 const date = new Date(backup.created_at);
+                const dateStr = `${date.toLocaleDateString('fr-FR')} ${date.toLocaleTimeString('fr-FR', {hour: '2-digit', minute: '2-digit'})}`;
+                const escapedAppName = escapeHtml(data.app_name).replace(/'/g, "\\'");
                 return `
                     <tr>
                         <td>
-                            <small>${date.toLocaleDateString('fr-FR')} ${date.toLocaleTimeString('fr-FR', {hour: '2-digit', minute: '2-digit'})}</small>
+                            <small>${dateStr}</small>
                         </td>
                         <td><small>${backup.app_version || '-'}</small></td>
                         <td>
@@ -6234,13 +6236,13 @@ async function showAppBackupsList(slug) {
                         </td>
                         <td class="text-end">
                             <div class="btn-group btn-group-sm">
-                                <button class="btn btn-outline-warning" onclick="showRestoreBackupModal('${slug}', '${backup.backup_id}', '${data.app_name}')" title="Restaurer">
+                                <button class="btn btn-outline-warning" onclick="showRestoreBackupModal('${slug}', '${backup.backup_id}', '${escapedAppName}')" title="Restaurer">
                                     <i class="bi bi-arrow-counterclockwise"></i>
                                 </button>
                                 <button class="btn btn-outline-success" onclick="exportEncryptedBackup('${slug}', '${backup.backup_id}')" title="Exporter chiffré">
                                     <i class="bi bi-shield-lock"></i>
                                 </button>
-                                <button class="btn btn-outline-danger" onclick="deleteAppBackup('${slug}', '${backup.backup_id}')" title="Supprimer">
+                                <button class="btn btn-outline-danger" onclick="deleteAppBackup('${slug}', '${backup.backup_id}', '${escapedAppName}', '${dateStr}')" title="Supprimer">
                                     <i class="bi bi-trash"></i>
                                 </button>
                             </div>
@@ -6517,25 +6519,64 @@ async function exportEncryptedBackup(slug, backupId) {
 }
 
 /**
- * Supprime un backup
+ * Variables pour la suppression de backup
  */
-async function deleteAppBackup(slug, backupId) {
-    if (!confirm('Supprimer ce backup ?\n\nCette action est irréversible.')) {
-        return;
+let confirmDeleteBackupModal = null;
+
+/**
+ * Affiche le modal de confirmation de suppression d'un backup
+ */
+function deleteAppBackup(slug, backupId, appName, backupDate) {
+    if (!confirmDeleteBackupModal) {
+        confirmDeleteBackupModal = new bootstrap.Modal(document.getElementById('confirmDeleteBackupModal'));
     }
+    
+    // Stocker les infos du backup à supprimer
+    document.getElementById('deleteBackupSlug').value = slug;
+    document.getElementById('deleteBackupId').value = backupId;
+    document.getElementById('deleteBackupAppName').textContent = appName || slug;
+    document.getElementById('deleteBackupDate').textContent = backupDate || '-';
+    
+    // Réinitialiser le champ de confirmation
+    document.getElementById('confirmDeleteInput').value = '';
+    document.getElementById('confirmDeleteBackupBtn').disabled = true;
+    
+    confirmDeleteBackupModal.show();
+}
+
+/**
+ * Vérifie si la confirmation de suppression est valide
+ */
+function checkDeleteConfirmation() {
+    const input = document.getElementById('confirmDeleteInput').value;
+    const btn = document.getElementById('confirmDeleteBackupBtn');
+    btn.disabled = input !== 'SUPPRIMER';
+}
+
+/**
+ * Exécute la suppression après confirmation
+ */
+async function confirmDeleteBackup() {
+    const slug = document.getElementById('deleteBackupSlug').value;
+    const backupId = document.getElementById('deleteBackupId').value;
+    
+    if (!slug || !backupId) return;
+    
+    // Fermer le modal
+    confirmDeleteBackupModal.hide();
     
     try {
         await api.request(`/apps/${slug}/backup/${backupId}`, {
             method: 'DELETE'
         });
         
-        showToast('Succès', 'Backup supprimé', 'success');
+        showToast('Succès', 'Backup supprimé définitivement', 'success');
         showAppBackupsList(slug);
         loadAppBackupsOverview();
         
     } catch (error) {
         console.error('Erreur suppression:', error);
-        showToast('Erreur', 'Impossible de supprimer le backup', 'danger');
+        showToast('Erreur', error.message || 'Impossible de supprimer le backup', 'danger');
     }
 }
 
