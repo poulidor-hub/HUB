@@ -114,11 +114,24 @@ class Application(Base):
     requires_auth = Column(Boolean, default=True)
     is_shared_service = Column(Boolean, default=False)  # Si True, accessible par tous les service accounts
     
+    # Informations sur l'hébergement de l'application
+    is_remote = Column(Boolean, default=False)  # True si hébergée sur un serveur distant (pas le même que le HUB)
+    registered_from_ip = Column(String(45), nullable=True)  # IP source lors de l'auto-enregistrement
+    
     # Système d'approbation pour l'auto-enregistrement
     approval_status = Column(SQLEnum(ApprovalStatus), default=ApprovalStatus.approved)  # pending pour les auto-register
     approved_by_id = Column(Integer, ForeignKey('users.id', ondelete='SET NULL'), nullable=True)
     approved_at = Column(DateTime, nullable=True)
     rejection_reason = Column(String(500), nullable=True)  # Raison du rejet si applicable
+    
+    # Configuration des sauvegardes
+    backup_mode = Column(String(20), default="manual")  # disabled, manual, scheduled
+    backup_cron = Column(String(100), nullable=True)  # Expression cron (ex: "0 2 * * *")
+    backup_retention = Column(Integer, default=5)  # Nombre de backups à conserver (0 = illimité)
+    last_backup_at = Column(DateTime, nullable=True)  # Dernier backup réussi
+    last_backup_id = Column(String(36), nullable=True)  # UUID du dernier backup
+    next_backup_at = Column(DateTime, nullable=True)  # Prochain backup planifié
+    last_backup_status = Column(String(20), nullable=True)  # success, failed, running
     
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -128,6 +141,8 @@ class Application(Base):
     approved_by = relationship("User", foreign_keys=[approved_by_id])
     available_roles = relationship("AppRole", back_populates="application", cascade="all, delete-orphan")
     service_accounts = relationship("ServiceAccount", secondary=service_account_app_access, back_populates="applications")
+    # Note: pas de cascade delete-orphan pour conserver les backups même si l'app est supprimée
+    backups = relationship("AppBackup", back_populates="application")
     
     @property
     def users(self):
@@ -311,3 +326,61 @@ class UserSession(Base):
     def __repr__(self):
         status = "active" if self.is_active else f"closed ({self.duration_seconds}s)"
         return f"<UserSession user={self.user_id} {status}>"
+
+
+class BackupMode(enum.Enum):
+    """Mode de sauvegarde pour les applications"""
+    disabled = "disabled"    # Sauvegarde désactivée
+    manual = "manual"        # Sauvegarde manuelle uniquement
+    scheduled = "scheduled"  # Sauvegarde automatique planifiée
+
+
+class BackupStatus(enum.Enum):
+    """Statut du dernier backup"""
+    success = "success"
+    failed = "failed"
+    running = "running"
+
+
+class AppBackup(Base):
+    """
+    Sauvegardes centralisées des applications.
+    Stocke les métadonnées et références vers les fichiers ZIP.
+    
+    IMPORTANT: Les sauvegardes sont liées au app_slug (identifiant unique de l'application)
+    et non à l'app_id. Cela permet de conserver les sauvegardes même si l'application
+    est supprimée puis recréée (changement de serveur, réinstallation, etc.).
+    """
+    __tablename__ = "app_backups"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    backup_id = Column(String(36), unique=True, index=True, nullable=False)  # UUID
+    
+    # Référence à l'application - SET NULL pour conserver les backups si l'app est supprimée
+    app_id = Column(Integer, ForeignKey('applications.id', ondelete='SET NULL'), nullable=True)
+    app_slug = Column(String(50), index=True, nullable=False)  # Clé de rattachement principale
+    app_version = Column(String(50))  # Version de l'app au moment du backup
+    
+    # Métadonnées du backup
+    total_items = Column(Integer, default=0)
+    total_preferences = Column(Integer, default=0)
+    total_files = Column(Integer, default=0)
+    total_size_bytes = Column(Integer, default=0)
+    checksum = Column(String(64))  # SHA-256 du fichier ZIP original
+    
+    # Stockage
+    storage_path = Column(String(500), nullable=False)  # Chemin relatif du fichier
+    encrypted_path = Column(String(500))  # Chemin du fichier chiffré (si exporté)
+    is_encrypted = Column(Boolean, default=False)
+    
+    # Traçabilité
+    created_by = Column(String(100))  # Username ou service_account
+    created_by_type = Column(String(20), default="app")  # 'app', 'user', 'scheduler'
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+    description = Column(Text)
+    
+    # Relation
+    application = relationship("Application", back_populates="backups")
+    
+    def __repr__(self):
+        return f"<AppBackup {self.backup_id} for {self.app_slug}>"

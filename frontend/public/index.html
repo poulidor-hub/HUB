@@ -46,6 +46,11 @@
                             <i class="bi bi-diagram-3 me-1"></i>Discovery
                         </a>
                     </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="#" onclick="showPage('pki')" id="navPki">
+                            <i class="bi bi-shield-lock me-1"></i>PKI
+                        </a>
+                    </li>
                 </ul>
             </div>
             
@@ -590,10 +595,47 @@
             
             <!-- Test d'endpoint -->
             <div class="card mb-4">
-                <div class="card-header">
-                    <i class="bi bi-terminal me-2"></i>Test d'Endpoint
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <span><i class="bi bi-terminal me-2"></i>Test d'Endpoint</span>
+                    <small class="text-muted">Sélectionnez un service pour charger ses endpoints disponibles</small>
                 </div>
                 <div class="card-body">
+                    <!-- Sélection du service et endpoint -->
+                    <div class="row g-3 mb-3">
+                        <div class="col-md-4">
+                            <label class="form-label"><i class="bi bi-collection me-1"></i>Service cible</label>
+                            <select class="form-select" id="discoveryServiceSelect" onchange="onDiscoveryServiceChange()">
+                                <option value="">-- Sélectionner un service --</option>
+                            </select>
+                        </div>
+                        <div class="col-md-8">
+                            <label class="form-label"><i class="bi bi-signpost-split me-1"></i>Endpoint</label>
+                            <select class="form-select" id="discoveryEndpointSelect" onchange="onDiscoveryEndpointChange()" disabled>
+                                <option value="">-- Chargez d'abord les endpoints --</option>
+                            </select>
+                        </div>
+                    </div>
+                    
+                    <!-- Info endpoint sélectionné -->
+                    <div id="discoveryEndpointInfo" class="alert alert-light border mb-3 d-none">
+                        <div class="d-flex justify-content-between align-items-start">
+                            <div>
+                                <h6 class="mb-1">
+                                    <span class="badge me-2" id="discoveryEndpointMethod">GET</span>
+                                    <code id="discoveryEndpointPath">/api/...</code>
+                                </h6>
+                                <p class="mb-1 text-muted" id="discoveryEndpointDescription">Description de l'endpoint</p>
+                                <small class="text-muted">
+                                    <i class="bi bi-tag me-1"></i>Tags: <span id="discoveryEndpointTags">-</span>
+                                </small>
+                            </div>
+                            <button class="btn btn-sm btn-outline-primary" onclick="loadEndpointOpenApiSpec()" title="Voir la spec OpenAPI">
+                                <i class="bi bi-file-code"></i>
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <!-- Requête manuelle -->
                     <div class="row g-3 align-items-end">
                         <div class="col-md-2">
                             <label class="form-label">Méthode</label>
@@ -607,12 +649,23 @@
                         </div>
                         <div class="col-md-6">
                             <label class="form-label">URL de l'endpoint</label>
-                            <input type="text" class="form-control" id="discoveryUrl" placeholder="http://host:port/api/endpoint">
+                            <input type="text" class="form-control" id="discoveryUrl" placeholder="https://host:port/api/endpoint">
                         </div>
                         <div class="col-md-4">
                             <button class="btn btn-success w-100" onclick="testDiscoveryEndpoint()" id="discoveryTestBtn">
                                 <i class="bi bi-play-fill me-1"></i>Exécuter
                             </button>
+                        </div>
+                    </div>
+                    
+                    <!-- Paramètres de l'endpoint (si applicable) -->
+                    <div id="discoveryParamsSection" class="mt-3 d-none">
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <label class="form-label mb-0"><i class="bi bi-sliders me-1"></i>Paramètres</label>
+                            <small class="text-muted">Remplissez les paramètres requis</small>
+                        </div>
+                        <div id="discoveryParams" class="border rounded p-2 bg-light">
+                            <!-- Paramètres générés dynamiquement -->
                         </div>
                     </div>
                     
@@ -738,7 +791,321 @@
         </div>
     </div>
 
-    <!-- Admin Panel Modal -->
+    <!-- Section PKI / Certificats (page dédiée) -->
+    <div id="pkiSection" class="container-fluid py-4 d-none" style="margin-top: 70px;">
+        <div class="container">
+            <!-- En-tête -->
+            <div class="d-flex justify-content-between align-items-center mb-4">
+                <div>
+                    <h1 class="h3 mb-1"><i class="bi bi-shield-lock me-2"></i>PKI - Gestion des Certificats</h1>
+                    <p class="text-muted mb-0">Autorité de Certification locale pour sécuriser les connexions HTTPS</p>
+                </div>
+                <button class="btn btn-outline-secondary btn-sm" onclick="loadPkiPage()">
+                    <i class="bi bi-arrow-clockwise"></i> Actualiser
+                </button>
+            </div>
+
+            <!-- Statut PKI -->
+            <div class="row g-4 mb-4">
+                <!-- Card CA Status -->
+                <div class="col-md-6">
+                    <div class="card h-100" id="pkiCaCard">
+                        <div class="card-header d-flex justify-content-between align-items-center">
+                            <span><i class="bi bi-building me-2"></i>Autorité de Certification (CA)</span>
+                            <span class="badge" id="pkiCaStatus">Non initialisée</span>
+                        </div>
+                        <div class="card-body">
+                            <div id="pkiCaNotInitialized">
+                                <div class="text-center py-4">
+                                    <i class="bi bi-shield-x display-1 text-muted"></i>
+                                    <p class="mt-3 text-muted">La CA n'est pas encore initialisée</p>
+                                    <button class="btn btn-primary" onclick="initializePkiCA()">
+                                        <i class="bi bi-shield-plus me-1"></i>Initialiser la CA
+                                    </button>
+                                </div>
+                            </div>
+                            <div id="pkiCaInitialized" class="d-none">
+                                <div class="row g-3">
+                                    <div class="col-6">
+                                        <small class="text-muted">Nom</small>
+                                        <div class="fw-semibold" id="pkiCaName">-</div>
+                                    </div>
+                                    <div class="col-6">
+                                        <small class="text-muted">Organisation</small>
+                                        <div class="fw-semibold" id="pkiCaOrg">-</div>
+                                    </div>
+                                    <div class="col-6">
+                                        <small class="text-muted">Créée le</small>
+                                        <div id="pkiCaCreated">-</div>
+                                    </div>
+                                    <div class="col-6">
+                                        <small class="text-muted">Expire le</small>
+                                        <div id="pkiCaExpires">-</div>
+                                    </div>
+                                    <div class="col-12">
+                                        <small class="text-muted">Jours restants</small>
+                                        <div class="progress mt-1" style="height: 20px;">
+                                            <div class="progress-bar" id="pkiCaProgressBar" role="progressbar" style="width: 0%">
+                                                <span id="pkiCaDaysLeft">-</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <hr>
+                                <div class="d-flex gap-2">
+                                    <button class="btn btn-outline-primary btn-sm" onclick="downloadPkiCA('pem')">
+                                        <i class="bi bi-download me-1"></i>CA (.pem)
+                                    </button>
+                                    <button class="btn btn-outline-primary btn-sm" onclick="downloadPkiCA('der')">
+                                        <i class="bi bi-download me-1"></i>CA (.crt Windows)
+                                    </button>
+                                    <button class="btn btn-outline-info btn-sm" onclick="showCaInstallInstructions()">
+                                        <i class="bi bi-question-circle me-1"></i>Installation
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Card HTTPS Status -->
+                <div class="col-md-6">
+                    <div class="card h-100">
+                        <div class="card-header d-flex justify-content-between align-items-center">
+                            <span><i class="bi bi-lock me-2"></i>État HTTPS du Hub</span>
+                            <span class="badge" id="pkiHttpsStatus">-</span>
+                        </div>
+                        <div class="card-body">
+                            <div id="pkiHttpsInfo">
+                                <div class="row g-3">
+                                    <div class="col-6">
+                                        <small class="text-muted">Protocole actuel</small>
+                                        <div class="fw-semibold" id="pkiCurrentProtocol">-</div>
+                                    </div>
+                                    <div class="col-6">
+                                        <small class="text-muted">Certificat Hub</small>
+                                        <div id="pkiHubCertStatus">-</div>
+                                    </div>
+                                </div>
+                                <hr>
+                                <div id="pkiHttpsActions">
+                                    <!-- Actions dynamiques -->
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Certificats serveur -->
+            <div class="card mb-4">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <span><i class="bi bi-file-earmark-lock me-2"></i>Certificats Serveur</span>
+                    <button class="btn btn-primary btn-sm" onclick="showCreateCertModal()" id="pkiCreateCertBtn" disabled>
+                        <i class="bi bi-plus-lg me-1"></i>Nouveau certificat
+                    </button>
+                </div>
+                <div class="card-body p-0">
+                    <div id="pkiCertsTable" class="table-responsive">
+                        <table class="table table-hover mb-0">
+                            <thead class="table-light">
+                                <tr>
+                                    <th>Nom</th>
+                                    <th>Domaines</th>
+                                    <th>IPs</th>
+                                    <th>Expire</th>
+                                    <th>Statut</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="pkiCertsTableBody">
+                                <tr>
+                                    <td colspan="6" class="text-center text-muted py-4">
+                                        <i class="bi bi-inbox display-4"></i>
+                                        <p class="mt-2">Aucun certificat créé</p>
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Configuration PKI -->
+            <div class="card">
+                <div class="card-header">
+                    <i class="bi bi-gear me-2"></i>Configuration PKI
+                </div>
+                <div class="card-body">
+                    <div class="row g-3">
+                        <div class="col-md-3">
+                            <small class="text-muted">Validité CA</small>
+                            <div class="fw-semibold" id="pkiConfigCaValidity">-</div>
+                        </div>
+                        <div class="col-md-3">
+                            <small class="text-muted">Validité certificats</small>
+                            <div class="fw-semibold" id="pkiConfigCertValidity">-</div>
+                        </div>
+                        <div class="col-md-3">
+                            <small class="text-muted">Taille des clés</small>
+                            <div class="fw-semibold" id="pkiConfigKeySize">-</div>
+                        </div>
+                        <div class="col-md-3">
+                            <small class="text-muted">Domaines par défaut</small>
+                            <div class="fw-semibold" id="pkiConfigDomains">-</div>
+                        </div>
+                    </div>
+                    <hr>
+                    <small class="text-muted">
+                        <i class="bi bi-info-circle me-1"></i>
+                        Modifiez ces paramètres via les variables d'environnement <code>PKI_*</code> dans votre fichier <code>.env</code>
+                    </small>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal création certificat -->
+    <div class="modal fade" id="pkiCreateCertModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="bi bi-file-earmark-plus me-2"></i>Nouveau Certificat</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <form id="pkiCreateCertForm" onsubmit="handleCreateCert(event)">
+                    <div class="modal-body">
+                        <div class="mb-3">
+                            <label class="form-label">Nom du certificat <span class="text-danger">*</span></label>
+                            <input type="text" class="form-control" id="pkiCertName" required 
+                                   pattern="[a-z0-9-]+" placeholder="ex: hub, mon-app, api-server">
+                            <small class="text-muted">Lettres minuscules, chiffres et tirets uniquement</small>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">Domaines DNS</label>
+                            <input type="text" class="form-control" id="pkiCertDomains" 
+                                   placeholder="ex: hub.local, mon-app.local">
+                            <small class="text-muted">Séparés par des virgules. Les domaines par défaut seront ajoutés.</small>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">Adresses IP</label>
+                            <input type="text" class="form-control" id="pkiCertIps" 
+                                   placeholder="ex: 192.168.1.100, 10.0.0.50">
+                            <small class="text-muted">Séparées par des virgules. L'IP du serveur sera ajoutée automatiquement.</small>
+                        </div>
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="pkiCertForce">
+                            <label class="form-check-label" for="pkiCertForce">
+                                Remplacer si existe déjà
+                            </label>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuler</button>
+                        <button type="submit" class="btn btn-primary">
+                            <i class="bi bi-shield-plus me-1"></i>Créer le certificat
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal instructions installation CA -->
+    <div class="modal fade" id="pkiInstallModal" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="bi bi-question-circle me-2"></i>Installation de la CA</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <ul class="nav nav-pills mb-3" id="pkiInstallTabs">
+                        <li class="nav-item">
+                            <button class="nav-link active" data-bs-toggle="pill" data-bs-target="#pkiInstallWindows">
+                                <i class="bi bi-windows me-1"></i>Windows
+                            </button>
+                        </li>
+                        <li class="nav-item">
+                            <button class="nav-link" data-bs-toggle="pill" data-bs-target="#pkiInstallLinux">
+                                <i class="bi bi-ubuntu me-1"></i>Linux
+                            </button>
+                        </li>
+                        <li class="nav-item">
+                            <button class="nav-link" data-bs-toggle="pill" data-bs-target="#pkiInstallMac">
+                                <i class="bi bi-apple me-1"></i>Mac
+                            </button>
+                        </li>
+                        <li class="nav-item">
+                            <button class="nav-link" data-bs-toggle="pill" data-bs-target="#pkiInstallFirefox">
+                                <i class="bi bi-browser-firefox me-1"></i>Firefox
+                            </button>
+                        </li>
+                    </ul>
+                    <div class="tab-content" id="pkiInstallContent">
+                        <div class="tab-pane fade show active" id="pkiInstallWindows">
+                            <div class="alert alert-info">
+                                <i class="bi bi-info-circle me-2"></i>
+                                Téléchargez d'abord le certificat CA au format <strong>.crt (Windows)</strong>
+                            </div>
+                            <ol class="list-group list-group-numbered">
+                                <li class="list-group-item">Double-cliquez sur le fichier <code>Hub-Local-CA.crt</code></li>
+                                <li class="list-group-item">Cliquez sur <strong>"Installer le certificat..."</strong></li>
+                                <li class="list-group-item">Sélectionnez <strong>"Ordinateur local"</strong> → Suivant</li>
+                                <li class="list-group-item">Choisissez <strong>"Placer tous les certificats dans le magasin suivant"</strong></li>
+                                <li class="list-group-item">Parcourir → <strong>"Autorités de certification racines de confiance"</strong></li>
+                                <li class="list-group-item">Terminer et <strong>redémarrez votre navigateur</strong></li>
+                            </ol>
+                        </div>
+                        <div class="tab-pane fade" id="pkiInstallLinux">
+                            <div class="alert alert-info">
+                                <i class="bi bi-info-circle me-2"></i>
+                                Téléchargez d'abord le certificat CA au format <strong>.pem</strong>
+                            </div>
+                            <h6>Ubuntu/Debian :</h6>
+                            <pre class="bg-dark text-light p-3 rounded"><code>sudo cp Hub-Local-CA.pem /usr/local/share/ca-certificates/Hub-Local-CA.crt
+sudo update-ca-certificates</code></pre>
+                            <h6 class="mt-3">RHEL/CentOS/Fedora :</h6>
+                            <pre class="bg-dark text-light p-3 rounded"><code>sudo cp Hub-Local-CA.pem /etc/pki/ca-trust/source/anchors/
+sudo update-ca-trust</code></pre>
+                        </div>
+                        <div class="tab-pane fade" id="pkiInstallMac">
+                            <div class="alert alert-info">
+                                <i class="bi bi-info-circle me-2"></i>
+                                Téléchargez d'abord le certificat CA au format <strong>.pem</strong>
+                            </div>
+                            <ol class="list-group list-group-numbered">
+                                <li class="list-group-item">Double-cliquez sur <code>Hub-Local-CA.pem</code></li>
+                                <li class="list-group-item">Ajoutez-le au trousseau <strong>"Système"</strong></li>
+                                <li class="list-group-item">Ouvrez <strong>Trousseau d'accès</strong></li>
+                                <li class="list-group-item">Trouvez le certificat, double-cliquez dessus</li>
+                                <li class="list-group-item">Développez <strong>"Confiance"</strong> → Sélectionnez <strong>"Toujours faire confiance"</strong></li>
+                                <li class="list-group-item">Fermez et entrez votre mot de passe</li>
+                            </ol>
+                        </div>
+                        <div class="tab-pane fade" id="pkiInstallFirefox">
+                            <div class="alert alert-warning">
+                                <i class="bi bi-exclamation-triangle me-2"></i>
+                                Firefox utilise son propre magasin de certificats, indépendant du système.
+                            </div>
+                            <ol class="list-group list-group-numbered">
+                                <li class="list-group-item">Ouvrez Firefox → <strong>Préférences</strong></li>
+                                <li class="list-group-item">Recherchez <strong>"Certificats"</strong></li>
+                                <li class="list-group-item">Cliquez sur <strong>"Afficher les certificats"</strong></li>
+                                <li class="list-group-item">Onglet <strong>"Autorités"</strong> → <strong>"Importer"</strong></li>
+                                <li class="list-group-item">Sélectionnez le fichier <code>Hub-Local-CA.pem</code></li>
+                                <li class="list-group-item">Cochez <strong>"Faire confiance pour identifier les sites web"</strong></li>
+                                <li class="list-group-item">OK et <strong>redémarrez Firefox</strong></li>
+                            </ol>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Fermer</button>
+                </div>
+            </div>
+        </div>
+    </div>
     <div class="modal fade" id="adminModal" tabindex="-1">
         <div class="modal-dialog modal-xl">
             <div class="modal-content">
@@ -765,8 +1132,13 @@
                             </button>
                         </li>
                         <li class="nav-item">
+                            <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tabAppBackups" onclick="loadAppBackupsOverview()">
+                                <i class="bi bi-hdd-stack me-1"></i>Sauvegardes
+                            </button>
+                        </li>
+                        <li class="nav-item">
                             <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tabBackup" onclick="loadBackupInfo()">
-                                <i class="bi bi-cloud-download me-1"></i>Backup
+                                <i class="bi bi-cloud-download me-1"></i>Backup HUB
                             </button>
                         </li>
                     </ul>
@@ -957,6 +1329,89 @@
                                             </ul>
                                         </div>
                                     </div>
+                                </div>
+                            </div>
+                        </div>
+                        <!-- App Backups Tab - Sauvegardes des Applications -->
+                        <div class="tab-pane fade" id="tabAppBackups">
+                            <div class="d-flex justify-content-between align-items-center mb-3">
+                                <div>
+                                    <h5 class="mb-0"><i class="bi bi-hdd-stack me-2"></i>Sauvegardes des Applications</h5>
+                                    <small class="text-muted">Gestion centralisée des backups de toutes les applications</small>
+                                </div>
+                                <button class="btn btn-outline-secondary btn-sm" onclick="loadAppBackupsOverview()">
+                                    <i class="bi bi-arrow-clockwise me-1"></i>Actualiser
+                                </button>
+                            </div>
+                            
+                            <!-- Stats globales -->
+                            <div class="row mb-4" id="appBackupsStats">
+                                <div class="col-md-3">
+                                    <div class="card bg-light">
+                                        <div class="card-body text-center py-3">
+                                            <h3 class="mb-0" id="statsAppsCount">0</h3>
+                                            <small class="text-muted">Applications</small>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="col-md-3">
+                                    <div class="card bg-light">
+                                        <div class="card-body text-center py-3">
+                                            <h3 class="mb-0" id="statsTotalBackups">0</h3>
+                                            <small class="text-muted">Sauvegardes</small>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="col-md-3">
+                                    <div class="card bg-light">
+                                        <div class="card-body text-center py-3">
+                                            <h3 class="mb-0" id="statsTotalSize">0 B</h3>
+                                            <small class="text-muted">Stockage total</small>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="col-md-3">
+                                    <div class="card bg-light">
+                                        <div class="card-body text-center py-3">
+                                            <h3 class="mb-0" id="statsScheduledApps">0</h3>
+                                            <small class="text-muted">Planifiées</small>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <!-- Tableau des applications avec leurs backups -->
+                            <div class="table-responsive" id="appBackupsTable">
+                                <table class="table table-hover align-middle">
+                                    <thead class="table-dark">
+                                        <tr>
+                                            <th>Application</th>
+                                            <th>Mode</th>
+                                            <th>Dernier backup</th>
+                                            <th>Prochain</th>
+                                            <th>Backups</th>
+                                            <th>Taille</th>
+                                            <th class="text-end">Actions</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="appBackupsTableBody">
+                                        <tr>
+                                            <td colspan="7" class="text-center text-muted py-4">
+                                                <i class="bi bi-hourglass-split me-2"></i>Chargement...
+                                            </td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                            
+                            <!-- Légende des modes -->
+                            <div class="row mt-3">
+                                <div class="col-12">
+                                    <small class="text-muted">
+                                        <span class="badge bg-secondary me-2">Désactivé</span> Pas de sauvegarde
+                                        <span class="badge bg-info ms-3 me-2">Manuel</span> Sauvegarde déclenchée à la demande via le HUB
+                                        <span class="badge bg-success ms-3 me-2">Planifié</span> Sauvegarde automatique selon le cron
+                                    </small>
                                 </div>
                             </div>
                         </div>
@@ -1470,6 +1925,316 @@
         </div>
     </div>
 
+    <!-- App Backup Config Modal -->
+    <div class="modal fade" id="appBackupConfigModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header bg-primary text-white">
+                    <h5 class="modal-title"><i class="bi bi-gear me-2"></i>Configuration sauvegarde</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <form id="appBackupConfigForm" onsubmit="saveAppBackupConfig(event)">
+                    <div class="modal-body">
+                        <input type="hidden" id="backupConfigAppSlug">
+                        <h6 class="mb-3"><i class="bi bi-app me-1"></i><span id="backupConfigAppName">Application</span></h6>
+                        
+                        <div class="mb-3">
+                            <label class="form-label">Mode de sauvegarde</label>
+                            <select class="form-select" id="backupConfigMode" onchange="toggleCronInput()">
+                                <option value="disabled">Désactivé - Pas de sauvegarde</option>
+                                <option value="manual">Manuel - Sauvegarde à la demande via le HUB</option>
+                                <option value="scheduled">Planifié - Sauvegarde automatique</option>
+                            </select>
+                        </div>
+                        
+                        <div class="mb-3" id="cronInputGroup" style="display: none;">
+                            <label class="form-label">Expression Cron</label>
+                            <input type="text" class="form-control" id="backupConfigCron" placeholder="0 2 * * *">
+                            <small class="text-muted">
+                                Exemples : <code>0 2 * * *</code> (2h chaque jour), 
+                                <code>0 3 * * 0</code> (dimanche 3h), 
+                                <code>0 0 1 * *</code> (1er du mois)
+                            </small>
+                        </div>
+                        
+                        <div class="mb-3">
+                            <label class="form-label">Rétention (nombre de backups à conserver)</label>
+                            <input type="number" class="form-control" id="backupConfigRetention" min="0" value="5">
+                            <small class="text-muted">0 = illimité (attention à l'espace disque)</small>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuler</button>
+                        <button type="submit" class="btn btn-primary">
+                            <i class="bi bi-check-lg me-1"></i>Enregistrer
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- App Backups List Modal -->
+    <div class="modal fade" id="appBackupsListModal" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header bg-dark text-white">
+                    <h5 class="modal-title"><i class="bi bi-hdd-stack me-2"></i>Sauvegardes de <span id="backupsListAppName">-</span></h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <input type="hidden" id="backupsListAppSlug">
+                    
+                    <!-- Config résumé -->
+                    <div class="card bg-light mb-3">
+                        <div class="card-body py-2">
+                            <div class="row small">
+                                <div class="col-4">
+                                    <strong>Mode :</strong> <span id="backupsListMode">-</span>
+                                </div>
+                                <div class="col-4">
+                                    <strong>Cron :</strong> <span id="backupsListCron">-</span>
+                                </div>
+                                <div class="col-4">
+                                    <strong>Rétention :</strong> <span id="backupsListRetention">-</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Liste des backups -->
+                    <div class="table-responsive">
+                        <table class="table table-sm table-hover">
+                            <thead class="table-light">
+                                <tr>
+                                    <th>Date</th>
+                                    <th>Version</th>
+                                    <th>Contenu</th>
+                                    <th>Taille</th>
+                                    <th>Par</th>
+                                    <th class="text-end">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="backupsListBody">
+                                <tr>
+                                    <td colspan="6" class="text-center text-muted py-3">
+                                        <i class="bi bi-hourglass-split me-1"></i>Chargement...
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <div class="d-flex w-100 justify-content-between">
+                        <div>
+                            <button type="button" class="btn btn-outline-primary" onclick="showImportRestoreModal()">
+                                <i class="bi bi-upload me-1"></i>Importer & Restaurer
+                            </button>
+                        </div>
+                        <div>
+                            <button type="button" class="btn btn-success" id="triggerBackupBtn" onclick="triggerAppBackup()" style="display: none;">
+                                <i class="bi bi-play-circle me-1"></i>Déclencher une sauvegarde
+                            </button>
+                            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Fermer</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Confirmation Modal for Backup Trigger -->
+    <div class="modal fade" id="confirmBackupTriggerModal" tabindex="-1">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header bg-warning">
+                    <h5 class="modal-title"><i class="bi bi-exclamation-triangle me-2"></i>Confirmation</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <p>Êtes-vous sûr de vouloir déclencher une sauvegarde pour <strong id="confirmBackupAppName">-</strong> ?</p>
+                    <small class="text-muted">
+                        <i class="bi bi-info-circle me-1"></i>
+                        Le HUB va contacter l'application pour créer une sauvegarde complète.
+                        Cette opération peut prendre quelques minutes selon la taille des données.
+                    </small>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuler</button>
+                    <button type="button" class="btn btn-success" onclick="confirmTriggerBackup()">
+                        <i class="bi bi-play-circle me-1"></i>Confirmer
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Confirmation Modal for Backup Delete -->
+    <div class="modal fade" id="confirmDeleteBackupModal" tabindex="-1">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header bg-danger text-white">
+                    <h5 class="modal-title"><i class="bi bi-exclamation-triangle me-2"></i>Confirmer la suppression</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <input type="hidden" id="deleteBackupSlug">
+                    <input type="hidden" id="deleteBackupId">
+                    
+                    <div class="alert alert-danger mb-3">
+                        <i class="bi bi-exclamation-octagon me-1"></i>
+                        <strong>Attention !</strong> Cette action est irréversible.
+                    </div>
+                    
+                    <p>Êtes-vous sûr de vouloir supprimer cette sauvegarde ?</p>
+                    
+                    <div class="card bg-light">
+                        <div class="card-body py-2">
+                            <small class="text-muted">Application :</small>
+                            <div id="deleteBackupAppName" class="fw-bold">-</div>
+                            <small class="text-muted">Date :</small>
+                            <div id="deleteBackupDate" class="fw-bold">-</div>
+                        </div>
+                    </div>
+                    
+                    <div class="mt-3">
+                        <label for="confirmDeleteInput" class="form-label text-danger">
+                            <i class="bi bi-shield-exclamation me-1"></i>Pour confirmer, tapez <code>SUPPRIMER</code> ci-dessous :
+                        </label>
+                        <input type="text" class="form-control" id="confirmDeleteInput" placeholder="SUPPRIMER" oninput="checkDeleteConfirmation()">
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuler</button>
+                    <button type="button" class="btn btn-danger" id="confirmDeleteBackupBtn" onclick="confirmDeleteBackup()" disabled>
+                        <i class="bi bi-trash me-1"></i>Supprimer définitivement
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal Restauration depuis backup existant -->
+    <div class="modal fade" id="restoreBackupModal" tabindex="-1">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header bg-warning">
+                    <h5 class="modal-title"><i class="bi bi-arrow-counterclockwise me-2"></i>Restaurer le backup</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <input type="hidden" id="restoreBackupSlug">
+                    <input type="hidden" id="restoreBackupId">
+                    
+                    <div class="alert alert-warning mb-3">
+                        <i class="bi bi-exclamation-triangle me-1"></i>
+                        <strong>Attention :</strong> Cette action va restaurer les données sur l'application <strong id="restoreAppName">-</strong>.
+                    </div>
+                    
+                    <h6 class="mb-3">Options de restauration :</h6>
+                    
+                    <div class="form-check form-switch mb-2">
+                        <input class="form-check-input" type="checkbox" id="restoreClearExisting">
+                        <label class="form-check-label" for="restoreClearExisting">
+                            <i class="bi bi-trash text-danger me-1"></i>Supprimer les données existantes avant restauration
+                        </label>
+                    </div>
+                    
+                    <hr class="my-3">
+                    
+                    <div class="form-check mb-2">
+                        <input class="form-check-input" type="checkbox" id="restoreItems" checked>
+                        <label class="form-check-label" for="restoreItems">Restaurer les items</label>
+                    </div>
+                    <div class="form-check mb-2">
+                        <input class="form-check-input" type="checkbox" id="restorePreferences" checked>
+                        <label class="form-check-label" for="restorePreferences">Restaurer les préférences</label>
+                    </div>
+                    <div class="form-check mb-2">
+                        <input class="form-check-input" type="checkbox" id="restoreFiles" checked>
+                        <label class="form-check-label" for="restoreFiles">Restaurer les fichiers</label>
+                    </div>
+                    <div class="form-check mb-2">
+                        <input class="form-check-input" type="checkbox" id="restoreTestData" checked>
+                        <label class="form-check-label" for="restoreTestData">Restaurer les données de test</label>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuler</button>
+                    <button type="button" class="btn btn-warning" onclick="executeRestore()">
+                        <i class="bi bi-arrow-counterclockwise me-1"></i>Restaurer
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal Import et Restauration depuis fichier -->
+    <div class="modal fade" id="importRestoreModal" tabindex="-1">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header bg-primary text-white">
+                    <h5 class="modal-title"><i class="bi bi-upload me-2"></i>Importer et restaurer un backup</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <input type="hidden" id="importRestoreSlug">
+                    
+                    <div class="mb-3">
+                        <label for="importRestoreFile" class="form-label">Fichier de backup (.zip)</label>
+                        <input class="form-control" type="file" id="importRestoreFile" accept=".zip" onchange="previewImportRestoreFile()">
+                    </div>
+                    
+                    <!-- Aperçu du fichier -->
+                    <div id="importRestorePreview" class="d-none">
+                        <div class="card bg-light mb-3">
+                            <div class="card-body py-2">
+                                <small class="text-muted">Fichier sélectionné :</small>
+                                <div id="importRestoreFilename" class="fw-bold"></div>
+                                <small class="text-muted">Taille : <span id="importRestoreFilesize">-</span></small>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <h6 class="mb-3">Options de restauration :</h6>
+                    
+                    <div class="form-check form-switch mb-2">
+                        <input class="form-check-input" type="checkbox" id="importClearExisting">
+                        <label class="form-check-label" for="importClearExisting">
+                            <i class="bi bi-trash text-danger me-1"></i>Supprimer les données existantes
+                        </label>
+                    </div>
+                    
+                    <hr class="my-3">
+                    
+                    <div class="form-check mb-2">
+                        <input class="form-check-input" type="checkbox" id="importRestoreItems" checked>
+                        <label class="form-check-label" for="importRestoreItems">Restaurer les items</label>
+                    </div>
+                    <div class="form-check mb-2">
+                        <input class="form-check-input" type="checkbox" id="importRestorePreferences" checked>
+                        <label class="form-check-label" for="importRestorePreferences">Restaurer les préférences</label>
+                    </div>
+                    <div class="form-check mb-2">
+                        <input class="form-check-input" type="checkbox" id="importRestoreFiles" checked>
+                        <label class="form-check-label" for="importRestoreFiles">Restaurer les fichiers</label>
+                    </div>
+                    <div class="form-check mb-2">
+                        <input class="form-check-input" type="checkbox" id="importRestoreTestData" checked>
+                        <label class="form-check-label" for="importRestoreTestData">Restaurer les données de test</label>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuler</button>
+                    <button type="button" class="btn btn-primary" id="executeImportRestoreBtn" onclick="executeImportRestore()" disabled>
+                        <i class="bi bi-upload me-1"></i>Importer et restaurer
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Toast Container -->
     <div class="toast-container position-fixed bottom-0 end-0 p-3">
         <div id="toast" class="toast" role="alert">
@@ -1483,7 +2248,7 @@
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
-    <script src="js/api.js?v=20260105b"></script>
-    <script src="js/app.js?v=20260105b"></script>
+    <script src="js/api.js?v=20260108a"></script>
+    <script src="js/app.js?v=20260108a"></script>
 </body>
 </html>

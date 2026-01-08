@@ -143,9 +143,11 @@ class AppCreateSimplified(BaseModel):
     description: Optional[str] = None
     icon: str = "bi-app"
     color: str = "#0d6efd"
-    api_port: int = Field(..., ge=1, le=65535, description="Port de l'API backend")
-    frontend_port: Optional[int] = Field(None, ge=1, le=65535, description="Port du frontend")
-    frontend_https: bool = Field(False, description="Activer https:// pour le frontend")
+    api_port: int = Field(..., ge=1, le=65535, description="Port de l'API backend HTTP")
+    api_https_port: Optional[int] = Field(None, ge=1, le=65535, description="Port de l'API backend HTTPS (prioritaire sur api_port)")
+    frontend_port: Optional[int] = Field(None, ge=1, le=65535, description="Port du frontend HTTP")
+    frontend_https: bool = Field(False, description="Activer https:// pour le frontend (deprecated, utiliser frontend_https_port)")
+    frontend_https_port: Optional[int] = Field(None, ge=1, le=65535, description="Port du frontend HTTPS (prioritaire sur frontend_port)")
     custom_host: Optional[str] = Field(None, description="Host personnalisé si différent du Hub")
     requires_auth: bool = True
     create_service_account: bool = Field(False, description="Créer un service account M2M pour cette application")
@@ -173,6 +175,8 @@ class AppResponse(AppBase):
     id: int
     is_active: bool
     is_shared_service: bool
+    is_remote: bool = False  # True si hébergée sur un serveur distant
+    registered_from_ip: Optional[str] = None  # IP source lors de l'auto-enregistrement
     approval_status: ApprovalStatusEnum = ApprovalStatusEnum.approved
     created_at: datetime
     
@@ -206,6 +210,8 @@ class AppResponseWithMyRole(AppResponse):
             is_active=app.is_active,
             requires_auth=app.requires_auth,
             is_shared_service=app.is_shared_service,
+            is_remote=getattr(app, 'is_remote', False) or False,
+            registered_from_ip=getattr(app, 'registered_from_ip', None),
             approval_status=approval_status,
             created_at=app.created_at,
             my_role=my_role,
@@ -254,6 +260,8 @@ class AppWithUsers(AppResponse):
             is_active=app.is_active,
             requires_auth=app.requires_auth,
             is_shared_service=app.is_shared_service,
+            is_remote=getattr(app, 'is_remote', False) or False,
+            registered_from_ip=getattr(app, 'registered_from_ip', None),
             approval_status=approval_status,
             created_at=app.created_at,
             users=users
@@ -291,6 +299,8 @@ class AppWithUsersAndDocker(AppWithUsers):
             is_active=app.is_active,
             requires_auth=app.requires_auth,
             is_shared_service=app.is_shared_service,
+            is_remote=getattr(app, 'is_remote', False) or False,
+            registered_from_ip=getattr(app, 'registered_from_ip', None),
             approval_status=approval_status,
             created_at=app.created_at,
             users=users,
@@ -595,8 +605,11 @@ class AppRegisterRequest(BaseModel):
     slug: str = Field(..., min_length=2, max_length=50, pattern=r'^[a-z0-9-]+$', description="Slug unique de l'application (défini dans .env)")
     name: Optional[str] = Field(None, max_length=100, description="Nom de l'application (optionnel, utilise le slug si absent)")
     description: Optional[str] = Field(None, description="Description de l'application")
-    api_port: int = Field(..., ge=1, le=65535, description="Port de l'API backend")
-    frontend_port: Optional[int] = Field(None, ge=1, le=65535, description="Port du frontend (optionnel)")
+    api_port: int = Field(..., ge=1, le=65535, description="Port de l'API backend HTTP")
+    api_https_port: Optional[int] = Field(None, ge=1, le=65535, description="Port de l'API backend HTTPS (prioritaire sur api_port)")
+    frontend_port: Optional[int] = Field(None, ge=1, le=65535, description="Port du frontend HTTP (optionnel)")
+    frontend_https_port: Optional[int] = Field(None, ge=1, le=65535, description="Port du frontend HTTPS (prioritaire sur frontend_port)")
+    custom_host: Optional[str] = Field(None, description="Host/IP de l'application si hébergée sur un serveur distant (ex: 192.168.1.200)")
     is_shared: bool = Field(False, description="Si True, l'application sera accessible par tous les service accounts (M2M)")
 
 
@@ -638,6 +651,188 @@ class AppCredentialsResponse(BaseModel):
     hub_host: str
     hub_api_port: int = 8000
     message: str
+
+
+# ===== App Backup Schemas =====
+class BackupModeEnum(str, Enum):
+    """Mode de sauvegarde pour les applications"""
+    disabled = "disabled"    # Sauvegarde désactivée
+    manual = "manual"        # Sauvegarde manuelle uniquement
+    scheduled = "scheduled"  # Sauvegarde automatique planifiée
+
+
+class BackupStatusEnum(str, Enum):
+    """Statut du dernier backup"""
+    success = "success"
+    failed = "failed"
+    running = "running"
+
+
+class AppBackupConfig(BaseModel):
+    """Configuration de sauvegarde pour une application"""
+    backup_mode: BackupModeEnum = BackupModeEnum.manual
+    backup_cron: Optional[str] = Field(None, description="Expression cron (ex: '0 2 * * *' = 2h du matin)")
+    backup_retention: int = Field(5, ge=0, description="Nombre de backups à conserver (0 = illimité)")
+
+
+class AppBackupConfigUpdate(BaseModel):
+    """Mise à jour de la configuration de sauvegarde"""
+    backup_mode: Optional[BackupModeEnum] = None
+    backup_cron: Optional[str] = None
+    backup_retention: Optional[int] = Field(None, ge=0)
+
+
+class AppBackupReceive(BaseModel):
+    """Données reçues lors d'un push de backup depuis une application"""
+    backup_id: str = Field(..., description="UUID du backup généré par l'application")
+    app_version: Optional[str] = Field(None, description="Version de l'application")
+    total_items: int = Field(0, ge=0)
+    total_preferences: int = Field(0, ge=0)
+    total_files: int = Field(0, ge=0)
+    checksum: Optional[str] = Field(None, description="SHA-256 du fichier ZIP")
+    description: Optional[str] = None
+
+
+class AppBackupResponse(BaseModel):
+    """Réponse détaillée d'un backup"""
+    id: int
+    backup_id: str
+    app_slug: str
+    app_version: Optional[str] = None
+    total_items: int = 0
+    total_preferences: int = 0
+    total_files: int = 0
+    total_size_bytes: int = 0
+    total_size_human: str = "0 B"
+    checksum: Optional[str] = None
+    is_encrypted: bool = False
+    created_by: Optional[str] = None
+    created_by_type: str = "app"
+    created_at: datetime
+    description: Optional[str] = None
+    
+    class Config:
+        from_attributes = True
+    
+    @classmethod
+    def from_orm_model(cls, backup) -> "AppBackupResponse":
+        """Convertit un AppBackup ORM en réponse"""
+        size = backup.total_size_bytes or 0
+        # Formatage lisible de la taille
+        for unit in ["B", "KB", "MB", "GB"]:
+            if size < 1024:
+                size_human = f"{size:.1f} {unit}"
+                break
+            size /= 1024
+        else:
+            size_human = f"{size:.1f} TB"
+        
+        return cls(
+            id=backup.id,
+            backup_id=backup.backup_id,
+            app_slug=backup.app_slug,
+            app_version=backup.app_version,
+            total_items=backup.total_items or 0,
+            total_preferences=backup.total_preferences or 0,
+            total_files=backup.total_files or 0,
+            total_size_bytes=backup.total_size_bytes or 0,
+            total_size_human=size_human,
+            checksum=backup.checksum,
+            is_encrypted=backup.is_encrypted or False,
+            created_by=backup.created_by,
+            created_by_type=backup.created_by_type or "app",
+            created_at=backup.created_at,
+            description=backup.description
+        )
+
+
+class AppBackupBrief(BaseModel):
+    """Résumé d'un backup pour les listes"""
+    id: int
+    backup_id: str
+    app_slug: str
+    total_size_human: str
+    created_at: datetime
+    is_encrypted: bool = False
+    
+    class Config:
+        from_attributes = True
+
+
+class AppBackupListResponse(BaseModel):
+    """Liste des backups d'une application"""
+    app_slug: str
+    app_name: str
+    backups: List[AppBackupResponse] = []
+    total: int = 0
+    backup_config: Optional[AppBackupConfig] = None
+
+
+class AppBackupStatusResponse(BaseModel):
+    """Statut de backup d'une application"""
+    app_slug: str
+    app_name: str
+    backup_mode: BackupModeEnum
+    backup_cron: Optional[str] = None
+    backup_retention: int = 5
+    last_backup_at: Optional[datetime] = None
+    last_backup_id: Optional[str] = None
+    last_backup_status: Optional[str] = None
+    next_backup_at: Optional[datetime] = None
+    backups_count: int = 0
+    total_size_bytes: int = 0
+    total_size_human: str = "0 B"
+
+
+class AllBackupsResponse(BaseModel):
+    """Vue globale de tous les backups (admin)"""
+    apps: List[AppBackupStatusResponse] = []
+    total_apps: int = 0
+    total_backups: int = 0
+    total_size_bytes: int = 0
+    total_size_human: str = "0 B"
+
+
+class BackupTriggerResponse(BaseModel):
+    """Réponse après déclenchement d'un backup"""
+    success: bool
+    message: str
+    backup_id: Optional[str] = None
+    app_slug: str
+
+
+class BackupExportResponse(BaseModel):
+    """Réponse après export chiffré d'un backup"""
+    success: bool
+    message: str
+    backup_id: str
+    encrypted_filename: str
+    encrypted_size_bytes: int
+    encrypted_size_human: str
+
+
+class RestoreToAppRequest(BaseModel):
+    """Options de restauration vers une application"""
+    clear_existing: bool = False
+    restore_items: bool = True
+    restore_preferences: bool = True
+    restore_files: bool = True
+    restore_test_data: bool = True
+
+
+class RestoreToAppResponse(BaseModel):
+    """Réponse après restauration vers une application"""
+    success: bool
+    message: str
+    app_slug: str
+    backup_id: str
+    items_restored: int = 0
+    preferences_restored: int = 0
+    files_restored: int = 0
+    items_skipped: int = 0
+    files_skipped: int = 0
+    errors: List[str] = []
+    warnings: List[str] = []
 
 
 # Forward references

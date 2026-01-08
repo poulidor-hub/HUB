@@ -606,6 +606,7 @@ function showPage(page) {
     document.getElementById('auditSection').classList.add('d-none');
     document.getElementById('usersSection').classList.add('d-none');
     document.getElementById('discoverySection').classList.add('d-none');
+    document.getElementById('pkiSection')?.classList.add('d-none');
     
     // Réinitialiser les styles de navigation
     document.querySelectorAll('#adminNavigation .nav-link').forEach(link => {
@@ -644,6 +645,15 @@ function showPage(page) {
             document.getElementById('discoverySection').classList.remove('d-none');
             document.getElementById('navDiscovery')?.classList.add('active');
             loadDiscoveryPage();
+            break;
+        case 'pki':
+            if (!currentUser?.is_admin) {
+                showToast('Accès refusé', 'Vous devez être administrateur', 'danger');
+                return;
+            }
+            document.getElementById('pkiSection').classList.remove('d-none');
+            document.getElementById('navPki')?.classList.add('active');
+            loadPkiPage();
             break;
     }
 }
@@ -4966,6 +4976,8 @@ async function exportErrors() {
 let discoveryM2MToken = null;
 let discoveryM2MTokenExpiry = null;
 let discoveryServices = [];
+let discoveryOpenApiSpecs = {}; // Cache des specs OpenAPI par service slug
+let discoverySelectedEndpoint = null; // Endpoint actuellement sélectionné
 
 /**
  * Charge la page Discovery - initialise les Service Accounts et l'état
@@ -5131,6 +5143,9 @@ async function discoverSharedServices() {
         
         document.getElementById('discoveryServicesCount').textContent = result.total_shared || 0;
         
+        // Mettre à jour le sélecteur de services pour le test d'endpoint
+        updateDiscoveryServiceSelect();
+        
         if (discoveryServices.length === 0) {
             container.innerHTML = `
                 <div class="text-center py-4 text-muted">
@@ -5179,6 +5194,413 @@ async function discoverSharedServices() {
 function selectDiscoveryService(apiUrl) {
     document.getElementById('discoveryUrl').value = apiUrl;
     showToast('Service sélectionné', 'URL pré-remplie, ajoutez l\'endpoint souhaité', 'info');
+}
+
+/**
+ * Met à jour le sélecteur de services après découverte
+ */
+function updateDiscoveryServiceSelect() {
+    const select = document.getElementById('discoveryServiceSelect');
+    select.innerHTML = '<option value="">-- Sélectionner un service --</option>';
+    
+    discoveryServices.forEach(svc => {
+        const opt = document.createElement('option');
+        opt.value = svc.slug;
+        opt.textContent = `${svc.name} (${svc.slug})`;
+        opt.dataset.apiUrl = svc.api_url;
+        opt.dataset.name = svc.name;
+        select.appendChild(opt);
+    });
+    
+    // Réinitialiser le sélecteur d'endpoints
+    const endpointSelect = document.getElementById('discoveryEndpointSelect');
+    endpointSelect.innerHTML = '<option value="">-- Sélectionnez d\'abord un service --</option>';
+    endpointSelect.disabled = true;
+    document.getElementById('discoveryEndpointInfo').classList.add('d-none');
+    document.getElementById('discoveryParamsSection').classList.add('d-none');
+}
+
+/**
+ * Appelé quand on change le service sélectionné
+ */
+async function onDiscoveryServiceChange() {
+    const select = document.getElementById('discoveryServiceSelect');
+    const selected = select.options[select.selectedIndex];
+    const endpointSelect = document.getElementById('discoveryEndpointSelect');
+    
+    if (!selected || !selected.value) {
+        endpointSelect.innerHTML = '<option value="">-- Sélectionnez d\'abord un service --</option>';
+        endpointSelect.disabled = true;
+        document.getElementById('discoveryEndpointInfo').classList.add('d-none');
+        document.getElementById('discoveryParamsSection').classList.add('d-none');
+        return;
+    }
+    
+    const slug = selected.value;
+    const apiUrl = selected.dataset.apiUrl;
+    
+    // Pré-remplir l'URL de base
+    document.getElementById('discoveryUrl').value = apiUrl;
+    
+    // Charger la spec OpenAPI du service
+    endpointSelect.innerHTML = '<option value="">⏳ Chargement des endpoints...</option>';
+    endpointSelect.disabled = true;
+    
+    try {
+        const spec = await loadServiceOpenApiSpec(slug, apiUrl);
+        
+        if (spec && spec.paths) {
+            populateEndpointSelect(spec, apiUrl);
+        } else {
+            endpointSelect.innerHTML = '<option value="">❌ Spec OpenAPI non disponible</option>';
+            showToast('Info', 'Ce service ne fournit pas de spécification OpenAPI', 'warning');
+        }
+    } catch (error) {
+        console.error('Erreur chargement spec OpenAPI:', error);
+        endpointSelect.innerHTML = '<option value="">❌ Erreur chargement</option>';
+        showToast('Erreur', 'Impossible de charger les endpoints: ' + error.message, 'danger');
+    }
+}
+
+/**
+ * Charge la spécification OpenAPI d'un service
+ */
+async function loadServiceOpenApiSpec(slug, apiUrl) {
+    // Vérifier le cache
+    if (discoveryOpenApiSpecs[slug]) {
+        return discoveryOpenApiSpecs[slug];
+    }
+    
+    // Essayer différents chemins pour OpenAPI
+    const openApiPaths = ['/openapi.json', '/api/openapi.json', '/docs/openapi.json', '/swagger.json'];
+    
+    for (const path of openApiPaths) {
+        try {
+            const url = apiUrl.replace(/\/$/, '') + path;
+            const response = await fetch(url, {
+                headers: {
+                    'Authorization': `Bearer ${discoveryM2MToken}`,
+                    'Accept': 'application/json'
+                }
+            });
+            
+            if (response.ok) {
+                const spec = await response.json();
+                discoveryOpenApiSpecs[slug] = spec;
+                console.log(`✅ Spec OpenAPI chargée depuis ${url}`);
+                return spec;
+            }
+        } catch (e) {
+            // Continuer avec le chemin suivant
+        }
+    }
+    
+    return null;
+}
+
+/**
+ * Remplit le sélecteur d'endpoints depuis la spec OpenAPI
+ */
+function populateEndpointSelect(spec, baseUrl) {
+    const select = document.getElementById('discoveryEndpointSelect');
+    select.innerHTML = '<option value="">-- Sélectionner un endpoint --</option>';
+    
+    // Grouper par tag
+    const endpointsByTag = {};
+    const methodColors = {
+        'get': 'success',
+        'post': 'primary',
+        'put': 'warning',
+        'patch': 'info',
+        'delete': 'danger'
+    };
+    
+    for (const [path, methods] of Object.entries(spec.paths || {})) {
+        for (const [method, details] of Object.entries(methods)) {
+            if (['get', 'post', 'put', 'patch', 'delete'].includes(method.toLowerCase())) {
+                const tags = details.tags || ['Autre'];
+                const tag = tags[0];
+                
+                if (!endpointsByTag[tag]) {
+                    endpointsByTag[tag] = [];
+                }
+                
+                endpointsByTag[tag].push({
+                    method: method.toUpperCase(),
+                    path: path,
+                    summary: details.summary || '',
+                    description: details.description || '',
+                    operationId: details.operationId || '',
+                    parameters: details.parameters || [],
+                    requestBody: details.requestBody || null,
+                    responses: details.responses || {},
+                    tags: tags
+                });
+            }
+        }
+    }
+    
+    // Créer les optgroups
+    for (const [tag, endpoints] of Object.entries(endpointsByTag)) {
+        const optgroup = document.createElement('optgroup');
+        optgroup.label = `📁 ${tag}`;
+        
+        endpoints.forEach((ep, idx) => {
+            const opt = document.createElement('option');
+            const methodBadge = `[${ep.method}]`;
+            opt.value = JSON.stringify(ep);
+            opt.textContent = `${methodBadge} ${ep.path} - ${ep.summary || ep.operationId || 'Sans description'}`;
+            opt.dataset.method = ep.method;
+            opt.dataset.path = ep.path;
+            optgroup.appendChild(opt);
+        });
+        
+        select.appendChild(optgroup);
+    }
+    
+    select.disabled = false;
+    showToast('Endpoints chargés', `${Object.values(endpointsByTag).flat().length} endpoints disponibles`, 'success');
+}
+
+/**
+ * Appelé quand on sélectionne un endpoint
+ */
+function onDiscoveryEndpointChange() {
+    const select = document.getElementById('discoveryEndpointSelect');
+    const selected = select.options[select.selectedIndex];
+    
+    if (!selected || !selected.value) {
+        document.getElementById('discoveryEndpointInfo').classList.add('d-none');
+        document.getElementById('discoveryParamsSection').classList.add('d-none');
+        discoverySelectedEndpoint = null;
+        return;
+    }
+    
+    try {
+        const endpoint = JSON.parse(selected.value);
+        discoverySelectedEndpoint = endpoint;
+        
+        // Afficher les infos de l'endpoint
+        const infoDiv = document.getElementById('discoveryEndpointInfo');
+        infoDiv.classList.remove('d-none');
+        
+        // Méthode avec couleur
+        const methodBadge = document.getElementById('discoveryEndpointMethod');
+        const methodColors = {
+            'GET': 'bg-success',
+            'POST': 'bg-primary',
+            'PUT': 'bg-warning text-dark',
+            'PATCH': 'bg-info',
+            'DELETE': 'bg-danger'
+        };
+        methodBadge.className = `badge ${methodColors[endpoint.method] || 'bg-secondary'}`;
+        methodBadge.textContent = endpoint.method;
+        
+        document.getElementById('discoveryEndpointPath').textContent = endpoint.path;
+        document.getElementById('discoveryEndpointDescription').textContent = 
+            endpoint.description || endpoint.summary || 'Pas de description disponible';
+        document.getElementById('discoveryEndpointTags').textContent = endpoint.tags.join(', ');
+        
+        // Mettre à jour la méthode et l'URL
+        document.getElementById('discoveryMethod').value = endpoint.method;
+        
+        // Construire l'URL complète
+        const serviceSelect = document.getElementById('discoveryServiceSelect');
+        const baseUrl = serviceSelect.options[serviceSelect.selectedIndex]?.dataset.apiUrl || '';
+        document.getElementById('discoveryUrl').value = baseUrl.replace(/\/$/, '') + endpoint.path;
+        
+        // Générer les paramètres s'il y en a
+        generateEndpointParams(endpoint);
+        
+        // Générer le body exemple si POST/PUT/PATCH
+        if (['POST', 'PUT', 'PATCH'].includes(endpoint.method) && endpoint.requestBody) {
+            generateRequestBodyExample(endpoint.requestBody);
+        } else {
+            document.getElementById('discoveryBody').value = '';
+        }
+        
+    } catch (e) {
+        console.error('Erreur parsing endpoint:', e);
+    }
+}
+
+/**
+ * Génère les champs de paramètres pour l'endpoint
+ */
+function generateEndpointParams(endpoint) {
+    const paramsSection = document.getElementById('discoveryParamsSection');
+    const paramsContainer = document.getElementById('discoveryParams');
+    
+    const params = endpoint.parameters || [];
+    
+    if (params.length === 0) {
+        paramsSection.classList.add('d-none');
+        return;
+    }
+    
+    paramsSection.classList.remove('d-none');
+    paramsContainer.innerHTML = '';
+    
+    params.forEach(param => {
+        const row = document.createElement('div');
+        row.className = 'row g-2 mb-2 align-items-center';
+        
+        const isRequired = param.required || false;
+        const paramType = param.in; // path, query, header
+        const typeIcon = {
+            'path': 'bi-link-45deg',
+            'query': 'bi-question-circle',
+            'header': 'bi-card-heading'
+        }[paramType] || 'bi-tag';
+        
+        row.innerHTML = `
+            <div class="col-md-3">
+                <div class="input-group input-group-sm">
+                    <span class="input-group-text"><i class="bi ${typeIcon}"></i></span>
+                    <input type="text" class="form-control" value="${escapeHtml(param.name)}" readonly>
+                </div>
+            </div>
+            <div class="col-md-5">
+                <input type="text" class="form-control form-control-sm discovery-param-value" 
+                       data-param-name="${escapeHtml(param.name)}" 
+                       data-param-in="${paramType}"
+                       placeholder="${escapeHtml(param.description || param.schema?.type || 'valeur')}"
+                       ${isRequired ? 'required' : ''}>
+            </div>
+            <div class="col-md-4">
+                <small class="text-muted">
+                    ${isRequired ? '<span class="badge bg-danger me-1">Requis</span>' : ''}
+                    <span class="badge bg-secondary">${paramType}</span>
+                    ${param.schema?.type ? `<span class="badge bg-light text-dark">${param.schema.type}</span>` : ''}
+                </small>
+            </div>
+        `;
+        
+        paramsContainer.appendChild(row);
+    });
+    
+    // Ajouter listener pour mettre à jour l'URL en temps réel
+    paramsContainer.querySelectorAll('.discovery-param-value').forEach(input => {
+        input.addEventListener('input', updateDiscoveryUrlWithParams);
+    });
+}
+
+/**
+ * Met à jour l'URL avec les paramètres remplis
+ */
+function updateDiscoveryUrlWithParams() {
+    if (!discoverySelectedEndpoint) return;
+    
+    const serviceSelect = document.getElementById('discoveryServiceSelect');
+    const baseUrl = serviceSelect.options[serviceSelect.selectedIndex]?.dataset.apiUrl || '';
+    let path = discoverySelectedEndpoint.path;
+    
+    const queryParams = [];
+    
+    document.querySelectorAll('.discovery-param-value').forEach(input => {
+        const paramName = input.dataset.paramName;
+        const paramIn = input.dataset.paramIn;
+        const value = input.value.trim();
+        
+        if (value) {
+            if (paramIn === 'path') {
+                // Remplacer {param} dans le path
+                path = path.replace(`{${paramName}}`, encodeURIComponent(value));
+            } else if (paramIn === 'query') {
+                queryParams.push(`${encodeURIComponent(paramName)}=${encodeURIComponent(value)}`);
+            }
+        }
+    });
+    
+    let fullUrl = baseUrl.replace(/\/$/, '') + path;
+    if (queryParams.length > 0) {
+        fullUrl += '?' + queryParams.join('&');
+    }
+    
+    document.getElementById('discoveryUrl').value = fullUrl;
+}
+
+/**
+ * Génère un exemple de body pour les requêtes POST/PUT/PATCH
+ */
+function generateRequestBodyExample(requestBody) {
+    const bodyTextarea = document.getElementById('discoveryBody');
+    
+    try {
+        const content = requestBody.content;
+        const jsonContent = content?.['application/json'];
+        
+        if (jsonContent?.schema) {
+            const example = generateSchemaExample(jsonContent.schema);
+            bodyTextarea.value = JSON.stringify(example, null, 2);
+        } else if (jsonContent?.example) {
+            bodyTextarea.value = JSON.stringify(jsonContent.example, null, 2);
+        }
+    } catch (e) {
+        console.warn('Impossible de générer exemple body:', e);
+    }
+}
+
+/**
+ * Génère un exemple à partir d'un schéma JSON
+ */
+function generateSchemaExample(schema, depth = 0) {
+    if (depth > 5) return null; // Éviter la récursion infinie
+    
+    if (schema.example !== undefined) {
+        return schema.example;
+    }
+    
+    if (schema.$ref) {
+        // Référence à un composant - retourner un placeholder
+        return { "_ref": schema.$ref.split('/').pop() };
+    }
+    
+    switch (schema.type) {
+        case 'object':
+            const obj = {};
+            if (schema.properties) {
+                for (const [key, prop] of Object.entries(schema.properties)) {
+                    obj[key] = generateSchemaExample(prop, depth + 1);
+                }
+            }
+            return obj;
+        case 'array':
+            if (schema.items) {
+                return [generateSchemaExample(schema.items, depth + 1)];
+            }
+            return [];
+        case 'string':
+            if (schema.enum) return schema.enum[0];
+            if (schema.format === 'date') return '2024-01-01';
+            if (schema.format === 'date-time') return '2024-01-01T00:00:00Z';
+            if (schema.format === 'email') return 'user@example.com';
+            return schema.default || 'string';
+        case 'integer':
+        case 'number':
+            return schema.default || schema.minimum || 0;
+        case 'boolean':
+            return schema.default || true;
+        default:
+            return null;
+    }
+}
+
+/**
+ * Affiche la spec OpenAPI complète de l'endpoint sélectionné
+ */
+function loadEndpointOpenApiSpec() {
+    if (!discoverySelectedEndpoint) {
+        showToast('Info', 'Sélectionnez d\'abord un endpoint', 'info');
+        return;
+    }
+    
+    // Afficher dans le résultat
+    document.getElementById('discoveryResultCard').style.display = 'block';
+    document.getElementById('discoveryResultStatus').textContent = 'OpenAPI Spec';
+    document.getElementById('discoveryResultStatus').className = 'badge bg-info';
+    document.getElementById('discoveryResultTime').textContent = '';
+    document.getElementById('discoveryResultBody').textContent = JSON.stringify(discoverySelectedEndpoint, null, 2);
 }
 
 /**
@@ -5571,4 +5993,1133 @@ function displayImportResult(result) {
     }
     
     card.classList.remove('d-none');
+}
+
+
+// =============================================================================
+// APP BACKUPS - SAUVEGARDES CENTRALISÉES DES APPLICATIONS
+// =============================================================================
+
+let appBackupConfigModal = null;
+let appBackupsListModal = null;
+
+/**
+ * Charge la vue d'ensemble des sauvegardes de toutes les applications
+ */
+async function loadAppBackupsOverview() {
+    try {
+        const data = await api.request('/admin/backups');
+        
+        // Mettre à jour les stats globales
+        document.getElementById('statsAppsCount').textContent = data.total_apps || 0;
+        document.getElementById('statsTotalBackups').textContent = data.total_backups || 0;
+        document.getElementById('statsTotalSize').textContent = data.total_size_human || '0 B';
+        
+        // Compter les apps planifiées
+        const scheduledCount = (data.apps || []).filter(a => a.backup_mode === 'scheduled').length;
+        document.getElementById('statsScheduledApps').textContent = scheduledCount;
+        
+        // Générer le tableau
+        const tbody = document.getElementById('appBackupsTableBody');
+        
+        if (!data.apps || data.apps.length === 0) {
+            tbody.innerHTML = `
+                <tr>
+                    <td colspan="7" class="text-center text-muted py-4">
+                        <i class="bi bi-inbox me-2"></i>Aucune application trouvée
+                    </td>
+                </tr>
+            `;
+            return;
+        }
+        
+        tbody.innerHTML = data.apps.map(app => {
+            // Badge du mode
+            let modeBadge;
+            switch (app.backup_mode) {
+                case 'disabled':
+                    modeBadge = '<span class="badge bg-secondary">Désactivé</span>';
+                    break;
+                case 'manual':
+                    modeBadge = '<span class="badge bg-info">Manuel</span>';
+                    break;
+                case 'scheduled':
+                    modeBadge = `<span class="badge bg-success">Planifié</span>`;
+                    break;
+                default:
+                    modeBadge = '<span class="badge bg-secondary">Manuel</span>';
+            }
+            
+            // Dernier backup
+            let lastBackupInfo = '-';
+            if (app.last_backup_at) {
+                const lastDate = new Date(app.last_backup_at);
+                const statusIcon = app.last_backup_status === 'success' ? '✅' : 
+                                   app.last_backup_status === 'failed' ? '❌' : '⏳';
+                lastBackupInfo = `${statusIcon} ${lastDate.toLocaleDateString('fr-FR')} ${lastDate.toLocaleTimeString('fr-FR', {hour: '2-digit', minute: '2-digit'})}`;
+            }
+            
+            // Prochain backup
+            let nextBackupInfo = '-';
+            if (app.backup_mode === 'scheduled' && app.next_backup_at) {
+                const nextDate = new Date(app.next_backup_at);
+                nextBackupInfo = `${nextDate.toLocaleDateString('fr-FR')} ${nextDate.toLocaleTimeString('fr-FR', {hour: '2-digit', minute: '2-digit'})}`;
+            } else if (app.backup_mode === 'scheduled' && app.backup_cron) {
+                nextBackupInfo = `<code class="small">${app.backup_cron}</code>`;
+            }
+            
+            return `
+                <tr>
+                    <td>
+                        <strong>${escapeHtml(app.app_name)}</strong>
+                        <br><small class="text-muted">${escapeHtml(app.app_slug)}</small>
+                    </td>
+                    <td>${modeBadge}</td>
+                    <td><small>${lastBackupInfo}</small></td>
+                    <td><small>${nextBackupInfo}</small></td>
+                    <td>
+                        <span class="badge bg-light text-dark">${app.backups_count}</span>
+                    </td>
+                    <td>${app.total_size_human}</td>
+                    <td class="text-end">
+                        <div class="btn-group btn-group-sm">
+                            <button class="btn btn-outline-success" onclick="showTriggerBackupConfirm('${app.app_slug}', '${escapeHtml(app.app_name)}')" title="Déclencher sauvegarde" ${app.backup_mode === 'disabled' ? 'style="display: none;"' : ''}>
+                                <i class="bi bi-play-circle"></i>
+                            </button>
+                            <button class="btn btn-outline-primary" onclick="showAppBackupsList('${app.app_slug}')" title="Voir les sauvegardes">
+                                <i class="bi bi-hdd-stack"></i>
+                            </button>
+                            <button class="btn btn-outline-secondary" onclick="showAppBackupConfig('${app.app_slug}', '${escapeHtml(app.app_name)}')" title="Configurer">
+                                <i class="bi bi-gear"></i>
+                            </button>
+                        </div>
+                    </td>
+                </tr>
+            `;
+        }).join('');
+        
+    } catch (error) {
+        console.error('Erreur chargement backups apps:', error);
+        showToast('Erreur', 'Impossible de charger les sauvegardes', 'danger');
+    }
+}
+
+/**
+ * Affiche la modale de configuration de backup pour une application
+ */
+async function showAppBackupConfig(slug, name) {
+    // Initialiser la modale si nécessaire
+    if (!appBackupConfigModal) {
+        appBackupConfigModal = new bootstrap.Modal(document.getElementById('appBackupConfigModal'));
+    }
+    
+    document.getElementById('backupConfigAppSlug').value = slug;
+    document.getElementById('backupConfigAppName').textContent = name;
+    
+    try {
+        // Charger la config actuelle
+        const config = await api.request(`/apps/${slug}/backup/config`);
+        
+        document.getElementById('backupConfigMode').value = config.backup_mode || 'manual';
+        document.getElementById('backupConfigCron').value = config.backup_cron || '';
+        document.getElementById('backupConfigRetention').value = config.backup_retention ?? 5;
+        
+        toggleCronInput();
+        appBackupConfigModal.show();
+        
+    } catch (error) {
+        console.error('Erreur chargement config backup:', error);
+        showToast('Erreur', 'Impossible de charger la configuration', 'danger');
+    }
+}
+
+/**
+ * Affiche/masque le champ cron selon le mode
+ */
+function toggleCronInput() {
+    const mode = document.getElementById('backupConfigMode').value;
+    const cronGroup = document.getElementById('cronInputGroup');
+    cronGroup.style.display = mode === 'scheduled' ? 'block' : 'none';
+}
+
+/**
+ * Enregistre la configuration de backup
+ */
+async function saveAppBackupConfig(event) {
+    event.preventDefault();
+    
+    const slug = document.getElementById('backupConfigAppSlug').value;
+    const config = {
+        backup_mode: document.getElementById('backupConfigMode').value,
+        backup_cron: document.getElementById('backupConfigCron').value || null,
+        backup_retention: parseInt(document.getElementById('backupConfigRetention').value) || 5
+    };
+    
+    try {
+        await api.request(`/apps/${slug}/backup/config`, {
+            method: 'PUT',
+            body: JSON.stringify(config)
+        });
+        
+        showToast('Succès', 'Configuration de sauvegarde mise à jour', 'success');
+        appBackupConfigModal.hide();
+        loadAppBackupsOverview();
+        
+    } catch (error) {
+        console.error('Erreur sauvegarde config:', error);
+        showToast('Erreur', error.message || 'Impossible de sauvegarder', 'danger');
+    }
+}
+
+/**
+ * Affiche la liste des backups d'une application
+ */
+async function showAppBackupsList(slug) {
+    // Initialiser la modale si nécessaire
+    if (!appBackupsListModal) {
+        appBackupsListModal = new bootstrap.Modal(document.getElementById('appBackupsListModal'));
+    }
+    
+    document.getElementById('backupsListAppSlug').value = slug;
+    
+    try {
+        const data = await api.request(`/apps/${slug}/backup`);
+        
+        document.getElementById('backupsListAppName').textContent = data.app_name;
+        
+        // Config résumé
+        const modeLabels = {
+            'disabled': 'Désactivé',
+            'manual': 'Manuel',
+            'scheduled': 'Planifié'
+        };
+        document.getElementById('backupsListMode').textContent = modeLabels[data.backup_config?.backup_mode] || 'Manuel';
+        document.getElementById('backupsListCron').textContent = data.backup_config?.backup_cron || '-';
+        document.getElementById('backupsListRetention').textContent = data.backup_config?.backup_retention ?? 5;
+        
+        // Afficher/masquer le bouton de déclenchement selon le mode
+        const triggerBtn = document.getElementById('triggerBackupBtn');
+        if (triggerBtn) {
+            triggerBtn.style.display = data.backup_config?.backup_mode !== 'disabled' ? '' : 'none';
+        }
+        
+        // Liste des backups
+        const tbody = document.getElementById('backupsListBody');
+        
+        if (!data.backups || data.backups.length === 0) {
+            tbody.innerHTML = `
+                <tr>
+                    <td colspan="6" class="text-center text-muted py-3">
+                        <i class="bi bi-inbox me-1"></i>Aucune sauvegarde disponible
+                    </td>
+                </tr>
+            `;
+        } else {
+            tbody.innerHTML = data.backups.map(backup => {
+                const date = new Date(backup.created_at);
+                const dateStr = `${date.toLocaleDateString('fr-FR')} ${date.toLocaleTimeString('fr-FR', {hour: '2-digit', minute: '2-digit'})}`;
+                const escapedAppName = escapeHtml(data.app_name).replace(/'/g, "\\'");
+                return `
+                    <tr>
+                        <td>
+                            <small>${dateStr}</small>
+                        </td>
+                        <td><small>${backup.app_version || '-'}</small></td>
+                        <td>
+                            <small class="text-muted">
+                                ${backup.total_items} items, ${backup.total_files} fichiers
+                            </small>
+                        </td>
+                        <td><small>${backup.total_size_human}</small></td>
+                        <td>
+                            <span class="badge bg-light text-dark">${backup.created_by_type}</span>
+                        </td>
+                        <td class="text-end">
+                            <div class="btn-group btn-group-sm">
+                                <button class="btn btn-outline-warning" onclick="showRestoreBackupModal('${slug}', '${backup.backup_id}', '${escapedAppName}')" title="Restaurer">
+                                    <i class="bi bi-arrow-counterclockwise"></i>
+                                </button>
+                                <button class="btn btn-outline-success" onclick="exportEncryptedBackup('${slug}', '${backup.backup_id}')" title="Exporter chiffré">
+                                    <i class="bi bi-shield-lock"></i>
+                                </button>
+                                <button class="btn btn-outline-danger" onclick="deleteAppBackup('${slug}', '${backup.backup_id}', '${escapedAppName}', '${dateStr}')" title="Supprimer">
+                                    <i class="bi bi-trash"></i>
+                                </button>
+                            </div>
+                        </td>
+                    </tr>
+                `;
+            }).join('');
+        }
+        
+        appBackupsListModal.show();
+        
+    } catch (error) {
+        console.error('Erreur chargement backups:', error);
+        showToast('Erreur', 'Impossible de charger les sauvegardes', 'danger');
+    }
+}
+
+// =============================================================================
+// RESTAURATION DE BACKUPS
+// =============================================================================
+
+let restoreBackupModal = null;
+let importRestoreModal = null;
+
+/**
+ * Affiche le modal de restauration pour un backup existant
+ */
+function showRestoreBackupModal(slug, backupId, appName) {
+    if (!restoreBackupModal) {
+        restoreBackupModal = new bootstrap.Modal(document.getElementById('restoreBackupModal'));
+    }
+    
+    document.getElementById('restoreBackupSlug').value = slug;
+    document.getElementById('restoreBackupId').value = backupId;
+    document.getElementById('restoreAppName').textContent = appName;
+    
+    // Réinitialiser les options
+    document.getElementById('restoreClearExisting').checked = false;
+    document.getElementById('restoreItems').checked = true;
+    document.getElementById('restorePreferences').checked = true;
+    document.getElementById('restoreFiles').checked = true;
+    document.getElementById('restoreTestData').checked = true;
+    
+    restoreBackupModal.show();
+}
+
+/**
+ * Exécute la restauration d'un backup existant vers l'application
+ */
+async function executeRestore() {
+    const slug = document.getElementById('restoreBackupSlug').value;
+    const backupId = document.getElementById('restoreBackupId').value;
+    
+    if (!slug || !backupId) return;
+    
+    const options = {
+        clear_existing: document.getElementById('restoreClearExisting').checked,
+        restore_items: document.getElementById('restoreItems').checked,
+        restore_preferences: document.getElementById('restorePreferences').checked,
+        restore_files: document.getElementById('restoreFiles').checked,
+        restore_test_data: document.getElementById('restoreTestData').checked
+    };
+    
+    // Confirmation si clear_existing
+    if (options.clear_existing) {
+        if (!confirm('⚠️ ATTENTION : Toutes les données existantes de l\'application seront SUPPRIMÉES avant la restauration.\n\nContinuer ?')) {
+            return;
+        }
+    }
+    
+    restoreBackupModal.hide();
+    showToast('Restauration', 'Restauration en cours...', 'info');
+    
+    try {
+        const result = await api.request(`/apps/${slug}/backup/${backupId}/restore`, {
+            method: 'POST',
+            body: JSON.stringify(options)
+        });
+        
+        if (result.success) {
+            let message = `Restauration terminée : ${result.items_restored} items, ${result.preferences_restored} prefs, ${result.files_restored} fichiers`;
+            if (result.warnings && result.warnings.length > 0) {
+                message += `\n⚠️ ${result.warnings.length} avertissement(s)`;
+            }
+            showToast('Succès', message, 'success');
+        } else {
+            showToast('Attention', result.message || 'Restauration avec erreurs', 'warning');
+        }
+        
+        // Afficher les erreurs éventuelles
+        if (result.errors && result.errors.length > 0) {
+            console.warn('Erreurs de restauration:', result.errors);
+        }
+        
+    } catch (error) {
+        console.error('Erreur restauration:', error);
+        showToast('Erreur', error.message || 'Impossible de restaurer le backup', 'danger');
+    }
+}
+
+/**
+ * Affiche le modal d'import et restauration depuis fichier
+ */
+function showImportRestoreModal() {
+    if (!importRestoreModal) {
+        importRestoreModal = new bootstrap.Modal(document.getElementById('importRestoreModal'));
+    }
+    
+    const slug = document.getElementById('backupsListAppSlug').value;
+    document.getElementById('importRestoreSlug').value = slug;
+    
+    // Réinitialiser
+    document.getElementById('importRestoreFile').value = '';
+    document.getElementById('importRestorePreview').classList.add('d-none');
+    document.getElementById('executeImportRestoreBtn').disabled = true;
+    document.getElementById('importClearExisting').checked = false;
+    document.getElementById('importRestoreItems').checked = true;
+    document.getElementById('importRestorePreferences').checked = true;
+    document.getElementById('importRestoreFiles').checked = true;
+    document.getElementById('importRestoreTestData').checked = true;
+    
+    importRestoreModal.show();
+}
+
+/**
+ * Prévisualise le fichier d'import sélectionné
+ */
+function previewImportRestoreFile() {
+    const fileInput = document.getElementById('importRestoreFile');
+    const file = fileInput.files[0];
+    
+    if (!file) {
+        document.getElementById('importRestorePreview').classList.add('d-none');
+        document.getElementById('executeImportRestoreBtn').disabled = true;
+        return;
+    }
+    
+    // Vérifier l'extension
+    if (!file.name.endsWith('.zip')) {
+        showToast('Erreur', 'Le fichier doit être un ZIP', 'warning');
+        fileInput.value = '';
+        document.getElementById('importRestorePreview').classList.add('d-none');
+        document.getElementById('executeImportRestoreBtn').disabled = true;
+        return;
+    }
+    
+    // Afficher l'aperçu
+    document.getElementById('importRestoreFilename').textContent = file.name;
+    document.getElementById('importRestoreFilesize').textContent = formatFileSize(file.size);
+    document.getElementById('importRestorePreview').classList.remove('d-none');
+    document.getElementById('executeImportRestoreBtn').disabled = false;
+}
+
+/**
+ * Formate une taille de fichier
+ */
+function formatFileSize(bytes) {
+    if (bytes === 0) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+}
+
+/**
+ * Exécute l'import et restauration depuis fichier
+ */
+async function executeImportRestore() {
+    const slug = document.getElementById('importRestoreSlug').value;
+    const fileInput = document.getElementById('importRestoreFile');
+    const file = fileInput.files[0];
+    
+    if (!slug || !file) return;
+    
+    const clearExisting = document.getElementById('importClearExisting').checked;
+    
+    // Confirmation si clear_existing
+    if (clearExisting) {
+        if (!confirm('⚠️ ATTENTION : Toutes les données existantes de l\'application seront SUPPRIMÉES avant la restauration.\n\nContinuer ?')) {
+            return;
+        }
+    }
+    
+    importRestoreModal.hide();
+    showToast('Import', 'Envoi et restauration en cours...', 'info');
+    
+    try {
+        // Préparer le FormData
+        const formData = new FormData();
+        formData.append('file', file);
+        formData.append('clear_existing', clearExisting);
+        formData.append('restore_items', document.getElementById('importRestoreItems').checked);
+        formData.append('restore_preferences', document.getElementById('importRestorePreferences').checked);
+        formData.append('restore_files', document.getElementById('importRestoreFiles').checked);
+        formData.append('restore_test_data', document.getElementById('importRestoreTestData').checked);
+        
+        // Envoyer la requête
+        const response = await fetch(`/api/apps/${slug}/backup/restore/upload`, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${api.token}`
+            },
+            body: formData
+        });
+        
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.detail || 'Erreur lors de l\'import');
+        }
+        
+        const result = await response.json();
+        
+        if (result.success) {
+            let message = `Restauration terminée : ${result.items_restored} items, ${result.preferences_restored} prefs, ${result.files_restored} fichiers`;
+            showToast('Succès', message, 'success');
+        } else {
+            showToast('Attention', result.message || 'Restauration avec erreurs', 'warning');
+        }
+        
+        // Rafraîchir la liste des backups
+        showAppBackupsList(slug);
+        
+    } catch (error) {
+        console.error('Erreur import restauration:', error);
+        showToast('Erreur', error.message || 'Impossible d\'importer le backup', 'danger');
+    }
+}
+
+/**
+ * Exporte et télécharge un backup chiffré
+ */
+async function exportEncryptedBackup(slug, backupId) {
+    try {
+        showToast('Chiffrement', 'Chiffrement du backup en cours...', 'info');
+        
+        // D'abord, chiffrer le backup
+        const exportResult = await api.request(`/apps/${slug}/backup/${backupId}/export`);
+        
+        if (!exportResult.success) {
+            throw new Error(exportResult.message || 'Erreur de chiffrement');
+        }
+        
+        // Ensuite, télécharger le fichier chiffré
+        const url = `/api/apps/${slug}/backup/${backupId}/export/download`;
+        const response = await fetch(url, {
+            headers: {
+                'Authorization': `Bearer ${api.token}`
+            }
+        });
+        
+        if (!response.ok) {
+            throw new Error('Erreur lors du téléchargement');
+        }
+        
+        const blob = await response.blob();
+        const downloadUrl = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = downloadUrl;
+        a.download = exportResult.encrypted_filename || `backup_${slug}_${backupId}.encrypted`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(downloadUrl);
+        
+        showToast('Succès', `Backup chiffré exporté (${exportResult.encrypted_size_human})`, 'success');
+        
+        // Rafraîchir la liste pour voir le statut is_encrypted
+        showAppBackupsList(slug);
+        
+    } catch (error) {
+        console.error('Erreur export chiffré:', error);
+        showToast('Erreur', error.message || 'Impossible d\'exporter le backup', 'danger');
+    }
+}
+
+/**
+ * Variables pour la suppression de backup
+ */
+let confirmDeleteBackupModal = null;
+
+/**
+ * Affiche le modal de confirmation de suppression d'un backup
+ */
+function deleteAppBackup(slug, backupId, appName, backupDate) {
+    if (!confirmDeleteBackupModal) {
+        confirmDeleteBackupModal = new bootstrap.Modal(document.getElementById('confirmDeleteBackupModal'));
+    }
+    
+    // Stocker les infos du backup à supprimer
+    document.getElementById('deleteBackupSlug').value = slug;
+    document.getElementById('deleteBackupId').value = backupId;
+    document.getElementById('deleteBackupAppName').textContent = appName || slug;
+    document.getElementById('deleteBackupDate').textContent = backupDate || '-';
+    
+    // Réinitialiser le champ de confirmation
+    document.getElementById('confirmDeleteInput').value = '';
+    document.getElementById('confirmDeleteBackupBtn').disabled = true;
+    
+    confirmDeleteBackupModal.show();
+}
+
+/**
+ * Vérifie si la confirmation de suppression est valide
+ */
+function checkDeleteConfirmation() {
+    const input = document.getElementById('confirmDeleteInput').value;
+    const btn = document.getElementById('confirmDeleteBackupBtn');
+    btn.disabled = input !== 'SUPPRIMER';
+}
+
+/**
+ * Exécute la suppression après confirmation
+ */
+async function confirmDeleteBackup() {
+    const slug = document.getElementById('deleteBackupSlug').value;
+    const backupId = document.getElementById('deleteBackupId').value;
+    
+    if (!slug || !backupId) return;
+    
+    // Fermer le modal
+    confirmDeleteBackupModal.hide();
+    
+    try {
+        await api.request(`/apps/${slug}/backup/${backupId}`, {
+            method: 'DELETE'
+        });
+        
+        showToast('Succès', 'Backup supprimé définitivement', 'success');
+        showAppBackupsList(slug);
+        loadAppBackupsOverview();
+        
+    } catch (error) {
+        console.error('Erreur suppression:', error);
+        showToast('Erreur', error.message || 'Impossible de supprimer le backup', 'danger');
+    }
+}
+
+
+// Variables pour le déclenchement de backup
+let confirmBackupTriggerModal = null;
+let pendingBackupSlug = null;
+let pendingBackupAppName = null;
+
+/**
+ * Affiche le modal de confirmation pour déclencher un backup
+ */
+function showTriggerBackupConfirm(slug, appName) {
+    if (!confirmBackupTriggerModal) {
+        confirmBackupTriggerModal = new bootstrap.Modal(document.getElementById('confirmBackupTriggerModal'));
+    }
+    
+    pendingBackupSlug = slug;
+    pendingBackupAppName = appName;
+    
+    document.getElementById('confirmBackupAppName').textContent = appName;
+    confirmBackupTriggerModal.show();
+}
+
+/**
+ * Déclenche le backup après confirmation (depuis le modal de confirmation)
+ */
+async function confirmTriggerBackup() {
+    if (!pendingBackupSlug) return;
+    
+    // Fermer le modal de confirmation
+    confirmBackupTriggerModal.hide();
+    
+    await doTriggerBackup(pendingBackupSlug, pendingBackupAppName);
+    
+    pendingBackupSlug = null;
+    pendingBackupAppName = null;
+}
+
+/**
+ * Déclenche le backup depuis le modal de liste des backups
+ */
+async function triggerAppBackup() {
+    const slug = document.getElementById('backupsListAppSlug').value;
+    const appName = document.getElementById('backupsListAppName').textContent;
+    
+    if (!slug) return;
+    
+    // Afficher le modal de confirmation
+    showTriggerBackupConfirm(slug, appName);
+}
+
+/**
+ * Effectue le déclenchement du backup
+ */
+async function doTriggerBackup(slug, appName) {
+    // Toast de progression
+    showToast('Sauvegarde', `Déclenchement de la sauvegarde pour ${appName}...`, 'info');
+    
+    try {
+        const response = await api.request(`/apps/${slug}/backup/trigger`, {
+            method: 'POST'
+        });
+        
+        if (response.success) {
+            showToast('Succès', response.message || `Sauvegarde créée pour ${appName}`, 'success');
+            
+            // Rafraîchir les données
+            loadAppBackupsOverview();
+            
+            // Si le modal de liste est ouvert, le rafraîchir
+            if (appBackupsListModal && document.getElementById('backupsListAppSlug').value === slug) {
+                showAppBackupsList(slug);
+            }
+        } else {
+            showToast('Information', response.message || 'Backup non créé', 'warning');
+        }
+        
+    } catch (error) {
+        console.error('Erreur déclenchement backup:', error);
+        showToast('Erreur', error.message || 'Impossible de déclencher la sauvegarde', 'danger');
+    }
+}
+
+
+// =============================================================================
+// PKI - GESTION DES CERTIFICATS SSL/TLS
+// =============================================================================
+
+let pkiCreateCertModal = null;
+let pkiInstallModal = null;
+
+/**
+ * Charge la page PKI avec toutes les informations
+ */
+async function loadPkiPage() {
+    try {
+        const status = await api.request('/pki/status');
+        
+        // Initialiser les modals Bootstrap si pas encore fait
+        if (!pkiCreateCertModal) {
+            pkiCreateCertModal = new bootstrap.Modal(document.getElementById('pkiCreateCertModal'));
+        }
+        if (!pkiInstallModal) {
+            pkiInstallModal = new bootstrap.Modal(document.getElementById('pkiInstallModal'));
+        }
+        
+        // Mettre à jour l'affichage CA
+        updatePkiCaDisplay(status);
+        
+        // Mettre à jour l'état HTTPS
+        updatePkiHttpsDisplay(status);
+        
+        // Mettre à jour la liste des certificats
+        updatePkiCertsTable(status.certificates);
+        
+        // Mettre à jour la configuration
+        updatePkiConfigDisplay(status.config);
+        
+    } catch (error) {
+        console.error('Erreur chargement PKI:', error);
+        showToast('Erreur', 'Impossible de charger les informations PKI', 'danger');
+    }
+}
+
+/**
+ * Met à jour l'affichage de la CA
+ */
+function updatePkiCaDisplay(status) {
+    const caStatusBadge = document.getElementById('pkiCaStatus');
+    const caNotInit = document.getElementById('pkiCaNotInitialized');
+    const caInit = document.getElementById('pkiCaInitialized');
+    const createCertBtn = document.getElementById('pkiCreateCertBtn');
+    
+    if (status.initialized && status.ca) {
+        const ca = status.ca;
+        
+        // Badge statut
+        if (ca.days_remaining > 365) {
+            caStatusBadge.className = 'badge bg-success';
+            caStatusBadge.textContent = '✅ Active';
+        } else if (ca.days_remaining > 30) {
+            caStatusBadge.className = 'badge bg-warning text-dark';
+            caStatusBadge.textContent = '⚠️ À renouveler';
+        } else if (ca.days_remaining > 0) {
+            caStatusBadge.className = 'badge bg-danger';
+            caStatusBadge.textContent = '🔴 Expire bientôt';
+        } else {
+            caStatusBadge.className = 'badge bg-danger';
+            caStatusBadge.textContent = '⛔ Expirée';
+        }
+        
+        // Infos CA
+        document.getElementById('pkiCaName').textContent = ca.common_name || '-';
+        document.getElementById('pkiCaOrg').textContent = ca.organization || '-';
+        document.getElementById('pkiCaCreated').textContent = ca.created ? new Date(ca.created).toLocaleDateString('fr-FR') : '-';
+        document.getElementById('pkiCaExpires').textContent = ca.expires ? new Date(ca.expires).toLocaleDateString('fr-FR') : '-';
+        
+        // Progress bar
+        const totalDays = status.config.ca_validity_years * 365;
+        const percent = Math.max(0, Math.min(100, (ca.days_remaining / totalDays) * 100));
+        const progressBar = document.getElementById('pkiCaProgressBar');
+        progressBar.style.width = percent + '%';
+        progressBar.className = 'progress-bar ' + (percent > 30 ? 'bg-success' : percent > 10 ? 'bg-warning' : 'bg-danger');
+        document.getElementById('pkiCaDaysLeft').textContent = ca.days_remaining + ' jours';
+        
+        caNotInit.classList.add('d-none');
+        caInit.classList.remove('d-none');
+        createCertBtn.disabled = false;
+    } else {
+        caStatusBadge.className = 'badge bg-secondary';
+        caStatusBadge.textContent = 'Non initialisée';
+        caNotInit.classList.remove('d-none');
+        caInit.classList.add('d-none');
+        createCertBtn.disabled = true;
+    }
+}
+
+/**
+ * Met à jour l'affichage de l'état HTTPS
+ */
+function updatePkiHttpsDisplay(status) {
+    const httpsBadge = document.getElementById('pkiHttpsStatus');
+    const currentProtocol = document.getElementById('pkiCurrentProtocol');
+    const hubCertStatus = document.getElementById('pkiHubCertStatus');
+    const actionsDiv = document.getElementById('pkiHttpsActions');
+    
+    // Protocole actuel
+    const isHttps = window.location.protocol === 'https:';
+    currentProtocol.innerHTML = isHttps 
+        ? '<i class="bi bi-lock-fill text-success me-1"></i>HTTPS' 
+        : '<i class="bi bi-unlock text-warning me-1"></i>HTTP';
+    
+    // Chercher le certificat "hub"
+    const hubCert = status.certificates.find(c => c.name === 'hub');
+    
+    if (hubCert) {
+        if (hubCert.status === 'valid' && hubCert.days_remaining > 0) {
+            httpsBadge.className = 'badge bg-success';
+            httpsBadge.textContent = isHttps ? '🔒 Sécurisé' : '✅ Prêt';
+            hubCertStatus.innerHTML = `<span class="text-success"><i class="bi bi-check-circle me-1"></i>Valide (${hubCert.days_remaining}j)</span>`;
+            
+            if (!isHttps) {
+                actionsDiv.innerHTML = `
+                    <div class="alert alert-info mb-0">
+                        <i class="bi bi-info-circle me-2"></i>
+                        Le certificat Hub est prêt. Redémarrez le conteneur <code>hub-frontend</code> pour activer HTTPS.
+                        <hr>
+                        <code>docker-compose up -d --build hub-frontend</code>
+                    </div>
+                `;
+            } else {
+                actionsDiv.innerHTML = `
+                    <div class="alert alert-success mb-0">
+                        <i class="bi bi-shield-check me-2"></i>
+                        Connexion sécurisée active. Vos communications sont chiffrées.
+                    </div>
+                `;
+            }
+        } else {
+            httpsBadge.className = 'badge bg-warning text-dark';
+            httpsBadge.textContent = '⚠️ Certificat expiré';
+            hubCertStatus.innerHTML = `<span class="text-danger"><i class="bi bi-exclamation-triangle me-1"></i>${hubCert.status}</span>`;
+            actionsDiv.innerHTML = `
+                <button class="btn btn-warning" onclick="renewPkiCert('hub')">
+                    <i class="bi bi-arrow-repeat me-1"></i>Renouveler le certificat Hub
+                </button>
+            `;
+        }
+    } else {
+        httpsBadge.className = 'badge bg-secondary';
+        httpsBadge.textContent = 'Non configuré';
+        hubCertStatus.innerHTML = '<span class="text-muted">Non créé</span>';
+        
+        if (status.initialized) {
+            actionsDiv.innerHTML = `
+                <button class="btn btn-primary" onclick="createHubCertificate()">
+                    <i class="bi bi-shield-plus me-1"></i>Créer le certificat Hub
+                </button>
+                <small class="text-muted d-block mt-2">Crée automatiquement un certificat pour le Hub</small>
+            `;
+        } else {
+            actionsDiv.innerHTML = `
+                <div class="alert alert-secondary mb-0">
+                    <i class="bi bi-arrow-left me-2"></i>
+                    Initialisez d'abord la CA pour pouvoir créer des certificats.
+                </div>
+            `;
+        }
+    }
+}
+
+/**
+ * Met à jour le tableau des certificats
+ */
+function updatePkiCertsTable(certificates) {
+    const tbody = document.getElementById('pkiCertsTableBody');
+    
+    if (!certificates || certificates.length === 0) {
+        tbody.innerHTML = `
+            <tr>
+                <td colspan="6" class="text-center text-muted py-4">
+                    <i class="bi bi-inbox display-4"></i>
+                    <p class="mt-2">Aucun certificat créé</p>
+                </td>
+            </tr>
+        `;
+        return;
+    }
+    
+    tbody.innerHTML = certificates.map(cert => {
+        // Status badge
+        let statusBadge;
+        if (cert.status === 'revoked') {
+            statusBadge = '<span class="badge bg-danger">Révoqué</span>';
+        } else if (cert.days_remaining <= 0) {
+            statusBadge = '<span class="badge bg-danger">Expiré</span>';
+        } else if (cert.days_remaining < 30) {
+            statusBadge = `<span class="badge bg-warning text-dark">${cert.days_remaining}j</span>`;
+        } else {
+            statusBadge = `<span class="badge bg-success">${cert.days_remaining}j</span>`;
+        }
+        
+        // Expire date
+        const expireDate = cert.expires ? new Date(cert.expires).toLocaleDateString('fr-FR') : '-';
+        
+        return `
+            <tr>
+                <td><strong>${cert.name}</strong></td>
+                <td><code class="small">${(cert.domains || []).join(', ')}</code></td>
+                <td><code class="small">${(cert.ips || []).join(', ')}</code></td>
+                <td>${expireDate}</td>
+                <td>${statusBadge}</td>
+                <td>
+                    <div class="btn-group btn-group-sm">
+                        <button class="btn btn-outline-primary" onclick="downloadPkiCert('${cert.name}', 'cert')" title="Télécharger certificat">
+                            <i class="bi bi-download"></i>
+                        </button>
+                        <button class="btn btn-outline-secondary" onclick="downloadPkiCert('${cert.name}', 'key')" title="Télécharger clé">
+                            <i class="bi bi-key"></i>
+                        </button>
+                        <button class="btn btn-outline-info" onclick="renewPkiCert('${cert.name}')" title="Renouveler">
+                            <i class="bi bi-arrow-repeat"></i>
+                        </button>
+                        <button class="btn btn-outline-danger" onclick="revokePkiCert('${cert.name}')" title="Révoquer">
+                            <i class="bi bi-x-circle"></i>
+                        </button>
+                    </div>
+                </td>
+            </tr>
+        `;
+    }).join('');
+}
+
+/**
+ * Met à jour l'affichage de la configuration
+ */
+function updatePkiConfigDisplay(config) {
+    document.getElementById('pkiConfigCaValidity').textContent = config.ca_validity_years + ' ans';
+    document.getElementById('pkiConfigCertValidity').textContent = config.cert_validity_days + ' jours';
+    document.getElementById('pkiConfigKeySize').textContent = config.key_size + ' bits';
+    document.getElementById('pkiConfigDomains').textContent = (config.cert_domains || []).join(', ');
+}
+
+/**
+ * Initialise la CA
+ */
+async function initializePkiCA() {
+    if (!confirm('Initialiser l\'Autorité de Certification ?\n\nCela créera une nouvelle CA qui sera utilisée pour signer tous les certificats.')) {
+        return;
+    }
+    
+    try {
+        const result = await api.request('/pki/init', {
+            method: 'POST',
+            body: JSON.stringify({ force: false })
+        });
+        
+        if (result.success) {
+            showToast('PKI', 'CA initialisée avec succès !', 'success');
+            loadPkiPage();
+        } else {
+            showToast('PKI', result.message, 'warning');
+        }
+    } catch (error) {
+        console.error('Erreur init CA:', error);
+        showToast('Erreur', error.message || 'Impossible d\'initialiser la CA', 'danger');
+    }
+}
+
+/**
+ * Crée automatiquement le certificat Hub
+ */
+async function createHubCertificate() {
+    try {
+        const result = await api.request('/pki/certificates', {
+            method: 'POST',
+            body: JSON.stringify({
+                name: 'hub',
+                domains: [],  // Utilise les domaines par défaut
+                ips: [],
+                force: false
+            })
+        });
+        
+        if (result.success) {
+            showToast('PKI', 'Certificat Hub créé avec succès !', 'success');
+            loadPkiPage();
+        } else {
+            showToast('PKI', result.message, 'warning');
+        }
+    } catch (error) {
+        console.error('Erreur création cert Hub:', error);
+        showToast('Erreur', error.message || 'Impossible de créer le certificat', 'danger');
+    }
+}
+
+/**
+ * Affiche le modal de création de certificat
+ */
+function showCreateCertModal() {
+    document.getElementById('pkiCreateCertForm').reset();
+    pkiCreateCertModal.show();
+}
+
+/**
+ * Gère la soumission du formulaire de création de certificat
+ */
+async function handleCreateCert(event) {
+    event.preventDefault();
+    
+    const name = document.getElementById('pkiCertName').value.trim().toLowerCase();
+    const domainsStr = document.getElementById('pkiCertDomains').value.trim();
+    const ipsStr = document.getElementById('pkiCertIps').value.trim();
+    const force = document.getElementById('pkiCertForce').checked;
+    
+    const domains = domainsStr ? domainsStr.split(',').map(d => d.trim()).filter(d => d) : [];
+    const ips = ipsStr ? ipsStr.split(',').map(ip => ip.trim()).filter(ip => ip) : [];
+    
+    try {
+        const result = await api.request('/pki/certificates', {
+            method: 'POST',
+            body: JSON.stringify({ name, domains, ips, force })
+        });
+        
+        pkiCreateCertModal.hide();
+        
+        if (result.success) {
+            showToast('PKI', `Certificat '${name}' créé avec succès !`, 'success');
+            loadPkiPage();
+        } else {
+            showToast('PKI', result.message, 'warning');
+        }
+    } catch (error) {
+        console.error('Erreur création certificat:', error);
+        showToast('Erreur', error.message || 'Impossible de créer le certificat', 'danger');
+    }
+}
+
+/**
+ * Télécharge la CA
+ */
+async function downloadPkiCA(format) {
+    try {
+        const response = await fetch(`/api/pki/ca/download?format=${format}`, {
+            headers: {
+                'Authorization': `Bearer ${localStorage.getItem('hub_token')}`
+            }
+        });
+        
+        if (!response.ok) {
+            throw new Error(`Erreur ${response.status}`);
+        }
+        
+        const blob = await response.blob();
+        const filename = format === 'pem' ? 'hub-ca.crt' : 'hub-ca.der';
+        
+        // Créer un lien de téléchargement
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        window.URL.revokeObjectURL(url);
+        a.remove();
+        
+        showToast('PKI', `CA téléchargée (${format.toUpperCase()})`, 'success');
+    } catch (error) {
+        console.error('Erreur téléchargement CA:', error);
+        showToast('Erreur', 'Impossible de télécharger la CA', 'danger');
+    }
+}
+
+/**
+ * Télécharge un fichier de certificat
+ */
+async function downloadPkiCert(name, file) {
+    try {
+        const response = await fetch(`/api/pki/certificates/${name}/download?file=${file}`, {
+            headers: {
+                'Authorization': `Bearer ${localStorage.getItem('hub_token')}`
+            }
+        });
+        
+        if (!response.ok) {
+            throw new Error(`Erreur ${response.status}`);
+        }
+        
+        const blob = await response.blob();
+        const ext = file === 'cert' ? 'crt' : 'key';
+        const filename = `${name}.${ext}`;
+        
+        // Créer un lien de téléchargement
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        window.URL.revokeObjectURL(url);
+        a.remove();
+        
+        showToast('PKI', `${file === 'cert' ? 'Certificat' : 'Clé'} téléchargé(e)`, 'success');
+    } catch (error) {
+        console.error('Erreur téléchargement certificat:', error);
+        showToast('Erreur', 'Impossible de télécharger le fichier', 'danger');
+    }
+}
+
+/**
+ * Renouvelle un certificat
+ */
+async function renewPkiCert(name) {
+    if (!confirm(`Renouveler le certificat '${name}' ?\n\nLe certificat actuel sera remplacé.`)) {
+        return;
+    }
+    
+    try {
+        const result = await api.request(`/pki/certificates/${name}/renew`, {
+            method: 'POST'
+        });
+        
+        if (result.success) {
+            showToast('PKI', `Certificat '${name}' renouvelé !`, 'success');
+            loadPkiPage();
+        } else {
+            showToast('PKI', result.message, 'warning');
+        }
+    } catch (error) {
+        console.error('Erreur renouvellement:', error);
+        showToast('Erreur', error.message || 'Impossible de renouveler', 'danger');
+    }
+}
+
+/**
+ * Révoque un certificat
+ */
+async function revokePkiCert(name) {
+    if (!confirm(`Révoquer le certificat '${name}' ?\n\n⚠️ Cette action est irréversible !`)) {
+        return;
+    }
+    
+    try {
+        const result = await api.request(`/pki/certificates/${name}/revoke`, {
+            method: 'POST'
+        });
+        
+        if (result.success) {
+            showToast('PKI', `Certificat '${name}' révoqué`, 'warning');
+            loadPkiPage();
+        } else {
+            showToast('PKI', result.message, 'warning');
+        }
+    } catch (error) {
+        console.error('Erreur révocation:', error);
+        showToast('Erreur', error.message || 'Impossible de révoquer', 'danger');
+    }
+}
+
+/**
+ * Affiche les instructions d'installation de la CA
+ */
+function showCaInstallInstructions() {
+    pkiInstallModal.show();
 }

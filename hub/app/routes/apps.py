@@ -9,6 +9,7 @@ from pathlib import Path
 import logging
 
 from app.routes.events import notify_event, notify_stats_update
+from app.routes.app_backups import reassociate_orphan_backups
 
 from app.database import get_db
 from app.models import Application, User, ServiceAccount, UserAppRole, ApprovalStatus, service_account_app_access
@@ -467,7 +468,8 @@ async def get_apps_status(
         
         try:
             start = asyncio.get_event_loop().time()
-            async with httpx.AsyncClient(timeout=5.0) as client:
+            # verify=False pour accepter les certificats auto-signés (PKI interne)
+            async with httpx.AsyncClient(timeout=5.0, verify=False) as client:
                 # Essayer d'abord /health, puis / en fallback
                 for endpoint in ["/health", "/api/health", "/"]:
                     try:
@@ -788,12 +790,19 @@ async def create_app(
         # Utiliser le host configuré ou auto-détecté
         host = settings.get_hub_host()
     
-    # Construire les URLs à partir des ports
-    api_url = f"http://{host}:{app_data.api_port}"
+    # Construire les URLs à partir des ports - Priorité HTTPS
+    if app_data.api_https_port:
+        api_url = f"https://{host}:{app_data.api_https_port}"
+    else:
+        api_url = f"http://{host}:{app_data.api_port}"
+    
     frontend_url = None
     callback_url = None
 
-    if app_data.frontend_port:
+    if app_data.frontend_https_port:
+        frontend_url = f"https://{host}:{app_data.frontend_https_port}"
+        callback_url = f"{frontend_url}/callback"
+    elif app_data.frontend_port:
         frontend_protocol = "https" if app_data.frontend_https else "http"
         frontend_url = f"{frontend_protocol}://{host}:{app_data.frontend_port}"
         callback_url = f"{frontend_url}/callback"
@@ -872,6 +881,11 @@ async def create_app(
     
     await db.commit()
     await db.refresh(app)
+    
+    # Réassocier les backups orphelins qui ont le même slug
+    orphan_count = await reassociate_orphan_backups(db, app)
+    if orphan_count > 0:
+        logger.info(f"📦 {orphan_count} backup(s) orphelin(s) réassocié(s) à l'application '{app.slug}'")
     
     # Si l'app est un service partagé, l'ajouter à tous les SA existants
     shared_added_count = 0
@@ -982,24 +996,37 @@ async def register_app(
             logger.info(f"⚠️ Application '{app_data.slug}' déjà enregistrée, vérification des mises à jour...")
             
             updated_fields = []
-            host = settings.get_hub_host()
+            # Utiliser custom_host si fourni (app distante), sinon le host du HUB
+            if app_data.custom_host:
+                host = app_data.custom_host
+            else:
+                host = settings.get_hub_host()
             
-            # Mettre à jour les URLs si les ports ont changé
-            new_api_url = f"http://{host}:{app_data.api_port}"
+            # Mettre à jour les URLs si les ports ont changé - Priorité HTTPS
+            if app_data.api_https_port:
+                new_api_url = f"https://{host}:{app_data.api_https_port}"
+            else:
+                new_api_url = f"http://{host}:{app_data.api_port}"
             if existing_app.api_url != new_api_url:
                 old_value = existing_app.api_url
                 existing_app.api_url = new_api_url
                 updated_fields.append(f"api_url: {old_value} → {new_api_url}")
                 logger.info(f"🔄 Mise à jour api_url: {old_value} → {new_api_url}")
             
-            if app_data.frontend_port:
+            # Utiliser le port HTTPS si fourni, sinon le port HTTP
+            if app_data.frontend_https_port:
+                new_frontend_url = f"https://{host}:{app_data.frontend_https_port}"
+            elif app_data.frontend_port:
                 new_frontend_url = f"http://{host}:{app_data.frontend_port}"
-                if existing_app.frontend_url != new_frontend_url:
-                    old_value = existing_app.frontend_url
-                    existing_app.frontend_url = new_frontend_url
-                    existing_app.callback_url = f"{new_frontend_url}/callback"
-                    updated_fields.append(f"frontend_url: {old_value} → {new_frontend_url}")
-                    logger.info(f"🔄 Mise à jour frontend_url: {old_value} → {new_frontend_url}")
+            else:
+                new_frontend_url = None
+            
+            if new_frontend_url and existing_app.frontend_url != new_frontend_url:
+                old_value = existing_app.frontend_url
+                existing_app.frontend_url = new_frontend_url
+                existing_app.callback_url = f"{new_frontend_url}/callback"
+                updated_fields.append(f"frontend_url: {old_value} → {new_frontend_url}")
+                logger.info(f"🔄 Mise à jour frontend_url: {old_value} → {new_frontend_url}")
             
             # Mettre à jour is_shared_service si différent
             if existing_app.is_shared_service != app_data.is_shared:
@@ -1007,6 +1034,14 @@ async def register_app(
                 existing_app.is_shared_service = app_data.is_shared
                 updated_fields.append(f"is_shared: {old_shared} → {app_data.is_shared}")
                 logger.info(f"🔄 Mise à jour is_shared_service: {old_shared} → {app_data.is_shared}")
+            
+            # Mettre à jour is_remote si custom_host est fourni et différent
+            is_now_remote = bool(app_data.custom_host)
+            if existing_app.is_remote != is_now_remote:
+                old_remote = existing_app.is_remote
+                existing_app.is_remote = is_now_remote
+                updated_fields.append(f"is_remote: {old_remote} → {is_now_remote}")
+                logger.info(f"🔄 Mise à jour is_remote: {old_remote} → {is_now_remote}")
             
             # Mettre à jour le nom si fourni et différent
             if app_data.name and existing_app.name != app_data.name:
@@ -1062,29 +1097,60 @@ async def register_app(
             )
     
     # Nouvelle application (ou remplacement) - créer l'app et le service account
-    host = settings.get_hub_host()
-    api_url = f"http://{host}:{app_data.api_port}"
-    frontend_url = f"http://{host}:{app_data.frontend_port}" if app_data.frontend_port else None
+    # Déterminer si c'est une app distante (custom_host fourni)
+    is_remote = bool(app_data.custom_host)
+    if is_remote:
+        host = app_data.custom_host
+        logger.info(f"🌐 Application distante détectée - host: {host} (IP source: {client_ip})")
+    else:
+        host = settings.get_hub_host()
+    
+    # Construire l'URL API - Priorité HTTPS
+    if app_data.api_https_port:
+        api_url = f"https://{host}:{app_data.api_https_port}"
+    else:
+        api_url = f"http://{host}:{app_data.api_port}"
+    
+    # Utiliser le port HTTPS si fourni, sinon le port HTTP
+    if app_data.frontend_https_port:
+        frontend_url = f"https://{host}:{app_data.frontend_https_port}"
+    elif app_data.frontend_port:
+        frontend_url = f"http://{host}:{app_data.frontend_port}"
+    else:
+        frontend_url = None
     callback_url = f"{frontend_url}/callback" if frontend_url else None
     
     # SÉCURITÉ : Les apps auto-enregistrées sont en statut "pending"
     # L'admin doit approuver avant que l'app ne soit active
+    # Description enrichie pour les apps distantes
+    description = app_data.description
+    if not description:
+        if is_remote:
+            description = f"Application {app_data.slug} (auto-enregistrée depuis serveur distant {client_ip}, en attente d'approbation)"
+        else:
+            description = f"Application {app_data.slug} (auto-enregistrée, en attente d'approbation)"
+    
     app = Application(
         name=app_data.name or app_data.slug.replace("-", " ").title(),
         slug=app_data.slug,
-        description=app_data.description or f"Application {app_data.slug} (auto-enregistrée, en attente d'approbation)",
+        description=description,
         api_url=api_url,
         frontend_url=frontend_url,
         callback_url=callback_url,
         requires_auth=True,
         is_shared_service=app_data.is_shared,  # Permet l'accès M2M si True
+        is_remote=is_remote,  # Marquer comme app distante si custom_host fourni
+        registered_from_ip=client_ip,  # Enregistrer l'IP source
         approval_status=ApprovalStatus.pending,  # En attente d'approbation admin
         is_active=False  # Inactive jusqu'à approbation
     )
     db.add(app)
     await db.flush()
     
-    logger.info(f"🔒 Application '{app_data.slug}' créée en statut PENDING (en attente d'approbation admin)")
+    if is_remote:
+        logger.info(f"🔒🌐 Application DISTANTE '{app_data.slug}' créée en statut PENDING (host: {host}, IP source: {client_ip})")
+    else:
+        logger.info(f"🔒 Application '{app_data.slug}' créée en statut PENDING (en attente d'approbation admin)")
     
     # Créer le service account automatiquement
     client_id = ServiceAccount.generate_client_id()
@@ -1129,6 +1195,12 @@ async def register_app(
     await db.commit()
     await db.refresh(app)
     
+    # Réassocier les backups orphelins qui ont le même slug
+    # Cela permet de récupérer les sauvegardes d'une app précédemment supprimée
+    orphan_count = await reassociate_orphan_backups(db, app)
+    if orphan_count > 0:
+        logger.info(f"📦 {orphan_count} backup(s) orphelin(s) réassocié(s) à l'application '{app.slug}'")
+    
     # Si l'app est un service partagé (is_shared=True), l'ajouter à tous les SA existants
     shared_added_count = 0
     if app_data.is_shared:
@@ -1139,7 +1211,14 @@ async def register_app(
     
     # Notifier les clients SSE (auto-registration)
     action = "replaced" if replaced else "created"
-    notify_event("apps_updated", {"action": action, "app_slug": app.slug, "app_name": app.name, "source": "auto-register"})
+    notify_event("apps_updated", {
+        "action": action, 
+        "app_slug": app.slug, 
+        "app_name": app.name, 
+        "source": "auto-register",
+        "is_remote": is_remote,
+        "registered_from_ip": client_ip
+    })
     notify_stats_update()
     
     # Sauvegarder les credentials dans le fichier (backup)
@@ -1152,12 +1231,15 @@ async def register_app(
     )
     
     # Message indiquant l'attente d'approbation
-    message = f"⏳ Application '{app_data.slug}' enregistrée avec succès. EN ATTENTE D'APPROBATION ADMIN."
+    if is_remote:
+        message = f"⏳🌐 Application DISTANTE '{app_data.slug}' enregistrée depuis {client_ip}. EN ATTENTE D'APPROBATION ADMIN."
+    else:
+        message = f"⏳ Application '{app_data.slug}' enregistrée avec succès. EN ATTENTE D'APPROBATION ADMIN."
     message += " Credentials M2M générés mais inactifs jusqu'à approbation."
     if app_data.is_shared:
         message += " Le mode service partagé sera activé après approbation."
     
-    logger.info(f"📝 Application '{app_data.slug}' auto-enregistrée depuis {client_ip} (PENDING)")
+    logger.info(f"📝 Application '{app_data.slug}' auto-enregistrée depuis {client_ip} (PENDING, remote={is_remote})")
     
     return AppRegisterResponse(
         message=message,
@@ -1165,7 +1247,7 @@ async def register_app(
         credentials={
             "client_id": client_id,
             "client_secret": client_secret,
-            "hub_host": host,
+            "hub_host": settings.get_hub_host(),  # Toujours retourner le host du HUB pour la connexion
             "hub_api_port": settings.hub_api_port if hasattr(settings, 'hub_api_port') else 8000
         },
         is_new=True,
@@ -1220,20 +1302,29 @@ async def admin_auto_register_app(
             shared_changed = True
             logger.info(f"🔄 Mise à jour is_shared_service: {old_shared_value} → {app_data.is_shared}")
         
-        # Mettre à jour les URLs si les ports ont changé
-        new_api_url = f"http://{host}:{app_data.api_port}"
+        # Mettre à jour les URLs si les ports ont changé - Priorité HTTPS
+        if app_data.api_https_port:
+            new_api_url = f"https://{host}:{app_data.api_https_port}"
+        else:
+            new_api_url = f"http://{host}:{app_data.api_port}"
         if existing_app.api_url != new_api_url:
             old_value = existing_app.api_url
             existing_app.api_url = new_api_url
             updated_fields.append(f"api_url: {old_value} → {new_api_url}")
         
-        if app_data.frontend_port:
+        # Utiliser le port HTTPS si fourni, sinon le port HTTP
+        if app_data.frontend_https_port:
+            new_frontend_url = f"https://{host}:{app_data.frontend_https_port}"
+        elif app_data.frontend_port:
             new_frontend_url = f"http://{host}:{app_data.frontend_port}"
-            if existing_app.frontend_url != new_frontend_url:
-                old_value = existing_app.frontend_url
-                existing_app.frontend_url = new_frontend_url
-                existing_app.callback_url = f"{new_frontend_url}/callback"
-                updated_fields.append(f"frontend_url: {old_value} → {new_frontend_url}")
+        else:
+            new_frontend_url = None
+        
+        if new_frontend_url and existing_app.frontend_url != new_frontend_url:
+            old_value = existing_app.frontend_url
+            existing_app.frontend_url = new_frontend_url
+            existing_app.callback_url = f"{new_frontend_url}/callback"
+            updated_fields.append(f"frontend_url: {old_value} → {new_frontend_url}")
         
         # Mettre à jour le nom si fourni et différent
         if app_data.name and existing_app.name != app_data.name:
@@ -1292,8 +1383,20 @@ async def admin_auto_register_app(
     
     # Nouvelle application - créer l'app et le service account
     host = settings.get_hub_host()
-    api_url = f"http://{host}:{app_data.api_port}"
-    frontend_url = f"http://{host}:{app_data.frontend_port}" if app_data.frontend_port else None
+    
+    # Construire l'URL API - Priorité HTTPS
+    if app_data.api_https_port:
+        api_url = f"https://{host}:{app_data.api_https_port}"
+    else:
+        api_url = f"http://{host}:{app_data.api_port}"
+    
+    # Utiliser le port HTTPS si fourni, sinon le port HTTP
+    if app_data.frontend_https_port:
+        frontend_url = f"https://{host}:{app_data.frontend_https_port}"
+    elif app_data.frontend_port:
+        frontend_url = f"http://{host}:{app_data.frontend_port}"
+    else:
+        frontend_url = None
     callback_url = f"{frontend_url}/callback" if frontend_url else None
     
     app = Application(
@@ -1344,6 +1447,11 @@ async def admin_auto_register_app(
     
     await db.commit()
     await db.refresh(app)
+    
+    # Réassocier les backups orphelins qui ont le même slug
+    orphan_count = await reassociate_orphan_backups(db, app)
+    if orphan_count > 0:
+        logger.info(f"📦 {orphan_count} backup(s) orphelin(s) réassocié(s) à l'application '{app.slug}'")
     
     # Si l'app est un service partagé, l'ajouter à tous les SA existants
     shared_added_count = 0

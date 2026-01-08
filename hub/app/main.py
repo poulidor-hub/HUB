@@ -14,7 +14,7 @@ from app.database import init_db, async_session_maker, apply_migrations
 from app.models import User, ErrorLog
 from app.auth import get_password_hash, cleanup_expired_tokens
 from app.config import get_settings
-from app.routes import auth, users, apps, service_accounts, backup, audit, docs, events
+from app.routes import auth, users, apps, service_accounts, backup, audit, docs, events, pki, app_backups
 
 settings = get_settings()
 
@@ -22,6 +22,7 @@ settings = get_settings()
 _cleanup_task = None
 _docker_sync_task = None
 _log_purge_task = None
+_backup_scheduler_task = None
 
 
 async def create_default_admin():
@@ -119,9 +120,80 @@ async def periodic_log_purge():
             await asyncio.sleep(interval_hours * 3600)
 
 
+async def periodic_backup_scheduler():
+    """
+    Tâche périodique pour vérifier et déclencher les backups planifiés.
+    Vérifie toutes les minutes si un backup doit être lancé.
+    """
+    from croniter import croniter
+    from sqlalchemy import select
+    from app.models import Application
+    from datetime import datetime
+    
+    print("📅 Scheduler de backups démarré")
+    
+    # Attendre un peu avant le premier check
+    await asyncio.sleep(30)
+    
+    while True:
+        try:
+            async with async_session_maker() as db:
+                # Récupérer les apps avec backup scheduled
+                result = await db.execute(
+                    select(Application)
+                    .where(Application.backup_mode == "scheduled")
+                    .where(Application.backup_cron.isnot(None))
+                    .where(Application.is_active == True)
+                )
+                apps = result.scalars().all()
+                
+                now = datetime.utcnow()
+                
+                for app in apps:
+                    try:
+                        # Vérifier si c'est l'heure du backup
+                        if app.next_backup_at and app.next_backup_at <= now:
+                            print(f"📦 Déclenchement backup planifié pour {app.slug}")
+                            
+                            # Mettre à jour le statut
+                            app.last_backup_status = "running"
+                            
+                            # Calculer le prochain backup
+                            cron = croniter(app.backup_cron, now)
+                            app.next_backup_at = cron.get_next(datetime)
+                            
+                            await db.commit()
+                            
+                            # TODO: Déclencher réellement le backup
+                            # Pour l'instant, on log juste l'événement
+                            # L'implémentation complète nécessiterait d'appeler l'API de l'app
+                            
+                            print(f"📅 Prochain backup pour {app.slug}: {app.next_backup_at}")
+                        
+                        # Si next_backup_at n'est pas défini, le calculer
+                        elif not app.next_backup_at and app.backup_cron:
+                            cron = croniter(app.backup_cron, now)
+                            app.next_backup_at = cron.get_next(datetime)
+                            await db.commit()
+                            print(f"📅 Prochain backup programmé pour {app.slug}: {app.next_backup_at}")
+                            
+                    except Exception as e:
+                        print(f"⚠️ Erreur scheduler backup pour {app.slug}: {e}")
+            
+            # Vérifier toutes les 60 secondes
+            await asyncio.sleep(60)
+            
+        except asyncio.CancelledError:
+            print("🛑 Scheduler de backups arrêté")
+            break
+        except Exception as e:
+            print(f"⚠️ Erreur dans le scheduler de backups: {e}")
+            await asyncio.sleep(60)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _cleanup_task, _docker_sync_task, _log_purge_task
+    global _cleanup_task, _docker_sync_task, _log_purge_task, _backup_scheduler_task
     
     # Startup
     print("🚀 Démarrage du Hub d'Authentification...")
@@ -138,6 +210,9 @@ async def lifespan(app: FastAPI):
     
     # Démarrer la tâche de purge des logs
     _log_purge_task = asyncio.create_task(periodic_log_purge())
+    
+    # Démarrer le scheduler de backups
+    _backup_scheduler_task = asyncio.create_task(periodic_backup_scheduler())
     
     print("✅ Hub prêt !")
     yield
@@ -160,6 +235,12 @@ async def lifespan(app: FastAPI):
         _log_purge_task.cancel()
         try:
             await _log_purge_task
+        except asyncio.CancelledError:
+            pass
+    if _backup_scheduler_task:
+        _backup_scheduler_task.cancel()
+        try:
+            await _backup_scheduler_task
         except asyncio.CancelledError:
             pass
 
@@ -276,6 +357,23 @@ async def http_exception_handler(request: Request, exc: StarletteHTTPException):
     )
 
 
+def _sanitize_error_for_json(obj):
+    """
+    Convertit récursivement les objets non-sérialisables en JSON.
+    Notamment les bytes qui apparaissent dans les erreurs de validation.
+    """
+    if isinstance(obj, bytes):
+        try:
+            return obj.decode('utf-8', errors='replace')
+        except Exception:
+            return "<binary data>"
+    elif isinstance(obj, dict):
+        return {k: _sanitize_error_for_json(v) for k, v in obj.items()}
+    elif isinstance(obj, (list, tuple)):
+        return [_sanitize_error_for_json(item) for item in obj]
+    return obj
+
+
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
     """
@@ -297,10 +395,14 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
     # Logger l'erreur
     await _log_error_to_db(request, error_code, error_type, error_message)
     
+    # Sanitize les erreurs pour éviter les problèmes de sérialisation JSON
+    # (bytes, etc. venant du body brut)
+    sanitized_errors = _sanitize_error_for_json(errors)
+    
     return JSONResponse(
         status_code=error_code,
         content={
-            "detail": errors,
+            "detail": sanitized_errors,
             "request_id": request_id
         }
     )
@@ -358,6 +460,8 @@ app.include_router(backup.router)
 app.include_router(audit.router)
 app.include_router(docs.router)
 app.include_router(events.router)
+app.include_router(pki.router)
+app.include_router(app_backups.router)
 
 
 @app.get("/health")

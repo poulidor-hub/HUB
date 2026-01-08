@@ -56,8 +56,16 @@ services:
       - ./INTEGRATION.md:/code/INTEGRATION.md:ro
       # Changelog pour agents IA (accessible via /api/docs/changelog)
       - ./CHANGELOG.md:/code/CHANGELOG.md:ro
+      # PKI - Script de gestion des certificats
+      - ./pki.py:/code/pki.py:ro
+      # PKI - Dossier des certificats
+      - ./certs:/code/certs:rw
+      # PKI - Fichier .env pour la configuration
+      - ./.env:/code/.env:ro
       # Socket Docker pour la détection automatique des conteneurs (lecture seule)
       - /var/run/docker.sock:/var/run/docker.sock:ro
+      # Stockage des sauvegardes d'applications
+      - ./storage/backups:/code/storage/backups:rw
     # Groupe docker pour accéder au socket
     # ⚠️ Le GID varie selon les systèmes : 986 (Arch), 999 (Debian), 998, etc.
     # Vérifiez avec: getent group docker
@@ -80,6 +88,22 @@ services:
     restart: unless-stopped
     ports:
       - "${HUB_FRONTEND_PORT:-80}:80"
+      - "${HUB_HTTPS_PORT:-443}:443"
+    environment:
+      # Configuration PKI pour génération automatique des certificats
+      - PKI_CA_COMMON_NAME=${PKI_CA_COMMON_NAME:-Hub Local CA}
+      - PKI_CA_VALIDITY_YEARS=${PKI_CA_VALIDITY_YEARS:-10}
+      - PKI_CERT_VALIDITY_DAYS=${PKI_CERT_VALIDITY_DAYS:-365}
+      - PKI_CERT_DOMAINS=${PKI_CERT_DOMAINS:-localhost,hub.local,hub-frontend}
+      - PKI_CERT_IPS=${PKI_CERT_IPS:-}
+      - HUB_HOST=${HUB_HOST:-}
+    volumes:
+      # Dossier PKI complet (lecture/écriture pour génération auto)
+      - ./certs:/pki/certs:rw
+      # Script PKI
+      - ./pki.py:/pki/pki.py:ro
+      # Certificats SSL pour Nginx (liens symboliques créés par l'entrypoint)
+      - ./certs/server/hub:/etc/nginx/ssl/source:rw
     depends_on:
       - hub-api
     networks:

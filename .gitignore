@@ -6,6 +6,13 @@ secrets/service_accounts/*.env
 .env.prod
 *.pem
 
+# PKI / Certificats - Clés privées et certificats générés
+certs/ca/*.key
+certs/ca/*.crt
+certs/server/**/*.key
+certs/server/**/*.crt
+certs/registry.json
+
 # Python
 __pycache__/
 *.py[cod]
