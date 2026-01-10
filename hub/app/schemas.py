@@ -1,4 +1,4 @@
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, field_validator
 from typing import Optional, List, TYPE_CHECKING
 from datetime import datetime
 from enum import Enum
@@ -176,6 +176,12 @@ class AppResponse(AppBase):
     registered_from_ip: Optional[str] = None  # IP source lors de l'auto-enregistrement
     approval_status: ApprovalStatusEnum = ApprovalStatusEnum.approved
     created_at: datetime
+    
+    @field_validator('is_remote', mode='before')
+    @classmethod
+    def convert_none_to_false(cls, v):
+        """Convertit None en False pour is_remote (anciennes apps en BDD)"""
+        return v if v is not None else False
     
     class Config:
         from_attributes = True
