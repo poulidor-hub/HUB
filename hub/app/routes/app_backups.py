@@ -26,6 +26,7 @@ import uuid
 import json
 import hashlib
 import secrets
+import zipfile
 from pathlib import Path
 from datetime import datetime
 from typing import Optional
@@ -118,6 +119,101 @@ def human_readable_size(size: int) -> str:
             return f"{size:.1f} {unit}"
         size /= 1024
     return f"{size:.1f} PB"
+
+
+def extract_metadata_from_zip(zip_content: bytes) -> dict:
+    """
+    Extrait les métadonnées et compteurs depuis un fichier ZIP de backup.
+    
+    Le ZIP contient typiquement un fichier data.json avec la structure:
+    {
+        "metadata": {
+            "backup_id": "...",
+            "app_version": "...",
+            ...
+        },
+        "data": {
+            "items": [...],
+            "user_preferences": [...],
+            "uploaded_files": [...],
+            ...
+        }
+    }
+    
+    Returns:
+        dict avec app_version, total_items, total_preferences, total_files, content_summary
+    """
+    result = {
+        "app_version": None,
+        "total_items": 0,
+        "total_preferences": 0,
+        "total_files": 0,
+        "content_summary": ""
+    }
+    
+    try:
+        with zipfile.ZipFile(io.BytesIO(zip_content), 'r') as zf:
+            # Chercher data.json ou manifest.json
+            data_file = None
+            for name in ['data.json', 'manifest.json', 'backup.json']:
+                if name in zf.namelist():
+                    data_file = name
+                    break
+            
+            if data_file:
+                with zf.open(data_file) as f:
+                    data = json.load(f)
+                    
+                    # Extraire la version depuis metadata
+                    metadata = data.get("metadata", {})
+                    result["app_version"] = metadata.get("app_version") or metadata.get("version")
+                    
+                    # Extraire les compteurs depuis data
+                    backup_data = data.get("data", {})
+                    
+                    # Compter les items
+                    items = backup_data.get("items", [])
+                    result["total_items"] = len(items)
+                    
+                    # Compter les préférences
+                    prefs = backup_data.get("user_preferences", []) or backup_data.get("preferences", [])
+                    result["total_preferences"] = len(prefs)
+                    
+                    # Compter les fichiers uploadés
+                    files = backup_data.get("uploaded_files", []) or backup_data.get("files", [])
+                    result["total_files"] = len(files)
+                    
+                    # Construire un résumé du contenu
+                    summary_parts = []
+                    
+                    # Parcourir toutes les clés de data pour un résumé complet
+                    for key, value in backup_data.items():
+                        if isinstance(value, list) and len(value) > 0:
+                            # Formater le nom de la clé pour l'affichage
+                            display_name = key.replace("_", " ").title()
+                            summary_parts.append(f"{len(value)} {display_name}")
+                    
+                    if summary_parts:
+                        result["content_summary"] = ", ".join(summary_parts)
+                    else:
+                        result["content_summary"] = "Backup vide"
+            else:
+                # Pas de fichier de données trouvé, lister les fichiers du ZIP
+                file_list = zf.namelist()
+                result["total_files"] = len(file_list)
+                result["content_summary"] = f"{len(file_list)} fichier(s) dans l'archive"
+                
+    except zipfile.BadZipFile:
+        logger.warning("Le fichier n'est pas un ZIP valide")
+        result["content_summary"] = "Archive invalide"
+    except json.JSONDecodeError:
+        logger.warning("Erreur de parsing JSON dans le backup")
+        result["content_summary"] = "Données JSON invalides"
+    except Exception as e:
+        logger.warning(f"Erreur extraction métadonnées: {e}")
+        result["content_summary"] = "Erreur d'extraction"
+    
+    return result
 
 
 def encrypt_backup(data: bytes) -> tuple[bytes, bytes, bytes]:
@@ -402,6 +498,19 @@ async def receive_backup(
             detail="Checksum invalide - le fichier est peut-être corrompu"
         )
     
+    # Extraire les métadonnées du ZIP si les valeurs ne sont pas fournies
+    zip_metadata = extract_metadata_from_zip(content)
+    
+    # Utiliser les valeurs du ZIP si non fournies par l'appelant
+    final_app_version = app_version or zip_metadata.get("app_version")
+    final_total_items = total_items if total_items > 0 else zip_metadata.get("total_items", 0)
+    final_total_preferences = total_preferences if total_preferences > 0 else zip_metadata.get("total_preferences", 0)
+    final_total_files = total_files if total_files > 0 else zip_metadata.get("total_files", 0)
+    
+    # Générer une description automatique si non fournie
+    content_summary = zip_metadata.get("content_summary", "")
+    final_description = description or content_summary
+    
     # Créer le dossier de stockage
     app_dir = ensure_storage_dir(slug)
     
@@ -419,16 +528,16 @@ async def receive_backup(
         backup_id=backup_id,
         app_id=app.id,
         app_slug=slug,
-        app_version=app_version,
-        total_items=total_items,
-        total_preferences=total_preferences,
-        total_files=total_files,
+        app_version=final_app_version,
+        total_items=final_total_items,
+        total_preferences=final_total_preferences,
+        total_files=final_total_files,
         total_size_bytes=file_size,
         checksum=computed_checksum,
         storage_path=storage_path,
         created_by=created_by,
         created_by_type=created_by_type,
-        description=description
+        description=final_description
     )
     
     db.add(backup)
@@ -894,11 +1003,15 @@ async def trigger_backup(
         with open(full_path, "wb") as f:
             f.write(zip_content)
         
-        # Extraire les métadonnées du backup_info
-        app_version = backup_info.get("app_version")
-        total_items = backup_info.get("total_items", 0)
-        total_preferences = backup_info.get("total_preferences", 0)
-        total_files = backup_info.get("total_files", 0)
+        # Extraire les métadonnées du ZIP
+        zip_metadata = extract_metadata_from_zip(zip_content)
+        
+        # Extraire les métadonnées - priorité: backup_info API > ZIP > défaut
+        app_version = backup_info.get("app_version") or zip_metadata.get("app_version")
+        total_items = backup_info.get("total_items") or zip_metadata.get("total_items", 0)
+        total_preferences = backup_info.get("total_preferences") or zip_metadata.get("total_preferences", 0)
+        total_files = backup_info.get("total_files") or zip_metadata.get("total_files", 0)
+        content_summary = zip_metadata.get("content_summary", "")
         
         # Créer l'enregistrement en base
         backup = AppBackup(
@@ -914,7 +1027,7 @@ async def trigger_backup(
             storage_path=storage_path,
             created_by=current_user.username,
             created_by_type="hub",  # Indique que c'est le HUB qui a déclenché
-            description=f"Backup déclenché manuellement depuis le HUB par {current_user.username}"
+            description=content_summary or f"Backup déclenché manuellement depuis le HUB par {current_user.username}"
         )
         
         db.add(backup)

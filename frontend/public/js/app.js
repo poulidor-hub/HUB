@@ -6209,6 +6209,21 @@ async function showAppBackupsList(slug) {
                 const date = new Date(backup.created_at);
                 const dateStr = `${date.toLocaleDateString('fr-FR')} ${date.toLocaleTimeString('fr-FR', {hour: '2-digit', minute: '2-digit'})}`;
                 const escapedAppName = escapeHtml(data.app_name).replace(/'/g, "\\'");
+                
+                // Afficher le contenu: description si disponible, sinon compteurs
+                let contentDisplay = '';
+                if (backup.description && backup.description.trim()) {
+                    contentDisplay = backup.description;
+                } else if (backup.total_items > 0 || backup.total_files > 0 || backup.total_preferences > 0) {
+                    const parts = [];
+                    if (backup.total_items > 0) parts.push(`${backup.total_items} items`);
+                    if (backup.total_preferences > 0) parts.push(`${backup.total_preferences} prefs`);
+                    if (backup.total_files > 0) parts.push(`${backup.total_files} fichiers`);
+                    contentDisplay = parts.join(', ');
+                } else {
+                    contentDisplay = 'Backup vide';
+                }
+                
                 return `
                     <tr>
                         <td>
@@ -6216,8 +6231,8 @@ async function showAppBackupsList(slug) {
                         </td>
                         <td><small>${backup.app_version || '-'}</small></td>
                         <td>
-                            <small class="text-muted">
-                                ${backup.total_items} items, ${backup.total_files} fichiers
+                            <small class="text-muted" title="${escapeHtml(backup.description || '')}">
+                                ${escapeHtml(contentDisplay)}
                             </small>
                         </td>
                         <td><small>${backup.total_size_human}</small></td>
