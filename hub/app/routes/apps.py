@@ -1022,8 +1022,8 @@ async def register_app(
                 updated_fields.append(f"is_shared: {old_shared} → {app_data.is_shared}")
                 logger.info(f"🔄 Mise à jour is_shared_service: {old_shared} → {app_data.is_shared}")
             
-            # Mettre à jour is_remote si custom_host est fourni et différent
-            is_now_remote = bool(app_data.custom_host)
+            # Mettre à jour is_remote (sur un serveur différent du Hub)
+            is_now_remote = app_data.custom_host and app_data.custom_host != settings.get_hub_host()
             if existing_app.is_remote != is_now_remote:
                 old_remote = existing_app.is_remote
                 existing_app.is_remote = is_now_remote
@@ -1084,13 +1084,18 @@ async def register_app(
             )
     
     # Nouvelle application (ou remplacement) - créer l'app et le service account
-    # Déterminer si c'est une app distante (custom_host fourni)
-    is_remote = bool(app_data.custom_host)
-    if is_remote:
+    # Utiliser custom_host si fourni, sinon le host du Hub
+    if app_data.custom_host:
         host = app_data.custom_host
-        logger.info(f"🌐 Application distante détectée - host: {host} (IP source: {client_ip})")
     else:
         host = settings.get_hub_host()
+    
+    # Déterminer si c'est une app distante (sur un serveur différent du Hub)
+    is_remote = app_data.custom_host and app_data.custom_host != settings.get_hub_host()
+    if is_remote:
+        logger.info(f"🌐 Application DISTANTE détectée - host: {host} (IP source: {client_ip})")
+    else:
+        logger.info(f"📍 Application LOCALE détectée - host: {host} (IP source: {client_ip})")
     
     # Construire l'URL API
     api_url = f"http://{host}:{app_data.api_port}"
