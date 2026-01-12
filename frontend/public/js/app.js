@@ -4371,119 +4371,118 @@ function renderPageSessionHistory(data) {
     container.innerHTML = `
         <!-- Sessions actives -->
         ${activeSessions.length > 0 ? `
-        <div class="mb-4">
+        <div class="mb-4 px-3 pt-3">
             <div class="d-flex align-items-center mb-2">
                 <span class="badge bg-success me-2">${activeSessions.length}</span>
                 <h6 class="mb-0 text-success"><i class="bi bi-broadcast me-1"></i>Sessions actives</h6>
             </div>
-            <div class="table-responsive">
-                <table class="table table-sm table-hover align-middle mb-0 border rounded">
-                    <thead class="table-light">
-                        <tr>
-                            <th style="width: 20%">Utilisateur</th>
-                            <th style="width: 20%">Application</th>
-                            <th style="width: 20%">Connecté depuis</th>
-                            <th style="width: 15%">Durée</th>
-                            <th style="width: 10%">Activité</th>
-                            <th style="width: 15%">IP</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        ${activeSessions.map(s => `
-                            <tr class="table-success table-active">
-                                <td>
-                                    <div class="d-flex align-items-center">
-                                        <span class="position-relative me-2">
-                                            <i class="bi bi-person-circle fs-5 text-success"></i>
-                                            <span class="position-absolute bottom-0 end-0 translate-middle-x">
-                                                <i class="bi bi-circle-fill text-success" style="font-size: 0.5rem;"></i>
-                                            </span>
+            <table class="table table-sm table-hover align-middle mb-0 border rounded">
+                <thead class="table-light">
+                    <tr>
+                        <th style="min-width: 150px">Utilisateur</th>
+                        <th style="min-width: 120px">Application</th>
+                        <th style="min-width: 150px">Connecté depuis</th>
+                        <th style="min-width: 100px">Durée</th>
+                        <th style="min-width: 80px">Activité</th>
+                        <th style="min-width: 120px">IP</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${activeSessions.map(s => `
+                        <tr class="table-success table-active">
+                            <td>
+                                <div class="d-flex align-items-center">
+                                    <span class="position-relative me-2">
+                                        <i class="bi bi-person-circle fs-5 text-success"></i>
+                                        <span class="position-absolute bottom-0 end-0 translate-middle-x">
+                                            <i class="bi bi-circle-fill text-success" style="font-size: 0.5rem;"></i>
                                         </span>
-                                        <strong>${escapeHtml(s.username || 'Unknown')}</strong>
-                                    </div>
-                                </td>
-                                <td>
-                                    ${s.current_app_name 
-                                        ? `<span class="badge bg-primary bg-gradient"><i class="bi bi-app me-1"></i>${escapeHtml(s.current_app_name)}</span>` 
-                                        : '<span class="badge bg-secondary bg-gradient"><i class="bi bi-house me-1"></i>Hub</span>'}
-                                </td>
-                                <td>
-                                    <small class="text-muted">${formatDateTime(s.login_at)}</small>
-                                </td>
-                                <td>
-                                    <span class="badge bg-light text-dark border">
-                                        <i class="bi bi-clock me-1"></i>${s.duration_display || 'en cours'}
                                     </span>
-                                </td>
-                                <td>
-                                    ${s.idle_minutes !== undefined && s.idle_minutes > 5 
-                                        ? `<span class="badge bg-warning text-dark" title="Inactif depuis ${s.idle_minutes} min">
-                                            <i class="bi bi-hourglass-split me-1"></i>${s.idle_minutes}m
-                                           </span>`
-                                        : '<span class="badge bg-success"><i class="bi bi-activity"></i></span>'}
-                                </td>
-                                <td><code class="small bg-light px-2 py-1 rounded">${s.ip_address || '-'}</code></td>
-                            </tr>
-                        `).join('')}
-                    </tbody>
-                </table>
-            </div>
+                                    <strong>${escapeHtml(s.username || 'Unknown')}</strong>
+                                </div>
+                            </td>
+                            <td>
+                                ${s.current_app_name 
+                                    ? `<span class="badge bg-primary bg-gradient"><i class="bi bi-app me-1"></i>${escapeHtml(s.current_app_name)}</span>` 
+                                    : '<span class="badge bg-secondary bg-gradient"><i class="bi bi-house me-1"></i>Hub</span>'}
+                            </td>
+                            <td>
+                                <small class="text-muted">${formatDateTime(s.login_at)}</small>
+                            </td>
+                            <td>
+                                <span class="badge bg-light text-dark border">
+                                    <i class="bi bi-clock me-1"></i>${s.duration_display || 'en cours'}
+                                </span>
+                            </td>
+                            <td>
+                                ${s.idle_minutes !== undefined && s.idle_minutes > 5 
+                                    ? `<span class="badge bg-warning text-dark" title="Inactif depuis ${s.idle_minutes} min">
+                                        <i class="bi bi-hourglass-split me-1"></i>${s.idle_minutes}m
+                                       </span>`
+                                    : '<span class="badge bg-success"><i class="bi bi-activity"></i></span>'}
+                            </td>
+                            <td><code class="small bg-light px-2 py-1 rounded">${s.ip_address || '-'}</code></td>
+                        </tr>
+                    `).join('')}
+                </tbody>
+            </table>
         </div>
         ` : ''}
         
         <!-- Sessions terminées -->
         ${closedSessions.length > 0 ? `
-        <div>
+        <div class="px-3 pb-3">
             <div class="d-flex align-items-center mb-2">
                 <span class="badge bg-secondary me-2">${closedSessions.length}</span>
                 <h6 class="mb-0 text-muted"><i class="bi bi-clock-history me-1"></i>Sessions terminées</h6>
             </div>
-            <div class="table-responsive" style="max-height: 400px; overflow-y: auto;">
-                <table class="table table-sm table-hover align-middle mb-0 border rounded">
-                    <thead class="table-light sticky-top">
+            <table class="table table-sm table-hover align-middle mb-0 border rounded">
+                <thead class="table-light">
+                    <tr>
+                        <th style="min-width: 140px">Utilisateur</th>
+                        <th style="min-width: 120px">Application</th>
+                        <th style="min-width: 140px">Connexion</th>
+                        <th style="min-width: 140px">Déconnexion</th>
+                        <th style="min-width: 80px">Durée</th>
+                        <th style="min-width: 100px">Raison</th>
+                        <th style="min-width: 100px">IP</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${closedSessions.map(s => `
                         <tr>
-                            <th style="width: 18%">Utilisateur</th>
-                            <th style="width: 15%">Application</th>
-                            <th style="width: 17%">Connexion</th>
-                            <th style="width: 17%">Déconnexion</th>
-                            <th style="width: 10%">Durée</th>
-                            <th style="width: 13%">Raison</th>
-                            <th style="width: 10%">IP</th>
+                            <td>
+                                <div class="d-flex align-items-center">
+                                    <i class="bi bi-person-circle fs-5 text-muted me-2"></i>
+                                    <span class="text-muted">${escapeHtml(s.username || 'Unknown')}</span>
+                                </div>
+                            </td>
+                            <td>
+                                ${s.current_app_name 
+                                    ? `<span class="badge bg-primary bg-opacity-50"><i class="bi bi-app me-1"></i>${escapeHtml(s.current_app_name)}</span>` 
+                                    : '<span class="text-muted small"><i class="bi bi-house me-1"></i>Hub</span>'}
+                            </td>
+                            <td><small class="text-muted">${formatDateTime(s.login_at)}</small></td>
+                            <td><small class="text-muted">${formatDateTime(s.logout_at)}</small></td>
+                            <td>
+                                <span class="badge bg-light text-dark border">
+                                    ${s.duration_display || '-'}
+                                </span>
+                            </td>
+                            <td>${getLogoutReasonBadge(s.logout_reason)}</td>
+                            <td><code class="small text-muted">${s.ip_address || '-'}</code></td>
                         </tr>
-                    </thead>
-                    <tbody>
-                        ${closedSessions.map(s => `
-                            <tr>
-                                <td>
-                                    <div class="d-flex align-items-center">
-                                        <i class="bi bi-person-circle fs-5 text-muted me-2"></i>
-                                        <span class="text-muted">${escapeHtml(s.username || 'Unknown')}</span>
-                                    </div>
-                                </td>
-                                <td>
-                                    ${s.current_app_name 
-                                        ? `<span class="badge bg-primary bg-opacity-50"><i class="bi bi-app me-1"></i>${escapeHtml(s.current_app_name)}</span>` 
-                                        : '<span class="text-muted small"><i class="bi bi-house me-1"></i>Hub</span>'}
-                                </td>
-                                <td><small class="text-muted">${formatDateTime(s.login_at)}</small></td>
-                                <td><small class="text-muted">${formatDateTime(s.logout_at)}</small></td>
-                                <td>
-                                    <span class="badge bg-light text-dark border">
-                                        ${s.duration_display || '-'}
-                                    </span>
-                                </td>
-                                <td>${getLogoutReasonBadge(s.logout_reason)}</td>
-                                <td><code class="small text-muted">${s.ip_address || '-'}</code></td>
-                            </tr>
-                        `).join('')}
-                    </tbody>
-                </table>
-            </div>
+                    `).join('')}
+                </tbody>
+            </table>
         </div>
         ` : ''}
-        
-        <!-- Résumé -->
-        <div class="mt-3 pt-3 border-top">
+    `;
+    
+    // Résumé dans le footer (hors zone scrollable)
+    const summaryContainer = document.getElementById('pageSessionsSummary');
+    if (summaryContainer) {
+        summaryContainer.innerHTML = `
             <div class="row text-center">
                 <div class="col">
                     <div class="text-muted small">Total sessions</div>
@@ -4502,8 +4501,8 @@ function renderPageSessionHistory(data) {
                     <strong class="fs-5">${data.period_days}j</strong>
                 </div>
             </div>
-        </div>
-    `;
+        `;
+    }
 }
 
 // ===== Page Utilisateurs Dédiée =====
