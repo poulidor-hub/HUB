@@ -132,17 +132,33 @@ class DockerScanner:
         self._client = None
         self._available = None
         self._last_error = None
+        self._last_check_time = None
+        self._retry_interval = 30  # Réessayer toutes les 30 secondes si échec
     
     def reset(self):
         """Réinitialise le client Docker (pour retry après échec)"""
         self._client = None
         self._available = None
         self._last_error = None
+        self._last_check_time = None
     
     @property
     def client(self):
-        """Client Docker (lazy loading avec retry si échec précédent)"""
+        """Client Docker (lazy loading avec retry automatique si échec précédent)"""
+        import time
+        current_time = time.time()
+        
+        # Si connexion échouée, réessayer après l'intervalle de retry
+        if self._client is False and self._last_check_time:
+            elapsed = current_time - self._last_check_time
+            if elapsed >= self._retry_interval:
+                logger.info(f"🔄 Tentative de reconnexion Docker (après {elapsed:.0f}s)")
+                self._client = None  # Permettre un nouveau retry
+            else:
+                return None  # Pas encore temps de réessayer
+        
         if self._client is None:
+            self._last_check_time = current_time
             try:
                 import docker
                 self._client = docker.from_env()
