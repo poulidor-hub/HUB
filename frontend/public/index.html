@@ -736,6 +736,29 @@
                         <span class="input-group-text"><i class="bi bi-search"></i></span>
                         <input type="text" class="form-control" id="usersSearchInput" placeholder="Rechercher..." oninput="filterUsersTable()">
                     </div>
+                    <!-- Boutons opérations en masse -->
+                    <div class="dropdown">
+                        <button class="btn btn-outline-secondary btn-sm dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false">
+                            <i class="bi bi-people-fill me-1"></i>Actions en masse
+                        </button>
+                        <ul class="dropdown-menu dropdown-menu-end">
+                            <li><h6 class="dropdown-header">Gestion des accès</h6></li>
+                            <li><a class="dropdown-item" href="#" onclick="showBulkOperationsModal('assign-roles'); return false;">
+                                <i class="bi bi-plus-circle text-success me-2"></i>Assigner des rôles
+                            </a></li>
+                            <li><a class="dropdown-item" href="#" onclick="showBulkOperationsModal('remove-access'); return false;">
+                                <i class="bi bi-dash-circle text-warning me-2"></i>Retirer des accès
+                            </a></li>
+                            <li><hr class="dropdown-divider"></li>
+                            <li><h6 class="dropdown-header">Gestion des utilisateurs</h6></li>
+                            <li><a class="dropdown-item" href="#" onclick="showBulkOperationsModal('create'); return false;">
+                                <i class="bi bi-person-plus text-primary me-2"></i>Créer en masse
+                            </a></li>
+                            <li><a class="dropdown-item" href="#" onclick="showBulkOperationsModal('delete'); return false;">
+                                <i class="bi bi-trash text-danger me-2"></i>Supprimer en masse
+                            </a></li>
+                        </ul>
+                    </div>
                     <button class="btn btn-primary btn-sm" onclick="showAddUserFormPage()">
                         <i class="bi bi-person-plus me-1"></i>Ajouter
                     </button>
@@ -1916,6 +1939,135 @@
         </div>
     </div>
 
+    <!-- Modal Gestion en masse des utilisateurs -->
+    <div class="modal fade" id="bulkOperationsModal" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header bg-primary text-white">
+                    <h5 class="modal-title" id="bulkModalTitle">
+                        <i class="bi bi-people-fill me-2"></i>Opérations en masse
+                    </h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <!-- Section de sélection des utilisateurs -->
+                    <div id="bulkUserSelectionSection" class="mb-4">
+                        <h6 class="mb-3"><i class="bi bi-person-check me-2"></i>Sélectionner les utilisateurs</h6>
+                        <div id="bulkUsersList">
+                            <div class="text-center py-3">
+                                <div class="spinner-border spinner-border-sm text-primary" role="status"></div>
+                                <span class="ms-2">Chargement...</span>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Section: Assigner des rôles -->
+                    <div id="bulkAssignSection" class="d-none">
+                        <h6 class="mb-3"><i class="bi bi-plus-circle text-success me-2"></i>Assigner un rôle</h6>
+                        <div class="row g-3">
+                            <div class="col-md-6">
+                                <label for="bulkAssignAppSelect" class="form-label">Application</label>
+                                <select class="form-select" id="bulkAssignAppSelect">
+                                    <option value="">Chargement...</option>
+                                </select>
+                            </div>
+                            <div class="col-md-6">
+                                <label for="bulkAssignRoleSelect" class="form-label">Rôle à attribuer</label>
+                                <select class="form-select" id="bulkAssignRoleSelect">
+                                    <option value="admin">Admin</option>
+                                    <option value="manager">Manager</option>
+                                    <option value="user" selected>User</option>
+                                    <option value="viewer">Viewer</option>
+                                </select>
+                            </div>
+                        </div>
+                        <p class="text-muted small mt-2">
+                            <i class="bi bi-info-circle me-1"></i>
+                            Les utilisateurs sélectionnés recevront ce rôle sur l'application choisie.
+                            Si un rôle existe déjà, il sera mis à jour.
+                        </p>
+                    </div>
+                    
+                    <!-- Section: Retirer des accès -->
+                    <div id="bulkRemoveSection" class="d-none">
+                        <h6 class="mb-3"><i class="bi bi-dash-circle text-warning me-2"></i>Retirer l'accès</h6>
+                        <div class="row g-3">
+                            <div class="col-md-12">
+                                <label for="bulkRemoveAppSelect" class="form-label">Application</label>
+                                <select class="form-select" id="bulkRemoveAppSelect">
+                                    <option value="">Chargement...</option>
+                                </select>
+                            </div>
+                        </div>
+                        <p class="text-muted small mt-2">
+                            <i class="bi bi-exclamation-triangle text-warning me-1"></i>
+                            Les utilisateurs sélectionnés perdront leur accès à cette application.
+                        </p>
+                    </div>
+                    
+                    <!-- Section: Supprimer des utilisateurs -->
+                    <div id="bulkDeleteSection" class="d-none">
+                        <div class="alert alert-danger">
+                            <h6><i class="bi bi-exclamation-triangle-fill me-2"></i>Attention - Suppression irréversible</h6>
+                            <p class="mb-0">
+                                Vous êtes sur le point de supprimer définitivement les utilisateurs sélectionnés.
+                                Cette action ne peut pas être annulée.
+                            </p>
+                        </div>
+                    </div>
+                    
+                    <!-- Section: Créer des utilisateurs -->
+                    <div id="bulkCreateSection" class="d-none">
+                        <h6 class="mb-3"><i class="bi bi-person-plus text-primary me-2"></i>Nouveaux utilisateurs</h6>
+                        <div id="bulkCreateUsersList">
+                            <!-- Les lignes de création sont ajoutées dynamiquement -->
+                        </div>
+                        <button type="button" class="btn btn-outline-secondary btn-sm mt-2" onclick="addBulkCreateUserRow()">
+                            <i class="bi bi-plus me-1"></i>Ajouter un utilisateur
+                        </button>
+                        
+                        <hr class="my-3">
+                        
+                        <h6 class="mb-3"><i class="bi bi-app me-2"></i>Accès application (optionnel)</h6>
+                        <div class="row g-3">
+                            <div class="col-md-6">
+                                <label for="bulkCreateAppSelect" class="form-label">Application</label>
+                                <select class="form-select" id="bulkCreateAppSelect">
+                                    <option value="">-- Aucune (créer sans accès) --</option>
+                                </select>
+                            </div>
+                            <div class="col-md-6">
+                                <label for="bulkCreateRoleSelect" class="form-label">Rôle</label>
+                                <select class="form-select" id="bulkCreateRoleSelect">
+                                    <option value="admin">Admin</option>
+                                    <option value="manager">Manager</option>
+                                    <option value="user" selected>User</option>
+                                    <option value="viewer">Viewer</option>
+                                </select>
+                            </div>
+                        </div>
+                        <p class="text-muted small mt-2">
+                            <i class="bi bi-info-circle me-1"></i>
+                            Si une application est sélectionnée, tous les nouveaux utilisateurs auront accès à cette application avec le rôle choisi.
+                        </p>
+                    </div>
+                    
+                    <!-- Section de résultat -->
+                    <div id="bulkResultSection" class="d-none mt-4 pt-3 border-top">
+                        <h6 class="mb-3"><i class="bi bi-clipboard-check me-2"></i>Résultat</h6>
+                        <div id="bulkResultContent"></div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Fermer</button>
+                    <button type="button" class="btn btn-primary" onclick="executeBulkOperation()">
+                        <i class="bi bi-check-lg me-1"></i>Exécuter
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Toast Container -->
     <div class="toast-container position-fixed bottom-0 end-0 p-3">
         <div id="toast" class="toast" role="alert">
@@ -1929,7 +2081,7 @@
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
-    <script src="js/api.js?v=20260108a"></script>
-    <script src="js/app.js?v=20260108a"></script>
+    <script src="js/api.js?v=20260114a"></script>
+    <script src="js/app.js?v=20260114a"></script>
 </body>
 </html>

@@ -766,6 +766,69 @@ class HubAPI {
         
         return response.json();
     }
+    
+    // ===== Bulk Operations API =====
+    
+    /**
+     * Crée plusieurs utilisateurs en masse
+     * @param {Array} users - Liste des utilisateurs à créer
+     * @returns {Promise<Object>} Résultat de la création
+     */
+    async bulkCreateUsers(users) {
+        return this.request('/users/bulk/create', {
+            method: 'POST',
+            body: JSON.stringify({ users })
+        });
+    }
+    
+    /**
+     * Met à jour les rôles de plusieurs utilisateurs en masse
+     * @param {Array} updates - Liste des mises à jour de rôles
+     * @returns {Promise<Object>} Résultat de la mise à jour
+     */
+    async bulkUpdateUserRoles(updates) {
+        return this.request('/users/bulk/roles', {
+            method: 'POST',
+            body: JSON.stringify({ updates })
+        });
+    }
+    
+    /**
+     * Supprime plusieurs utilisateurs en masse
+     * @param {Array} userIds - Liste des IDs à supprimer
+     * @param {boolean} confirm - Confirmation de suppression
+     * @returns {Promise<Object>} Résultat de la suppression
+     */
+    async bulkDeleteUsers(userIds, confirm = true) {
+        return this.request('/users/bulk/delete', {
+            method: 'POST',
+            body: JSON.stringify({ user_ids: userIds, confirm })
+        });
+    }
+    
+    /**
+     * Assigne des rôles sur des applications à plusieurs utilisateurs
+     * @param {Array} assignments - Liste des assignations
+     * @returns {Promise<Object>} Résultat de l'assignation
+     */
+    async bulkAssignAppRoles(assignments) {
+        return this.request('/users/bulk/assign-app-roles', {
+            method: 'POST',
+            body: JSON.stringify({ assignments })
+        });
+    }
+    
+    /**
+     * Supprime l'accès à des applications pour plusieurs utilisateurs
+     * @param {Array} removals - Liste des suppressions d'accès
+     * @returns {Promise<Object>} Résultat de la suppression
+     */
+    async bulkRemoveAppAccess(removals) {
+        return this.request('/users/bulk/remove-app-access', {
+            method: 'POST',
+            body: JSON.stringify({ removals })
+        });
+    }
 }
 
 const api = new HubAPI();

@@ -6667,3 +6667,564 @@ async function doTriggerBackup(slug, appName) {
 
 
 // =============================================================================
+// ===== GESTION EN MASSE DES UTILISATEURS (Bulk Operations) =====
+// =============================================================================
+
+let bulkOperationsModal = null;
+let selectedUsersForBulk = new Set();
+let bulkOperationMode = null; // 'assign-roles', 'remove-access', 'delete'
+
+/**
+ * Initialise le modal de gestion en masse
+ */
+function initBulkOperationsModal() {
+    const modalEl = document.getElementById('bulkOperationsModal');
+    if (modalEl && !bulkOperationsModal) {
+        bulkOperationsModal = new bootstrap.Modal(modalEl);
+    }
+}
+
+/**
+ * Ouvre le modal de gestion en masse
+ * @param {string} mode - Mode d'opération: 'assign-roles', 'remove-access', 'delete', 'create'
+ */
+function showBulkOperationsModal(mode) {
+    initBulkOperationsModal();
+    bulkOperationMode = mode;
+    selectedUsersForBulk.clear();
+    
+    // Configurer le modal selon le mode
+    const modalTitle = document.getElementById('bulkModalTitle');
+    const assignSection = document.getElementById('bulkAssignSection');
+    const removeSection = document.getElementById('bulkRemoveSection');
+    const deleteSection = document.getElementById('bulkDeleteSection');
+    const createSection = document.getElementById('bulkCreateSection');
+    const userSelectionSection = document.getElementById('bulkUserSelectionSection');
+    
+    // Masquer toutes les sections
+    [assignSection, removeSection, deleteSection, createSection].forEach(s => {
+        if (s) s.classList.add('d-none');
+    });
+    
+    // Afficher la section appropriée
+    switch (mode) {
+        case 'assign-roles':
+            modalTitle.textContent = 'Assigner des rôles en masse';
+            if (assignSection) assignSection.classList.remove('d-none');
+            if (userSelectionSection) userSelectionSection.classList.remove('d-none');
+            loadBulkUserSelection();
+            loadBulkAppSelection('bulkAssignAppSelect');
+            break;
+        case 'remove-access':
+            modalTitle.textContent = 'Retirer des accès en masse';
+            if (removeSection) removeSection.classList.remove('d-none');
+            if (userSelectionSection) userSelectionSection.classList.remove('d-none');
+            loadBulkUserSelection();
+            loadBulkAppSelection('bulkRemoveAppSelect');
+            break;
+        case 'delete':
+            modalTitle.textContent = 'Supprimer des utilisateurs en masse';
+            if (deleteSection) deleteSection.classList.remove('d-none');
+            if (userSelectionSection) userSelectionSection.classList.remove('d-none');
+            loadBulkUserSelection();
+            break;
+        case 'create':
+            modalTitle.textContent = 'Créer des utilisateurs en masse';
+            if (createSection) createSection.classList.remove('d-none');
+            if (userSelectionSection) userSelectionSection.classList.add('d-none');
+            initBulkCreateForm();
+            break;
+    }
+    
+    // Réinitialiser le résultat
+    document.getElementById('bulkResultSection').classList.add('d-none');
+    
+    bulkOperationsModal.show();
+}
+
+/**
+ * Charge la liste des utilisateurs pour sélection en masse
+ */
+async function loadBulkUserSelection() {
+    const container = document.getElementById('bulkUsersList');
+    if (!container) return;
+    
+    try {
+        const users = allUsersPage.length > 0 ? allUsersPage : await api.getUsers();
+        
+        if (users.length === 0) {
+            container.innerHTML = '<p class="text-muted">Aucun utilisateur disponible</p>';
+            return;
+        }
+        
+        container.innerHTML = `
+            <div class="mb-2">
+                <div class="input-group input-group-sm">
+                    <span class="input-group-text"><i class="bi bi-search"></i></span>
+                    <input type="text" class="form-control" id="bulkUserSearch" 
+                           placeholder="Rechercher..." onkeyup="filterBulkUsers()">
+                </div>
+            </div>
+            <div class="mb-2">
+                <button type="button" class="btn btn-sm btn-outline-secondary me-1" onclick="selectAllBulkUsers()">
+                    <i class="bi bi-check-all"></i> Tout sélectionner
+                </button>
+                <button type="button" class="btn btn-sm btn-outline-secondary" onclick="deselectAllBulkUsers()">
+                    <i class="bi bi-x-lg"></i> Tout désélectionner
+                </button>
+                <span class="ms-2 text-muted small" id="bulkSelectedCount">0 sélectionné(s)</span>
+            </div>
+            <div class="bulk-users-list border rounded p-2" style="max-height: 250px; overflow-y: auto;">
+                ${users.filter(u => u.id !== currentUser?.id).map(user => `
+                    <div class="form-check bulk-user-item" data-username="${escapeHtml(user.username.toLowerCase())}">
+                        <input class="form-check-input bulk-user-checkbox" type="checkbox" 
+                               value="${user.id}" id="bulkUser_${user.id}"
+                               onchange="toggleBulkUserSelection(${user.id})">
+                        <label class="form-check-label d-flex justify-content-between w-100" for="bulkUser_${user.id}">
+                            <span>
+                                <strong>${escapeHtml(user.username)}</strong>
+                                ${user.is_admin ? '<span class="badge bg-dark ms-1">Admin</span>' : ''}
+                                ${!user.is_active ? '<span class="badge bg-secondary ms-1">Inactif</span>' : ''}
+                            </span>
+                            <small class="text-muted">${user.app_roles?.length || 0} app(s)</small>
+                        </label>
+                    </div>
+                `).join('')}
+            </div>
+        `;
+    } catch (error) {
+        console.error('Erreur chargement utilisateurs bulk:', error);
+        container.innerHTML = '<p class="text-danger">Erreur de chargement</p>';
+    }
+}
+
+/**
+ * Charge la liste des applications pour sélection
+ */
+async function loadBulkAppSelection(selectId) {
+    const select = document.getElementById(selectId);
+    if (!select) return;
+    
+    try {
+        const apps = allApps.length > 0 ? allApps : await api.getAllApps();
+        
+        select.innerHTML = `
+            <option value="">-- Sélectionner une application --</option>
+            ${apps.map(app => `
+                <option value="${app.id}">${escapeHtml(app.name)} (${app.slug})</option>
+            `).join('')}
+        `;
+    } catch (error) {
+        console.error('Erreur chargement apps bulk:', error);
+        select.innerHTML = '<option value="">Erreur de chargement</option>';
+    }
+}
+
+/**
+ * Filtre les utilisateurs dans la liste de sélection bulk
+ */
+function filterBulkUsers() {
+    const search = document.getElementById('bulkUserSearch')?.value.toLowerCase() || '';
+    document.querySelectorAll('.bulk-user-item').forEach(item => {
+        const username = item.dataset.username || '';
+        item.style.display = username.includes(search) ? '' : 'none';
+    });
+}
+
+/**
+ * Toggle la sélection d'un utilisateur
+ */
+function toggleBulkUserSelection(userId) {
+    if (selectedUsersForBulk.has(userId)) {
+        selectedUsersForBulk.delete(userId);
+    } else {
+        selectedUsersForBulk.add(userId);
+    }
+    updateBulkSelectedCount();
+}
+
+/**
+ * Sélectionne tous les utilisateurs visibles
+ */
+function selectAllBulkUsers() {
+    document.querySelectorAll('.bulk-user-item').forEach(item => {
+        if (item.style.display !== 'none') {
+            const checkbox = item.querySelector('.bulk-user-checkbox');
+            if (checkbox) {
+                checkbox.checked = true;
+                selectedUsersForBulk.add(parseInt(checkbox.value));
+            }
+        }
+    });
+    updateBulkSelectedCount();
+}
+
+/**
+ * Désélectionne tous les utilisateurs
+ */
+function deselectAllBulkUsers() {
+    document.querySelectorAll('.bulk-user-checkbox').forEach(cb => {
+        cb.checked = false;
+    });
+    selectedUsersForBulk.clear();
+    updateBulkSelectedCount();
+}
+
+/**
+ * Met à jour le compteur de sélection
+ */
+function updateBulkSelectedCount() {
+    const countEl = document.getElementById('bulkSelectedCount');
+    if (countEl) {
+        countEl.textContent = `${selectedUsersForBulk.size} sélectionné(s)`;
+    }
+}
+
+/**
+ * Initialise le formulaire de création en masse
+ */
+function initBulkCreateForm() {
+    const container = document.getElementById('bulkCreateUsersList');
+    if (!container) return;
+    
+    container.innerHTML = '';
+    addBulkCreateUserRow();
+    loadBulkAppSelection('bulkCreateAppSelect');
+}
+
+/**
+ * Ajoute une ligne pour créer un utilisateur
+ */
+function addBulkCreateUserRow() {
+    const container = document.getElementById('bulkCreateUsersList');
+    if (!container) return;
+    
+    const rowIndex = container.children.length;
+    const row = document.createElement('div');
+    row.className = 'bulk-create-row border rounded p-2 mb-2';
+    row.dataset.index = rowIndex;
+    
+    row.innerHTML = `
+        <div class="row g-2">
+            <div class="col-md-4">
+                <input type="text" class="form-control form-control-sm" 
+                       placeholder="Nom d'utilisateur *" name="username_${rowIndex}" required>
+            </div>
+            <div class="col-md-4">
+                <input type="email" class="form-control form-control-sm" 
+                       placeholder="Email (optionnel)" name="email_${rowIndex}">
+            </div>
+            <div class="col-md-3">
+                <input type="text" class="form-control form-control-sm" 
+                       placeholder="Mot de passe *" name="password_${rowIndex}" required>
+            </div>
+            <div class="col-md-1 d-flex align-items-center">
+                <button type="button" class="btn btn-sm btn-outline-danger" onclick="removeBulkCreateRow(this)">
+                    <i class="bi bi-trash"></i>
+                </button>
+            </div>
+        </div>
+        <div class="row g-2 mt-1">
+            <div class="col-md-6">
+                <div class="form-check form-check-inline">
+                    <input class="form-check-input" type="checkbox" name="isAdmin_${rowIndex}" id="isAdmin_${rowIndex}">
+                    <label class="form-check-label small" for="isAdmin_${rowIndex}">Admin Hub</label>
+                </div>
+                <div class="form-check form-check-inline">
+                    <input class="form-check-input" type="checkbox" name="mustChangePwd_${rowIndex}" id="mustChangePwd_${rowIndex}">
+                    <label class="form-check-label small" for="mustChangePwd_${rowIndex}">Changer mdp</label>
+                </div>
+            </div>
+        </div>
+    `;
+    
+    container.appendChild(row);
+}
+
+/**
+ * Supprime une ligne de création
+ */
+function removeBulkCreateRow(btn) {
+    const row = btn.closest('.bulk-create-row');
+    if (row && document.querySelectorAll('.bulk-create-row').length > 1) {
+        row.remove();
+    }
+}
+
+/**
+ * Exécute l'opération en masse selon le mode
+ */
+async function executeBulkOperation() {
+    const resultSection = document.getElementById('bulkResultSection');
+    const resultContent = document.getElementById('bulkResultContent');
+    
+    try {
+        let result;
+        
+        switch (bulkOperationMode) {
+            case 'assign-roles':
+                result = await executeBulkAssignRoles();
+                break;
+            case 'remove-access':
+                result = await executeBulkRemoveAccess();
+                break;
+            case 'delete':
+                result = await executeBulkDelete();
+                break;
+            case 'create':
+                result = await executeBulkCreate();
+                break;
+            default:
+                throw new Error('Mode d\'opération non reconnu');
+        }
+        
+        // Afficher le résultat
+        displayBulkResult(result);
+        
+        // Rafraîchir la liste des utilisateurs
+        await loadUsersPageData();
+        
+    } catch (error) {
+        console.error('Erreur opération bulk:', error);
+        resultSection.classList.remove('d-none');
+        resultContent.innerHTML = `
+            <div class="alert alert-danger">
+                <i class="bi bi-exclamation-triangle me-2"></i>
+                ${escapeHtml(error.message)}
+            </div>
+        `;
+    }
+}
+
+/**
+ * Exécute l'assignation de rôles en masse
+ */
+async function executeBulkAssignRoles() {
+    const appId = parseInt(document.getElementById('bulkAssignAppSelect')?.value);
+    const role = document.getElementById('bulkAssignRoleSelect')?.value;
+    
+    if (!appId) {
+        throw new Error('Veuillez sélectionner une application');
+    }
+    if (!role) {
+        throw new Error('Veuillez sélectionner un rôle');
+    }
+    if (selectedUsersForBulk.size === 0) {
+        throw new Error('Veuillez sélectionner au moins un utilisateur');
+    }
+    
+    return await api.bulkAssignAppRoles([{
+        app_id: appId,
+        user_ids: Array.from(selectedUsersForBulk),
+        role: role
+    }]);
+}
+
+/**
+ * Exécute la suppression d'accès en masse
+ */
+async function executeBulkRemoveAccess() {
+    const appId = parseInt(document.getElementById('bulkRemoveAppSelect')?.value);
+    
+    if (!appId) {
+        throw new Error('Veuillez sélectionner une application');
+    }
+    if (selectedUsersForBulk.size === 0) {
+        throw new Error('Veuillez sélectionner au moins un utilisateur');
+    }
+    
+    return await api.bulkRemoveAppAccess([{
+        app_id: appId,
+        user_ids: Array.from(selectedUsersForBulk)
+    }]);
+}
+
+/**
+ * Exécute la suppression d'utilisateurs en masse avec confirmation
+ */
+async function executeBulkDelete() {
+    if (selectedUsersForBulk.size === 0) {
+        throw new Error('Veuillez sélectionner au moins un utilisateur');
+    }
+    
+    // Demander confirmation
+    const usernames = [];
+    document.querySelectorAll('.bulk-user-checkbox:checked').forEach(cb => {
+        const label = cb.closest('.bulk-user-item')?.querySelector('strong');
+        if (label) usernames.push(label.textContent);
+    });
+    
+    const confirmed = confirm(
+        `⚠️ ATTENTION: Vous allez supprimer ${selectedUsersForBulk.size} utilisateur(s):\n\n` +
+        `${usernames.slice(0, 10).join('\n')}` +
+        (usernames.length > 10 ? `\n... et ${usernames.length - 10} autre(s)` : '') +
+        `\n\nCette action est IRRÉVERSIBLE.\n\nConfirmer la suppression ?`
+    );
+    
+    if (!confirmed) {
+        throw new Error('Opération annulée par l\'utilisateur');
+    }
+    
+    return await api.bulkDeleteUsers(Array.from(selectedUsersForBulk), true);
+}
+
+/**
+ * Exécute la création d'utilisateurs en masse
+ */
+async function executeBulkCreate() {
+    const rows = document.querySelectorAll('.bulk-create-row');
+    const users = [];
+    const appId = parseInt(document.getElementById('bulkCreateAppSelect')?.value) || null;
+    const role = document.getElementById('bulkCreateRoleSelect')?.value || 'user';
+    
+    rows.forEach((row, index) => {
+        const username = row.querySelector(`[name="username_${row.dataset.index}"]`)?.value?.trim();
+        const email = row.querySelector(`[name="email_${row.dataset.index}"]`)?.value?.trim() || null;
+        const password = row.querySelector(`[name="password_${row.dataset.index}"]`)?.value;
+        const isAdmin = row.querySelector(`[name="isAdmin_${row.dataset.index}"]`)?.checked || false;
+        const mustChangePwd = row.querySelector(`[name="mustChangePwd_${row.dataset.index}"]`)?.checked || false;
+        
+        if (username && password) {
+            const userData = {
+                username,
+                email,
+                password,
+                is_admin: isAdmin,
+                is_active: true,
+                must_change_password: mustChangePwd,
+                can_change_password: true,
+                app_roles: []
+            };
+            
+            // Ajouter le rôle sur l'application si sélectionnée
+            if (appId) {
+                userData.app_roles.push({ app_id: appId, role: role });
+            }
+            
+            users.push(userData);
+        }
+    });
+    
+    if (users.length === 0) {
+        throw new Error('Veuillez remplir au moins un utilisateur (nom et mot de passe obligatoires)');
+    }
+    
+    // Demander confirmation
+    const confirmed = confirm(
+        `Vous allez créer ${users.length} utilisateur(s):\n\n` +
+        `${users.slice(0, 10).map(u => u.username).join('\n')}` +
+        (users.length > 10 ? `\n... et ${users.length - 10} autre(s)` : '') +
+        `\n\nConfirmer la création ?`
+    );
+    
+    if (!confirmed) {
+        throw new Error('Opération annulée par l\'utilisateur');
+    }
+    
+    return await api.bulkCreateUsers(users);
+}
+
+/**
+ * Affiche le résultat d'une opération bulk
+ */
+function displayBulkResult(result) {
+    const resultSection = document.getElementById('bulkResultSection');
+    const resultContent = document.getElementById('bulkResultContent');
+    
+    if (!resultSection || !resultContent) return;
+    
+    resultSection.classList.remove('d-none');
+    
+    // Déterminer le type de résultat
+    let html = '';
+    
+    if (result.total_created !== undefined) {
+        // Résultat création
+        const alertClass = result.total_failed > 0 ? 'warning' : 'success';
+        html = `
+            <div class="alert alert-${alertClass}">
+                <h6><i class="bi bi-person-plus me-2"></i>Création terminée</h6>
+                <p class="mb-1">
+                    <strong>${result.total_created}</strong> utilisateur(s) créé(s) sur ${result.total_requested}
+                    ${result.total_failed > 0 ? `<br><span class="text-danger">${result.total_failed} échec(s)</span>` : ''}
+                </p>
+            </div>
+        `;
+    } else if (result.total_deleted !== undefined) {
+        // Résultat suppression
+        const alertClass = result.total_failed > 0 ? 'warning' : 'success';
+        html = `
+            <div class="alert alert-${alertClass}">
+                <h6><i class="bi bi-trash me-2"></i>Suppression terminée</h6>
+                <p class="mb-1">
+                    <strong>${result.total_deleted}</strong> utilisateur(s) supprimé(s) sur ${result.total_requested}
+                    ${result.total_failed > 0 ? `<br><span class="text-danger">${result.total_failed} échec(s)</span>` : ''}
+                </p>
+            </div>
+        `;
+    } else if (result.total_updated !== undefined) {
+        // Résultat mise à jour rôles
+        const alertClass = result.total_failed > 0 ? 'warning' : 'success';
+        html = `
+            <div class="alert alert-${alertClass}">
+                <h6><i class="bi bi-pencil me-2"></i>Mise à jour terminée</h6>
+                <p class="mb-1">
+                    <strong>${result.total_updated}</strong> utilisateur(s) mis à jour sur ${result.total_requested}
+                    ${result.total_failed > 0 ? `<br><span class="text-danger">${result.total_failed} échec(s)</span>` : ''}
+                </p>
+            </div>
+        `;
+    } else if (result.total_assignments !== undefined) {
+        // Résultat assignation
+        const alertClass = result.total_failed > 0 ? 'warning' : 'success';
+        html = `
+            <div class="alert alert-${alertClass}">
+                <h6><i class="bi bi-check-circle me-2"></i>Assignation terminée</h6>
+                <p class="mb-1">
+                    <strong>${result.total_success}</strong> assignation(s) réussie(s) sur ${result.total_assignments}
+                    ${result.total_failed > 0 ? `<br><span class="text-danger">${result.total_failed} échec(s)</span>` : ''}
+                </p>
+            </div>
+        `;
+    } else if (result.total_removals !== undefined) {
+        // Résultat suppression accès
+        const alertClass = result.total_failed > 0 ? 'warning' : 'success';
+        html = `
+            <div class="alert alert-${alertClass}">
+                <h6><i class="bi bi-x-circle me-2"></i>Suppression d'accès terminée</h6>
+                <p class="mb-1">
+                    <strong>${result.total_success}</strong> accès supprimé(s) sur ${result.total_removals}
+                    ${result.total_failed > 0 ? `<br><span class="text-danger">${result.total_failed} échec(s)</span>` : ''}
+                </p>
+            </div>
+        `;
+    }
+    
+    // Afficher les détails des erreurs si présentes
+    if (result.results && result.results.some(r => !r.success)) {
+        html += `
+            <details class="mt-2">
+                <summary class="text-danger cursor-pointer">Voir les erreurs</summary>
+                <ul class="list-unstyled mt-2 small">
+                    ${result.results.filter(r => !r.success).map(r => `
+                        <li class="text-danger">
+                            <i class="bi bi-x-circle me-1"></i>
+                            ${escapeHtml(r.username || r.user_id || 'Inconnu')}: ${escapeHtml(r.error || 'Erreur inconnue')}
+                        </li>
+                    `).join('')}
+                </ul>
+            </details>
+        `;
+    }
+    
+    resultContent.innerHTML = html;
+    
+    // Notification toast
+    if (result.total_failed > 0) {
+        showToast('Opération terminée', 'Certaines opérations ont échoué', 'warning');
+    } else {
+        showToast('Succès', 'Opération en masse terminée', 'success');
+    }
+}
+
+// =============================================================================

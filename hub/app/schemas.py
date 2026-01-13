@@ -836,6 +836,158 @@ class RestoreToAppResponse(BaseModel):
     warnings: List[str] = []
 
 
+# ===== Bulk Operations Schemas =====
+
+class BulkUserAppRoleAssignment(BaseModel):
+    """Attribution d'un rôle sur une application"""
+    app_id: int
+    role: str = "user"
+
+
+class BulkUserCreate(BaseModel):
+    """Données pour créer un utilisateur en masse"""
+    username: str = Field(..., min_length=3, max_length=50)
+    email: Optional[EmailStr] = None
+    password: str = Field(..., min_length=8)
+    is_admin: bool = False
+    is_active: bool = True
+    must_change_password: bool = False
+    can_change_password: bool = True
+    app_roles: List[BulkUserAppRoleAssignment] = []
+
+
+class BulkUsersCreateRequest(BaseModel):
+    """Requête de création d'utilisateurs en masse"""
+    users: List[BulkUserCreate] = Field(..., min_length=1, max_length=100)
+
+
+class BulkUserCreateResult(BaseModel):
+    """Résultat de création d'un utilisateur"""
+    username: str
+    success: bool
+    user_id: Optional[int] = None
+    error: Optional[str] = None
+
+
+class BulkUsersCreateResponse(BaseModel):
+    """Réponse de création en masse"""
+    total_requested: int
+    total_created: int
+    total_failed: int
+    results: List[BulkUserCreateResult]
+
+
+class BulkUserRoleUpdate(BaseModel):
+    """Mise à jour des rôles d'un utilisateur"""
+    user_id: int
+    app_roles: List[BulkUserAppRoleAssignment]
+
+
+class BulkUsersRolesUpdateRequest(BaseModel):
+    """Requête de mise à jour des rôles en masse"""
+    updates: List[BulkUserRoleUpdate] = Field(..., min_length=1, max_length=100)
+
+
+class BulkUserRoleUpdateResult(BaseModel):
+    """Résultat de mise à jour des rôles d'un utilisateur"""
+    user_id: int
+    username: str
+    success: bool
+    roles_updated: int = 0
+    error: Optional[str] = None
+
+
+class BulkUsersRolesUpdateResponse(BaseModel):
+    """Réponse de mise à jour des rôles en masse"""
+    total_requested: int
+    total_updated: int
+    total_failed: int
+    results: List[BulkUserRoleUpdateResult]
+
+
+class BulkUsersDeleteRequest(BaseModel):
+    """Requête de suppression d'utilisateurs en masse"""
+    user_ids: List[int] = Field(..., min_length=1, max_length=100)
+    confirm: bool = Field(..., description="Doit être True pour confirmer la suppression")
+
+
+class BulkUserDeleteResult(BaseModel):
+    """Résultat de suppression d'un utilisateur"""
+    user_id: int
+    username: str
+    success: bool
+    error: Optional[str] = None
+
+
+class BulkUsersDeleteResponse(BaseModel):
+    """Réponse de suppression en masse"""
+    total_requested: int
+    total_deleted: int
+    total_failed: int
+    results: List[BulkUserDeleteResult]
+
+
+class BulkAppRoleAssignment(BaseModel):
+    """Attribution d'un rôle à plusieurs utilisateurs sur une application"""
+    app_id: int
+    user_ids: List[int] = Field(..., min_length=1)
+    role: str = "user"
+
+
+class BulkAppRolesAssignRequest(BaseModel):
+    """Requête d'attribution de rôles sur applications en masse"""
+    assignments: List[BulkAppRoleAssignment] = Field(..., min_length=1, max_length=50)
+
+
+class BulkAppRoleAssignResult(BaseModel):
+    """Résultat d'attribution d'un rôle"""
+    app_id: int
+    app_name: str
+    user_id: int
+    username: str
+    role: str
+    success: bool
+    action: str = ""  # "created", "updated", "unchanged"
+    error: Optional[str] = None
+
+
+class BulkAppRolesAssignResponse(BaseModel):
+    """Réponse d'attribution de rôles en masse"""
+    total_assignments: int
+    total_success: int
+    total_failed: int
+    results: List[BulkAppRoleAssignResult]
+
+
+class BulkRemoveAppAccess(BaseModel):
+    """Suppression d'accès à une application pour plusieurs utilisateurs"""
+    app_id: int
+    user_ids: List[int] = Field(..., min_length=1)
+
+
+class BulkRemoveAppAccessRequest(BaseModel):
+    """Requête de suppression d'accès en masse"""
+    removals: List[BulkRemoveAppAccess] = Field(..., min_length=1, max_length=50)
+
+
+class BulkRemoveAppAccessResult(BaseModel):
+    """Résultat de suppression d'accès"""
+    app_id: int
+    app_name: str
+    user_id: int
+    username: str
+    success: bool
+    error: Optional[str] = None
+
+
+class BulkRemoveAppAccessResponse(BaseModel):
+    """Réponse de suppression d'accès en masse"""
+    total_removals: int
+    total_success: int
+    total_failed: int
+    results: List[BulkRemoveAppAccessResult]
+
+
 # Forward references
 UserResponse.model_rebuild()
 ServiceAccountResponse.model_rebuild()
