@@ -1,6 +1,7 @@
 /**
  * API Client for Hub Authentication
  * Supporte les refresh tokens pour maintenir les sessions
+ * Inclut un refresh proactif avant expiration du token
  */
 
 // L'API est maintenant proxifiée via Nginx sur le même hôte/port
@@ -12,11 +13,68 @@ class HubAPI {
         this.refreshToken = localStorage.getItem('hub_refresh_token');
         this._refreshPromise = null; // Pour éviter les appels concurrents
         this._lastRefreshTime = 0; // Timestamp du dernier refresh réussi
+        this._proactiveRefreshTimer = null; // Timer pour refresh proactif
+        this._tokenExpiry = null; // Date d'expiration du token
+        
+        // Si on a un token, parser son expiration et planifier le refresh
+        if (this.token) {
+            this._scheduleProactiveRefresh();
+        }
+    }
+
+    /**
+     * Parse le payload JWT pour extraire l'expiration
+     */
+    _parseTokenExpiry(token) {
+        try {
+            const payload = JSON.parse(atob(token.split('.')[1]));
+            return payload.exp ? new Date(payload.exp * 1000) : null;
+        } catch (e) {
+            console.warn('Impossible de parser le token JWT:', e);
+            return null;
+        }
+    }
+
+    /**
+     * Planifie un refresh proactif 2 minutes avant l'expiration du token
+     */
+    _scheduleProactiveRefresh() {
+        // Annuler tout timer existant
+        if (this._proactiveRefreshTimer) {
+            clearTimeout(this._proactiveRefreshTimer);
+            this._proactiveRefreshTimer = null;
+        }
+
+        if (!this.token || !this.refreshToken) return;
+
+        const expiry = this._parseTokenExpiry(this.token);
+        if (!expiry) return;
+
+        this._tokenExpiry = expiry;
+        const now = Date.now();
+        const expiryTime = expiry.getTime();
+        
+        // Rafraîchir 2 minutes avant l'expiration (ou immédiatement si < 2 min)
+        const refreshIn = Math.max(0, expiryTime - now - 2 * 60 * 1000);
+        
+        console.log(`🔑 Token expire à ${expiry.toLocaleTimeString()}, refresh proactif dans ${Math.round(refreshIn / 1000)}s`);
+        
+        this._proactiveRefreshTimer = setTimeout(async () => {
+            console.log('🔄 Refresh proactif du token...');
+            const success = await this.tryRefreshToken();
+            if (success) {
+                console.log('✅ Refresh proactif réussi');
+            } else {
+                console.warn('⚠️ Refresh proactif échoué');
+            }
+        }, refreshIn);
     }
 
     setToken(token) {
         this.token = token;
         localStorage.setItem('hub_token', token);
+        // Replanifier le refresh proactif avec le nouveau token
+        this._scheduleProactiveRefresh();
     }
 
     setRefreshToken(token) {
@@ -31,8 +89,14 @@ class HubAPI {
     clearToken() {
         this.token = null;
         this.refreshToken = null;
+        this._tokenExpiry = null;
         localStorage.removeItem('hub_token');
         localStorage.removeItem('hub_refresh_token');
+        // Annuler le timer de refresh proactif
+        if (this._proactiveRefreshTimer) {
+            clearTimeout(this._proactiveRefreshTimer);
+            this._proactiveRefreshTimer = null;
+        }
     }
 
     getHeaders() {
