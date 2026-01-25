@@ -13,6 +13,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
+from app.health_checker import start_health_checker, stop_health_checker, is_health_checker_running
 
 
 router = APIRouter(prefix="/api/events", tags=["Events"])
@@ -151,7 +152,7 @@ async def periodic_session_cleanup():
 
 
 def start_cleanup_task():
-    """Démarre la tâche de cleanup si elle n'est pas déjà active."""
+    """Démarre la tâche de cleanup et le health checker si pas déjà actifs."""
     global _cleanup_task
     if _cleanup_task is None or _cleanup_task.done():
         try:
@@ -160,15 +161,24 @@ def start_cleanup_task():
             print("🔄 Tâche de cleanup des sessions démarrée")
         except RuntimeError:
             pass
+    
+    # Démarrer aussi le health checker
+    if not is_health_checker_running():
+        start_health_checker()
 
 
 def stop_cleanup_task():
-    """Arrête la tâche de cleanup si plus aucun client connecté."""
+    """Arrête la tâche de cleanup et le health checker si plus aucun client connecté."""
     global _cleanup_task
-    if len(_connected_clients) == 0 and _cleanup_task and not _cleanup_task.done():
-        _cleanup_task.cancel()
-        _cleanup_task = None
-        print("🔄 Tâche de cleanup des sessions arrêtée")
+    if len(_connected_clients) == 0:
+        if _cleanup_task and not _cleanup_task.done():
+            _cleanup_task.cancel()
+            _cleanup_task = None
+            print("🔄 Tâche de cleanup des sessions arrêtée")
+        
+        # Arrêter aussi le health checker
+        if is_health_checker_running():
+            stop_health_checker()
 
 
 # =============================================================================

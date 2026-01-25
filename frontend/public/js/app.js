@@ -210,7 +210,32 @@ function handleSSEEvent(data) {
                 updateAppDockerStatusInTable(data.data?.slug, data.data?.status);
             }
             // Aussi mettre à jour sur le dashboard
-            updateAppCardStatus(data.data?.slug, data.data?.status);
+            updateAppCardStatus(data.data?.slug, data.data?.status, null);
+            break;
+        
+        case 'app_health_changed':
+            // Événement pour les changements de santé (health check)
+            const appSlug = data.data?.slug;
+            const appName = data.data?.name;
+            const newHealthStatus = data.data?.health_status;
+            const previousStatus = data.data?.previous_status;
+            
+            console.log(`🏥 Health status changed: ${appSlug} -> ${newHealthStatus}`);
+            
+            // Mettre à jour le badge dans le tableau admin
+            if (currentPage === 'apps-admin') {
+                updateAppHealthStatusInTable(appSlug, newHealthStatus);
+            }
+            
+            // Mettre à jour la carte sur le dashboard
+            updateAppCardStatus(appSlug, null, newHealthStatus);
+            
+            // Notification
+            if (newHealthStatus === 'unhealthy') {
+                showToast('⚠️ Application hors ligne', `${appName || appSlug} ne répond plus`, 'warning');
+            } else if (previousStatus === 'unhealthy' && newHealthStatus === 'healthy') {
+                showToast('✅ Application en ligne', `${appName || appSlug} est de nouveau accessible`, 'success');
+            }
             break;
             
         case 'users_updated':
@@ -893,8 +918,10 @@ function renderAppsGrid(apps) {
     const isAdmin = currentUser?.is_admin;
 
     grid.innerHTML = apps.map(app => {
-        // Déterminer si l'app est en maintenance (conteneur Docker arrêté)
-        const isInMaintenance = app.docker_status && app.docker_status !== 'running';
+        // Déterminer si l'app est en maintenance (conteneur Docker arrêté OU health check échoué)
+        const isDockerStopped = app.docker_status && app.docker_status !== 'running';
+        const isHealthUnhealthy = app.health_status === 'unhealthy';
+        const isInMaintenance = isDockerStopped || isHealthUnhealthy;
         const isUnavailable = !app.is_active || isInMaintenance;
         
         return `
@@ -1209,15 +1236,50 @@ function updateAppDockerStatusInTable(slug, dockerStatus) {
 }
 
 /**
- * Met à jour le statut d'une carte d'app sur le dashboard
+ * Met à jour le statut de santé (health check) d'une app dans le tableau admin
  */
-function updateAppCardStatus(slug, dockerStatus) {
+function updateAppHealthStatusInTable(slug, healthStatus) {
+    if (!slug) return;
+    
+    // Trouver la cellule de connectivité
+    const cell = document.querySelector(`.app-connectivity[data-app-slug="${slug}"]`);
+    if (!cell) return;
+    
+    // Mettre à jour le badge
+    let badge;
+    if (healthStatus === 'healthy') {
+        badge = `<span class="badge bg-success">
+            <i class="bi bi-wifi me-1"></i>En ligne
+        </span>`;
+    } else if (healthStatus === 'unhealthy') {
+        badge = `<span class="badge bg-danger">
+            <i class="bi bi-wifi-off me-1"></i>Hors ligne
+        </span>`;
+    } else {
+        badge = `<span class="badge bg-light text-muted">
+            <i class="bi bi-question-circle me-1"></i>Inconnu
+        </span>`;
+    }
+    cell.innerHTML = badge;
+    
+    console.log(`🏥 Health status mis à jour pour ${slug}: ${healthStatus}`);
+}
+
+/**
+ * Met à jour le statut d'une carte d'app sur le dashboard
+ * @param {string} slug - Slug de l'application
+ * @param {string} dockerStatus - Statut Docker ('running', 'exited', etc.)
+ * @param {string} healthStatus - Statut santé ('healthy', 'unhealthy')
+ */
+function updateAppCardStatus(slug, dockerStatus, healthStatus) {
     if (!slug) return;
     
     const card = document.querySelector(`.app-card[data-app-slug="${slug}"]`);
     if (!card) return;
     
-    const isInMaintenance = dockerStatus && dockerStatus !== 'running';
+    const isDockerStopped = dockerStatus && dockerStatus !== 'running';
+    const isHealthUnhealthy = healthStatus === 'unhealthy';
+    const isInMaintenance = isDockerStopped || isHealthUnhealthy;
     
     if (isInMaintenance) {
         card.classList.add('app-inactive');
@@ -1368,6 +1430,17 @@ function renderAppsTable(apps) {
                             ? '<span class="badge bg-light text-dark"><i class="bi bi-play-circle text-success me-1"></i>Running</span>'
                             : '<span class="badge bg-warning text-dark"><i class="bi bi-pause-circle me-1"></i>Maintenance</span>';
                     
+                    // Déterminer le statut de santé (health check automatique)
+                    const healthStatus = app.health_status;
+                    let healthBadge;
+                    if (healthStatus === 'healthy') {
+                        healthBadge = '<span class="badge bg-success"><i class="bi bi-wifi me-1"></i>En ligne</span>';
+                    } else if (healthStatus === 'unhealthy') {
+                        healthBadge = '<span class="badge bg-danger"><i class="bi bi-wifi-off me-1"></i>Hors ligne</span>';
+                    } else {
+                        healthBadge = '<span class="badge bg-light text-muted"><i class="bi bi-hourglass-split me-1"></i>Vérification...</span>';
+                    }
+                    
                     return `
                     <tr data-app-id="${app.id}">
                         <td>
@@ -1391,7 +1464,7 @@ function renderAppsTable(apps) {
                         </td>
                         <td>${dockerBadge}</td>
                         <td class="app-connectivity" data-app-slug="${app.slug}">
-                            <span class="badge bg-light text-muted"><i class="bi bi-question-circle me-1"></i>Non testé</span>
+                            ${healthBadge}
                         </td>
                         <td class="text-end">
                             <button class="btn btn-sm btn-outline-info me-1" onclick="showDockerDetails('${app.slug}')" title="Détails Docker">

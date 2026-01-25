@@ -10,6 +10,7 @@ import logging
 
 from app.routes.events import notify_event, notify_stats_update
 from app.routes.app_backups import reassociate_orphan_backups
+from app.health_checker import get_app_health_status
 
 from app.database import get_db
 from app.models import Application, User, ServiceAccount, UserAppRole, ApprovalStatus, service_account_app_access
@@ -554,7 +555,8 @@ async def list_apps(
             AppResponseWithMyRole.from_app_with_role(
                 app, 
                 user_roles_map.get(app.slug),
-                get_docker_status_for_app(app, port_status_map)
+                get_docker_status_for_app(app, port_status_map),
+                get_app_health_status(app.slug)
             )
             for app in apps
         ]
@@ -568,7 +570,8 @@ async def list_apps(
             AppResponseWithMyRole.from_app_with_role(
                 ar.application, 
                 ar.role,
-                get_docker_status_for_app(ar.application, port_status_map)
+                get_docker_status_for_app(ar.application, port_status_map),
+                get_app_health_status(ar.application.slug)
             )
             for ar in sorted_roles
         ]
