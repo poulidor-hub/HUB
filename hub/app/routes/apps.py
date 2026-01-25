@@ -544,7 +544,10 @@ async def list_apps(
     port_status_map = get_docker_status_map()
     
     if current_user.is_admin:
-        result = await db.execute(select(Application))
+        # Tri alphabétique par nom pour un ordre stable et prévisible
+        result = await db.execute(
+            select(Application).order_by(Application.name)
+        )
         apps = result.scalars().all()
         logger.debug(f"Admin {current_user.username}: {len(apps)} applications trouvées")
         return [
@@ -557,15 +560,17 @@ async def list_apps(
         ]
     else:
         # Retourne uniquement les apps de l'utilisateur via app_roles
+        # Tri alphabétique par nom pour un ordre stable et prévisible
         apps_count = len(user.app_roles)
         logger.debug(f"User {current_user.username}: {apps_count} applications accessibles")
+        sorted_roles = sorted(user.app_roles, key=lambda ar: ar.application.name.lower())
         return [
             AppResponseWithMyRole.from_app_with_role(
                 ar.application, 
                 ar.role,
                 get_docker_status_for_app(ar.application, port_status_map)
             )
-            for ar in user.app_roles
+            for ar in sorted_roles
         ]
 
 
