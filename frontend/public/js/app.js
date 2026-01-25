@@ -215,26 +215,26 @@ function handleSSEEvent(data) {
         
         case 'app_health_changed':
             // Événement pour les changements de santé (health check)
-            const appSlug = data.data?.slug;
-            const appName = data.data?.name;
+            const healthAppSlug = data.data?.slug;
+            const healthAppName = data.data?.name;
             const newHealthStatus = data.data?.health_status;
             const previousStatus = data.data?.previous_status;
             
-            console.log(`🏥 Health status changed: ${appSlug} -> ${newHealthStatus}`);
+            console.log(`🏥 Health status changed: ${healthAppSlug} -> ${newHealthStatus}`);
             
             // Mettre à jour le badge dans le tableau admin
             if (currentPage === 'apps-admin') {
-                updateAppHealthStatusInTable(appSlug, newHealthStatus);
+                updateAppHealthStatusInTable(healthAppSlug, newHealthStatus);
             }
             
             // Mettre à jour la carte sur le dashboard
-            updateAppCardStatus(appSlug, null, newHealthStatus);
+            updateAppCardStatus(healthAppSlug, null, newHealthStatus);
             
             // Notification
             if (newHealthStatus === 'unhealthy') {
-                showToast('⚠️ Application hors ligne', `${appName || appSlug} ne répond plus`, 'warning');
+                showToast('⚠️ Application hors ligne', `${healthAppName || healthAppSlug} ne répond plus`, 'warning');
             } else if (previousStatus === 'unhealthy' && newHealthStatus === 'healthy') {
-                showToast('✅ Application en ligne', `${appName || appSlug} est de nouveau accessible`, 'success');
+                showToast('✅ Application en ligne', `${healthAppName || healthAppSlug} est de nouveau accessible`, 'success');
             }
             break;
             
