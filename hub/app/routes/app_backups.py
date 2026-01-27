@@ -1076,18 +1076,55 @@ async def trigger_backup(
 # RESTAURATION VERS UNE APPLICATION
 # =============================================================================
 
+async def get_admin_or_app_service_account(
+    slug: str,
+    current_entity = Depends(get_current_entity)
+) -> User | ServiceAccount:
+    """
+    Vérifie que l'appelant est soit un admin, soit un service account 
+    associé à l'application spécifiée.
+    
+    Permet aux applications de déclencher leurs propres restaurations via M2M.
+    """
+    if isinstance(current_entity, User):
+        if not current_entity.is_admin:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Accès administrateur requis"
+            )
+        return current_entity
+    elif isinstance(current_entity, ServiceAccount):
+        # Vérifier que le SA a accès à cette application
+        app_slugs = [app.slug for app in current_entity.applications]
+        if slug not in app_slugs:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Service account n'a pas accès à l'application '{slug}'"
+            )
+        return current_entity
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Type d'authentification non reconnu"
+        )
+
+
 @router.post("/api/apps/{slug}/backup/{backup_id}/restore", response_model=RestoreToAppResponse)
 async def restore_backup_to_app(
     slug: str,
     backup_id: str,
     options: RestoreToAppRequest = RestoreToAppRequest(),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_admin)
+    current_entity = Depends(get_current_entity)
 ):
     """
     Restaure un backup existant vers une application.
     
     Le HUB envoie le fichier de backup à l'application via POST /api/admin/restore.
+    
+    Authentification: 
+    - Utilisateur admin du Hub
+    - Service account associé à l'application (pour sync-from-hub M2M)
     
     Options:
     - **clear_existing**: Supprimer toutes les données existantes avant restauration
@@ -1099,6 +1136,27 @@ async def restore_backup_to_app(
     import httpx
     from app.auth import create_access_token
     from datetime import timedelta
+    
+    # Vérifier les permissions (admin ou SA de l'app)
+    if isinstance(current_entity, User):
+        if not current_entity.is_admin:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Accès administrateur requis"
+            )
+    elif isinstance(current_entity, ServiceAccount):
+        # Vérifier que le SA a accès à cette application
+        app_slugs = [app.slug for app in current_entity.applications]
+        if slug not in app_slugs:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Service account n'a pas accès à l'application '{slug}'"
+            )
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Type d'authentification non reconnu"
+        )
     
     app = await get_app_or_404(db, slug)
     backup = await get_backup_or_404(db, backup_id)
