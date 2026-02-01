@@ -87,8 +87,8 @@ async def check_app_health(app_slug: str, api_url: str) -> dict:
         
         # Client avec timeout court et sans vérification SSL (PKI interne)
         async with httpx.AsyncClient(timeout=HEALTH_CHECK_TIMEOUT, verify=False) as client:
-            # Essayer /health d'abord, puis /api/health, puis /
-            for endpoint in ["/health", "/api/health", "/"]:
+            # Essayer /api/health d'abord (standard des apps), puis /health, puis /
+            for endpoint in ["/api/health", "/health", "/"]:
                 try:
                     url = api_url.rstrip('/') + endpoint
                     response = await client.get(url)
