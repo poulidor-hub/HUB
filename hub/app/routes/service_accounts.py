@@ -224,7 +224,7 @@ async def get_service_accounts_status(
     - Si le fichier de credentials existe
     - Si les credentials sont valides (test d'authentification)
     """
-    from datetime import datetime
+    from datetime import datetime, timezone
     
     result = await db.execute(
         select(ServiceAccount)

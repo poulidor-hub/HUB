@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 from typing import Optional
-from datetime import datetime
+from datetime import datetime, timezone
 import json
 import os
 import base64
@@ -34,7 +34,7 @@ JWT_PUBLIC_KEY_PATH = SECRETS_DIR / "jwt_public_key.pem"
 
 @router.get("/export", response_model=BackupExport)
 async def export_environment(
-    include_jwt_keys: bool = True,
+    include_jwt_keys: bool = False,
     include_sa_secrets: bool = True,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_admin)
@@ -42,7 +42,7 @@ async def export_environment(
     """
     Exporte l'environnement complet du Hub.
     
-    - **include_jwt_keys**: Inclure les clés RSA JWT (nécessaire pour conserver les sessions)
+    - **include_jwt_keys**: Inclure les clés RSA JWT (⚠️ désactivé par défaut — fuite = tous tokens compromis)
     - **include_sa_secrets**: Inclure les secrets des service accounts depuis les fichiers .env
     
     ⚠️ Le fichier d'export contient des données sensibles, stockez-le de manière sécurisée !
@@ -149,6 +149,7 @@ async def export_environment(
     jwt_private_key = None
     jwt_public_key = None
     if include_jwt_keys:
+        logger.warning(f"⚠️  Export JWT keys demandé par {current_user.username} — la clé privée sera incluse dans le backup")
         if JWT_PRIVATE_KEY_PATH.exists():
             jwt_private_key = base64.b64encode(JWT_PRIVATE_KEY_PATH.read_bytes()).decode()
         if JWT_PUBLIC_KEY_PATH.exists():
@@ -496,5 +497,5 @@ CLIENT_SECRET={client_secret}
 # Généré lors de l'import le {datetime.utcnow().isoformat()}
 """
         filepath.write_text(content)
-    except Exception:
-        pass  # Silencieux en cas d'erreur
+    except Exception as e:
+        logger.warning(f"⚠️ Impossible d'écrire le secret du service account {client_id[:16]}: {e}")

@@ -6,6 +6,7 @@ let currentUser = null;
 let allApps = [];
 let allServiceAccounts = [];
 let hubHost = null;  // IP/hostname du Hub (chargé depuis l'API)
+let beaconToken = null;  // Token HMAC éphémère pour sécuriser beacon-logout
 
 // Tracking des fenêtres d'applications ouvertes pour fermeture automatique au logout
 const openedAppWindows = new Map();
@@ -35,9 +36,12 @@ function initEventSource(isReconnect = false) {
     }
     
     try {
-        // Passer l'user_id pour le tracking de session
+        // Passer l'user_id et beacon_token pour le tracking de session sécurisé
         const userId = currentUser?.id || '';
-        const sseUrl = userId ? `/api/events/stream?user_id=${userId}` : '/api/events/stream';
+        let sseUrl = '/api/events/stream';
+        if (userId && beaconToken) {
+            sseUrl = `/api/events/stream?user_id=${userId}&beacon_token=${beaconToken}`;
+        }
         eventSource = new EventSource(sseUrl);
         
         eventSource.onopen = () => {
@@ -422,7 +426,8 @@ document.addEventListener('DOMContentLoaded', () => {
             try {
                 const data = JSON.stringify({
                     reason: 'browser_closed',
-                    user_id: currentUser.id
+                    user_id: currentUser.id,
+                    beacon_token: beaconToken || ''
                 });
                 navigator.sendBeacon('/api/auth/beacon-logout', data);
                 console.log('📤 Beacon logout envoyé');
@@ -520,6 +525,11 @@ async function handleLogin(event) {
     try {
         errorDiv.classList.add('d-none');
         const loginResult = await api.login(username, password);
+        
+        // Sauvegarder le beacon token pour le logout sécurisé à la fermeture
+        if (loginResult.beacon_token) {
+            beaconToken = loginResult.beacon_token;
+        }
         
         // Si un callback SSO est en attente, rediriger vers l'application externe
         const pendingCallback = getPendingCallback();

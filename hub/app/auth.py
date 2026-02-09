@@ -1,7 +1,7 @@
 import jwt
 import secrets
 import hashlib
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional, List, Union
 from passlib.context import CryptContext
 from fastapi import Depends, HTTPException, status
@@ -212,10 +212,6 @@ async def cleanup_expired_tokens(db: AsyncSession) -> int:
 
 async def revoke_all_user_tokens(db: AsyncSession, user_id: int) -> None:
     """Révoque tous les refresh tokens d'un utilisateur"""
-    await db.execute(
-        select(RefreshToken)
-        .where(RefreshToken.user_id == user_id, RefreshToken.revoked_at.is_(None))
-    )
     result = await db.execute(
         select(RefreshToken)
         .where(RefreshToken.user_id == user_id, RefreshToken.revoked_at.is_(None))

@@ -16,6 +16,10 @@ from app.auth import get_password_hash, cleanup_expired_tokens
 from app.config import get_settings
 from app.routes import auth, users, apps, service_accounts, backup, audit, docs, events, app_backups
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 settings = get_settings()
 
 # Variables globales pour contrôler les tâches périodiques
@@ -26,19 +30,30 @@ _backup_scheduler_task = None
 
 
 async def create_default_admin():
-    """Crée l'admin par défaut si inexistant"""
+    """Crée l'admin par défaut si inexistant et force le changement de mot de passe par défaut"""
     async with async_session_maker() as db:
         result = await db.execute(select(User).where(User.username == settings.admin_username))
-        if not result.scalar_one_or_none():
+        existing_admin = result.scalar_one_or_none()
+        
+        if not existing_admin:
             admin = User(
                 username=settings.admin_username,
                 email=settings.admin_email,
                 hashed_password=get_password_hash(settings.admin_password),
-                is_admin=True
+                is_admin=True,
+                must_change_password=True
             )
             db.add(admin)
             await db.commit()
-            print(f"✅ Admin créé: {settings.admin_username}")
+            logger.info(f"✅ Admin créé: {settings.admin_username}")
+        else:
+            # Vérifier si le mot de passe par défaut est encore utilisé
+            from app.auth import verify_password
+            if verify_password("admin123", existing_admin.hashed_password):
+                if not existing_admin.must_change_password:
+                    existing_admin.must_change_password = True
+                    await db.commit()
+                logger.warning("⚠️  Mot de passe admin par défaut détecté ! Changez-le dès que possible.")
 
 
 async def periodic_token_cleanup():
@@ -49,12 +64,12 @@ async def periodic_token_cleanup():
             async with async_session_maker() as db:
                 deleted_count = await cleanup_expired_tokens(db)
                 if deleted_count > 0:
-                    print(f"🧹 Nettoyage: {deleted_count} tokens expirés supprimés")
+                    logger.info(f"🧹 Nettoyage: {deleted_count} tokens expirés supprimés")
         except asyncio.CancelledError:
-            print("🛑 Tâche de nettoyage arrêtée")
+            logger.info("🛑 Tâche de nettoyage arrêtée")
             break
         except Exception as e:
-            print(f"⚠️ Erreur lors du nettoyage des tokens: {e}")
+            logger.warning(f"⚠️ Erreur lors du nettoyage des tokens: {e}")
 
 
 async def periodic_docker_sync():
@@ -62,10 +77,10 @@ async def periodic_docker_sync():
     interval = settings.docker_sync_interval
     
     if interval <= 0:
-        print("🐳 Synchronisation Docker désactivée (DOCKER_SYNC_INTERVAL=0)")
+        logger.info("🐳 Synchronisation Docker désactivée (DOCKER_SYNC_INTERVAL=0)")
         return
     
-    print(f"🐳 Synchronisation Docker activée (toutes les {interval}s)")
+    logger.info(f"🐳 Synchronisation Docker activée (toutes les {interval}s)")
     
     # Attendre un peu avant le premier scan (laisser les apps démarrer)
     await asyncio.sleep(30)
@@ -76,14 +91,14 @@ async def periodic_docker_sync():
             async with async_session_maker() as db:
                 result = await auto_sync_docker_applications(db)
                 if result.get("changes", 0) > 0:
-                    print(f"🐳 Sync Docker: {result['changes']} application(s) mise(s) à jour")
+                    logger.info(f"🐳 Sync Docker: {result['changes']} application(s) mise(s) à jour")
             
             await asyncio.sleep(interval)
         except asyncio.CancelledError:
-            print("🛑 Tâche de synchronisation Docker arrêtée")
+            logger.info("🛑 Tâche de synchronisation Docker arrêtée")
             break
         except Exception as e:
-            print(f"⚠️ Erreur lors de la synchronisation Docker: {e}")
+            logger.warning(f"⚠️ Erreur lors de la synchronisation Docker: {e}")
             await asyncio.sleep(interval)
 
 
@@ -96,10 +111,10 @@ async def periodic_log_purge():
     error_days = settings.error_retention_days
     
     if audit_days <= 0 and error_days <= 0:
-        print("🗑️ Purge des logs désactivée (rétention = 0)")
+        logger.info("🗑️ Purge des logs désactivée (rétention = 0)")
         return
     
-    print(f"🗑️ Purge des logs activée (audit: {audit_days}j, errors: {error_days}j, intervalle: {interval_hours}h)")
+    logger.info(f"🗑️ Purge des logs activée (audit: {audit_days}j, errors: {error_days}j, intervalle: {interval_hours}h)")
     
     # Attendre un peu avant la première purge
     await asyncio.sleep(60)
@@ -109,14 +124,14 @@ async def periodic_log_purge():
             async with async_session_maker() as db:
                 result = await purge_old_logs(db, audit_days, error_days)
                 if result["audit_deleted"] > 0 or result["errors_deleted"] > 0:
-                    print(f"🗑️ Purge logs: {result['audit_deleted']} audit, {result['errors_deleted']} erreurs supprimés")
+                    logger.info(f"🗑️ Purge logs: {result['audit_deleted']} audit, {result['errors_deleted']} erreurs supprimés")
             
             await asyncio.sleep(interval_hours * 3600)
         except asyncio.CancelledError:
-            print("🛑 Tâche de purge des logs arrêtée")
+            logger.info("🛑 Tâche de purge des logs arrêtée")
             break
         except Exception as e:
-            print(f"⚠️ Erreur lors de la purge des logs: {e}")
+            logger.warning(f"⚠️ Erreur lors de la purge des logs: {e}")
             await asyncio.sleep(interval_hours * 3600)
 
 
@@ -128,9 +143,9 @@ async def periodic_backup_scheduler():
     from croniter import croniter
     from sqlalchemy import select
     from app.models import Application
-    from datetime import datetime
+    from datetime import datetime, timezone
     
-    print("📅 Scheduler de backups démarré")
+    logger.info("📅 Scheduler de backups démarré")
     
     # Attendre un peu avant le premier check
     await asyncio.sleep(30)
@@ -153,7 +168,7 @@ async def periodic_backup_scheduler():
                     try:
                         # Vérifier si c'est l'heure du backup
                         if app.next_backup_at and app.next_backup_at <= now:
-                            print(f"📦 Déclenchement backup planifié pour {app.slug}")
+                            logger.info(f"📦 Déclenchement backup planifié pour {app.slug}")
                             
                             # Mettre à jour le statut
                             app.last_backup_status = "running"
@@ -168,26 +183,26 @@ async def periodic_backup_scheduler():
                             # Pour l'instant, on log juste l'événement
                             # L'implémentation complète nécessiterait d'appeler l'API de l'app
                             
-                            print(f"📅 Prochain backup pour {app.slug}: {app.next_backup_at}")
+                            logger.info(f"📅 Prochain backup pour {app.slug}: {app.next_backup_at}")
                         
                         # Si next_backup_at n'est pas défini, le calculer
                         elif not app.next_backup_at and app.backup_cron:
                             cron = croniter(app.backup_cron, now)
                             app.next_backup_at = cron.get_next(datetime)
                             await db.commit()
-                            print(f"📅 Prochain backup programmé pour {app.slug}: {app.next_backup_at}")
+                            logger.info(f"📅 Prochain backup programmé pour {app.slug}: {app.next_backup_at}")
                             
                     except Exception as e:
-                        print(f"⚠️ Erreur scheduler backup pour {app.slug}: {e}")
+                        logger.warning(f"⚠️ Erreur scheduler backup pour {app.slug}: {e}")
             
             # Vérifier toutes les 60 secondes
             await asyncio.sleep(60)
             
         except asyncio.CancelledError:
-            print("🛑 Scheduler de backups arrêté")
+            logger.info("🛑 Scheduler de backups arrêté")
             break
         except Exception as e:
-            print(f"⚠️ Erreur dans le scheduler de backups: {e}")
+            logger.warning(f"⚠️ Erreur dans le scheduler de backups: {e}")
             await asyncio.sleep(60)
 
 
@@ -196,14 +211,24 @@ async def lifespan(app: FastAPI):
     global _cleanup_task, _docker_sync_task, _log_purge_task, _backup_scheduler_task
     
     # Startup
-    print("🚀 Démarrage du Hub d'Authentification...")
+    logger.info("🚀 Démarrage du Hub d'Authentification...")
     await init_db()
     await apply_migrations()  # Appliquer les migrations SQL si nécessaires
     await create_default_admin()
     
+    # Vérifier la configuration des secrets
+    from app.config import get_settings
+    _settings = get_settings()
+    if not _settings.secrets_encryption_key:
+        logger.warning(
+            "⚠️  SECRETS_ENCRYPTION_KEY non définie ! "
+            "Les secrets des service accounts ne seront pas chiffrés. "
+            "Définissez cette variable d'environnement pour la production."
+        )
+    
     # Démarrer la tâche de nettoyage périodique
     _cleanup_task = asyncio.create_task(periodic_token_cleanup())
-    print("🧹 Tâche de nettoyage des tokens démarrée")
+    logger.info("🧹 Tâche de nettoyage des tokens démarrée")
     
     # Démarrer la tâche de synchronisation Docker
     _docker_sync_task = asyncio.create_task(periodic_docker_sync())
@@ -214,11 +239,11 @@ async def lifespan(app: FastAPI):
     # Démarrer le scheduler de backups
     _backup_scheduler_task = asyncio.create_task(periodic_backup_scheduler())
     
-    print("✅ Hub prêt !")
+    logger.info("✅ Hub prêt !")
     yield
     
     # Shutdown
-    print("👋 Arrêt du Hub...")
+    logger.info("👋 Arrêt du Hub...")
     if _cleanup_task:
         _cleanup_task.cancel()
         try:
@@ -330,9 +355,9 @@ async def _log_error_to_db(
             )
             db.add(error_log)
             await db.commit()
-            print(f"📝 Erreur {error_code} loggée: {request.url.path}")
+            logger.debug(f"📝 Erreur {error_code} loggée: {request.url.path}")
     except Exception as log_error:
-        print(f"⚠️ Erreur lors du logging d'erreur: {log_error}")
+        logger.warning(f"⚠️ Erreur lors du logging d'erreur: {log_error}")
 
 
 @app.exception_handler(StarletteHTTPException)
@@ -346,9 +371,17 @@ async def http_exception_handler(request: Request, exc: StarletteHTTPException):
     error_message = str(exc.detail) if exc.detail else "Erreur HTTP"
     error_type = _get_error_type(error_code)
     
-    # Logger toutes les erreurs HTTP (4xx et 5xx)
+    # Logger toutes les erreurs HTTP (4xx et 5xx) sauf les 404 sur des paths non-API
+    # Les 404 sont très fréquents (scans, robots, favicon) et polluent la DB
     if error_code >= 400:
-        await _log_error_to_db(request, error_code, error_type, error_message)
+        should_log = True
+        if error_code == 404:
+            path = str(request.url.path)
+            # Ne loguer les 404 que pour les routes API (pas favicon, .env, wp-admin, etc.)
+            if not path.startswith("/api/"):
+                should_log = False
+        if should_log:
+            await _log_error_to_db(request, error_code, error_type, error_message)
     
     return JSONResponse(
         status_code=error_code,

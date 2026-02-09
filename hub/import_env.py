@@ -70,7 +70,7 @@ def write_sa_secret(client_id: str, client_secret: str, app_slugs: list):
         content = f"""CLIENT_ID={client_id}
 CLIENT_SECRET={client_secret}
 # Applications autorisées: {', '.join(app_slugs)}
-# Restauré lors de l'import le {datetime.utcnow().isoformat()}
+# Restauré lors de l'import le {datetime.now(timezone.utc).isoformat()}
 """
         filepath.write_text(content)
         print(f"   📄 Fichier créé: {filepath}")

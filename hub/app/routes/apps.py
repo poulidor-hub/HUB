@@ -4,6 +4,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 from typing import List, Optional, Union, Dict
 import re
+import asyncio
+import ipaddress
 
 from pathlib import Path
 import logging
@@ -13,7 +15,7 @@ from app.routes.app_backups import reassociate_orphan_backups
 from app.health_checker import get_app_health_status
 
 from app.database import get_db
-from app.models import Application, User, ServiceAccount, UserAppRole, ApprovalStatus, service_account_app_access
+from app.models import Application, User, ServiceAccount, UserAppRole, ApprovalStatus, service_account_app_access, DEFAULT_ROLES
 from app.schemas import (
     AppCreate, AppCreateSimplified, AppUpdate, AppResponse, AppWithUsers, AppWithUsersAndDocker,
     AppResponseWithMyRole,
@@ -39,6 +41,9 @@ def get_docker_status_map() -> Dict[str, str]:
     
     Utilise directement le client Docker pour inclure les conteneurs arrêtés
     dont les ports ne sont plus visibles.
+    
+    Note: Le SDK Docker est synchrone/bloquant, donc cette fonction doit être
+    appelée via run_in_executor() depuis un contexte async.
     
     Returns:
         Dict[str, str]: Mapping port -> status ('running', 'exited', etc.)
@@ -268,11 +273,25 @@ def get_whitelist_networks() -> list[str]:
 
 
 def is_docker_network_ip(ip: str) -> bool:
-    """Vérifie si l'IP provient d'un réseau autorisé (whitelist)"""
+    """Vérifie si l'IP provient d'un réseau autorisé (whitelist) avec validation stricte."""
     if not ip:
         return False
     whitelist = get_whitelist_networks()
-    return any(ip.startswith(prefix) for prefix in whitelist)
+    try:
+        addr = ipaddress.ip_address(ip)
+        for prefix in whitelist:
+            # Supporter la notation CIDR (ex: 172.17.0.0/16) et les préfixes simples
+            try:
+                network = ipaddress.ip_network(prefix, strict=False)
+                if addr in network:
+                    return True
+            except ValueError:
+                # Fallback pour les préfixes simples (ex: "172.17.")
+                if ip.startswith(prefix):
+                    return True
+    except ValueError:
+        return False
+    return False
 
 
 def generate_slug(name: str) -> str:
@@ -443,7 +462,7 @@ async def get_apps_status(
     """
     import httpx
     import asyncio
-    from datetime import datetime
+    from datetime import datetime, timezone
     
     result = await db.execute(select(Application))
     apps = result.scalars().all()
@@ -541,8 +560,9 @@ async def list_apps(
     user = user_result.scalar_one()
     user_roles_map = {ar.application.slug: ar.role for ar in user.app_roles}
     
-    # Récupérer le statut Docker de tous les conteneurs
-    port_status_map = get_docker_status_map()
+    # Récupérer le statut Docker de tous les conteneurs (appel bloquant → executor)
+    loop = asyncio.get_running_loop()
+    port_status_map = await loop.run_in_executor(None, get_docker_status_map)
     
     if current_user.is_admin:
         # Tri alphabétique par nom pour un ordre stable et prévisible
@@ -632,8 +652,8 @@ async def log_app_access(
     }
 
 
-# Rôles disponibles pour les apps
-AVAILABLE_ROLES = ["admin", "manager", "user", "viewer"]
+# Rôles disponibles pour les apps (— référence unique depuis models.py)
+AVAILABLE_ROLES = DEFAULT_ROLES
 
 
 @router.put("/me/role/{app_slug}")
@@ -747,8 +767,9 @@ async def list_all_apps_with_users(
     _: User = Depends(get_current_admin)
 ):
     """Liste toutes les applications avec leurs utilisateurs et statut Docker (admin uniquement)"""
-    # Récupérer le statut Docker de tous les conteneurs
-    port_status_map = get_docker_status_map()
+    # Récupérer le statut Docker de tous les conteneurs (appel bloquant → executor)
+    loop = asyncio.get_running_loop()
+    port_status_map = await loop.run_in_executor(None, get_docker_status_map)
     
     result = await db.execute(
         select(Application).options(
@@ -1744,7 +1765,7 @@ async def update_app_shared(
     # Si l'app devient un service partagé et était en attente, l'approuver automatiquement
     auto_approved = False
     if is_shared and not old_shared and app.approval_status == ApprovalStatus.pending:
-        from datetime import datetime
+        from datetime import datetime, timezone
         app.approval_status = ApprovalStatus.approved
         app.approved_at = datetime.utcnow()
         app.is_active = True
@@ -1845,7 +1866,7 @@ async def approve_or_reject_app(
     - **approve=false** : Rejette l'application (reste inactive)
       - Nécessite une raison de rejet
     """
-    from datetime import datetime
+    from datetime import datetime, timezone
     
     # Récupérer l'application avec ses relations
     result = await db.execute(
@@ -2267,7 +2288,8 @@ async def scan_docker_containers(
     
     # Scanner Docker
     try:
-        docker_info = docker_scanner.get_docker_info()
+        loop = asyncio.get_running_loop()
+        docker_info = await loop.run_in_executor(None, docker_scanner.get_docker_info)
         
         if not docker_info.get("available"):
             return DockerScanResponse(
@@ -2275,7 +2297,7 @@ async def scan_docker_containers(
                 error=docker_info.get("error", "Docker non accessible")
             )
         
-        containers = docker_scanner.scan_containers(include_stopped=include_stopped)
+        containers = await loop.run_in_executor(None, lambda: docker_scanner.scan_containers(include_stopped=include_stopped))
 
         # Filtrer les conteneurs (sauf si show_all=True)
         filtered_containers = []
@@ -2372,7 +2394,8 @@ async def reconnect_docker(
         
         # Tenter une nouvelle connexion
         if docker_scanner.is_available:
-            docker_info = docker_scanner.get_docker_info()
+            loop = asyncio.get_running_loop()
+            docker_info = await loop.run_in_executor(None, docker_scanner.get_docker_info)
             logger.info(f"✅ Docker reconnecté par {current_user.username}")
             return {
                 "success": True,
@@ -2471,7 +2494,8 @@ async def get_app_docker_info(
             }
             return response
         
-        containers = client.containers.list(all=True)
+        loop = asyncio.get_running_loop()
+        containers = await loop.run_in_executor(None, lambda: client.containers.list(all=True))
         matching_container = None
         
         for container in containers:
@@ -2737,8 +2761,9 @@ async def sync_docker_applications(
             "unchanged": []
         }
     
-    # Scanner tous les conteneurs Docker (y compris arrêtés)
-    containers = docker_scanner.scan_containers(include_stopped=True)
+    # Scanner tous les conteneurs Docker (y compris arrêtés) — appel bloquant → executor
+    loop = asyncio.get_running_loop()
+    containers = await loop.run_in_executor(None, lambda: docker_scanner.scan_containers(include_stopped=True))
     
     # Extraire les ports hôte des conteneurs en cours d'exécution
     running_ports = set()
@@ -2830,7 +2855,7 @@ async def sync_docker_applications(
         "activated": activated,
         "deactivated": deactivated,
         "unchanged_count": len(unchanged),
-        "docker_info": docker_scanner.get_docker_info()
+        "docker_info": await loop.run_in_executor(None, docker_scanner.get_docker_info)
     }
 
 
@@ -2855,8 +2880,9 @@ async def auto_sync_docker_applications(db: AsyncSession) -> dict:
     if not apps:
         return {"message": "Aucune application", "changes": 0}
     
-    # Scanner tous les conteneurs Docker
-    containers = docker_scanner.scan_containers(include_stopped=True)
+    # Scanner tous les conteneurs Docker — appel bloquant → executor
+    loop = asyncio.get_running_loop()
+    containers = await loop.run_in_executor(None, lambda: docker_scanner.scan_containers(include_stopped=True))
     
     # Extraire les ports hôte des conteneurs en cours d'exécution
     running_ports = set()

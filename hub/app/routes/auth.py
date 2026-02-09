@@ -3,8 +3,12 @@ from fastapi.responses import RedirectResponse, JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
+import hmac
+import hashlib
+import secrets
+import logging
 
 from app.database import get_db
 from app.models import User, AuditLog, ServiceAccount, UserAppRole, UserSession
@@ -25,8 +29,54 @@ from app.auth import (
 )
 from app.routes.audit import start_session, end_session, log_action
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/api/auth", tags=["Authentication"])
 settings = get_settings()
+
+# ============================================================================
+# RATE LIMITING
+# ============================================================================
+# Compteur simple en mémoire par IP pour le rate limiting des endpoints sensibles
+# Compatible mono-worker (suffisant pour le déploiement actuel)
+_login_attempts: dict[str, list[float]] = {}
+_RATE_LIMIT_WINDOW = 60  # secondes
+_RATE_LIMIT_MAX = 5  # max tentatives par fenêtre
+
+
+def _check_rate_limit(ip: str) -> None:
+    """Vérifie le rate limit pour une IP. Lève HTTPException 429 si dépassé."""
+    import time
+    now = time.time()
+    attempts = _login_attempts.get(ip, [])
+    # Nettoyer les tentatives expirées
+    attempts = [t for t in attempts if now - t < _RATE_LIMIT_WINDOW]
+    if len(attempts) >= _RATE_LIMIT_MAX:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Trop de tentatives de connexion. Réessayez dans {_RATE_LIMIT_WINDOW} secondes.",
+            headers={"Retry-After": str(_RATE_LIMIT_WINDOW)}
+        )
+    attempts.append(now)
+    _login_attempts[ip] = attempts
+
+
+# ============================================================================
+# BEACON TOKEN — jeton éphémère HMAC pour sécuriser beacon-logout
+# ============================================================================
+_BEACON_SECRET = secrets.token_hex(32)  # Régénéré à chaque démarrage
+
+
+def generate_beacon_token(user_id: int) -> str:
+    """Génère un token HMAC lié au user_id pour sécuriser le beacon-logout."""
+    message = f"{user_id}:{_BEACON_SECRET}"
+    return hmac.new(message.encode(), digestmod=hashlib.sha256).hexdigest()[:32]
+
+
+def verify_beacon_token(user_id: int, token: str) -> bool:
+    """Vérifie qu'un beacon token est valide pour le user_id donné."""
+    expected = generate_beacon_token(user_id)
+    return hmac.compare_digest(expected, token)
 
 
 @router.post("/token", response_model=Token)
@@ -156,6 +206,10 @@ async def login_for_token(
         return Token(access_token=token, expires_at=expire)
     
     # === GRANT TYPE: PASSWORD (défaut) ===
+    # Rate limiting sur le login par mot de passe
+    client_ip = request.client.host if request.client else "unknown"
+    _check_rate_limit(client_ip)
+    
     if not username or not password:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -226,7 +280,8 @@ async def login_for_token(
         access_token=token,
         expires_at=expire,
         refresh_token=new_refresh_token,
-        must_change_password=user.must_change_password or False
+        must_change_password=user.must_change_password or False,
+        beacon_token=generate_beacon_token(user.id)
     )
 
 
@@ -237,6 +292,10 @@ async def login_with_redirect(
     db: AsyncSession = Depends(get_db)
 ):
     """Login avec redirection optionnelle vers une application (Authorization Code simplifié)"""
+    # Rate limiting
+    client_ip = request.client.host if request.client else "unknown"
+    _check_rate_limit(client_ip)
+    
     result = await db.execute(
         select(User)
         .options(selectinload(User.app_roles).selectinload(UserAppRole.application))
@@ -303,7 +362,8 @@ async def login_with_redirect(
     return Token(
         access_token=token,
         expires_at=expire,
-        refresh_token=new_refresh_token
+        refresh_token=new_refresh_token,
+        beacon_token=generate_beacon_token(user.id)
     )
 
 
@@ -478,11 +538,9 @@ async def beacon_logout(
     """
     Endpoint pour le logout via navigator.sendBeacon() lors de la fermeture du navigateur.
     
-    Ne nécessite pas d'authentification car sendBeacon ne peut pas envoyer de headers.
-    Reçoit le user_id dans le body JSON pour fermer la session.
-    
-    Note: Ce endpoint est moins sécurisé car il n'authentifie pas l'utilisateur,
-    mais il permet de fermer proprement les sessions lors de la fermeture du navigateur.
+    Sécurisé par un beacon_token HMAC lié au user_id, fourni au login.
+    sendBeacon ne peut pas envoyer de headers Authorization, donc on utilise
+    un jeton éphémère régénéré à chaque démarrage du serveur.
     """
     try:
         body = await request.body()
@@ -492,10 +550,16 @@ async def beacon_logout(
             data = json.loads(body.decode('utf-8'))
         
         user_id = data.get('user_id')
+        beacon_token = data.get('beacon_token', '')
         reason = data.get('reason', 'browser_closed')
         
         if not user_id:
             return {"message": "user_id manquant"}
+        
+        # Vérifier le beacon token
+        if not beacon_token or not verify_beacon_token(user_id, beacon_token):
+            logger.warning(f"⚠️ beacon-logout rejeté: token invalide pour user_id={user_id} depuis {request.client.host if request.client else 'unknown'}")
+            return {"message": "Token invalide"}
         
         # Fermer la session de l'utilisateur
         session = await end_session(db, user_id, reason=reason)
@@ -566,13 +630,21 @@ async def get_jwks():
 
 @router.post("/token/introspect", response_model=TokenIntrospection)
 async def introspect_token(
+    request: Request,
     token: str = Form(...),
     db: AsyncSession = Depends(get_db)
 ):
     """
     Introspection de token (RFC 7662).
     Permet aux applications de vérifier si un token est valide et non révoqué.
+    
+    ⚠️ Cet endpoint devrait être protégé par authentification (RFC 7662 §2.1).
+    Le mode non-authentifié est déprécié et sera supprimé dans une future version.
     """
+    # Log deprecation si pas d'auth header
+    auth_header = request.headers.get("authorization", "")
+    if not auth_header:
+        logger.warning(f"⚠️ DEPRECATED: Introspection sans authentification depuis {request.client.host if request.client else 'unknown'}")
     try:
         payload = verify_token(token)
         jti = payload.get("jti")
@@ -668,6 +740,10 @@ async def sso_login(
     4. Le Hub redirige vers le callback de l'app avec le token
     """
     from app.models import Application
+    
+    # Rate limiting
+    client_ip = request.client.host if request.client else "unknown"
+    _check_rate_limit(client_ip)
     
     # 1. Vérifier l'utilisateur
     result = await db.execute(

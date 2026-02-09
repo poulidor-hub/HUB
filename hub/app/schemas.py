@@ -1,10 +1,7 @@
 from pydantic import BaseModel, EmailStr, Field, field_validator
-from typing import Optional, List, TYPE_CHECKING
+from typing import Optional, List, Dict
 from datetime import datetime
 from enum import Enum
-
-if TYPE_CHECKING:
-    from app.schemas import AppResponse
 
 
 class GrantType(str, Enum):
@@ -382,12 +379,13 @@ class Token(BaseModel):
     expires_at: datetime
     refresh_token: Optional[str] = None  # Inclus seulement pour les logins utilisateur
     must_change_password: bool = False  # Si True, l'utilisateur doit changer son mot de passe
+    beacon_token: Optional[str] = None  # Token HMAC éphémère pour sécuriser beacon-logout
 
 
 class TokenPayload(BaseModel):
     sub: str
     roles: List[str]
-    apps: List[str]
+    apps: Dict[str, str]  # {app_slug: role} — correspond au payload JWT réel
     exp: datetime
     jti: Optional[str] = None  # JWT ID pour révocation
 

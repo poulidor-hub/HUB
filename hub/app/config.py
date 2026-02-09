@@ -11,11 +11,9 @@ def get_server_ip() -> str:
     """Détecte automatiquement l'IP du serveur"""
     try:
         # Crée une connexion UDP factice pour obtenir l'IP locale
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.connect(("8.8.8.8", 80))  # N'envoie rien, juste pour obtenir l'IP
-        ip = s.getsockname()[0]
-        s.close()
-        return ip
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.connect(("8.8.8.8", 80))  # N'envoie rien, juste pour obtenir l'IP
+            return s.getsockname()[0]
     except Exception:
         return "localhost"
 

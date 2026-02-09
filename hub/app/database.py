@@ -141,3 +141,62 @@ async def apply_migrations():
                         except Exception as e:
                             logger.warning(f"Migration 004 statement ignoré: {e}")
                 logger.info("✅ Migration 004 appliquée")
+        
+        # Vérifier si la migration 005 est nécessaire (remote app fields)
+        result = await conn.execute(text("""
+            SELECT column_name FROM information_schema.columns 
+            WHERE table_name = 'applications' AND column_name = 'is_remote'
+        """))
+        if not result.fetchone():
+            logger.info("📦 Application de la migration 005_add_remote_app_fields...")
+            migration_file = migrations_dir / "005_add_remote_app_fields.sql"
+            if migration_file.exists():
+                sql = migration_file.read_text()
+                for statement in sql.split(';'):
+                    statement = statement.strip()
+                    if statement and not statement.startswith('--'):
+                        try:
+                            await conn.execute(text(statement))
+                        except Exception as e:
+                            logger.warning(f"Migration 005 statement ignoré: {e}")
+                logger.info("✅ Migration 005 appliquée")
+        
+        # Vérifier si la migration 006 est nécessaire (app_backups table + scheduling fields)
+        result = await conn.execute(text("""
+            SELECT table_name FROM information_schema.tables 
+            WHERE table_schema = 'public' AND table_name = 'app_backups'
+        """))
+        if not result.fetchone():
+            logger.info("📦 Application de la migration 006_add_app_backups...")
+            migration_file = migrations_dir / "006_add_app_backups.sql"
+            if migration_file.exists():
+                sql = migration_file.read_text()
+                for statement in sql.split(';'):
+                    statement = statement.strip()
+                    if statement and not statement.startswith('--'):
+                        try:
+                            await conn.execute(text(statement))
+                        except Exception as e:
+                            logger.warning(f"Migration 006 statement ignoré: {e}")
+                logger.info("✅ Migration 006 appliquée")
+        
+        # Vérifier si la migration 007 est nécessaire (preserve backups on app delete)
+        # On vérifie si la contrainte FK utilise SET NULL (au lieu de CASCADE)
+        result = await conn.execute(text("""
+            SELECT confdeltype FROM pg_constraint 
+            WHERE conname = 'app_backups_app_id_fkey'
+        """))
+        row = result.fetchone()
+        if row and row[0] != 'n':  # 'n' = SET NULL, 'c' = CASCADE
+            logger.info("📦 Application de la migration 007_preserve_backups_on_app_delete...")
+            migration_file = migrations_dir / "007_preserve_backups_on_app_delete.sql"
+            if migration_file.exists():
+                sql = migration_file.read_text()
+                for statement in sql.split(';'):
+                    statement = statement.strip()
+                    if statement and not statement.startswith('--'):
+                        try:
+                            await conn.execute(text(statement))
+                        except Exception as e:
+                            logger.warning(f"Migration 007 statement ignoré: {e}")
+                logger.info("✅ Migration 007 appliquée")

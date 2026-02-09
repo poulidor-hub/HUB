@@ -2,7 +2,7 @@
 Tests des modèles de données
 """
 import pytest
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from app.models import (
     User, Application, UserAppRole, ServiceAccount,
@@ -177,7 +177,7 @@ class TestRefreshTokenModel:
         valid_token = RefreshToken(
             token_hash="valid_hash",
             user_id=test_user.id,
-            expires_at=datetime.utcnow() + timedelta(days=7)
+            expires_at=datetime.now(timezone.utc) + timedelta(days=7)
         )
         async_session.add(valid_token)
         await async_session.commit()
@@ -191,7 +191,7 @@ class TestRefreshTokenModel:
         expired_token = RefreshToken(
             token_hash="expired_hash",
             user_id=test_user.id,
-            expires_at=datetime.utcnow() - timedelta(days=1)
+            expires_at=datetime.now(timezone.utc) - timedelta(days=1)
         )
         async_session.add(expired_token)
         await async_session.commit()
@@ -205,8 +205,8 @@ class TestRefreshTokenModel:
         revoked_token = RefreshToken(
             token_hash="revoked_hash",
             user_id=test_user.id,
-            expires_at=datetime.utcnow() + timedelta(days=7),
-            revoked_at=datetime.utcnow()
+            expires_at=datetime.now(timezone.utc) + timedelta(days=7),
+            revoked_at=datetime.now(timezone.utc)
         )
         async_session.add(revoked_token)
         await async_session.commit()

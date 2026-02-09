@@ -1,4 +1,4 @@
-"""
+"""  
 Health Checker - Vérification périodique de l'état des applications
 =====================================================================
 
@@ -13,11 +13,13 @@ Fonctionnalités:
 - Timeout court (2s) pour détecter rapidement les pannes
 - Notifie le frontend via SSE quand le statut change
 - Combine avec le statut Docker pour une détection complète
+- Vérification SSL configurable via HEALTH_CHECK_VERIFY_SSL et HEALTH_CHECK_CA_BUNDLE
 """
 import asyncio
+import os
 import logging
 from typing import Dict, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 
 import httpx
 
@@ -34,6 +36,33 @@ HEALTH_CHECK_TIMEOUT = 2.0
 
 # Nombre d'échecs consécutifs avant de considérer l'app comme "offline"
 FAILURE_THRESHOLD = 1  # Immédiat car sur même serveur
+
+# Configuration SSL pour les health checks
+# HEALTH_CHECK_VERIFY_SSL=true active la vérification, false la désactive (défaut)
+# HEALTH_CHECK_CA_BUNDLE=/path/to/ca.pem pour spécifier un certificat CA
+_VERIFY_SSL = os.environ.get("HEALTH_CHECK_VERIFY_SSL", "false").lower() in ("true", "1", "yes")
+_CA_BUNDLE = os.environ.get("HEALTH_CHECK_CA_BUNDLE", "")
+HEALTH_CHECK_SSL_VERIFY = _CA_BUNDLE if (_VERIFY_SSL and _CA_BUNDLE) else _VERIFY_SSL
+
+# Client httpx réutilisable (au lieu de recréer à chaque check)
+_http_client: Optional[httpx.AsyncClient] = None
+
+def _get_http_client() -> httpx.AsyncClient:
+    """Retourne un client httpx réutilisable pour les health checks."""
+    global _http_client
+    if _http_client is None or _http_client.is_closed:
+        _http_client = httpx.AsyncClient(
+            timeout=HEALTH_CHECK_TIMEOUT,
+            verify=HEALTH_CHECK_SSL_VERIFY
+        )
+    return _http_client
+
+async def _close_http_client():
+    """Ferme le client httpx."""
+    global _http_client
+    if _http_client and not _http_client.is_closed:
+        await _http_client.aclose()
+        _http_client = None
 
 # Tâche de fond
 _health_check_task: Optional[asyncio.Task] = None
@@ -83,28 +112,28 @@ async def check_app_health(app_slug: str, api_url: str) -> dict:
         return result
     
     try:
-        start = asyncio.get_event_loop().time()
+        start = asyncio.get_running_loop().time()
         
-        # Client avec timeout court et sans vérification SSL (PKI interne)
-        async with httpx.AsyncClient(timeout=HEALTH_CHECK_TIMEOUT, verify=False) as client:
-            # Essayer /api/health d'abord (standard des apps), puis /health, puis /
-            for endpoint in ["/api/health", "/health", "/"]:
-                try:
-                    url = api_url.rstrip('/') + endpoint
-                    response = await client.get(url)
-                    elapsed = (asyncio.get_event_loop().time() - start) * 1000
-                    
-                    # Toute réponse < 500 indique que l'app est vivante
-                    # (même 401/403 signifie que l'app tourne)
-                    if response.status_code < 500:
-                        result["status"] = "healthy"
-                        result["response_time_ms"] = round(elapsed, 2)
-                        return result
-                except Exception:
-                    continue
-            
-            # Aucun endpoint n'a répondu
-            result["error"] = "Aucun endpoint accessible"
+        # Client réutilisable avec configuration SSL depuis l'environnement
+        client = _get_http_client()
+        # Essayer /api/health d'abord (standard des apps), puis /health, puis /
+        for endpoint in ["/api/health", "/health", "/"]:
+            try:
+                url = api_url.rstrip('/') + endpoint
+                response = await client.get(url)
+                elapsed = (asyncio.get_running_loop().time() - start) * 1000
+                
+                # Toute réponse < 500 indique que l'app est vivante
+                # (même 401/403 signifie que l'app tourne)
+                if response.status_code < 500:
+                    result["status"] = "healthy"
+                    result["response_time_ms"] = round(elapsed, 2)
+                    return result
+            except Exception:
+                continue
+        
+        # Aucun endpoint n'a répondu
+        result["error"] = "Aucun endpoint accessible"
             
     except httpx.TimeoutException:
         result["error"] = f"Timeout ({HEALTH_CHECK_TIMEOUT}s)"
@@ -196,7 +225,7 @@ async def periodic_health_check():
     """
     Tâche de fond qui effectue les health checks périodiquement.
     """
-    print(f"🏥 Health checker démarré (intervalle: {HEALTH_CHECK_INTERVAL}s)")
+    logger.info(f"🏥 Health checker démarré (intervalle: {HEALTH_CHECK_INTERVAL}s, SSL verify: {HEALTH_CHECK_SSL_VERIFY})")
     
     # Premier check immédiat
     await run_health_checks()
@@ -206,6 +235,7 @@ async def periodic_health_check():
             await asyncio.sleep(HEALTH_CHECK_INTERVAL)
             await run_health_checks()
         except asyncio.CancelledError:
+            await _close_http_client()
             logger.info("🏥 Health checker arrêté")
             break
         except Exception as e:

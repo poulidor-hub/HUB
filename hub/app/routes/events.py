@@ -5,8 +5,10 @@ Gère aussi le tracking de l'activité utilisateur et le cleanup des sessions.
 """
 import asyncio
 import json
+import hmac
+import hashlib
 from typing import Set, Optional, Dict
-from datetime import datetime
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Request, Depends, HTTPException
 from fastapi.responses import StreamingResponse
@@ -14,6 +16,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.health_checker import start_health_checker, stop_health_checker, is_health_checker_running
+
+import logging
+logger = logging.getLogger(__name__)
 
 
 router = APIRouter(prefix="/api/events", tags=["Events"])
@@ -108,7 +113,7 @@ async def broadcast_stats_update():
             await broadcast_event("stats_updated", stats)
     except Exception as e:
         # Ne pas faire planter si erreur de stats
-        print(f"⚠️ Erreur calcul stats SSE: {e}")
+        logger.warning(f"⚠️ Erreur calcul stats SSE: {e}")
 
 
 def notify_stats_update():
@@ -142,13 +147,13 @@ async def periodic_session_cleanup():
             async with async_session_maker() as db:
                 cleaned = await cleanup_stale_sessions(db)
                 if cleaned > 0:
-                    print(f"🧹 Cleanup périodique: {cleaned} session(s) expirée(s) fermée(s)")
+                    logger.info(f"🧹 Cleanup périodique: {cleaned} session(s) expirée(s) fermée(s)")
                     # Mettre à jour les stats après cleanup
                     await broadcast_stats_update()
         except asyncio.CancelledError:
             break
         except Exception as e:
-            print(f"⚠️ Erreur cleanup sessions: {e}")
+            logger.warning(f"⚠️ Erreur cleanup sessions: {e}")
 
 
 def start_cleanup_task():
@@ -158,7 +163,7 @@ def start_cleanup_task():
         try:
             loop = asyncio.get_running_loop()
             _cleanup_task = loop.create_task(periodic_session_cleanup())
-            print("🔄 Tâche de cleanup des sessions démarrée")
+            logger.info("🔄 Tâche de cleanup des sessions démarrée")
         except RuntimeError:
             pass
     
@@ -174,7 +179,7 @@ def stop_cleanup_task():
         if _cleanup_task and not _cleanup_task.done():
             _cleanup_task.cancel()
             _cleanup_task = None
-            print("🔄 Tâche de cleanup des sessions arrêtée")
+            logger.info("🔄 Tâche de cleanup des sessions arrêtée")
         
         # Arrêter aussi le health checker
         if is_health_checker_running():
@@ -214,10 +219,10 @@ async def handle_user_disconnect(user_id: int):
         async with async_session_maker() as db:
             session = await end_session(db, user_id, reason="sse_disconnect")
             if session:
-                print(f"📴 Session fermée (déconnexion SSE): user_id={user_id}")
+                logger.info(f"📴 Session fermée (déconnexion SSE): user_id={user_id}")
                 await broadcast_stats_update()
     except Exception as e:
-        print(f"⚠️ Erreur fermeture session SSE: {e}")
+        logger.warning(f"⚠️ Erreur fermeture session SSE: {e}")
 
 
 async def event_generator(request: Request, queue: asyncio.Queue, user_id: Optional[int] = None):
@@ -302,13 +307,19 @@ async def event_stream(request: Request):
     auth_header = request.headers.get("authorization", "")
     if not auth_header:
         # SSE via EventSource ne supporte pas les headers custom
-        # On peut récupérer l'user_id via un cookie ou query param
-        # Pour l'instant, on utilise le query param optionnel
+        # Valider le user_id via le beacon_token HMAC (lié au secret serveur)
         user_id_param = request.query_params.get("user_id")
-        if user_id_param:
+        beacon_token = request.query_params.get("beacon_token", "")
+        if user_id_param and beacon_token:
             try:
-                user_id = int(user_id_param)
-            except ValueError:
+                uid = int(user_id_param)
+                # Vérifier le beacon token pour éviter le spoofing
+                from app.routes.auth import verify_beacon_token
+                if verify_beacon_token(uid, beacon_token):
+                    user_id = uid
+                else:
+                    logger.warning(f"⚠️ SSE: beacon_token invalide pour user_id={user_id_param} depuis {request.client.host if request.client else 'unknown'}")
+            except (ValueError, Exception):
                 pass
     
     queue: asyncio.Queue = asyncio.Queue()

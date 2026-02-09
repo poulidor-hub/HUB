@@ -1,0 +1,21 @@
+# =============================================================================
+# Docker Compose Override — Développement uniquement
+# =============================================================================
+# Ce fichier est automatiquement chargé par `docker compose up` s'il existe.
+# Il ajoute les options de développement : hot-reload et montage du code source.
+#
+# En production, renommez ou supprimez ce fichier, ou utilisez :
+#   docker compose -f docker-compose.yml up -d
+# =============================================================================
+
+services:
+  hub-api:
+    # Hot-reload pour le développement
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    volumes:
+      # Montage du code source pour hot-reload
+      - ./hub/app:/code/app
+      - ./hub/tests:/code/tests
+      - ./hub/migrations:/code/migrations
+      - ./hub/app_tester.py:/code/app_tester.py
+      - ./hub/pytest.ini:/code/pytest.ini

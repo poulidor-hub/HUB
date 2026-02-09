@@ -17,7 +17,7 @@ import argparse
 import json
 import base64
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 # Ajouter le répertoire courant au path pour les imports
@@ -212,7 +212,7 @@ async def export_environment(
     
     return {
         "version": "1.0",
-        "exported_at": datetime.utcnow().isoformat(),
+        "exported_at": datetime.now(timezone.utc).isoformat(),
         "exported_by": "cli",
         "users": users_export,
         "applications": apps_export,

@@ -48,11 +48,7 @@ services:
       - LOG_PURGE_INTERVAL_HOURS=${LOG_PURGE_INTERVAL_HOURS:-24}
       - DOCKER_SYNC_INTERVAL=${DOCKER_SYNC_INTERVAL:-300}
     volumes:
-      - ./hub/app:/code/app
-      - ./hub/tests:/code/tests
-      - ./hub/migrations:/code/migrations
-      - ./hub/app_tester.py:/code/app_tester.py
-      - ./hub/pytest.ini:/code/pytest.ini
+      # Secrets et clés JWT
       - ./secrets:/code/secrets:rw
       - ./secrets/service_accounts:/code/secrets/service_accounts:rw
       # Version centralisée (source unique de vérité)
@@ -78,7 +74,7 @@ services:
       - hub-network
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
 
   # ===== FRONTEND (Nginx) =====
   hub-frontend:
