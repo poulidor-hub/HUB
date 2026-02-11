@@ -400,6 +400,7 @@ async def get_current_user_info(
         "email": current_user.email,
         "is_admin": current_user.is_admin,
         "must_change_password": current_user.must_change_password or False,
+        "beacon_token": generate_beacon_token(current_user.id),
         "applications": [
             {
                 "id": ar.application.id,

@@ -350,6 +350,22 @@ class DockerInfoResponse(BaseModel):
     developer_info: dict = {}
 
 
+# ===== Docker Stats Schema =====
+class DockerContainerStats(BaseModel):
+    """Stats ressources d'un conteneur Docker"""
+    cpu_percent: float = 0.0
+    memory_usage_mb: float = 0.0
+    memory_limit_mb: float = 0.0
+    uptime_seconds: Optional[int] = None
+
+
+class DockerStatsResponse(BaseModel):
+    """Réponse des stats Docker par port"""
+    stats: dict = {}  # port (str) -> DockerContainerStats
+    docker_available: bool = False
+    timestamp: Optional[str] = None
+
+
 # ===== Découverte M2M Schemas =====
 class AppDiscoveryItem(BaseModel):
     """Informations d'une application pour la découverte M2M"""

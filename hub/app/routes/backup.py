@@ -14,6 +14,8 @@ import os
 import base64
 from pathlib import Path
 
+import logging
+
 from app.database import get_db
 from app.models import User, Application, UserAppRole, ServiceAccount, AppRole, ApprovalStatus
 from app.auth import get_current_admin, get_password_hash
@@ -21,6 +23,8 @@ from app.schemas import (
     BackupExport, BackupImport, ImportResult, ImportMode,
     UserExport, AppExport, ServiceAccountExport, UserAppRoleExport, AppRoleExport
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/admin/backup", tags=["backup"])
 

@@ -606,6 +606,11 @@ class HubAPI {
         return this.request('/apps/status');
     }
 
+    // Récupère les stats Docker (CPU/RAM) des conteneurs
+    async getDockerStats() {
+        return this.request('/apps/docker-stats');
+    }
+
     // Vérifie le statut de tous les Service Accounts
     async getServiceAccountsStatus() {
         return this.request('/service-accounts/status');
@@ -722,16 +727,7 @@ class HubAPI {
         params.append('include_jwt_keys', includeJwtKeys);
         params.append('include_sa_secrets', includeSaSecrets);
         
-        const response = await fetch(`${API_BASE}/admin/backup/export?${params}`, {
-            headers: this.getHeaders()
-        });
-        
-        if (!response.ok) {
-            const error = await response.json().catch(() => ({ detail: 'Erreur d\'export' }));
-            throw new Error(error.detail);
-        }
-        
-        return response.json();
+        return this.request(`/admin/backup/export?${params}`);
     }
     
     /**
@@ -753,18 +749,10 @@ class HubAPI {
             jwt_public_key_b64: backupData.jwt_public_key_b64
         };
         
-        const response = await fetch(`${API_BASE}/admin/backup/import`, {
+        return this.request('/admin/backup/import', {
             method: 'POST',
-            headers: this.getHeaders(),
             body: JSON.stringify(payload)
         });
-        
-        if (!response.ok) {
-            const error = await response.json().catch(() => ({ detail: 'Erreur d\'import' }));
-            throw new Error(error.detail);
-        }
-        
-        return response.json();
     }
     
     // ===== Bulk Operations API =====

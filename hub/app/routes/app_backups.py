@@ -1008,9 +1008,9 @@ async def trigger_backup(
         
         # Extraire les métadonnées - priorité: backup_info API > ZIP > défaut
         app_version = backup_info.get("app_version") or zip_metadata.get("app_version")
-        total_items = backup_info.get("total_items") or zip_metadata.get("total_items", 0)
-        total_preferences = backup_info.get("total_preferences") or zip_metadata.get("total_preferences", 0)
-        total_files = backup_info.get("total_files") or zip_metadata.get("total_files", 0)
+        total_items = backup_info.get("total_items") if backup_info.get("total_items") is not None else zip_metadata.get("total_items", 0)
+        total_preferences = backup_info.get("total_preferences") if backup_info.get("total_preferences") is not None else zip_metadata.get("total_preferences", 0)
+        total_files = backup_info.get("total_files") if backup_info.get("total_files") is not None else zip_metadata.get("total_files", 0)
         content_summary = zip_metadata.get("content_summary", "")
         
         # Créer l'enregistrement en base

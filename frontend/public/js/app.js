@@ -97,6 +97,15 @@ async function refreshAfterReconnect() {
         // Mettre à jour currentUser
         currentUser = userValid;
         
+        // Renouveler le beacon_token (régénéré côté serveur après redémarrage)
+        if (userValid.beacon_token) {
+            beaconToken = userValid.beacon_token;
+            console.log('🔑 Beacon token renouvelé après reconnexion');
+            
+            // Reconnecter le SSE avec le nouveau beacon_token
+            initEventSource(false);
+        }
+        
         // Rafraîchir les applications (page principale)
         if (currentPage === 'dashboard' || currentPage === 'apps') {
             await loadApps();
@@ -1159,46 +1168,49 @@ async function loadAdminData() {
  * Rafraîchit le statut de connectivité des applications
  */
 async function refreshAppsStatus() {
-    // Afficher le spinner sur toutes les cellules de connectivité
-    document.querySelectorAll('.app-connectivity').forEach(cell => {
-        cell.innerHTML = '<span class="spinner-border spinner-border-sm text-primary" role="status"></span>';
-    });
+    const connectivityIcons = document.querySelectorAll('.app-connectivity-icon');
+    const isFirstLoad = connectivityIcons.length > 0 && 
+        connectivityIcons[0].querySelector('i') === null;
+
+    if (!isFirstLoad) {
+        // Rafraîchissement : indicateur subtil sans détruire l'affichage
+        connectivityIcons.forEach(el => {
+            el.style.opacity = '0.6';
+        });
+    }
     
     try {
         const status = await api.getAppsStatus();
         console.log('📡 Statut des applications:', status);
         
-        // Mettre à jour chaque cellule
+        // Mettre à jour chaque icône in-place
         status.apps.forEach(appStatus => {
-            const cell = document.querySelector(`.app-connectivity[data-app-slug="${appStatus.slug}"]`);
-            if (cell) {
-                let badge = '';
-                switch (appStatus.status) {
-                    case 'online':
-                        badge = `<span class="badge bg-success" title="Temps de réponse: ${appStatus.response_time_ms}ms">
-                            <i class="bi bi-wifi me-1"></i>En ligne
-                        </span>`;
-                        if (appStatus.response_time_ms) {
-                            badge += `<br><small class="text-muted">${appStatus.response_time_ms}ms</small>`;
-                        }
-                        break;
-                    case 'offline':
-                        badge = `<span class="badge bg-danger" title="${appStatus.error || 'Non joignable'}">
-                            <i class="bi bi-wifi-off me-1"></i>Hors ligne
-                        </span>`;
-                        break;
-                    case 'error':
-                        badge = `<span class="badge bg-warning text-dark" title="${appStatus.error || 'Erreur'}">
-                            <i class="bi bi-exclamation-triangle me-1"></i>Erreur
-                        </span>`;
-                        break;
-                    default:
-                        badge = `<span class="badge bg-light text-muted">
-                            <i class="bi bi-question-circle me-1"></i>Inconnu
-                        </span>`;
-                }
-                cell.innerHTML = badge;
+            const cell = document.querySelector(`.app-status-cell[data-app-slug="${appStatus.slug}"]`);
+            if (!cell) return;
+            const iconEl = cell.querySelector('.app-connectivity-icon');
+            if (!iconEl) return;
+            
+            iconEl.style.opacity = '1';
+            let icon = '';
+            switch (appStatus.status) {
+                case 'online':
+                    icon = `<i class="bi bi-wifi text-success" title="En ligne (${appStatus.response_time_ms || '?'}ms)"></i>`;
+                    break;
+                case 'offline':
+                    icon = `<i class="bi bi-wifi-off text-danger" title="Hors ligne: ${appStatus.error || 'Non joignable'}"></i>`;
+                    break;
+                case 'error':
+                    icon = `<i class="bi bi-exclamation-triangle text-warning" title="Erreur: ${appStatus.error || ''}"></i>`;
+                    break;
+                default:
+                    icon = `<i class="bi bi-wifi text-muted" title="Inconnu"></i>`;
             }
+            iconEl.innerHTML = icon;
+        });
+
+        // Restaurer l'opacité pour les éléments non mis à jour
+        connectivityIcons.forEach(el => {
+            el.style.opacity = '1';
         });
         
         // Afficher un résumé dans un toast discret
@@ -1210,37 +1222,41 @@ async function refreshAppsStatus() {
         }
     } catch (error) {
         console.error('Erreur lors du test de connectivité:', error);
-        // Afficher erreur dans les cellules
-        document.querySelectorAll('.app-connectivity').forEach(cell => {
-            cell.innerHTML = '<span class="badge bg-secondary"><i class="bi bi-x-circle me-1"></i>Erreur</span>';
+        // En cas d'erreur réseau, conserver le dernier état connu
+        connectivityIcons.forEach(el => {
+            el.style.opacity = '1';
         });
     }
 }
 
 /**
- * Met à jour le statut Docker d'une app dans le tableau admin
+ * Met à jour le statut Docker d'une app dans le tableau admin (colonne État fusionnée)
  */
 function updateAppDockerStatusInTable(slug, dockerStatus) {
     if (!slug) return;
     
-    // Trouver la ligne correspondante
-    const row = document.querySelector(`tr[data-app-id] .app-connectivity[data-app-slug="${slug}"]`)?.closest('tr');
-    if (!row) return;
+    const cell = document.querySelector(`.app-status-cell[data-app-slug="${slug}"]`);
+    if (!cell) return;
     
-    // Trouver la cellule Docker (6ème colonne, index 5)
-    const dockerCell = row.children[5];
-    if (!dockerCell) return;
+    // Trouver la 2ème icône dans .status-icons (Docker)
+    const icons = cell.querySelectorAll('.status-icons > i, .status-icons > span > i');
+    const statusIcons = cell.querySelector('.status-icons');
+    if (!statusIcons) return;
     
-    // Mettre à jour le badge Docker
-    let dockerBadge;
+    // L'icône Docker est le 2ème enfant direct de .status-icons
+    const children = Array.from(statusIcons.children);
+    if (children.length < 2) return;
+    const dockerEl = children[1]; // 2ème élément = Docker
+    
+    let dockerIcon;
     if (!dockerStatus) {
-        dockerBadge = '<span class="badge bg-light text-muted"><i class="bi bi-question-circle me-1"></i>Inconnu</span>';
+        dockerIcon = '<i class="bi bi-question-circle text-muted" title="Docker: Inconnu"></i>';
     } else if (dockerStatus === 'running') {
-        dockerBadge = '<span class="badge bg-light text-dark"><i class="bi bi-play-circle text-success me-1"></i>Running</span>';
+        dockerIcon = '<i class="bi bi-play-circle-fill text-success" title="Docker: Running"></i>';
     } else {
-        dockerBadge = '<span class="badge bg-warning text-dark"><i class="bi bi-pause-circle me-1"></i>Maintenance</span>';
+        dockerIcon = '<i class="bi bi-pause-circle-fill text-warning" title="Docker: Maintenance"></i>';
     }
-    dockerCell.innerHTML = dockerBadge;
+    dockerEl.outerHTML = dockerIcon;
     
     console.log(`🔄 Docker status mis à jour pour ${slug}: ${dockerStatus}`);
 }
@@ -1248,29 +1264,27 @@ function updateAppDockerStatusInTable(slug, dockerStatus) {
 /**
  * Met à jour le statut de santé (health check) d'une app dans le tableau admin
  */
+/**
+ * Met à jour le statut de santé (health check) d'une app dans le tableau admin (colonne État fusionnée)
+ */
 function updateAppHealthStatusInTable(slug, healthStatus) {
     if (!slug) return;
     
-    // Trouver la cellule de connectivité
-    const cell = document.querySelector(`.app-connectivity[data-app-slug="${slug}"]`);
+    const cell = document.querySelector(`.app-status-cell[data-app-slug="${slug}"]`);
     if (!cell) return;
     
-    // Mettre à jour le badge
-    let badge;
+    const iconEl = cell.querySelector('.app-connectivity-icon');
+    if (!iconEl) return;
+    
+    let icon;
     if (healthStatus === 'healthy') {
-        badge = `<span class="badge bg-success">
-            <i class="bi bi-wifi me-1"></i>En ligne
-        </span>`;
+        icon = '<i class="bi bi-wifi text-success" title="Connectivité: En ligne"></i>';
     } else if (healthStatus === 'unhealthy') {
-        badge = `<span class="badge bg-danger">
-            <i class="bi bi-wifi-off me-1"></i>Hors ligne
-        </span>`;
+        icon = '<i class="bi bi-wifi-off text-danger" title="Connectivité: Hors ligne"></i>';
     } else {
-        badge = `<span class="badge bg-light text-muted">
-            <i class="bi bi-question-circle me-1"></i>Inconnu
-        </span>`;
+        icon = '<i class="bi bi-wifi text-muted" title="Connectivité: Inconnu"></i>';
     }
-    cell.innerHTML = badge;
+    iconEl.innerHTML = icon;
     
     console.log(`🏥 Health status mis à jour pour ${slug}: ${healthStatus}`);
 }
@@ -1316,6 +1330,12 @@ let connectivityRefreshInterval = null;
 const CONNECTIVITY_REFRESH_DELAY = 30000; // 30 secondes
 
 /**
+ * Intervalle de rafraîchissement des stats Docker (CPU/RAM)
+ */
+let dockerStatsRefreshInterval = null;
+const DOCKER_STATS_REFRESH_DELAY = 60000; // 60 secondes
+
+/**
  * Démarre le rafraîchissement périodique de la connectivité
  */
 function startConnectivityRefresh() {
@@ -1330,6 +1350,9 @@ function startConnectivityRefresh() {
     }, CONNECTIVITY_REFRESH_DELAY);
     
     console.log(`⏱️ Rafraîchissement connectivité activé (${CONNECTIVITY_REFRESH_DELAY/1000}s)`);
+    
+    // Démarrer aussi les stats Docker
+    startDockerStatsRefresh();
 }
 
 /**
@@ -1341,49 +1364,156 @@ function stopConnectivityRefresh() {
         connectivityRefreshInterval = null;
         console.log('⏱️ Rafraîchissement connectivité désactivé');
     }
+    stopDockerStatsRefresh();
+}
+
+/**
+ * Démarre le rafraîchissement périodique des stats Docker (CPU/RAM)
+ */
+function startDockerStatsRefresh() {
+    if (dockerStatsRefreshInterval) return;
+    
+    dockerStatsRefreshInterval = setInterval(() => {
+        if (currentPage === 'apps-admin') {
+            console.log('📊 Rafraîchissement automatique des stats Docker...');
+            refreshDockerStats();
+        }
+    }, DOCKER_STATS_REFRESH_DELAY);
+    
+    console.log(`⏱️ Rafraîchissement stats Docker activé (${DOCKER_STATS_REFRESH_DELAY/1000}s)`);
+}
+
+/**
+ * Arrête le rafraîchissement des stats Docker
+ */
+function stopDockerStatsRefresh() {
+    if (dockerStatsRefreshInterval) {
+        clearInterval(dockerStatsRefreshInterval);
+        dockerStatsRefreshInterval = null;
+        console.log('⏱️ Rafraîchissement stats Docker désactivé');
+    }
+}
+
+/**
+ * Détermine la couleur d'une barre de progression selon le pourcentage
+ */
+function getStatsBarColor(percent) {
+    if (percent < 50) return 'bg-success';
+    if (percent < 80) return 'bg-warning';
+    return 'bg-danger';
+}
+
+/**
+ * Rafraîchit les stats Docker (CPU/RAM) pour toutes les applications
+ */
+async function refreshDockerStats() {
+    try {
+        const data = await api.getDockerStats();
+        if (!data.docker_available) {
+            console.log('🐳 Docker non disponible pour les stats');
+            return;
+        }
+        
+        console.log('📊 Stats Docker:', data.stats);
+        
+        // Pour chaque app dans le tableau, mettre à jour les barres
+        document.querySelectorAll('.app-status-cell[data-app-slug]').forEach(cell => {
+            const slug = cell.getAttribute('data-app-slug');
+            const statsContainer = cell.querySelector('.docker-stats[data-app-slug]');
+            if (!statsContainer) return;
+            
+            // Trouver la ligne de l'app et son URL API pour extraire le port
+            const row = cell.closest('tr');
+            if (!row) return;
+            
+            // Chercher dans les données allApps
+            const app = allApps?.find(a => a.slug === slug);
+            if (!app) return;
+            
+            // Extraire le port de l'URL API
+            let port = null;
+            try {
+                const url = new URL(app.api_url);
+                port = url.port;
+            } catch (e) {}
+            
+            if (!port || !data.stats[port]) {
+                // Pas de stats pour cette app, vider les barres
+                statsContainer.innerHTML = '';
+                return;
+            }
+            
+            const stats = data.stats[port];
+            const cpuColor = getStatsBarColor(stats.cpu_percent);
+            const memPercent = stats.memory_limit_mb > 0 
+                ? Math.min(100, Math.round((stats.memory_usage_mb / stats.memory_limit_mb) * 100)) 
+                : 0;
+            const memColor = getStatsBarColor(memPercent);
+            
+            statsContainer.innerHTML = `
+                <div class="docker-stats-row">
+                    <span class="docker-stats-label">CPU</span>
+                    <div class="progress docker-stats-bar">
+                        <div class="progress-bar ${cpuColor}" style="width: ${Math.min(100, stats.cpu_percent)}%"></div>
+                    </div>
+                    <span class="docker-stats-value">${stats.cpu_percent}%</span>
+                </div>
+                <div class="docker-stats-row">
+                    <span class="docker-stats-label">RAM</span>
+                    <div class="progress docker-stats-bar">
+                        <div class="progress-bar ${memColor}" style="width: ${memPercent}%"></div>
+                    </div>
+                    <span class="docker-stats-value">${Math.round(stats.memory_usage_mb)}M</span>
+                </div>
+            `;
+        });
+        
+    } catch (error) {
+        console.error('Erreur lors de la récupération des stats Docker:', error);
+    }
 }
 
 /**
  * Rafraîchit le statut des Service Accounts
  */
 async function refreshServiceAccountsStatus() {
-    // Afficher le spinner sur toutes les cellules de statut SA
-    document.querySelectorAll('.sa-credentials-status').forEach(cell => {
-        cell.innerHTML = '<span class="spinner-border spinner-border-sm text-primary" role="status"></span>';
+    const credentialsCells = document.querySelectorAll('.sa-credentials-status');
+    
+    // Indicateur subtil de rafraîchissement
+    credentialsCells.forEach(cell => {
+        cell.style.opacity = '0.6';
     });
     
     try {
         const status = await api.getServiceAccountsStatus();
         console.log('📡 Statut des Service Accounts:', status);
         
-        // Mettre à jour chaque cellule
+        // Mettre à jour chaque cellule avec une icône
         status.service_accounts.forEach(saStatus => {
             const cell = document.querySelector(`.sa-credentials-status[data-sa-id="${saStatus.id}"]`);
             if (cell) {
-                let badge = '';
+                cell.style.opacity = '1';
+                let icon = '';
                 switch (saStatus.credentials_status) {
                     case 'file_exists':
-                        badge = `<span class="badge bg-success" title="Fichier: ${saStatus.credentials_file}">
-                            <i class="bi bi-file-earmark-check me-1"></i>Credentials OK
-                        </span>`;
+                        icon = `<i class="bi bi-file-earmark-check-fill text-success" title="Credentials OK: ${saStatus.credentials_file || ''}"></i>`;
                         break;
                     case 'file_missing':
-                        badge = `<span class="badge bg-danger" title="Fichier de credentials manquant">
-                            <i class="bi bi-file-earmark-x me-1"></i>Fichier manquant
-                        </span>`;
+                        icon = `<i class="bi bi-file-earmark-x-fill text-danger" title="Fichier de credentials manquant"></i>`;
                         break;
                     case 'no_app':
-                        badge = `<span class="badge bg-secondary" title="Pas d'application associée">
-                            <i class="bi bi-dash-circle me-1"></i>Pas d'app
-                        </span>`;
+                        icon = `<i class="bi bi-dash-circle text-muted" title="Pas d'application associée"></i>`;
                         break;
                     default:
-                        badge = `<span class="badge bg-light text-muted">
-                            <i class="bi bi-question-circle me-1"></i>Inconnu
-                        </span>`;
+                        icon = `<i class="bi bi-question-circle text-muted" title="Credentials: Inconnu"></i>`;
                 }
-                cell.innerHTML = badge;
+                cell.innerHTML = icon;
             }
+        });
+
+        // Restaurer l'opacité
+        credentialsCells.forEach(cell => {
+            cell.style.opacity = '1';
         });
         
         // Afficher un résumé
@@ -1395,8 +1525,8 @@ async function refreshServiceAccountsStatus() {
         }
     } catch (error) {
         console.error('Erreur lors de la vérification des SA:', error);
-        document.querySelectorAll('.sa-credentials-status').forEach(cell => {
-            cell.innerHTML = '<span class="badge bg-secondary"><i class="bi bi-x-circle me-1"></i>Erreur</span>';
+        credentialsCells.forEach(cell => {
+            cell.style.opacity = '1';
         });
     }
 }
@@ -1423,32 +1553,37 @@ function renderAppsTable(apps) {
                     <th>Slug</th>
                     <th>URL Frontend</th>
                     <th>Utilisateurs</th>
-                    <th>Config</th>
-                    <th>Docker</th>
-                    <th>Connectivité</th>
+                    <th>État</th>
                     <th class="text-end">Actions</th>
                 </tr>
             </thead>
             <tbody id="appsTableBody">
                 ${apps.map(app => {
-                    // Déterminer le statut Docker
-                    const dockerStatus = app.docker_status;
-                    const isRunning = !dockerStatus || dockerStatus === 'running';
-                    const dockerBadge = !dockerStatus 
-                        ? '<span class="badge bg-light text-muted"><i class="bi bi-question-circle me-1"></i>Inconnu</span>'
-                        : dockerStatus === 'running'
-                            ? '<span class="badge bg-light text-dark"><i class="bi bi-play-circle text-success me-1"></i>Running</span>'
-                            : '<span class="badge bg-warning text-dark"><i class="bi bi-pause-circle me-1"></i>Maintenance</span>';
+                    // Icône Config
+                    const configIcon = app.is_active
+                        ? '<i class="bi bi-check-circle-fill text-success" title="Config: Actif"></i>'
+                        : '<i class="bi bi-x-circle-fill text-danger" title="Config: Inactif"></i>';
                     
-                    // Déterminer le statut de santé (health check automatique)
-                    const healthStatus = app.health_status;
-                    let healthBadge;
-                    if (healthStatus === 'healthy') {
-                        healthBadge = '<span class="badge bg-success"><i class="bi bi-wifi me-1"></i>En ligne</span>';
-                    } else if (healthStatus === 'unhealthy') {
-                        healthBadge = '<span class="badge bg-danger"><i class="bi bi-wifi-off me-1"></i>Hors ligne</span>';
+                    // Icône Docker
+                    const dockerStatus = app.docker_status;
+                    let dockerIcon;
+                    if (!dockerStatus) {
+                        dockerIcon = '<i class="bi bi-question-circle text-muted" title="Docker: Inconnu"></i>';
+                    } else if (dockerStatus === 'running') {
+                        dockerIcon = '<i class="bi bi-play-circle-fill text-success" title="Docker: Running"></i>';
                     } else {
-                        healthBadge = '<span class="badge bg-light text-muted"><i class="bi bi-hourglass-split me-1"></i>Vérification...</span>';
+                        dockerIcon = '<i class="bi bi-pause-circle-fill text-warning" title="Docker: Maintenance"></i>';
+                    }
+                    
+                    // Icône Connectivité
+                    const healthStatus = app.health_status;
+                    let healthIcon;
+                    if (healthStatus === 'healthy') {
+                        healthIcon = '<i class="bi bi-wifi text-success" title="Connectivité: En ligne"></i>';
+                    } else if (healthStatus === 'unhealthy') {
+                        healthIcon = '<i class="bi bi-wifi-off text-danger" title="Connectivité: Hors ligne"></i>';
+                    } else {
+                        healthIcon = '<i class="bi bi-wifi text-muted" title="Connectivité: Vérification..."></i>';
                     }
                     
                     return `
@@ -1467,14 +1602,13 @@ function renderAppsTable(apps) {
                         <td><code>${app.slug}</code></td>
                         <td><small class="text-muted">${escapeHtml(app.frontend_url || '-')}</small></td>
                         <td><span class="badge bg-secondary">${app.users?.length || 0}</span></td>
-                        <td>
-                            ${app.is_active 
-                                ? '<span class="badge bg-light text-dark"><i class="bi bi-check-circle text-success me-1"></i>Actif</span>' 
-                                : '<span class="badge bg-light text-dark"><i class="bi bi-x-circle text-danger me-1"></i>Inactif</span>'}
-                        </td>
-                        <td>${dockerBadge}</td>
-                        <td class="app-connectivity" data-app-slug="${app.slug}">
-                            ${healthBadge}
+                        <td class="app-status-cell" data-app-slug="${app.slug}">
+                            <div class="status-icons">
+                                ${configIcon}
+                                ${dockerIcon}
+                                <span class="app-connectivity-icon">${healthIcon}</span>
+                            </div>
+                            <div class="docker-stats" data-app-slug="${app.slug}"></div>
                         </td>
                         <td class="text-end">
                             <button class="btn btn-sm btn-outline-info me-1" onclick="showDockerDetails('${app.slug}')" title="Détails Docker">
@@ -1493,8 +1627,9 @@ function renderAppsTable(apps) {
         </table>
     `;
     
-    // Lancer automatiquement le test de connectivité
+    // Lancer automatiquement le test de connectivité et les stats Docker
     refreshAppsStatus();
+    refreshDockerStats();
 }
 
 function renderUsersTable(users) {
@@ -2529,9 +2664,7 @@ async function loadPendingApps() {
                 <thead class="table-light">
                     <tr>
                         <th>Application</th>
-                        <th>Slug</th>
                         <th>API URL</th>
-                        <th>Service partagé</th>
                         <th>Date</th>
                         <th class="text-end">Actions</th>
                     </tr>
@@ -2540,16 +2673,16 @@ async function loadPendingApps() {
                     ${pendingApps.map(app => `
                         <tr>
                             <td>
-                                <i class="${escapeHtml(app.icon)} me-2" style="color: ${escapeHtml(app.color)}"></i>
-                                <strong>${escapeHtml(app.name)}</strong>
+                                <div class="d-flex align-items-center">
+                                    <i class="${escapeHtml(app.icon)} me-2" style="color: ${escapeHtml(app.color)}"></i>
+                                    <div>
+                                        <strong>${escapeHtml(app.name)}</strong>
+                                        ${app.is_shared_service ? '<i class="bi bi-share text-info ms-1" title="Service partagé"></i>' : ''}
+                                        <br><code class="small text-muted">${escapeHtml(app.slug)}</code>
+                                    </div>
+                                </div>
                             </td>
-                            <td><code>${escapeHtml(app.slug)}</code></td>
                             <td><small class="text-muted">${escapeHtml(app.api_url)}</small></td>
-                            <td>
-                                ${app.is_shared_service 
-                                    ? '<span class="badge bg-info"><i class="bi bi-share me-1"></i>Partagé</span>' 
-                                    : '<span class="text-muted">-</span>'}
-                            </td>
                             <td><small class="text-muted">${formatDate(app.created_at)}</small></td>
                             <td class="text-end">
                                 <div class="btn-group btn-group-sm">
@@ -2692,11 +2825,9 @@ function renderServiceAccountsTable(serviceAccounts) {
             <thead>
                 <tr>
                     <th>Nom</th>
-                    <th>Client ID</th>
                     <th>Applications</th>
                     <th>Dernière utilisation</th>
-                    <th>Config</th>
-                    <th>Credentials</th>
+                    <th>État</th>
                     <th class="text-end">Actions</th>
                 </tr>
             </thead>
@@ -2707,9 +2838,9 @@ function renderServiceAccountsTable(serviceAccounts) {
                             <div>
                                 <strong>${escapeHtml(sa.name)}</strong>
                                 ${sa.description ? `<br><small class="text-muted">${escapeHtml(sa.description)}</small>` : ''}
+                                <br><code class="small text-muted">${sa.client_id}</code>
                             </div>
                         </td>
-                        <td><code class="small">${sa.client_id}</code></td>
                         <td>
                             ${sa.applications?.map(a => `<span class="badge bg-light text-dark me-1">${escapeHtml(a.name)}</span>`).join('') || '<span class="text-muted">-</span>'}
                         </td>
@@ -2719,12 +2850,14 @@ function renderServiceAccountsTable(serviceAccounts) {
                                 : '<small class="text-muted"><i class="bi bi-hourglass me-1"></i>Jamais</small>'}
                         </td>
                         <td>
-                            ${sa.is_active 
-                                ? '<span class="badge bg-light text-dark"><i class="bi bi-check-circle text-success me-1"></i>Actif</span>' 
-                                : '<span class="badge bg-light text-dark"><i class="bi bi-x-circle text-danger me-1"></i>Inactif</span>'}
-                        </td>
-                        <td class="sa-credentials-status" data-sa-id="${sa.id}">
-                            <span class="badge bg-light text-muted"><i class="bi bi-question-circle me-1"></i>Non vérifié</span>
+                            <div class="status-icons">
+                                ${sa.is_active 
+                                    ? '<i class="bi bi-check-circle-fill text-success" title="Config: Actif"></i>' 
+                                    : '<i class="bi bi-x-circle-fill text-danger" title="Config: Inactif"></i>'}
+                                <span class="sa-credentials-status" data-sa-id="${sa.id}">
+                                    <i class="bi bi-question-circle text-muted" title="Credentials: Non vérifié"></i>
+                                </span>
+                            </div>
                         </td>
                         <td class="text-end">
                             <div class="btn-group btn-group-sm">
@@ -6468,8 +6601,8 @@ function previewImportRestoreFile() {
     }
     
     // Vérifier l'extension
-    if (!file.name.endsWith('.zip')) {
-        showToast('Erreur', 'Le fichier doit être un ZIP', 'warning');
+    if (!file.name.endsWith('.zip') && !file.name.endsWith('.encrypted')) {
+        showToast('Erreur', 'Le fichier doit être un ZIP ou un fichier chiffré (.encrypted)', 'warning');
         fileInput.value = '';
         document.getElementById('importRestorePreview').classList.add('d-none');
         document.getElementById('executeImportRestoreBtn').disabled = true;
