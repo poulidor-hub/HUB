@@ -166,18 +166,7 @@ function handleSSEEvent(data) {
     console.log('📡 SSE event:', data.type, data.data);
     
     switch (data.type) {
-        case 'apps_updated':
-            // Rafraîchir la liste des applications selon la page
-            if (currentPage === 'apps-admin') {
-                // Page admin : recharger tout le tableau et relancer les tests
-                loadAllApps().then(() => {
-                    // Relancer le test de connectivité après rechargement
-                    setTimeout(() => refreshAppsStatus(), 500);
-                });
-            } else {
-                loadApps();
-            }
-            
+        case 'apps_updated': {
             // Notification adaptée selon l'action
             let appAction = 'modifiée';
             let toastType = 'info';
@@ -206,16 +195,43 @@ function handleSSEEvent(data) {
             const appName = data.data?.app_name || 'Application';
             showToast('Mise à jour', `${appName} ${appAction}`, toastType);
             
-            // Rafraîchir le token si une app a été créée ou modifiée (par un autre admin)
-            // MAIS seulement si ce n'est pas l'utilisateur courant qui a fait l'action
-            // (pour éviter un double refresh qui invaliderait le token)
-            if (data.data?.action === 'created' || data.data?.action === 'updated') {
-                // Vérifier si un refresh n'est pas déjà en cours (éviter double refresh)
-                if (!api._refreshPromise) {
-                    refreshTokenAfterAppChange(null, true); // silencieux via SSE
+            // Rafraîchir le token AVANT de mettre à jour l'UI si une app a été créée ou modifiée
+            // Cela garantit que le token contient les claims à jour (liste des apps)
+            // AVANT que l'utilisateur puisse cliquer sur la nouvelle app dans l'UI
+            const needsTokenRefresh = (data.data?.action === 'created' || data.data?.action === 'updated');
+            
+            if (needsTokenRefresh && !api._refreshPromise) {
+                // Attendre le refresh token AVANT de charger les apps dans l'UI
+                refreshTokenAfterAppChange(null, true).then(() => {
+                    if (currentPage === 'apps-admin') {
+                        loadAllApps().then(() => {
+                            setTimeout(() => refreshAppsStatus(), 500);
+                        });
+                    } else {
+                        loadApps();
+                    }
+                }).catch(() => {
+                    // En cas d'échec du refresh, charger quand même l'UI
+                    if (currentPage === 'apps-admin') {
+                        loadAllApps().then(() => {
+                            setTimeout(() => refreshAppsStatus(), 500);
+                        });
+                    } else {
+                        loadApps();
+                    }
+                });
+            } else {
+                // Pas besoin de refresh token (suppression, etc.) — charger l'UI directement
+                if (currentPage === 'apps-admin') {
+                    loadAllApps().then(() => {
+                        setTimeout(() => refreshAppsStatus(), 500);
+                    });
+                } else {
+                    loadApps();
                 }
             }
             break;
+        }
             
         case 'docker_status_changed':
             // Événement dédié pour les changements de statut Docker
@@ -417,6 +433,14 @@ document.addEventListener('DOMContentLoaded', () => {
     // Utile pour détecter un retour après un redémarrage serveur
     document.addEventListener('visibilitychange', () => {
         if (document.visibilityState === 'visible' && api.token && currentUser) {
+            // Vérifier si le token est expiré ou proche de l'expiration
+            // Les timers setTimeout sont throttlés/suspendus par le navigateur
+            // quand l'onglet est en arrière-plan, le refresh proactif peut avoir été raté
+            const expiry = api._parseTokenExpiry(api.token);
+            if (expiry && expiry.getTime() - Date.now() < 2 * 60 * 1000) {
+                console.log('👁️ Token expiré ou proche de l\'expiration au retour — refresh...');
+                api.tryRefreshToken();
+            }
             // Vérifier si la connexion SSE est toujours active
             if (!eventSource || eventSource.readyState !== EventSource.OPEN) {
                 console.log('👁️ Page redevenue visible - reconnexion SSE...');
@@ -1066,30 +1090,62 @@ async function updateMyAppRole(appSlug, role) {
     }
 }
 
-function openApp(slug, frontendUrl) {
+async function openApp(slug, frontendUrl) {
     if (!frontendUrl) {
         showToast('Information', 'Cette application n\'a pas de frontend configuré', 'warning');
         return;
     }
 
-    // Logger l'accès à l'application (async, non bloquant)
-    api.logAppAccess(slug).catch(e => console.warn('Échec log accès app:', e));
-
     // Nettoyer les références aux fenêtres déjà fermées
     cleanupClosedWindows();
 
-    // Rediriger avec le token dans un nouvel onglet
-    const separator = frontendUrl.includes('?') ? '&' : '?';
-    const url = `${frontendUrl}${separator}access_token=${api.token}`;
-    
-    // Ouvrir avec un nom unique pour pouvoir tracker la fenêtre
+    // 1. Ouvrir la fenêtre IMMÉDIATEMENT (dans le contexte synchrone du clic)
+    //    pour éviter le blocage par les popup blockers du navigateur
     const windowName = `hub_app_${slug}_${Date.now()}`;
-    const appWindow = window.open(url, windowName);
-    
+    const appWindow = window.open('about:blank', windowName);
+
+    if (!appWindow) {
+        showToast('Erreur', 'Impossible d\'ouvrir l\'application (popup bloqué ?)', 'warning');
+        return;
+    }
+
+    // Afficher une page de chargement dans la fenêtre en attendant le token
+    try {
+        appWindow.document.write(`
+            <!DOCTYPE html>
+            <html><head><title>Connexion...</title></head>
+            <body style="display:flex;align-items:center;justify-content:center;height:100vh;margin:0;font-family:system-ui,sans-serif;background:#f8f9fa;">
+                <div style="text-align:center;">
+                    <div style="border:4px solid #e9ecef;border-top:4px solid #0d6efd;border-radius:50%;width:40px;height:40px;animation:spin 1s linear infinite;margin:0 auto 1rem;"></div>
+                    <p style="color:#6c757d;margin:0;">Connexion à l'application...</p>
+                </div>
+                <style>@keyframes spin{0%{transform:rotate(0deg)}100%{transform:rotate(360deg)}}</style>
+            </body></html>
+        `);
+    } catch (e) {
+        // Ignorer si on ne peut pas écrire (cross-origin)
+    }
+
     // Stocker la référence pour fermeture automatique au logout
-    if (appWindow) {
-        openedAppWindows.set(windowName, appWindow);
+    openedAppWindows.set(windowName, appWindow);
+
+    try {
+        // 2. S'assurer que le token est valide AVANT de naviguer
+        await api.ensureFreshToken();
+
+        // 3. Logger l'accès à l'application (non bloquant)
+        api.logAppAccess(slug).catch(e => console.warn('Échec log accès app:', e));
+
+        // 4. Naviguer vers l'app avec un token garanti valide
+        const separator = frontendUrl.includes('?') ? '&' : '?';
+        appWindow.location.href = `${frontendUrl}${separator}access_token=${api.token}`;
         console.log(`Application ${slug} ouverte dans l'onglet ${windowName}`);
+    } catch (e) {
+        // En cas d'échec du refresh, fermer la fenêtre vierge
+        console.error(`Échec ouverture app ${slug}:`, e);
+        try { appWindow.close(); } catch (_) {}
+        openedAppWindows.delete(windowName);
+        showToast('Erreur', 'Session expirée — veuillez vous reconnecter', 'danger');
     }
 }
 

@@ -99,6 +99,30 @@ class HubAPI {
         }
     }
 
+    /**
+     * Vérifie que le token est valide et le rafraîchit si nécessaire.
+     * À appeler avant toute opération nécessitant un token garanti valide
+     * (ex: ouverture d'une application dans un nouvel onglet).
+     * @returns {Promise<void>}
+     * @throws {Error} si le token ne peut pas être obtenu/rafraîchi
+     */
+    async ensureFreshToken() {
+        if (!this.token) throw new Error('Non authentifié');
+
+        const expiry = this._parseTokenExpiry(this.token);
+        if (!expiry) return; // Impossible de parser, tenter quand même
+
+        // Si le token expire dans moins de 30 secondes, forcer un refresh
+        const margin = 30 * 1000;
+        if (expiry.getTime() - Date.now() < margin) {
+            console.log('🔄 Token proche de l\'expiration, refresh avant ouverture app...');
+            const refreshed = await this.tryRefreshToken();
+            if (!refreshed) {
+                throw new Error('Impossible de rafraîchir le token');
+            }
+        }
+    }
+
     getHeaders() {
         const headers = {
             'Content-Type': 'application/json'
