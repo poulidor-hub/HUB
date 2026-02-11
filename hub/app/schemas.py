@@ -547,6 +547,23 @@ class ServiceAccountExport(BaseModel):
     app_slugs: List[str] = []
 
 
+class AppBackupExport(BaseModel):
+    """Metadata d'un backup d'application pour l'export/import environnement"""
+    backup_id: str
+    app_slug: str
+    app_version: Optional[str] = None
+    total_items: int = 0
+    total_preferences: int = 0
+    total_files: int = 0
+    total_size_bytes: int = 0
+    checksum: Optional[str] = None
+    storage_filename: str  # Nom du fichier dans l'archive ZIP (ex: backups/mon-app/backup_uuid.zip)
+    created_by: Optional[str] = None
+    created_by_type: Optional[str] = None
+    created_at: Optional[datetime] = None
+    description: Optional[str] = None
+
+
 class BackupExport(BaseModel):
     """Structure complète d'export de l'environnement"""
     version: str = "1.0"
@@ -556,6 +573,7 @@ class BackupExport(BaseModel):
     applications: List[AppExport] = []
     user_app_roles: List[UserAppRoleExport] = []
     service_accounts: List[ServiceAccountExport] = []
+    app_backups: List[AppBackupExport] = []  # Backups d'applications (max 5 par app)
     jwt_private_key_b64: Optional[str] = None  # Clé privée encodée base64
     jwt_public_key_b64: Optional[str] = None   # Clé publique encodée base64
 
@@ -568,6 +586,7 @@ class BackupImport(BaseModel):
     applications: List[AppExport] = []
     user_app_roles: List[UserAppRoleExport] = []
     service_accounts: List[ServiceAccountExport] = []
+    app_backups: List[AppBackupExport] = []  # Backups d'applications à restaurer
     jwt_private_key_b64: Optional[str] = None
     jwt_public_key_b64: Optional[str] = None
 
@@ -585,6 +604,9 @@ class ImportResult(BaseModel):
     service_accounts_updated: int = 0
     service_accounts_skipped: int = 0
     user_app_roles_created: int = 0
+    app_backups_created: int = 0
+    app_backups_skipped: int = 0
+    app_backups_errors: int = 0
     errors: List[str] = []
     warnings: List[str] = []
 

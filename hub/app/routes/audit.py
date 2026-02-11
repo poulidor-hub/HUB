@@ -253,6 +253,7 @@ async def get_active_session_for_user(
                 UserSession.logout_at == None
             )
         ).order_by(UserSession.login_at.desc())
+        .limit(1)
     )
     return result.scalar_one_or_none()
 

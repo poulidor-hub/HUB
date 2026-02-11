@@ -75,8 +75,8 @@ class User(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
-    # Relations
-    app_roles = relationship("UserAppRole", back_populates="user", cascade="all, delete-orphan")
+    # Relations (lazy='raise' pour forcer selectinload explicite en async)
+    app_roles = relationship("UserAppRole", back_populates="user", cascade="all, delete-orphan", lazy="raise")
     
     @property
     def applications(self):
@@ -136,13 +136,13 @@ class Application(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
-    # Relations
-    user_roles = relationship("UserAppRole", back_populates="application", cascade="all, delete-orphan")
-    approved_by = relationship("User", foreign_keys=[approved_by_id])
-    available_roles = relationship("AppRole", back_populates="application", cascade="all, delete-orphan")
-    service_accounts = relationship("ServiceAccount", secondary=service_account_app_access, back_populates="applications")
+    # Relations (lazy='raise' pour forcer selectinload explicite en async)
+    user_roles = relationship("UserAppRole", back_populates="application", cascade="all, delete-orphan", lazy="raise")
+    approved_by = relationship("User", foreign_keys=[approved_by_id], lazy="raise")
+    available_roles = relationship("AppRole", back_populates="application", cascade="all, delete-orphan", lazy="raise")
+    service_accounts = relationship("ServiceAccount", secondary=service_account_app_access, back_populates="applications", lazy="raise")
     # Note: pas de cascade delete-orphan pour conserver les backups même si l'app est supprimée
-    backups = relationship("AppBackup", back_populates="application")
+    backups = relationship("AppBackup", back_populates="application", lazy="raise")
     
     @property
     def users(self):
@@ -227,7 +227,7 @@ class ServiceAccount(Base):
     last_used_at = Column(DateTime, nullable=True)
     
     # Relations
-    applications = relationship("Application", secondary=service_account_app_access, back_populates="service_accounts")
+    applications = relationship("Application", secondary=service_account_app_access, back_populates="service_accounts", lazy="raise")
     
     @staticmethod
     def generate_client_id() -> str:

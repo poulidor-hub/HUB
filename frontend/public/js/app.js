@@ -5974,20 +5974,44 @@ function clearDiscoveryResult() {
     document.getElementById('discoveryResultBody').textContent = '';
 }
 
-// ===== Backup/Restore Functions =====
+// ===== Cloner / Migrer — Export & Import d'environnement =====
 
 let backupFileData = null;
+let backupFileRef = null;  // Référence au fichier original pour upload ZIP
+let backupIsZip = false;   // Le fichier sélectionné est-il un ZIP ?
 
 /**
- * Charge les informations de backup (appelé à l'ouverture de l'onglet)
+ * Charge le résumé de l'environnement courant (appelé à l'ouverture de l'onglet)
  */
-function loadBackupInfo() {
+async function loadBackupInfo() {
     // Reset du formulaire d'import
     document.getElementById('importBackupFile').value = '';
     document.getElementById('backupPreview').classList.add('d-none');
     document.getElementById('importBackupBtn').disabled = true;
     document.getElementById('importResultCard').classList.add('d-none');
     backupFileData = null;
+    backupFileRef = null;
+    backupIsZip = false;
+
+    // Charger les compteurs de l'environnement courant
+    try {
+        const usersCount = (await api.request('/admin/users')).length;
+        const appsCount = allApps.length || (await api.request('/apps')).length;
+        const saCount = allServiceAccounts.length || 0;
+        // Compteur de rôles : somme des rôles de tous les users
+        let rolesCount = 0;
+        try {
+            const users = await api.request('/admin/users');
+            rolesCount = users.reduce((sum, u) => sum + (u.apps || []).length, 0);
+        } catch (_) { /* ignore */ }
+
+        document.getElementById('envSummaryUsers').textContent = usersCount;
+        document.getElementById('envSummaryApps').textContent = appsCount;
+        document.getElementById('envSummaryRoles').textContent = rolesCount;
+        document.getElementById('envSummarySA').textContent = saCount;
+    } catch (e) {
+        console.warn('Impossible de charger le résumé environnement', e);
+    }
 }
 
 /**
@@ -5997,25 +6021,38 @@ async function downloadBackupExport() {
     try {
         const includeJwt = document.getElementById('exportIncludeJwt').checked;
         const includeSaSecrets = document.getElementById('exportIncludeSaSecrets').checked;
+        const includeAppBackups = document.getElementById('exportIncludeAppBackups').checked;
         
-        showToast('Export', 'Génération du backup en cours...', 'info');
+        showToast('Export', 'Génération de l\'export en cours...', 'info');
         
-        const data = await api.exportBackup(includeJwt, includeSaSecrets);
+        const data = await api.exportBackup(includeJwt, includeSaSecrets, includeAppBackups);
         
-        // Créer le fichier JSON
-        const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-        const url = URL.createObjectURL(blob);
+        const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
         
-        // Télécharger
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `hub_backup_${new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)}.json`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
-        
-        showToast('Succès', `Backup exporté: ${data.users.length} utilisateurs, ${data.applications.length} applications`, 'success');
+        if (includeAppBackups && data instanceof Blob) {
+            // Télécharger le ZIP
+            const url = URL.createObjectURL(data);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `hub_export_${timestamp}.zip`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+            showToast('Export terminé', 'Archive ZIP avec backups d\'applications téléchargée', 'success');
+        } else {
+            // Télécharger le JSON
+            const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `hub_export_${timestamp}.json`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+            showToast('Export terminé', `${data.users.length} utilisateurs, ${data.applications.length} apps, ${(data.service_accounts || []).length} SA`, 'success');
+        }
         
     } catch (error) {
         console.error('Erreur export backup:', error);
@@ -6026,7 +6063,7 @@ async function downloadBackupExport() {
 /**
  * Prévisualise le fichier de backup sélectionné
  */
-function previewBackupFile() {
+async function previewBackupFile() {
     const fileInput = document.getElementById('importBackupFile');
     const file = fileInput.files[0];
     
@@ -6034,41 +6071,99 @@ function previewBackupFile() {
         document.getElementById('backupPreview').classList.add('d-none');
         document.getElementById('importBackupBtn').disabled = true;
         backupFileData = null;
+        backupFileRef = null;
+        backupIsZip = false;
         return;
     }
     
-    const reader = new FileReader();
-    reader.onload = function(e) {
+    backupFileRef = file;
+    
+    // Déterminer si c'est un ZIP en regardant l'extension ou les magic bytes
+    const isZipByName = file.name.toLowerCase().endsWith('.zip');
+    
+    if (isZipByName) {
+        // Fichier ZIP : utiliser l'endpoint serveur pour le preview
         try {
-            backupFileData = JSON.parse(e.target.result);
+            const preview = await api.previewBackupUpload(file);
+            backupIsZip = true;
             
-            // Afficher la preview
-            document.getElementById('previewUsers').textContent = (backupFileData.users || []).length;
-            document.getElementById('previewApps').textContent = (backupFileData.applications || []).length;
-            document.getElementById('previewSA').textContent = (backupFileData.service_accounts || []).length;
-            document.getElementById('previewJwt').textContent = backupFileData.jwt_private_key_b64 ? 'Oui' : 'Non';
+            // Stocker les données de preview (pas les données complètes)
+            backupFileData = {
+                _isZip: true,
+                users: { length: preview.users_count },
+                applications: { length: preview.apps_count },
+                service_accounts: { length: preview.service_accounts_count },
+                app_backups: { length: preview.app_backups_count },
+                jwt_private_key_b64: preview.has_jwt_keys,
+                version: preview.version,
+                exported_at: preview.exported_at,
+                exported_by: preview.exported_by,
+                app_backups_by_app: preview.app_backups_by_app
+            };
             
-            // Date et exporteur
-            if (backupFileData.exported_at) {
-                const date = new Date(backupFileData.exported_at);
+            document.getElementById('previewUsers').textContent = preview.users_count;
+            document.getElementById('previewApps').textContent = preview.apps_count;
+            document.getElementById('previewSA').textContent = preview.service_accounts_count;
+            document.getElementById('previewJwt').textContent = preview.has_jwt_keys ? 'Oui' : 'Non';
+            document.getElementById('previewBackups').textContent = preview.app_backups_count;
+            document.getElementById('previewVersion').textContent = preview.version || '–';
+            
+            if (preview.exported_at) {
+                const date = new Date(preview.exported_at);
                 document.getElementById('previewDate').textContent = date.toLocaleString('fr-FR');
             } else {
-                document.getElementById('previewDate').textContent = '-';
+                document.getElementById('previewDate').textContent = '–';
             }
-            document.getElementById('previewBy').textContent = backupFileData.exported_by || '-';
+            document.getElementById('previewBy').textContent = preview.exported_by || '-';
             
             document.getElementById('backupPreview').classList.remove('d-none');
             document.getElementById('importBackupBtn').disabled = false;
             
         } catch (error) {
-            console.error('Erreur parsing backup:', error);
-            showToast('Erreur', 'Fichier JSON invalide', 'danger');
+            console.error('Erreur preview ZIP:', error);
+            showToast('Erreur', 'Impossible de lire l\'archive ZIP: ' + error.message, 'danger');
             document.getElementById('backupPreview').classList.add('d-none');
             document.getElementById('importBackupBtn').disabled = true;
             backupFileData = null;
+            backupFileRef = null;
+            backupIsZip = false;
         }
-    };
-    reader.readAsText(file);
+    } else {
+        // Fichier JSON classique
+        backupIsZip = false;
+        const reader = new FileReader();
+        reader.onload = function(e) {
+            try {
+                backupFileData = JSON.parse(e.target.result);
+                
+                document.getElementById('previewUsers').textContent = (backupFileData.users || []).length;
+                document.getElementById('previewApps').textContent = (backupFileData.applications || []).length;
+                document.getElementById('previewSA').textContent = (backupFileData.service_accounts || []).length;
+                document.getElementById('previewJwt').textContent = backupFileData.jwt_private_key_b64 ? 'Oui' : 'Non';
+                document.getElementById('previewBackups').textContent = (backupFileData.app_backups || []).length;
+                document.getElementById('previewVersion').textContent = backupFileData.version || '–';
+                
+                if (backupFileData.exported_at) {
+                    const date = new Date(backupFileData.exported_at);
+                    document.getElementById('previewDate').textContent = date.toLocaleString('fr-FR');
+                } else {
+                    document.getElementById('previewDate').textContent = '–';
+                }
+                document.getElementById('previewBy').textContent = backupFileData.exported_by || '-';
+                
+                document.getElementById('backupPreview').classList.remove('d-none');
+                document.getElementById('importBackupBtn').disabled = false;
+                
+            } catch (error) {
+                console.error('Erreur parsing backup:', error);
+                showToast('Erreur', 'Fichier JSON invalide', 'danger');
+                document.getElementById('backupPreview').classList.add('d-none');
+                document.getElementById('importBackupBtn').disabled = true;
+                backupFileData = null;
+            }
+        };
+        reader.readAsText(file);
+    }
 }
 
 /**
@@ -6083,16 +6178,28 @@ async function executeBackupImport() {
     const importMode = document.getElementById('importMode').value;
     const restoreJwt = document.getElementById('importRestoreJwt').checked;
     
-    // Confirmation
-    const confirmMsg = `Vous allez importer:
-- ${(backupFileData.users || []).length} utilisateurs
-- ${(backupFileData.applications || []).length} applications
-- ${(backupFileData.service_accounts || []).length} service accounts
-
-Mode: ${importMode.toUpperCase()}
-${restoreJwt ? '⚠️ Les clés JWT seront restaurées (redémarrage nécessaire)' : ''}
-
-Continuer ?`;
+    // Compteurs pour la confirmation
+    const usersCount = backupIsZip ? backupFileData.users.length : (backupFileData.users || []).length;
+    const appsCount = backupIsZip ? backupFileData.applications.length : (backupFileData.applications || []).length;
+    const saCount = backupIsZip ? backupFileData.service_accounts.length : (backupFileData.service_accounts || []).length;
+    const backupsCount = backupIsZip ? backupFileData.app_backups.length : (backupFileData.app_backups || []).length;
+    
+    let confirmMsg = `Vous allez importer:
+- ${usersCount} utilisateurs
+- ${appsCount} applications
+- ${saCount} service accounts`;
+    
+    if (backupsCount > 0) {
+        confirmMsg += `\n- ${backupsCount} backups d'applications`;
+    }
+    
+    confirmMsg += `\n\nMode: ${importMode.toUpperCase()}`;
+    
+    if (restoreJwt) {
+        confirmMsg += '\n⚠️ Les clés JWT seront restaurées (redémarrage nécessaire)';
+    }
+    
+    confirmMsg += '\n\nContinuer ?';
     
     if (!confirm(confirmMsg)) {
         return;
@@ -6103,12 +6210,18 @@ Continuer ?`;
         btn.disabled = true;
         btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Import en cours...';
         
-        const result = await api.importBackup(backupFileData, importMode, restoreJwt);
+        let result;
         
-        // Afficher le résultat
+        if (backupIsZip) {
+            // Upload du fichier ZIP via le nouvel endpoint
+            result = await api.importBackupFile(backupFileRef, importMode, restoreJwt);
+        } else {
+            // Import JSON classique
+            result = await api.importBackup(backupFileData, importMode, restoreJwt);
+        }
+        
         displayImportResult(result);
         
-        // Rafraîchir les données si succès
         if (result.success) {
             showToast('Import réussi', 'Les données ont été importées avec succès', 'success');
             loadAllApps();
@@ -6130,7 +6243,7 @@ Continuer ?`;
     } finally {
         const btn = document.getElementById('importBackupBtn');
         btn.disabled = false;
-        btn.innerHTML = '<i class="bi bi-upload me-2"></i>Importer le backup';
+        btn.innerHTML = '<i class="bi bi-upload me-2"></i>Lancer l\'import';
     }
 }
 
@@ -6155,7 +6268,7 @@ function displayImportResult(result) {
     
     // Stats
     statsDiv.innerHTML = `
-        <div class="col-md-4">
+        <div class="col-md-3">
             <div class="text-center p-2 border rounded">
                 <div class="small text-muted">Utilisateurs</div>
                 <span class="badge bg-success">${result.users_created || 0} créés</span>
@@ -6163,7 +6276,7 @@ function displayImportResult(result) {
                 <span class="badge bg-secondary">${result.users_skipped || 0} skip</span>
             </div>
         </div>
-        <div class="col-md-4">
+        <div class="col-md-3">
             <div class="text-center p-2 border rounded">
                 <div class="small text-muted">Applications</div>
                 <span class="badge bg-success">${result.apps_created || 0} créées</span>
@@ -6171,12 +6284,20 @@ function displayImportResult(result) {
                 <span class="badge bg-secondary">${result.apps_skipped || 0} skip</span>
             </div>
         </div>
-        <div class="col-md-4">
+        <div class="col-md-3">
             <div class="text-center p-2 border rounded">
                 <div class="small text-muted">Service Accounts</div>
                 <span class="badge bg-success">${result.service_accounts_created || 0} créés</span>
                 <span class="badge bg-info">${result.service_accounts_updated || 0} maj</span>
                 <span class="badge bg-secondary">${result.service_accounts_skipped || 0} skip</span>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="text-center p-2 border rounded">
+                <div class="small text-muted">Backups Apps</div>
+                <span class="badge bg-success">${result.app_backups_created || 0} créés</span>
+                <span class="badge bg-secondary">${result.app_backups_skipped || 0} skip</span>
+                ${(result.app_backups_errors || 0) > 0 ? `<span class="badge bg-danger">${result.app_backups_errors} err</span>` : ''}
             </div>
         </div>
     `;

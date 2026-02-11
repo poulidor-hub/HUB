@@ -87,12 +87,8 @@ async def export_environment(
     await init_db()
     
     async with async_session_maker() as db:
-        # 1. Export des utilisateurs
-        users_result = await db.execute(
-            select(User).options(
-                selectinload(User.app_roles).selectinload(UserAppRole.application)
-            )
-        )
+        # 1. Export des utilisateurs (champs scalaires uniquement, pas besoin de charger les relations)
+        users_result = await db.execute(select(User))
         users = users_result.scalars().all()
         
         users_export = [
@@ -114,7 +110,7 @@ async def export_environment(
             select(Application).options(
                 selectinload(Application.available_roles),
                 selectinload(Application.approved_by)
-            )
+            ).execution_options(populate_existing=True)
         )
         apps = apps_result.scalars().all()
         

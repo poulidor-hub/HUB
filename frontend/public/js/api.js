@@ -720,18 +720,32 @@ class HubAPI {
      * Exporte l'environnement complet (backup)
      * @param {boolean} includeJwtKeys - Inclure les clés JWT
      * @param {boolean} includeSaSecrets - Inclure les secrets des service accounts
-     * @returns {Promise<Object>} Données du backup
+     * @param {boolean} includeAppBackups - Inclure les backups d'applications (retourne ZIP)
+     * @returns {Promise<Object|Blob>} Données du backup (JSON) ou Blob (ZIP)
      */
-    async exportBackup(includeJwtKeys = true, includeSaSecrets = true) {
+    async exportBackup(includeJwtKeys = true, includeSaSecrets = true, includeAppBackups = false) {
         const params = new URLSearchParams();
         params.append('include_jwt_keys', includeJwtKeys);
         params.append('include_sa_secrets', includeSaSecrets);
+        params.append('include_app_backups', includeAppBackups);
+        
+        if (includeAppBackups) {
+            // Retourne un Blob ZIP via l'endpoint download
+            const response = await fetch(`${API_BASE}/admin/backup/export/download?${params}`, {
+                headers: this.token ? { 'Authorization': `Bearer ${this.token}` } : {}
+            });
+            if (!response.ok) {
+                const err = await response.json().catch(() => ({ detail: response.statusText }));
+                throw new Error(err.detail || 'Erreur export');
+            }
+            return await response.blob();
+        }
         
         return this.request(`/admin/backup/export?${params}`);
     }
     
     /**
-     * Importe un environnement depuis un backup
+     * Importe un environnement depuis un backup JSON
      * @param {Object} backupData - Données du backup
      * @param {string} importMode - Mode d'import: skip, update, error
      * @param {boolean} restoreJwtKeys - Restaurer les clés JWT
@@ -745,6 +759,7 @@ class HubAPI {
             applications: backupData.applications || [],
             user_app_roles: backupData.user_app_roles || [],
             service_accounts: backupData.service_accounts || [],
+            app_backups: backupData.app_backups || [],
             jwt_private_key_b64: backupData.jwt_private_key_b64,
             jwt_public_key_b64: backupData.jwt_public_key_b64
         };
@@ -753,6 +768,56 @@ class HubAPI {
             method: 'POST',
             body: JSON.stringify(payload)
         });
+    }
+
+    /**
+     * Importe un environnement depuis un fichier uploadé (JSON ou ZIP)
+     * @param {File} file - Fichier JSON ou ZIP
+     * @param {string} importMode - Mode d'import: skip, update, error
+     * @param {boolean} restoreJwtKeys - Restaurer les clés JWT
+     * @returns {Promise<Object>} Résultat de l'import
+     */
+    async importBackupFile(file, importMode = 'skip', restoreJwtKeys = false) {
+        const formData = new FormData();
+        formData.append('file', file);
+        formData.append('import_mode', importMode);
+        formData.append('restore_jwt_keys', restoreJwtKeys);
+        
+        const response = await fetch(`${API_BASE}/admin/backup/import/upload`, {
+            method: 'POST',
+            headers: this.token ? { 'Authorization': `Bearer ${this.token}` } : {},
+            body: formData
+        });
+        
+        if (!response.ok) {
+            const err = await response.json().catch(() => ({ detail: response.statusText }));
+            throw new Error(err.detail || 'Erreur import');
+        }
+        
+        return await response.json();
+    }
+
+    /**
+     * Prévisualise un fichier d'import (JSON ou ZIP) sans l'importer
+     * @param {File} file - Fichier JSON ou ZIP
+     * @returns {Promise<Object>} Aperçu du contenu du fichier
+     */
+    async previewBackupUpload(file) {
+        const formData = new FormData();
+        formData.append('file', file);
+        
+        const response = await fetch(`${API_BASE}/admin/backup/import/preview`, {
+            method: 'POST',
+            headers: this.token ? { 'Authorization': `Bearer ${this.token}` } : {},
+            body: formData
+        });
+        
+        if (!response.ok) {
+            const err = await response.json().catch(() => ({ detail: response.statusText }));
+            throw new Error(err.detail || 'Erreur preview');
+        }
+        
+        return await response.json();
     }
     
     // ===== Bulk Operations API =====
