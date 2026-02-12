@@ -593,6 +593,21 @@ class HubAPI {
         });
     }
 
+    // Import lot d'applications (crée plusieurs apps + SA en une seule opération)
+    async batchImportApps(apps) {
+        return this.request('/apps/batch-import', {
+            method: 'POST',
+            body: JSON.stringify({ apps })
+        });
+    }
+
+    // Bascule l'état actif/inactif d'une application
+    async toggleAppActive(appId) {
+        return this.request(`/apps/${appId}/toggle-active`, {
+            method: 'PATCH'
+        });
+    }
+
     // ===== Approbation des Applications =====
     
     // Liste les applications en attente d'approbation

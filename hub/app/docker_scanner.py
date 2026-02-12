@@ -23,17 +23,41 @@ DEFAULT_EXCLUDED_CONTAINERS = {
 }
 
 # Patterns de noms à exclure (bases de données, reverse proxy, etc.)
+# Note: nginx n'est PAS exclu car les frontends d'applications hub utilisent souvent nginx
 EXCLUDED_NAME_PATTERNS = [
     r".*postgres.*",
     r".*mysql.*",
     r".*mariadb.*",
     r".*mongo.*",
     r".*redis.*",
-    r".*nginx.*",
+    r".*memcache.*",
+    r".*elasticsearch.*",
+    r".*kibana.*",
+    r".*grafana.*",
+    r".*prometheus.*",
     r".*traefik.*",
     r".*haproxy.*",
     r".*caddy.*",
+    r".*portainer.*",
+    r".*watchtower.*",
+    r".*adminer.*",
+    r".*phpmyadmin.*",
+    r".*pgadmin.*",
+    r"^nginx$",          # nginx seul (reverse proxy), mais pas "mon-app-nginx" ou "app-frontend"
 ]
+
+# Suffixes indicateurs du type de conteneur
+_API_SUFFIXES = ('-api', '-backend', '-back', '-server')
+_FRONTEND_SUFFIXES = ('-frontend', '-front', '-ui', '-web', '-client')
+
+# Images typiques frontend
+_FRONTEND_IMAGE_PATTERNS = [r'nginx', r'httpd', r'apache']
+# Images typiques backend
+_API_IMAGE_PATTERNS = [r'python', r'fastapi', r'uvicorn', r'gunicorn', r'flask', r'django', r'node', r'express']
+
+# Ports typiques
+_FRONTEND_PORTS = {80, 443, 3000, 8080}
+_API_PORTS = {8000, 5000, 5001, 8001, 8888, 9000}
 
 
 @dataclass
@@ -59,6 +83,9 @@ class DiscoveredContainer:
     hub_name: Optional[str] = None           # hub.name - Nom personnalisé
     hub_description: Optional[str] = None    # hub.description - Description
     hub_shared: bool = False                  # hub.shared - Service partagé M2M
+    # Auto-pairing : type détecté et slug de base pour le regroupement
+    container_type: str = 'unknown'           # 'api', 'frontend', 'unknown'
+    base_slug: str = ''                       # Slug sans suffixe de type (pour regrouper API+Frontend)
 
 
 def generate_slug(name: str) -> str:
@@ -108,6 +135,63 @@ def format_container_name(name: str) -> str:
     # Capitaliser chaque mot
     display_name = ' '.join(word.capitalize() for word in display_name.split())
     return display_name
+
+
+def generate_base_slug(slug: str) -> str:
+    """Retire les suffixes de type (api, frontend, backend...) pour obtenir le slug applicatif.
+    
+    Exemples:
+    - "exemple-app" -> "exemple-app"
+    - "mon-app-frontend" -> "mon-app"
+    - "salarie" -> "salarie" (pas de suffixe)
+    - "mon-app-api-frontend" -> "mon-app-api" (retire seulement le dernier)
+    """
+    for suffix in ('-api', '-backend', '-back', '-server', '-frontend', '-front', '-ui', '-web', '-client'):
+        if slug.endswith(suffix):
+            base = slug[:-len(suffix)]
+            return base if base else slug
+    return slug
+
+
+def detect_container_type(name: str, image: str, ports: List[ContainerPort]) -> str:
+    """Détecte si un conteneur est un backend API ou un frontend.
+    
+    Priorité de détection :
+    1. Label hub.type (pas encore implémenté, réservé)
+    2. Suffixe du nom du conteneur (-api, -frontend, etc.)
+    3. Image Docker (nginx → frontend, python/fastapi → api)
+    4. Port typique (80/443 → frontend, 8000/5000 → api)
+    
+    Returns:
+        'api', 'frontend', ou 'unknown'
+    """
+    slug = generate_slug(name)
+    
+    # 1. Détection par suffixe du slug
+    for suffix in _API_SUFFIXES:
+        if slug.endswith(suffix):
+            return 'api'
+    for suffix in _FRONTEND_SUFFIXES:
+        if slug.endswith(suffix):
+            return 'frontend'
+    
+    # 2. Détection par image Docker
+    image_lower = image.lower()
+    for pattern in _FRONTEND_IMAGE_PATTERNS:
+        if re.search(pattern, image_lower):
+            return 'frontend'
+    for pattern in _API_IMAGE_PATTERNS:
+        if re.search(pattern, image_lower):
+            return 'api'
+    
+    # 3. Détection par port (fallback)
+    host_ports = {p.host_port for p in ports if p.host_port}
+    if host_ports & _FRONTEND_PORTS and not host_ports & _API_PORTS:
+        return 'frontend'
+    if host_ports & _API_PORTS and not host_ports & _FRONTEND_PORTS:
+        return 'api'
+    
+    return 'unknown'
 
 
 def should_exclude_container(name: str) -> bool:
@@ -277,6 +361,15 @@ class DockerScanner:
                 else:
                     logger.debug(f"Conteneur {name}: slug généré={generated_slug}")
                 
+                # Détecter le type de conteneur (api/frontend/unknown) et le slug de base
+                container_type_label = labels.get("hub.type")  # Priorité au label explicite
+                if container_type_label and container_type_label in ('api', 'frontend'):
+                    ctype = container_type_label
+                else:
+                    ctype = detect_container_type(name, image_name, ports)
+                
+                base_slug = generate_base_slug(final_suggested_slug)
+                
                 discovered.append(DiscoveredContainer(
                     container_id=container.short_id,
                     name=name,
@@ -288,7 +381,9 @@ class DockerScanner:
                     labels={k: v for k, v in labels.items() if not k.startswith("com.")},
                     hub_name=hub_name,
                     hub_description=final_description,
-                    hub_shared=hub_shared
+                    hub_shared=hub_shared,
+                    container_type=ctype,
+                    base_slug=base_slug,
                 ))
                 
         except Exception as e:

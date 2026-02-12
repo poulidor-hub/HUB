@@ -634,6 +634,23 @@ class DockerContainerInfo(BaseModel):
     hub_name: Optional[str] = None           # hub.name - Nom personnalisé pour l'app
     hub_description: Optional[str] = None    # hub.description - Description de l'app
     hub_shared: bool = False                  # hub.shared - Marquer comme service partagé M2M
+    # Auto-pairing
+    container_type: str = "unknown"          # 'api', 'frontend', 'unknown'
+    base_slug: str = ""                      # Slug sans suffixe de type (pour regroupement)
+
+
+class DockerAppGroup(BaseModel):
+    """Groupe de conteneurs formant une application (API + Frontend optionnel)"""
+    base_slug: str                           # Slug applicatif commun
+    suggested_name: str                      # Nom suggéré pour l'application
+    description: Optional[str] = None
+    is_shared: bool = False
+    is_registered: bool = False              # True si au moins un conteneur est déjà enregistré
+    api_container: Optional[DockerContainerInfo] = None
+    frontend_container: Optional[DockerContainerInfo] = None
+    api_port: Optional[int] = None
+    frontend_port: Optional[int] = None
+    ungrouped_containers: List[DockerContainerInfo] = []  # Conteneurs non appairés dans ce groupe
 
 
 class DockerScanResponse(BaseModel):
@@ -643,7 +660,43 @@ class DockerScanResponse(BaseModel):
     containers_running: int = 0
     containers_total: int = 0
     discovered: List[DockerContainerInfo] = []
+    groups: List[DockerAppGroup] = []        # Conteneurs groupés par application
     error: Optional[str] = None
+
+
+# ===== Batch Import Schemas =====
+class BatchAppItem(BaseModel):
+    """Un élément d'import lot"""
+    base_slug: str = Field(..., min_length=2, max_length=50, pattern=r'^[a-z0-9-]+$')
+    name: Optional[str] = Field(None, max_length=100)
+    description: Optional[str] = None
+    api_port: int = Field(..., ge=1, le=65535)
+    frontend_port: Optional[int] = Field(None, ge=1, le=65535)
+    is_shared: bool = False
+
+
+class BatchImportRequest(BaseModel):
+    """Requête d'import lot d'applications"""
+    apps: List[BatchAppItem] = Field(..., min_length=1, max_length=50)
+
+
+class BatchAppResult(BaseModel):
+    """Résultat d'import d'une application"""
+    slug: str
+    name: str
+    success: bool
+    is_new: bool = False
+    message: str
+    credentials: Optional[dict] = None
+
+
+class BatchImportResponse(BaseModel):
+    """Réponse d'import lot"""
+    total: int
+    created: int
+    updated: int
+    errors: int
+    results: List[BatchAppResult]
 
 
 # ===== Auto-Registration Schemas =====

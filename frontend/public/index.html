@@ -822,11 +822,6 @@
                         <li class="nav-item">
                             <button class="nav-link active" data-bs-toggle="tab" data-bs-target="#tabApps">
                                 <i class="bi bi-app-indicator me-1"></i>Applications
-                            </button>
-                        </li>
-                        <li class="nav-item">
-                            <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tabPendingApps" onclick="loadPendingApps()">
-                                <i class="bi bi-hourglass-split me-1"></i>Approbations
                                 <span id="pendingAppsBadge" class="badge bg-warning text-dark ms-1 d-none">0</span>
                             </button>
                         </li>
@@ -861,25 +856,6 @@
                                 </div>
                             </div>
                             <div id="appsTable" class="table-responsive">
-                                <!-- Table loaded dynamically -->
-                            </div>
-                        </div>
-                        <!-- Pending Apps Tab (Approbations) -->
-                        <div class="tab-pane fade" id="tabPendingApps">
-                            <div class="d-flex justify-content-between align-items-center mb-3">
-                                <div>
-                                    <h5 class="mb-0"><i class="bi bi-shield-check me-2"></i>Applications en attente d'approbation</h5>
-                                    <small class="text-muted">Les applications auto-enregistrées nécessitent une validation admin</small>
-                                </div>
-                                <button class="btn btn-outline-secondary btn-sm" onclick="loadPendingApps()">
-                                    <i class="bi bi-arrow-clockwise me-1"></i>Actualiser
-                                </button>
-                            </div>
-                            <div id="pendingAppsAlert" class="alert alert-info d-none">
-                                <i class="bi bi-info-circle me-2"></i>
-                                Aucune application en attente d'approbation.
-                            </div>
-                            <div id="pendingAppsTable" class="table-responsive">
                                 <!-- Table loaded dynamically -->
                             </div>
                         </div>
@@ -1639,16 +1615,26 @@
                         </div>
                     </div>
                     
-                    <!-- Containers List -->
+                    <!-- Grouped Containers List -->
                     <div id="dockerContainers" class="d-none">
-                        <div class="alert alert-info small mb-3">
-                            <i class="bi bi-info-circle me-1"></i>
-                            <strong>Sélectionnez les conteneurs</strong> : Cliquez sur <span class="badge bg-danger">API</span> pour le backend 
-                            et <span class="badge bg-success">Front</span> pour le frontend. Vous pouvez sélectionner les deux pour créer une application complète.
+                        <div class="d-flex justify-content-between align-items-center mb-3">
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" id="dockerSelectAll" onchange="toggleDockerSelectAll()">
+                                <label class="form-check-label fw-bold" for="dockerSelectAll">
+                                    Tout sélectionner
+                                </label>
+                            </div>
+                            <span id="dockerGroupCount" class="badge bg-info">0 application(s) détectée(s)</span>
                         </div>
-                        <div class="list-group" id="containersList" style="max-height: 400px; overflow-y: auto;">
-                            <!-- Containers loaded dynamically -->
+                        <div id="containersList" style="max-height: 450px; overflow-y: auto;">
+                            <!-- App groups loaded dynamically -->
                         </div>
+                    </div>
+                    
+                    <!-- Import Results -->
+                    <div id="dockerImportResults" class="d-none mt-3">
+                        <h6 class="mb-2"><i class="bi bi-check2-all me-1"></i>Résultat de l'import</h6>
+                        <div id="dockerImportResultsList"></div>
                     </div>
                     
                     <!-- Empty State -->
@@ -1659,29 +1645,15 @@
                     </div>
                 </div>
                 <div class="modal-footer flex-column align-items-stretch">
-                    <!-- Résumé de la sélection -->
+                    <!-- Résumé + bouton import -->
                     <div class="d-flex justify-content-between align-items-center w-100 mb-2 pb-2 border-bottom">
                         <div>
                             <strong class="small text-muted me-2">Sélection :</strong>
                             <span id="dockerSelectionSummary"><span class="text-muted">Aucune sélection</span></span>
                         </div>
-                        <div class="btn-group">
-                            <button type="button" class="btn btn-success" id="dockerQuickImportBtn" onclick="quickImportDockerSelection()" disabled title="Enregistre automatiquement avec Service Account">
-                                <i class="bi bi-lightning-charge me-1"></i>Import rapide
-                            </button>
-                            <button type="button" class="btn btn-primary" id="dockerImportBtn" onclick="importDockerSelection()" disabled>
-                                <i class="bi bi-pencil me-1"></i>Personnaliser
-                            </button>
-                        </div>
-                    </div>
-                    <!-- Option shared service -->
-                    <div class="d-flex justify-content-between align-items-center w-100 mb-2 pb-2 border-bottom">
-                        <div class="form-check">
-                            <input class="form-check-input" type="checkbox" id="dockerIsShared">
-                            <label class="form-check-label" for="dockerIsShared">
-                                <i class="bi bi-share text-primary me-1"></i>Service partagé (API accessible par tous les SA)
-                            </label>
-                        </div>
+                        <button type="button" class="btn btn-success" id="dockerBatchImportBtn" onclick="batchImportDockerSelection()" disabled>
+                            <i class="bi bi-lightning-charge me-1"></i>Importer la sélection
+                        </button>
                     </div>
                     <!-- Options -->
                     <div class="d-flex justify-content-between align-items-center w-100">

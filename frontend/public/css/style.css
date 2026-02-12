@@ -605,3 +605,38 @@ body {
     text-align: right;
     flex-shrink: 0;
 }
+
+/* === Docker Scanner Group Cards === */
+.docker-group-card {
+    transition: border-color 0.2s, box-shadow 0.2s;
+}
+.docker-group-card:hover:not(.opacity-50) {
+    box-shadow: 0 0 0 0.15rem rgba(13, 110, 253, 0.15);
+}
+.docker-group-card.border-success {
+    background-color: rgba(25, 135, 84, 0.03);
+}
+
+/* === Toggle Switch dans le tableau admin === */
+.table .form-switch {
+    min-height: unset;
+    padding-left: 2.5em;
+}
+.table .form-switch .form-check-input {
+    cursor: pointer;
+    width: 2.2em;
+    height: 1.1em;
+}
+
+/* === Approval badges inline === */
+.table-warning {
+    --bs-table-bg: rgba(255, 193, 7, 0.08) !important;
+}
+.table-danger {
+    --bs-table-bg: rgba(220, 53, 69, 0.06) !important;
+}
+
+/* === Import results === */
+#dockerImportResultsList .border-bottom:last-child {
+    border-bottom: none !important;
+}

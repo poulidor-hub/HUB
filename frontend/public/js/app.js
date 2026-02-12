@@ -191,6 +191,14 @@ function handleSSEEvent(data) {
                     appAction = `Docker: ${data.data?.new_status || 'mis à jour'}`;
                     toastType = data.data?.new_status === 'running' ? 'success' : 'warning';
                     break;
+                case 'toggled':
+                    appAction = data.data?.is_active ? 'activée' : 'désactivée';
+                    toastType = data.data?.is_active ? 'success' : 'warning';
+                    break;
+                case 'batch_import':
+                    appAction = `lot importé (${data.data?.created || 0} créée(s))`;
+                    toastType = 'success';
+                    break;
             }
             const appName = data.data?.app_name || 'Application';
             showToast('Mise à jour', `${appName} ${appAction}`, toastType);
@@ -1595,6 +1603,18 @@ function renderAppsTable(apps) {
         return;
     }
 
+    // Compter les apps pending pour le badge
+    const pendingCount = apps.filter(a => a.approval_status === 'pending' || a.approval_status === 'rejected').length;
+    const badge = document.getElementById('pendingAppsBadge');
+    if (badge) {
+        if (pendingCount > 0) {
+            badge.textContent = pendingCount;
+            badge.classList.remove('d-none');
+        } else {
+            badge.classList.add('d-none');
+        }
+    }
+
     container.innerHTML = `
         <div class="d-flex justify-content-between align-items-center mb-2">
             <small class="text-muted">${apps.length} application(s)</small>
@@ -1609,17 +1629,13 @@ function renderAppsTable(apps) {
                     <th>Slug</th>
                     <th>URL Frontend</th>
                     <th>Utilisateurs</th>
+                    <th class="text-center">Actif</th>
                     <th>État</th>
                     <th class="text-end">Actions</th>
                 </tr>
             </thead>
             <tbody id="appsTableBody">
                 ${apps.map(app => {
-                    // Icône Config
-                    const configIcon = app.is_active
-                        ? '<i class="bi bi-check-circle-fill text-success" title="Config: Actif"></i>'
-                        : '<i class="bi bi-x-circle-fill text-danger" title="Config: Inactif"></i>';
-                    
                     // Icône Docker
                     const dockerStatus = app.docker_status;
                     let dockerIcon;
@@ -1642,8 +1658,48 @@ function renderAppsTable(apps) {
                         healthIcon = '<i class="bi bi-wifi text-muted" title="Connectivité: Vérification..."></i>';
                     }
                     
+                    // Badge approbation
+                    let approvalBadge = '';
+                    let approvalActions = '';
+                    const approvalStatus = app.approval_status;
+                    if (approvalStatus === 'pending') {
+                        approvalBadge = '<span class="badge bg-warning text-dark ms-1">En attente</span>';
+                        approvalActions = `
+                            <button class="btn btn-sm btn-success me-1" onclick="approveApp('${escapeHtml(app.slug)}')" title="Approuver">
+                                <i class="bi bi-check-lg"></i>
+                            </button>
+                            <button class="btn btn-sm btn-outline-danger me-1" onclick="showRejectAppModal('${escapeHtml(app.slug)}', '${escapeHtml(app.name)}')" title="Rejeter">
+                                <i class="bi bi-x-lg"></i>
+                            </button>
+                        `;
+                    } else if (approvalStatus === 'rejected') {
+                        approvalBadge = '<span class="badge bg-danger ms-1">Rejeté</span>';
+                        approvalActions = `
+                            <button class="btn btn-sm btn-success me-1" onclick="approveApp('${escapeHtml(app.slug)}')" title="Approuver">
+                                <i class="bi bi-check-lg"></i>
+                            </button>
+                            <button class="btn btn-sm btn-outline-secondary me-1" onclick="deletePendingApp('${escapeHtml(app.slug)}')" title="Supprimer">
+                                <i class="bi bi-trash"></i>
+                            </button>
+                        `;
+                    }
+                    
+                    // Toggle switch pour activation
+                    const isPending = approvalStatus === 'pending' || approvalStatus === 'rejected';
+                    const toggleSwitch = isPending ? '' : `
+                        <div class="form-check form-switch d-flex justify-content-center mb-0">
+                            <input class="form-check-input" type="checkbox" role="switch" 
+                                id="toggleApp-${app.id}" 
+                                ${app.is_active ? 'checked' : ''} 
+                                onchange="toggleAppActive(${app.id})"
+                                title="${app.is_active ? 'Désactiver' : 'Activer'}">
+                        </div>
+                    `;
+                    
+                    const rowClass = isPending ? 'table-warning' : (approvalStatus === 'rejected' ? 'table-danger' : '');
+                    
                     return `
-                    <tr data-app-id="${app.id}">
+                    <tr data-app-id="${app.id}" class="${rowClass}">
                         <td>
                             <div class="d-flex align-items-center">
                                 <span class="me-2 rounded p-1" style="background-color: ${app.color}; color: white;">
@@ -1652,30 +1708,34 @@ function renderAppsTable(apps) {
                                 <div>
                                     <strong>${escapeHtml(app.name)}</strong>
                                     ${app.is_shared_service ? '<span class="badge bg-info ms-1" title="API partagée accessible par tous les SA"><i class="bi bi-share"></i></span>' : ''}
+                                    ${approvalBadge}
                                 </div>
                             </div>
                         </td>
                         <td><code>${app.slug}</code></td>
                         <td><small class="text-muted">${escapeHtml(app.frontend_url || '-')}</small></td>
                         <td><span class="badge bg-secondary">${app.users?.length || 0}</span></td>
+                        <td class="text-center">${toggleSwitch}</td>
                         <td class="app-status-cell" data-app-slug="${app.slug}">
                             <div class="status-icons">
-                                ${configIcon}
                                 ${dockerIcon}
                                 <span class="app-connectivity-icon">${healthIcon}</span>
                             </div>
                             <div class="docker-stats" data-app-slug="${app.slug}"></div>
                         </td>
-                        <td class="text-end">
-                            <button class="btn btn-sm btn-outline-info me-1" onclick="showDockerDetails('${app.slug}')" title="Détails Docker">
-                                <i class="bi bi-eye"></i>
-                            </button>
-                            <button class="btn btn-sm btn-outline-primary me-1" onclick="editApp(${app.id})">
-                                <i class="bi bi-pencil"></i>
-                            </button>
-                            <button class="btn btn-sm btn-outline-danger" onclick="deleteApp(${app.id}, '${escapeHtml(app.name)}')">
-                                <i class="bi bi-trash"></i>
-                            </button>
+                        <td class="text-end text-nowrap">
+                            ${approvalActions}
+                            ${!isPending ? `
+                                <button class="btn btn-sm btn-outline-info me-1" onclick="showDockerDetails('${app.slug}')" title="Détails Docker">
+                                    <i class="bi bi-eye"></i>
+                                </button>
+                                <button class="btn btn-sm btn-outline-primary me-1" onclick="editApp(${app.id})">
+                                    <i class="bi bi-pencil"></i>
+                                </button>
+                                <button class="btn btn-sm btn-outline-danger" onclick="deleteApp(${app.id}, '${escapeHtml(app.name)}')">
+                                    <i class="bi bi-trash"></i>
+                                </button>
+                            ` : ''}
                         </td>
                     </tr>
                 `}).join('')}
@@ -1686,6 +1746,27 @@ function renderAppsTable(apps) {
     // Lancer automatiquement le test de connectivité et les stats Docker
     refreshAppsStatus();
     refreshDockerStats();
+}
+
+/**
+ * Bascule l'état actif/inactif d'une application (toggle switch)
+ */
+async function toggleAppActive(appId) {
+    const toggle = document.getElementById(`toggleApp-${appId}`);
+    const originalState = !toggle.checked; // L'état vient de changer, on garde l'ancien
+    
+    try {
+        const result = await api.toggleAppActive(appId);
+        showToast('Mise à jour', result.message, 'success');
+        
+        // Rafraîchir le dashboard si la page est visible
+        loadApps();
+    } catch (error) {
+        console.error('Erreur toggle app:', error);
+        // Rollback le switch
+        toggle.checked = originalState;
+        showToast('Erreur', error.message, 'danger');
+    }
 }
 
 function renderUsersTable(users) {
@@ -2775,8 +2856,7 @@ async function approveApp(slug) {
     try {
         const result = await api.approveApp(slug);
         showToast('Application approuvée', result.message, 'success');
-        await loadPendingApps();  // Rafraîchir la liste
-        await loadAdminData();    // Rafraîchir les apps principales
+        await loadAdminData();    // Rafraîchir le tableau principal (inclut les pending)
         await loadApps();         // Rafraîchir le dashboard
     } catch (error) {
         console.error('Erreur approbation:', error);
@@ -2814,7 +2894,7 @@ async function confirmRejectApp() {
         const result = await api.rejectApp(slug, reason);
         rejectAppModal.hide();
         showToast('Application rejetée', result.message, 'warning');
-        await loadPendingApps();  // Rafraîchir la liste
+        await loadAdminData();  // Rafraîchir le tableau principal
     } catch (error) {
         console.error('Erreur rejet:', error);
         showToast('Erreur', `Impossible de rejeter: ${error.message}`, 'danger');
@@ -2832,7 +2912,7 @@ async function deletePendingApp(slug) {
     try {
         await api.deletePendingApp(slug);
         showToast('Application supprimée', `L'application "${slug}" a été supprimée`, 'success');
-        await loadPendingApps();  // Rafraîchir la liste
+        await loadAdminData();  // Rafraîchir le tableau principal
     } catch (error) {
         console.error('Erreur suppression:', error);
         showToast('Erreur', `Impossible de supprimer: ${error.message}`, 'danger');
@@ -3738,7 +3818,8 @@ async function exportSessions() {
 
 let dockerScanModal;
 let lastDockerScan = null;
-let dockerSelection = { api: null, frontend: null };
+let dockerSelection = { api: null, frontend: null };  // Legacy (unused)
+let dockerGroupSelection = {};  // { base_slug: true } pour la sélection groupée
 
 /**
  * Affiche la modal de scan Docker et lance le scan
@@ -3773,8 +3854,8 @@ async function performDockerScan() {
     const includeStopped = document.getElementById('dockerIncludeStopped').checked;
     const showAll = document.getElementById('dockerShowAll').checked;
     
-    // Reset sélection
-    dockerSelection = { api: null, frontend: null };
+    // Reset sélection groupée
+    dockerGroupSelection = {};
     updateDockerSelectionSummary();
     
     // Show loading
@@ -3789,6 +3870,7 @@ async function performDockerScan() {
     document.getElementById('dockerInfo').classList.add('d-none');
     document.getElementById('dockerContainers').classList.add('d-none');
     document.getElementById('dockerEmpty').classList.add('d-none');
+    document.getElementById('dockerImportResults').classList.add('d-none');
     
     try {
         const result = await api.scanDockerContainers(includeStopped, showAll);
@@ -3797,7 +3879,6 @@ async function performDockerScan() {
         document.getElementById('dockerStatus').classList.add('d-none');
         
         if (!result.available) {
-            // Docker non disponible
             document.getElementById('dockerError').classList.remove('d-none');
             document.getElementById('dockerErrorMessage').textContent = 
                 result.error || 'Docker n\'est pas accessible depuis le Hub';
@@ -3810,10 +3891,12 @@ async function performDockerScan() {
         document.getElementById('dockerRunning').textContent = result.containers_running || 0;
         document.getElementById('dockerTotal').textContent = result.containers_total || 0;
         
-        // Afficher les conteneurs découverts
-        if (result.discovered && result.discovered.length > 0) {
+        // Afficher les groupes d'applications détectés
+        if (result.groups && result.groups.length > 0) {
             document.getElementById('dockerContainers').classList.remove('d-none');
-            renderDockerContainers(result.discovered);
+            const importableGroups = result.groups.filter(g => !g.is_registered);
+            document.getElementById('dockerGroupCount').textContent = `${result.groups.length} application(s) détectée(s)${importableGroups.length < result.groups.length ? ` (${importableGroups.length} importable(s))` : ''}`;
+            renderDockerGroups(result.groups);
         } else {
             document.getElementById('dockerEmpty').classList.remove('d-none');
         }
@@ -3834,72 +3917,106 @@ function refreshDockerScan() {
 }
 
 /**
- * Affiche la liste des conteneurs découverts avec sélection API/Frontend
+ * Affiche les groupes d'applications détectés par le scanner Docker
  */
-function renderDockerContainers(containers) {
+function renderDockerGroups(groups) {
     const list = document.getElementById('containersList');
     
-    list.innerHTML = containers.map(container => {
-        const ports = container.ports.map(p => {
-            if (p.host_port) {
-                return `<span class="badge bg-primary me-1">${p.host_port}:${p.container_port}</span>`;
-            }
-            return `<span class="badge bg-secondary me-1">${p.container_port}</span>`;
-        }).join('');
-        
-        const statusClass = container.status === 'running' ? 'success' : 'secondary';
-        const statusIcon = container.status === 'running' ? 'play-circle-fill' : 'stop-circle-fill';
-        
-        // Vérifier si ce conteneur est sélectionné
-        const isApi = dockerSelection.api?.container_id === container.container_id;
-        const isFrontend = dockerSelection.frontend?.container_id === container.container_id;
-        const selectedClass = isApi ? 'border-danger border-2' : (isFrontend ? 'border-success border-2' : '');
-        const selectedBadge = isApi ? '<span class="badge bg-danger ms-2">API</span>' : 
-                            (isFrontend ? '<span class="badge bg-success ms-2">Frontend</span>' : '');
-        
-        // Conteneur déjà enregistré ?
-        const isRegistered = container.is_registered;
-        const registeredBadge = isRegistered ? '<span class="badge bg-warning text-dark ms-2"><i class="bi bi-check-circle me-1"></i>Déjà enregistré</span>' : '';
+    list.innerHTML = groups.map(group => {
+        const isRegistered = group.is_registered;
+        const isChecked = dockerGroupSelection[group.base_slug] === true;
         const registeredClass = isRegistered ? 'opacity-50' : '';
+        const registeredBadge = isRegistered ? '<span class="badge bg-warning text-dark ms-1"><i class="bi bi-check-circle me-1"></i>Déjà enregistré</span>' : '';
+        
+        // Conteneur API
+        let apiInfo = '';
+        if (group.api_container) {
+            const c = group.api_container;
+            const port = group.api_port || '?';
+            const statusClass = c.status === 'running' ? 'success' : 'secondary';
+            apiInfo = `
+                <div class="d-flex align-items-center mb-1">
+                    <span class="badge bg-danger me-2">API</span>
+                    <i class="bi bi-circle-fill text-${statusClass} me-1" style="font-size: 0.5rem;"></i>
+                    <small class="text-muted">${escapeHtml(c.name)}</small>
+                    <span class="badge bg-primary ms-2">:${port}</span>
+                    <small class="text-muted ms-2">${escapeHtml(c.image)}</small>
+                </div>
+            `;
+        }
+        
+        // Conteneur Frontend
+        let frontInfo = '';
+        if (group.frontend_container) {
+            const c = group.frontend_container;
+            const port = group.frontend_port || '?';
+            const statusClass = c.status === 'running' ? 'success' : 'secondary';
+            frontInfo = `
+                <div class="d-flex align-items-center mb-1">
+                    <span class="badge bg-success me-2">Front</span>
+                    <i class="bi bi-circle-fill text-${statusClass} me-1" style="font-size: 0.5rem;"></i>
+                    <small class="text-muted">${escapeHtml(c.name)}</small>
+                    <span class="badge bg-primary ms-2">:${port}</span>
+                    <small class="text-muted ms-2">${escapeHtml(c.image)}</small>
+                </div>
+            `;
+        }
+        
+        // Conteneurs non groupés
+        let ungroupedInfo = '';
+        if (group.ungrouped_containers && group.ungrouped_containers.length > 0) {
+            ungroupedInfo = group.ungrouped_containers.map(c => {
+                const port = c.ports[0]?.host_port || '?';
+                return `
+                    <div class="d-flex align-items-center mb-1">
+                        <span class="badge bg-secondary me-2">?</span>
+                        <small class="text-muted">${escapeHtml(c.name)} :${port} (${escapeHtml(c.image)})</small>
+                    </div>
+                `;
+            }).join('');
+        }
+        
+        // Si pas d'API mais des ungrouped, considérer le premier comme API
+        const hasApi = !!group.api_container || (group.ungrouped_containers && group.ungrouped_containers.length > 0);
         
         return `
-            <div class="list-group-item ${selectedClass} ${registeredClass}" id="container-${container.container_id}">
-                <div class="d-flex w-100 justify-content-between align-items-start">
-                    <div class="flex-grow-1">
-                        <div class="d-flex align-items-center mb-1">
-                            <i class="bi bi-${statusIcon} text-${statusClass} me-2"></i>
-                            <strong>${escapeHtml(container.name)}</strong>
-                            ${selectedBadge}
-                            ${registeredBadge}
-                            <small class="text-muted ms-2">(${escapeHtml(container.container_id)})</small>
+            <div class="card mb-2 docker-group-card ${registeredClass} ${isChecked ? 'border-success border-2' : ''}" data-group-slug="${escapeHtml(group.base_slug)}">
+                <div class="card-body py-2 px-3">
+                    <div class="d-flex justify-content-between align-items-start">
+                        <div class="d-flex align-items-start flex-grow-1">
+                            <div class="form-check me-3 mt-1">
+                                <input class="form-check-input docker-group-check" type="checkbox" 
+                                    id="dockerGroup-${escapeHtml(group.base_slug)}" 
+                                    data-group-slug="${escapeHtml(group.base_slug)}"
+                                    ${isRegistered ? 'disabled' : ''}
+                                    ${isChecked ? 'checked' : ''}
+                                    onchange="toggleDockerGroupSelection('${escapeHtml(group.base_slug)}')">
+                            </div>
+                            <div class="flex-grow-1">
+                                <div class="d-flex align-items-center mb-1">
+                                    <strong>${escapeHtml(group.suggested_name)}</strong>
+                                    <code class="ms-2 small text-muted">${escapeHtml(group.base_slug)}</code>
+                                    ${registeredBadge}
+                                </div>
+                                ${group.description ? `<small class="text-muted d-block mb-1">${escapeHtml(group.description)}</small>` : ''}
+                                ${apiInfo}
+                                ${frontInfo}
+                                ${ungroupedInfo}
+                            </div>
                         </div>
-                        <small class="text-muted d-block mb-2">
-                            <i class="bi bi-box me-1"></i>${escapeHtml(container.image)}
-                        </small>
-                        <div>
-                            <i class="bi bi-ethernet me-1 small text-muted"></i>
-                            ${ports || '<span class="text-muted small">Aucun port exposé</span>'}
+                        <div class="text-end">
+                            ${!isRegistered ? `
+                                <div class="form-check form-check-inline">
+                                    <input class="form-check-input docker-shared-check" type="checkbox" 
+                                        id="dockerShared-${escapeHtml(group.base_slug)}"
+                                        data-group-slug="${escapeHtml(group.base_slug)}"
+                                        ${group.is_shared ? 'checked' : ''}>
+                                    <label class="form-check-label small" for="dockerShared-${escapeHtml(group.base_slug)}">
+                                        <i class="bi bi-share text-primary"></i> M2M
+                                    </label>
+                                </div>
+                            ` : ''}
                         </div>
-                    </div>
-                    <div class="text-end">
-                        <div class="btn-group btn-group-sm mb-2">
-                            <button type="button" class="btn ${isApi ? 'btn-danger' : 'btn-outline-danger'}" 
-                                    onclick="selectDockerContainer('${container.container_id}', 'api')"
-                                    title="Définir comme API Backend"
-                                    ${isRegistered ? 'disabled' : ''}>
-                                <i class="bi bi-hdd-rack"></i> API
-                            </button>
-                            <button type="button" class="btn ${isFrontend ? 'btn-success' : 'btn-outline-success'}" 
-                                    onclick="selectDockerContainer('${container.container_id}', 'frontend')"
-                                    title="Définir comme Frontend"
-                                    ${isRegistered ? 'disabled' : ''}>
-                                <i class="bi bi-window"></i> Front
-                            </button>
-                        </div>
-                        <br>
-                        <span class="badge bg-light text-dark">
-                            <i class="bi bi-tag me-1"></i>${escapeHtml(container.suggested_slug)}
-                        </span>
                     </div>
                 </div>
             </div>
@@ -3908,28 +4025,31 @@ function renderDockerContainers(containers) {
 }
 
 /**
- * Sélectionne un conteneur comme API ou Frontend
+ * Sélection/désélection d'un groupe d'application
  */
-function selectDockerContainer(containerId, type) {
-    if (!lastDockerScan || !lastDockerScan.discovered) return;
-    
-    const container = lastDockerScan.discovered.find(c => c.container_id === containerId);
-    if (!container) return;
-    
-    // Si déjà sélectionné pour ce type, désélectionner
-    if (dockerSelection[type]?.container_id === containerId) {
-        dockerSelection[type] = null;
+function toggleDockerGroupSelection(baseSlug) {
+    if (dockerGroupSelection[baseSlug]) {
+        delete dockerGroupSelection[baseSlug];
     } else {
-        // Si ce conteneur était sélectionné pour l'autre type, le retirer
-        const otherType = type === 'api' ? 'frontend' : 'api';
-        if (dockerSelection[otherType]?.container_id === containerId) {
-            dockerSelection[otherType] = null;
-        }
-        dockerSelection[type] = container;
+        dockerGroupSelection[baseSlug] = true;
     }
+    updateDockerSelectionSummary();
+}
+
+/**
+ * Sélection/désélection de tous les groupes importables
+ */
+function toggleDockerSelectAll() {
+    const selectAll = document.getElementById('dockerSelectAll').checked;
+    const checkboxes = document.querySelectorAll('.docker-group-check:not(:disabled)');
     
-    // Rafraîchir l'affichage
-    renderDockerContainers(lastDockerScan.discovered);
+    dockerGroupSelection = {};
+    checkboxes.forEach(cb => {
+        cb.checked = selectAll;
+        if (selectAll) {
+            dockerGroupSelection[cb.dataset.groupSlug] = true;
+        }
+    });
     updateDockerSelectionSummary();
 }
 
@@ -3938,198 +4058,149 @@ function selectDockerContainer(containerId, type) {
  */
 function updateDockerSelectionSummary() {
     const summary = document.getElementById('dockerSelectionSummary');
-    const importBtn = document.getElementById('dockerImportBtn');
-    const quickImportBtn = document.getElementById('dockerQuickImportBtn');
+    const importBtn = document.getElementById('dockerBatchImportBtn');
     
     if (!summary || !importBtn) return;
     
-    const hasApi = dockerSelection.api !== null;
-    const hasFrontend = dockerSelection.frontend !== null;
+    const selectedCount = Object.keys(dockerGroupSelection).length;
     
-    if (!hasApi && !hasFrontend) {
+    if (selectedCount === 0) {
         summary.innerHTML = '<span class="text-muted">Aucune sélection</span>';
         importBtn.disabled = true;
-        if (quickImportBtn) quickImportBtn.disabled = true;
     } else {
-        let html = '';
-        if (hasApi) {
-            const port = dockerSelection.api.ports[0]?.host_port || '?';
-            html += `<span class="badge bg-danger me-2"><i class="bi bi-hdd-rack me-1"></i>API: ${escapeHtml(dockerSelection.api.name)} (port ${port})</span>`;
-        }
-        if (hasFrontend) {
-            const port = dockerSelection.frontend.ports[0]?.host_port || '?';
-            html += `<span class="badge bg-success"><i class="bi bi-window me-1"></i>Frontend: ${escapeHtml(dockerSelection.frontend.name)} (port ${port})</span>`;
+        const slugs = Object.keys(dockerGroupSelection);
+        const maxShow = 3;
+        let html = slugs.slice(0, maxShow).map(s => `<span class="badge bg-info me-1">${escapeHtml(s)}</span>`).join('');
+        if (slugs.length > maxShow) {
+            html += `<span class="text-muted small">+${slugs.length - maxShow} autre(s)</span>`;
         }
         summary.innerHTML = html;
-        importBtn.disabled = !hasApi; // Au minimum une API est requise
-        if (quickImportBtn) quickImportBtn.disabled = !hasApi;
+        importBtn.disabled = false;
+        importBtn.innerHTML = `<i class="bi bi-lightning-charge me-1"></i>Importer (${selectedCount})`;
     }
 }
 
 /**
- * Import rapide : enregistre automatiquement l'application avec son Service Account
+ * Import lot : enregistre toutes les applications sélectionnées avec leurs SA
  */
-async function quickImportDockerSelection() {
-    if (!dockerSelection.api) {
-        showToast('Erreur', 'Veuillez sélectionner au moins un conteneur API', 'warning');
+async function batchImportDockerSelection() {
+    const selectedSlugs = Object.keys(dockerGroupSelection);
+    if (selectedSlugs.length === 0) {
+        showToast('Erreur', 'Aucune application sélectionnée', 'warning');
         return;
     }
     
-    const apiContainer = dockerSelection.api;
-    const frontendContainer = dockerSelection.frontend;
-    const isShared = document.getElementById('dockerIsShared')?.checked || false;
+    if (!lastDockerScan || !lastDockerScan.groups) return;
     
-    // Trouver les ports
-    const apiPort = apiContainer.ports[0]?.host_port || null;
-    const frontendPort = frontendContainer?.ports[0]?.host_port || null;
+    // Construire la liste d'apps à importer
+    const apps = [];
+    for (const slug of selectedSlugs) {
+        const group = lastDockerScan.groups.find(g => g.base_slug === slug);
+        if (!group || group.is_registered) continue;
+        
+        // Déterminer le port API
+        let apiPort = group.api_port;
+        if (!apiPort && group.ungrouped_containers && group.ungrouped_containers.length > 0) {
+            apiPort = group.ungrouped_containers[0].ports[0]?.host_port;
+        }
+        if (!apiPort) {
+            showToast('Erreur', `Pas de port API détecté pour "${slug}"`, 'warning');
+            continue;
+        }
+        
+        // Check shared
+        const sharedCb = document.getElementById(`dockerShared-${slug}`);
+        const isShared = sharedCb ? sharedCb.checked : group.is_shared;
+        
+        apps.push({
+            base_slug: slug,
+            name: group.suggested_name,
+            description: group.description,
+            api_port: apiPort,
+            frontend_port: group.frontend_port || null,
+            is_shared: isShared
+        });
+    }
     
-    if (!apiPort) {
-        showToast('Erreur', 'Le conteneur API doit avoir un port exposé sur l\'hôte', 'warning');
+    if (apps.length === 0) {
+        showToast('Info', 'Aucune application importable dans la sélection', 'info');
         return;
     }
     
-    // Générer slug et nom
-    let appSlug = apiContainer.suggested_slug.replace(/-?(api|backend)$/i, '') || apiContainer.suggested_slug;
-    let appName = apiContainer.suggested_name.replace(/\s*(api|backend)\s*/gi, '').trim() || apiContainer.suggested_name;
-    
-    // Récupérer la description depuis les variables d'environnement du conteneur si disponible
-    let appDescription = apiContainer.hub_description || `Importé depuis Docker: ${apiContainer.image}`;
+    // Désactiver le bouton pendant l'opération
+    const btn = document.getElementById('dockerBatchImportBtn');
+    const originalHtml = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Import en cours...';
     
     try {
-        // Désactiver le bouton pendant l'opération
-        const btn = document.getElementById('dockerQuickImportBtn');
-        const originalHtml = btn.innerHTML;
-        btn.disabled = true;
-        btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Import...';
+        const result = await api.batchImportApps(apps);
         
-        // Appeler l'API auto-register
-        const result = await api.autoRegisterApp(appSlug, appName, apiPort, frontendPort, isShared, appDescription);
+        // Afficher les résultats dans le modal (pas de second modal)
+        const resultsDiv = document.getElementById('dockerImportResults');
+        const resultsList = document.getElementById('dockerImportResultsList');
+        resultsDiv.classList.remove('d-none');
         
-        // Restaurer le bouton
-        btn.innerHTML = originalHtml;
-        btn.disabled = false;
+        resultsList.innerHTML = `
+            <div class="alert ${result.errors > 0 ? 'alert-warning' : 'alert-success'} py-2 mb-2">
+                <strong>${result.created}</strong> créée(s), <strong>${result.updated}</strong> mise(s) à jour${result.errors > 0 ? `, <strong>${result.errors}</strong> erreur(s)` : ''}
+            </div>
+            ${result.results.map(r => `
+                <div class="d-flex align-items-center py-1 border-bottom">
+                    <i class="bi ${r.success ? (r.is_new ? 'bi-check-circle-fill text-success' : 'bi-arrow-clockwise text-info') : 'bi-x-circle-fill text-danger'} me-2"></i>
+                    <div class="flex-grow-1">
+                        <strong>${escapeHtml(r.name)}</strong> <code class="small">${escapeHtml(r.slug)}</code>
+                        <br><small class="text-muted">${escapeHtml(r.message)}</small>
+                    </div>
+                    ${r.credentials?.client_secret ? `
+                        <div class="text-end">
+                            <button class="btn btn-sm btn-outline-dark" onclick="copyToClipboard('${escapeHtml(r.credentials.client_id)}\\n${escapeHtml(r.credentials.client_secret)}')" title="Copier credentials">
+                                <i class="bi bi-clipboard me-1"></i>Credentials
+                            </button>
+                        </div>
+                    ` : ''}
+                </div>
+            `).join('')}
+        `;
         
-        // Fermer la modal Docker
-        dockerScanModal.hide();
+        // Reset sélection
+        dockerGroupSelection = {};
+        updateDockerSelectionSummary();
         
-        // Afficher le résultat
-        const sharedMsg = isShared ? ' (API partagée M2M)' : '';
-        if (result.is_new) {
-            showToast('Succès', `Application "${appName}" créée${sharedMsg} avec Service Account !`, 'success');
-            
-            // Afficher les credentials si disponibles
-            if (result.credentials?.client_secret) {
-                setTimeout(() => {
-                    alert(`🔐 Credentials M2M générés pour ${appName}:\n\nClient ID: ${result.credentials.client_id}\nClient Secret: ${result.credentials.client_secret}\n\n⚠️ Le secret ne sera plus affiché ! Fichier sauvé: ${result.secrets_file || 'secrets/service_accounts/sa_' + appSlug + '.env'}`);
-                }, 500);
-            }
-        } else {
-            // Application existante - vérifier si des mises à jour ont été faites
-            if (result.message.includes('mise à jour')) {
-                showToast('Mise à jour', result.message, 'success');
-            } else {
-                const currentShared = result.credentials?.is_shared ? 'partagée' : 'privée';
-                showToast('Info', `Application "${appName}" existe déjà (${currentShared})`, 'info');
-            }
-        }
-        
-        // Rafraîchir les données admin
+        // Rafraîchir les données admin et le scan
         await loadAdminData();
         loadApps();
-        adminModal.show();
+        
+        // Relancer le scan pour actualiser la liste
+        await performDockerScan();
+        
+        showToast('Import terminé', `${result.created} application(s) importée(s)`, 'success');
         
     } catch (error) {
-        console.error('Erreur import rapide:', error);
+        console.error('Erreur import lot:', error);
         showToast('Erreur', error.message, 'danger');
-        
-        // Restaurer le bouton
-        const btn = document.getElementById('dockerQuickImportBtn');
-        if (btn) {
-            btn.innerHTML = '<i class="bi bi-lightning-charge me-1"></i>Import rapide';
-            btn.disabled = false;
-        }
+    } finally {
+        btn.innerHTML = originalHtml;
+        btn.disabled = Object.keys(dockerGroupSelection).length === 0;
     }
 }
 
 /**
- * Importe la sélection Docker comme application (mode personnalisé)
+ * Copie du texte dans le presse-papier
  */
-function importDockerSelection() {
-    if (!dockerSelection.api) {
-        showToast('Erreur', 'Veuillez sélectionner au moins un conteneur API', 'warning');
-        return;
-    }
-    
-    const apiContainer = dockerSelection.api;
-    const frontendContainer = dockerSelection.frontend;
-    const isShared = document.getElementById('dockerIsShared')?.checked || false;
-    
-    // Fermer la modal Docker
-    dockerScanModal.hide();
-    
-    // Trouver les ports
-    const apiPort = apiContainer.ports[0]?.host_port || null;
-    const frontendPort = frontendContainer?.ports[0]?.host_port || null;
-    
-    // Générer un nom/slug à partir de la sélection
-    let appName, appSlug, description;
-    if (frontendContainer) {
-        // On a API + Frontend - essayer de trouver un nom commun
-        const apiName = apiContainer.suggested_name.replace(/\s*(api|backend)\s*/gi, '').trim();
-        const frontName = frontendContainer.suggested_name.replace(/\s*(frontend|front|ui)\s*/gi, '').trim();
-        // Prendre le nom le plus court ou le plus commun
-        appName = apiName.length <= frontName.length ? apiName : frontName;
-        if (!appName) appName = apiContainer.suggested_name;
-        appSlug = apiContainer.suggested_slug.replace(/-?(api|backend)$/i, '');
-        if (!appSlug) appSlug = apiContainer.suggested_slug;
-        description = `API: ${apiContainer.image}\nFrontend: ${frontendContainer.image}`;
-    } else {
-        appName = apiContainer.suggested_name;
-        appSlug = apiContainer.suggested_slug;
-        description = `Importé depuis Docker: ${apiContainer.image}`;
-    }
-    
-    // Pré-remplir le formulaire de création d'app
-    document.getElementById('appFormTitle').textContent = 'Importer depuis Docker';
-    document.getElementById('appForm').reset();
-    document.getElementById('appId').value = '';
-    document.getElementById('appMode').value = 'create';
-    document.getElementById('appName').value = appName;
-    document.getElementById('appSlug').value = appSlug;
-    document.getElementById('appDescription').value = description;
-    document.getElementById('appIcon').value = 'bi-box-seam';  // Icône Docker
-    document.getElementById('appColor').value = '#0db7ed';     // Couleur Docker
-    document.getElementById('appApiPort').value = apiPort || '';
-    document.getElementById('appFrontendPort').value = frontendPort || '';
-    const httpsCheckbox = document.getElementById('appFrontendHttps');
-    if (httpsCheckbox) httpsCheckbox.checked = frontendPort === 443;
-    document.getElementById('appActive').checked = apiContainer.status === 'running';
-    document.getElementById('appRequiresAuth').checked = true;
-    document.getElementById('appCustomHost').checked = false;
-    document.getElementById('customHostGroup').classList.add('d-none');
-    
-    // Pré-remplir l'option is_shared depuis le scanner Docker
-    const appIsSharedCheckbox = document.getElementById('appIsSharedService');
-    if (appIsSharedCheckbox) appIsSharedCheckbox.checked = isShared;
-    
-    // Note: M2M est créé automatiquement lors de l'auto-enregistrement
-    
-    // Afficher mode simplifié (ports)
-    document.getElementById('simplePortsSection').classList.remove('d-none');
-    document.getElementById('advancedUrlsSection').classList.add('d-none');
-    document.getElementById('appApiPort').required = true;
-    document.getElementById('appApiUrl').required = false;
-    
-    updateIconPreview();
-    updateUrlPreview();
-    
-    // Afficher le formulaire
-    appFormModal.show();
-    
-    const msg = frontendContainer 
-        ? `API "${apiContainer.name}" + Frontend "${frontendContainer.name}" pré-chargés.`
-        : `Conteneur "${apiContainer.name}" pré-chargé.`;
-    showToast('Import Docker', msg + ' Vérifiez et ajustez les informations.', 'info');
+function copyToClipboard(text) {
+    navigator.clipboard.writeText(text).then(() => {
+        showToast('Copié', 'Credentials copiés dans le presse-papier', 'success');
+    }).catch(() => {
+        // Fallback
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+        showToast('Copié', 'Credentials copiés', 'success');
+    });
 }
 
 // ===== Page Audit Dédiée =====

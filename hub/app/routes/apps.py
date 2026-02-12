@@ -20,9 +20,11 @@ from app.schemas import (
     AppCreate, AppCreateSimplified, AppUpdate, AppResponse, AppWithUsers, AppWithUsersAndDocker,
     AppResponseWithMyRole,
     DockerScanResponse, DockerContainerInfo, DockerPortInfo, DockerInfoResponse,
+    DockerAppGroup,
     AppRegisterRequest, AppRegisterResponse, AppCredentialsResponse,
     AppDiscoveryItem, DiscoverResponse,
-    AppApprovalRequest, AppApprovalResponse, PendingAppsResponse
+    AppApprovalRequest, AppApprovalResponse, PendingAppsResponse,
+    BatchImportRequest, BatchImportResponse, BatchAppResult,
 )
 from app.auth import get_current_admin, get_current_user, get_password_hash, get_settings, verify_token_not_revoked, oauth2_scheme
 from app.routes.service_accounts import save_service_account_credentials, delete_service_account_credentials
@@ -1612,6 +1614,259 @@ async def admin_auto_register_app(
     )
 
 
+@router.post("/batch-import", response_model=BatchImportResponse)
+async def batch_import_apps(
+    data: BatchImportRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_admin)
+):
+    """
+    Import lot d'applications détectées par le scanner Docker.
+    
+    Crée plusieurs applications avec leurs Service Accounts en une seule opération.
+    Utilise la même logique que l'auto-register individuel.
+    
+    ⚠️ Admin uniquement.
+    """
+    logger.info(f"📦 Import lot de {len(data.apps)} application(s) par {current_user.username}")
+    
+    results = []
+    created = 0
+    updated = 0
+    errors = 0
+    host = settings.get_hub_host()
+    
+    for app_item in data.apps:
+        try:
+            # Vérifier si l'application existe déjà
+            result = await db.execute(
+                select(Application)
+                .options(selectinload(Application.service_accounts))
+                .where(Application.slug == app_item.base_slug)
+            )
+            existing_app = result.scalar_one_or_none()
+            
+            if existing_app:
+                # Application existante - mettre à jour si nécessaire
+                updated_fields = []
+                shared_changed = False
+                old_shared = existing_app.is_shared_service
+                
+                if existing_app.is_shared_service != app_item.is_shared:
+                    existing_app.is_shared_service = app_item.is_shared
+                    updated_fields.append(f"is_shared: {old_shared} → {app_item.is_shared}")
+                    shared_changed = True
+                
+                new_api_url = f"http://{host}:{app_item.api_port}"
+                if existing_app.api_url != new_api_url:
+                    existing_app.api_url = new_api_url
+                    updated_fields.append(f"api_url → {new_api_url}")
+                
+                if app_item.frontend_port:
+                    new_frontend_url = f"http://{host}:{app_item.frontend_port}"
+                    if existing_app.frontend_url != new_frontend_url:
+                        existing_app.frontend_url = new_frontend_url
+                        existing_app.callback_url = f"{new_frontend_url}/callback"
+                        updated_fields.append(f"frontend_url → {new_frontend_url}")
+                
+                if app_item.name and existing_app.name != app_item.name:
+                    existing_app.name = app_item.name
+                    updated_fields.append(f"name → {app_item.name}")
+                
+                if updated_fields:
+                    await db.commit()
+                    await db.refresh(existing_app)
+                    if shared_changed:
+                        if app_item.is_shared:
+                            await add_shared_service_to_all_service_accounts(db, existing_app)
+                        else:
+                            await remove_shared_service_from_all_service_accounts(db, existing_app)
+                        await db.commit()
+                
+                sa = next((sa for sa in existing_app.service_accounts), None)
+                results.append(BatchAppResult(
+                    slug=app_item.base_slug,
+                    name=existing_app.name,
+                    success=True,
+                    is_new=False,
+                    message=f"Mise à jour: {', '.join(updated_fields)}" if updated_fields else "Déjà enregistrée, aucun changement",
+                    credentials={"client_id": sa.client_id} if sa else None
+                ))
+                updated += 1
+                continue
+            
+            # Nouvelle application
+            api_url = f"http://{host}:{app_item.api_port}"
+            frontend_url = f"http://{host}:{app_item.frontend_port}" if app_item.frontend_port else None
+            callback_url = f"{frontend_url}/callback" if frontend_url else None
+            
+            app_name = app_item.name or app_item.base_slug.replace("-", " ").title()
+            app = Application(
+                name=app_name,
+                slug=app_item.base_slug,
+                description=app_item.description or f"Application {app_item.base_slug} (import lot)",
+                icon="bi-box-seam",
+                color="#0db7ed",
+                api_url=api_url,
+                frontend_url=frontend_url,
+                callback_url=callback_url,
+                requires_auth=True,
+                is_shared_service=app_item.is_shared
+            )
+            db.add(app)
+            await db.flush()
+            
+            # Créer le service account
+            client_id = ServiceAccount.generate_client_id()
+            client_secret = ServiceAccount.generate_client_secret()
+            
+            service_account = ServiceAccount(
+                name=f"SA - {app_name}",
+                description=f"Service account auto-créé pour {app_name}",
+                client_id=client_id,
+                client_secret_hash=get_password_hash(client_secret)
+            )
+            db.add(service_account)
+            await db.flush()
+            
+            # Associer le SA à l'app
+            sa_result = await db.execute(
+                select(ServiceAccount)
+                .options(selectinload(ServiceAccount.applications))
+                .where(ServiceAccount.id == service_account.id)
+            )
+            service_account = sa_result.scalar_one()
+            service_account.applications.append(app)
+            
+            # Ajouter les services partagés au SA
+            shared_result = await db.execute(
+                select(Application).where(Application.is_shared_service == True)
+            )
+            shared_apps = shared_result.scalars().all()
+            shared_slugs = []
+            for shared_app in shared_apps:
+                if shared_app not in service_account.applications:
+                    service_account.applications.append(shared_app)
+                    shared_slugs.append(shared_app.slug)
+            
+            await db.commit()
+            await db.refresh(app)
+            
+            # Réassocier les backups orphelins
+            await reassociate_orphan_backups(db, app)
+            
+            # Si service partagé, l'ajouter à tous les SA
+            if app_item.is_shared:
+                count = await add_shared_service_to_all_service_accounts(db, app)
+                if count > 0:
+                    await db.commit()
+            
+            # Sauvegarder les credentials
+            all_slugs = [app_item.base_slug] + shared_slugs
+            secrets_file = save_service_account_credentials(
+                name=app_item.base_slug,
+                client_id=client_id,
+                client_secret=client_secret,
+                app_slugs=all_slugs
+            )
+            
+            results.append(BatchAppResult(
+                slug=app_item.base_slug,
+                name=app_name,
+                success=True,
+                is_new=True,
+                message=f"Créée avec succès. Credentials dans {secrets_file}",
+                credentials={
+                    "client_id": client_id,
+                    "client_secret": client_secret,
+                    "secrets_file": secrets_file
+                }
+            ))
+            created += 1
+            
+        except Exception as e:
+            logger.error(f"❌ Erreur import '{app_item.base_slug}': {e}")
+            results.append(BatchAppResult(
+                slug=app_item.base_slug,
+                name=app_item.name or app_item.base_slug,
+                success=False,
+                message=str(e)
+            ))
+            errors += 1
+            # Rollback pour cette app uniquement
+            await db.rollback()
+    
+    # Notifier les clients SSE
+    if created > 0 or updated > 0:
+        notify_event("apps_updated", {
+            "action": "batch_import",
+            "created": created,
+            "updated": updated,
+            "source": "batch-import",
+            "user": current_user.username
+        })
+        notify_stats_update()
+    
+    logger.info(f"✅ Import lot terminé: {created} créées, {updated} mises à jour, {errors} erreur(s)")
+    
+    return BatchImportResponse(
+        total=len(data.apps),
+        created=created,
+        updated=updated,
+        errors=errors,
+        results=results
+    )
+
+
+@router.patch("/{app_id}/toggle-active")
+async def toggle_app_active(
+    app_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_admin)
+):
+    """
+    Bascule l'état actif/inactif d'une application en un clic.
+    
+    ⚠️ Admin uniquement.
+    """
+    result = await db.execute(select(Application).where(Application.id == app_id))
+    app = result.scalar_one_or_none()
+    
+    if not app:
+        raise HTTPException(status_code=404, detail="Application non trouvée")
+    
+    app.is_active = not app.is_active
+    await db.commit()
+    await db.refresh(app)
+    
+    status_label = "activée" if app.is_active else "désactivée"
+    logger.info(f"🔄 Application '{app.slug}' {status_label} par {current_user.username}")
+    
+    # Log audit
+    await log_action(
+        db=db,
+        action="app_toggled",
+        user=current_user,
+        details=f"Application '{app.name}' {status_label}",
+        app_slug=app.slug
+    )
+    
+    notify_event("apps_updated", {
+        "action": "toggled",
+        "app_slug": app.slug,
+        "app_name": app.name,
+        "is_active": app.is_active,
+        "user": current_user.username
+    })
+    
+    return {
+        "message": f"Application '{app.name}' {status_label}",
+        "app_id": app.id,
+        "is_active": app.is_active
+    }
+
+
 @router.get("/me/credentials", response_model=AppCredentialsResponse)
 async def get_app_credentials(
     request: Request,
@@ -2464,17 +2719,95 @@ async def scan_docker_containers(
                 # Labels Hub spécifiques pour pré-remplir le formulaire
                 hub_name=container.hub_name,
                 hub_description=container.hub_description,
-                hub_shared=container.hub_shared
+                hub_shared=container.hub_shared,
+                # Auto-pairing
+                container_type=container.container_type,
+                base_slug=container.base_slug,
             ))
         
-        logger.info(f"Scan Docker: {len(discovered)} conteneurs découverts par {current_user.username} (show_all={show_all})")
+        # === Regroupement par base_slug ===
+        from collections import defaultdict
+        groups_map = defaultdict(lambda: {"api": None, "frontend": None, "ungrouped": [], "is_registered": False, "description": None, "is_shared": False, "suggested_name": None})
+        
+        for ci in discovered:
+            base = ci.base_slug or ci.suggested_slug
+            group = groups_map[base]
+            
+            # Agréger les informations
+            if ci.is_registered:
+                group["is_registered"] = True
+            if ci.hub_description and not group["description"]:
+                group["description"] = ci.hub_description
+            if ci.hub_shared:
+                group["is_shared"] = True
+            
+            # Placer le conteneur dans le bon slot
+            if ci.container_type == 'api':
+                if group["api"] is None:
+                    group["api"] = ci
+                else:
+                    group["ungrouped"].append(ci)
+            elif ci.container_type == 'frontend':
+                if group["frontend"] is None:
+                    group["frontend"] = ci
+                else:
+                    group["ungrouped"].append(ci)
+            else:
+                group["ungrouped"].append(ci)
+            
+            # Nom suggéré : priorité au hub_name API, puis au nom formaté du base_slug
+            if not group["suggested_name"]:
+                if ci.hub_name:
+                    group["suggested_name"] = ci.hub_name
+                else:
+                    group["suggested_name"] = base.replace("-", " ").title()
+        
+        # Construire la liste de groupes
+        groups = []
+        for base, g in groups_map.items():
+            # Déterminer le port API
+            api_port = None
+            if g["api"]:
+                api_port = next((p.host_port for p in g["api"].ports if p.host_port), None)
+            
+            # Déterminer le port frontend
+            frontend_port = None
+            if g["frontend"]:
+                frontend_port = next((p.host_port for p in g["frontend"].ports if p.host_port), None)
+            
+            # Vérifier si le base_slug est déjà pris
+            final_base = base
+            if final_base in existing_slugs:
+                i = 2
+                while f"{final_base}-{i}" in existing_slugs:
+                    i += 1
+                final_base = f"{final_base}-{i}"
+            
+            groups.append(DockerAppGroup(
+                base_slug=final_base,
+                suggested_name=g["suggested_name"] or final_base.replace("-", " ").title(),
+                description=g["description"],
+                is_shared=g["is_shared"],
+                is_registered=g["is_registered"],
+                api_container=g["api"],
+                frontend_container=g["frontend"],
+                api_port=api_port,
+                frontend_port=frontend_port,
+                ungrouped_containers=g["ungrouped"],
+            ))
+        
+        # Trier : non-enregistrés d'abord, puis par nom
+        groups.sort(key=lambda g: (g.is_registered, g.suggested_name.lower()))
+        
+        logger.info(f"Scan Docker: {len(discovered)} conteneurs, {len(groups)} groupe(s) par {current_user.username} (show_all={show_all})")
         
         return DockerScanResponse(
             available=True,
             docker_version=docker_info.get("version"),
             containers_running=docker_info.get("containers_running", 0),
             containers_total=docker_info.get("containers_total", 0),
-            discovered=discovered
+            discovered=discovered,
+            groups=groups,
         )
         
     except Exception as e:
