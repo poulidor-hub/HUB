@@ -565,6 +565,24 @@ body {
 .docker-stats {
     margin-top: 4px;
     min-width: 80px;
+    min-height: 30px;
+}
+
+/* Placeholder grisé (évite le décalage au chargement) */
+.docker-stats-placeholder .progress-bar {
+    background-color: #dee2e6 !important;
+    width: 100% !important;
+    opacity: 0.4;
+    animation: stats-placeholder-pulse 1.8s ease-in-out infinite;
+}
+
+.docker-stats-placeholder .docker-stats-value {
+    opacity: 0.4;
+}
+
+@keyframes stats-placeholder-pulse {
+    0%, 100% { opacity: 0.4; }
+    50% { opacity: 0.2; }
 }
 
 .docker-stats-row {
@@ -604,6 +622,44 @@ body {
     width: 32px;
     text-align: right;
     flex-shrink: 0;
+}
+
+/* === App Card Stats (mini-indicateurs dashboard) === */
+.app-card-stats {
+    position: absolute;
+    bottom: 6px;
+    right: 10px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.6rem;
+    color: #adb5bd;
+    opacity: 0;
+    transition: opacity 0.5s ease;
+    pointer-events: none;
+}
+
+.app-card-stats.loaded {
+    opacity: 1;
+}
+
+.app-card-stats .stat-item {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+}
+
+.app-card-stats .stat-item i {
+    font-size: 0.55rem;
+}
+
+.app-card-stats .stat-value {
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+}
+
+.app-card.app-inactive .app-card-stats {
+    display: none;
 }
 
 /* === Docker Scanner Group Cards === */

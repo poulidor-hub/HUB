@@ -690,6 +690,13 @@ function showPage(page) {
     
     currentPage = page;
     
+    // Gérer le rafraîchissement des stats dashboard
+    if (page === 'dashboard') {
+        startDashboardStatsRefresh();
+    } else {
+        stopDashboardStatsRefresh();
+    }
+    
     switch(page) {
         case 'dashboard':
             document.getElementById('dashboardSection').classList.remove('d-none');
@@ -760,6 +767,7 @@ function showLoginScreen() {
     // S'assurer que le loading screen est caché et la navbar visible
     showNavbar();
     hideLoadingScreen();
+    stopDashboardStatsRefresh();
     
     currentUser = null;
     currentPage = 'dashboard';
@@ -919,6 +927,7 @@ async function loadApps() {
         // S'assurer que apps est un tableau
         if (Array.isArray(apps)) {
             renderAppsGrid(apps);
+            startDashboardStatsRefresh();
         } else {
             console.error('loadApps: réponse inattendue (pas un tableau):', apps);
             renderAppsGrid([]);
@@ -986,6 +995,7 @@ function renderAppsGrid(apps) {
                     </div>
                     <h5>${escapeHtml(app.name)}</h5>
                     <p>${escapeHtml(app.description || 'Aucune description')}</p>
+                    <div class="app-card-stats" data-app-slug="${app.slug}"></div>
                     ${isAdmin ? `
                         <div class="app-role-selector mt-2" onclick="event.stopPropagation()">
                             <select class="form-select form-select-sm" 
@@ -1400,6 +1410,89 @@ let dockerStatsRefreshInterval = null;
 const DOCKER_STATS_REFRESH_DELAY = 60000; // 60 secondes
 
 /**
+ * Intervalle de rafraîchissement des stats sur les tuiles du dashboard
+ */
+let dashboardStatsRefreshInterval = null;
+
+/**
+ * Rafraîchit les mini-indicateurs CPU/RAM sur les tuiles du dashboard
+ */
+async function refreshDashboardStats() {
+    try {
+        const data = await api.getDockerStats();
+        if (!data.docker_available) return;
+        
+        document.querySelectorAll('.app-card-stats[data-app-slug]').forEach(el => {
+            const slug = el.getAttribute('data-app-slug');
+            const app = allApps?.find(a => a.slug === slug);
+            if (!app) return;
+            
+            let port = null;
+            try {
+                const url = new URL(app.api_url);
+                port = url.port;
+            } catch (e) {}
+            
+            if (!port || !data.stats[port]) {
+                el.classList.remove('loaded');
+                el.innerHTML = '';
+                return;
+            }
+            
+            const stats = data.stats[port];
+            const cpuColor = getStatsBarColor(stats.cpu_percent);
+            const memPercent = stats.memory_limit_mb > 0 
+                ? Math.min(100, Math.round((stats.memory_usage_mb / stats.memory_limit_mb) * 100)) 
+                : 0;
+            const memColor = getStatsBarColor(memPercent);
+            
+            // Convertir les classes Bootstrap en couleurs CSS
+            const colorMap = { 'bg-success': '#198754', 'bg-warning': '#ffc107', 'bg-danger': '#dc3545' };
+            
+            el.innerHTML = `
+                <span class="stat-item" title="CPU: ${stats.cpu_percent}%">
+                    <i class="bi bi-cpu" style="color: ${colorMap[cpuColor] || '#adb5bd'}"></i>
+                    <span class="stat-value" style="color: ${colorMap[cpuColor] || '#adb5bd'}">${stats.cpu_percent}%</span>
+                </span>
+                <span class="stat-item" title="RAM: ${Math.round(stats.memory_usage_mb)}M (${memPercent}%)">
+                    <i class="bi bi-memory" style="color: ${colorMap[memColor] || '#adb5bd'}"></i>
+                    <span class="stat-value" style="color: ${colorMap[memColor] || '#adb5bd'}">${Math.round(stats.memory_usage_mb)}M</span>
+                </span>
+            `;
+            el.classList.add('loaded');
+        });
+    } catch (error) {
+        console.error('Erreur stats dashboard:', error);
+    }
+}
+
+/**
+ * Démarre le rafraîchissement périodique des stats sur le dashboard
+ */
+function startDashboardStatsRefresh() {
+    if (dashboardStatsRefreshInterval) return;
+    
+    // Premier appel immédiat
+    refreshDashboardStats();
+    
+    dashboardStatsRefreshInterval = setInterval(() => {
+        if (currentPage === 'dashboard') {
+            refreshDashboardStats();
+        }
+    }, DOCKER_STATS_REFRESH_DELAY);
+}
+
+/**
+ * Arrête le rafraîchissement des stats du dashboard
+ */
+function stopDashboardStatsRefresh() {
+    if (dashboardStatsRefreshInterval) {
+        clearInterval(dashboardStatsRefreshInterval);
+        dashboardStatsRefreshInterval = null;
+    }
+}
+
+/**
  * Démarre le rafraîchissement périodique de la connectivité
  */
 function startConnectivityRefresh() {
@@ -1502,8 +1595,8 @@ async function refreshDockerStats() {
             } catch (e) {}
             
             if (!port || !data.stats[port]) {
-                // Pas de stats pour cette app, vider les barres
-                statsContainer.innerHTML = '';
+                // Pas de stats — garder le placeholder grisé
+                statsContainer.classList.add('docker-stats-placeholder');
                 return;
             }
             
@@ -1514,6 +1607,8 @@ async function refreshDockerStats() {
                 : 0;
             const memColor = getStatsBarColor(memPercent);
             
+            // Retirer le placeholder et afficher les vraies données
+            statsContainer.classList.remove('docker-stats-placeholder');
             statsContainer.innerHTML = `
                 <div class="docker-stats-row">
                     <span class="docker-stats-label">CPU</span>
@@ -1721,7 +1816,22 @@ function renderAppsTable(apps) {
                                 ${dockerIcon}
                                 <span class="app-connectivity-icon">${healthIcon}</span>
                             </div>
-                            <div class="docker-stats" data-app-slug="${app.slug}"></div>
+                            <div class="docker-stats docker-stats-placeholder" data-app-slug="${app.slug}">
+                                <div class="docker-stats-row">
+                                    <span class="docker-stats-label">CPU</span>
+                                    <div class="progress docker-stats-bar">
+                                        <div class="progress-bar" style="width: 100%"></div>
+                                    </div>
+                                    <span class="docker-stats-value">--</span>
+                                </div>
+                                <div class="docker-stats-row">
+                                    <span class="docker-stats-label">RAM</span>
+                                    <div class="progress docker-stats-bar">
+                                        <div class="progress-bar" style="width: 100%"></div>
+                                    </div>
+                                    <span class="docker-stats-value">--</span>
+                                </div>
+                            </div>
                         </td>
                         <td class="text-end text-nowrap">
                             ${approvalActions}
