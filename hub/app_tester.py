@@ -530,8 +530,8 @@ class AppTester:
             )
         
         try:
-            # Tenter /health ou /
-            for endpoint in ["/health", "/api/health", "/", "/api/"]:
+            # Tenter /api/health ou / en fallback
+            for endpoint in ["/api/health", "/", "/api/"]:
                 try:
                     response = await self.client.get(f"{api_url}{endpoint}")
                     if response.status_code in [200, 401, 403]:  # 401/403 = API accessible mais auth requise

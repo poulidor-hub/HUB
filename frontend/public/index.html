@@ -57,7 +57,7 @@
                 <button id="changePasswordBtn" class="btn btn-outline-light btn-sm me-2 d-none" onclick="showChangePasswordModal(false)" title="Changer le mot de passe">
                     <i class="bi bi-key"></i>
                 </button>
-                <button id="adminBtn" class="btn btn-outline-light btn-sm me-2 d-none" onclick="showAdminPanel()">
+                <button id="adminBtn" class="btn btn-outline-light btn-sm me-2 d-none" onclick="showPage('admin')">
                     <i class="bi bi-gear"></i> Admin
                 </button>
                 <button id="logoutBtn" class="btn btn-outline-secondary btn-sm d-none" onclick="logout()">
@@ -810,412 +810,421 @@
         </div>
     </div>
 
-    <div class="modal fade" id="adminModal" tabindex="-1">
-        <div class="modal-dialog modal-xl">
-            <div class="modal-content">
-                <div class="modal-header bg-dark text-white">
-                    <h5 class="modal-title"><i class="bi bi-gear-fill me-2"></i>Administration</h5>
-                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+    <!-- Page Administration -->
+    <div id="adminSection" class="container-fluid py-4 d-none" style="margin-top: 70px;">
+        <div class="container">
+            <!-- En-tête -->
+            <div class="d-flex justify-content-between align-items-center mb-4">
+                <div>
+                    <h1 class="h3 mb-1"><i class="bi bi-gear-fill me-2"></i>Administration</h1>
+                    <p class="text-muted mb-0">Gestion des applications, service accounts et sauvegardes</p>
                 </div>
-                <div class="modal-body p-0">
-                    <ul class="nav nav-tabs" id="adminTabs">
-                        <li class="nav-item">
-                            <button class="nav-link active" data-bs-toggle="tab" data-bs-target="#tabApps">
-                                <i class="bi bi-app-indicator me-1"></i>Applications
-                                <span id="pendingAppsBadge" class="badge bg-warning text-dark ms-1 d-none">0</span>
+                <div class="d-flex gap-2">
+                    <button class="btn btn-outline-secondary" onclick="showPage('clone-migrate')">
+                        <i class="bi bi-arrow-left-right me-1"></i>Cloner / Migrer
+                    </button>
+                </div>
+            </div>
+
+            <!-- Sous-navigation avec onglets -->
+            <ul class="nav nav-tabs mb-4" id="adminPageTabs">
+                <li class="nav-item">
+                    <button class="nav-link active" data-bs-toggle="tab" data-bs-target="#tabApps">
+                        <i class="bi bi-app-indicator me-1"></i>Applications
+                        <span id="pendingAppsBadge" class="badge bg-warning text-dark ms-1 d-none">0</span>
+                    </button>
+                </li>
+                <li class="nav-item">
+                    <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tabServiceAccounts">
+                        <i class="bi bi-robot me-1"></i>Service Accounts
+                    </button>
+                </li>
+                <li class="nav-item">
+                    <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tabAppBackups" onclick="loadAppBackupsOverview()">
+                        <i class="bi bi-hdd-stack me-1"></i>Sauvegardes
+                    </button>
+                </li>
+            </ul>
+
+            <div class="tab-content">
+                <!-- Apps Tab -->
+                <div class="tab-pane fade show active" id="tabApps">
+                    <div class="d-flex justify-content-between align-items-center mb-3">
+                        <h5 class="mb-0">Gestion des Applications</h5>
+                        <div class="btn-group">
+                            <button class="btn btn-outline-secondary btn-sm" onclick="showDockerScanModal()">
+                                <i class="bi bi-box-seam me-1"></i>Scanner Docker
                             </button>
-                        </li>
-                        <li class="nav-item">
-                            <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tabServiceAccounts">
-                                <i class="bi bi-robot me-1"></i>Service Accounts
+                            <button class="btn btn-primary btn-sm" onclick="showAddAppForm()">
+                                <i class="bi bi-plus-lg me-1"></i>Ajouter
                             </button>
-                        </li>
-                        <li class="nav-item">
-                            <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tabAppBackups" onclick="loadAppBackupsOverview()">
-                                <i class="bi bi-hdd-stack me-1"></i>Sauvegardes
-                            </button>
-                        </li>
-                        <li class="nav-item">
-                            <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tabBackup" onclick="loadBackupInfo()">
-                                <i class="bi bi-arrow-left-right me-1"></i>Cloner / Migrer
-                            </button>
-                        </li>
-                    </ul>
-                    <div class="tab-content p-4">
-                        <!-- Apps Tab -->
-                        <div class="tab-pane fade show active" id="tabApps">
-                            <div class="d-flex justify-content-between align-items-center mb-3">
-                                <h5 class="mb-0">Gestion des Applications</h5>
-                                <div class="btn-group">
-                                    <button class="btn btn-outline-secondary btn-sm" onclick="showDockerScanModal()">
-                                        <i class="bi bi-box-seam me-1"></i>Scanner Docker
-                                    </button>
-                                    <button class="btn btn-primary btn-sm" onclick="showAddAppForm()">
-                                        <i class="bi bi-plus-lg me-1"></i>Ajouter
-                                    </button>
-                                </div>
-                            </div>
-                            <div id="appsTable" class="table-responsive">
-                                <!-- Table loaded dynamically -->
-                            </div>
                         </div>
-                        <!-- Service Accounts Tab -->
-                        <div class="tab-pane fade" id="tabServiceAccounts">
-                            <div class="d-flex justify-content-between align-items-center mb-3">
-                                <div>
-                                    <h5 class="mb-0">Service Accounts (M2M)</h5>
-                                    <small class="text-muted">Comptes techniques pour la communication entre applications</small>
-                                </div>
-                                <button class="btn btn-primary btn-sm" onclick="showAddServiceAccountForm()">
-                                    <i class="bi bi-plus-lg me-1"></i>Ajouter
-                                </button>
-                            </div>
-                            <div id="serviceAccountsTable" class="table-responsive">
-                                <!-- Table loaded dynamically -->
-                            </div>
+                    </div>
+                    <div id="appsTable" class="table-responsive">
+                        <!-- Table loaded dynamically -->
+                    </div>
+                </div>
+                <!-- Service Accounts Tab -->
+                <div class="tab-pane fade" id="tabServiceAccounts">
+                    <div class="d-flex justify-content-between align-items-center mb-3">
+                        <div>
+                            <h5 class="mb-0">Service Accounts (M2M)</h5>
+                            <small class="text-muted">Comptes techniques pour la communication entre applications</small>
                         </div>
-                        <!-- Cloner / Migrer Tab -->
-                        <div class="tab-pane fade" id="tabBackup">
-                            <!-- En-tête explicatif -->
-                            <div class="d-flex justify-content-between align-items-center mb-4">
-                                <div>
-                                    <h5 class="mb-1"><i class="bi bi-arrow-left-right me-2"></i>Cloner / Migrer l'environnement HUB</h5>
-                                    <small class="text-muted">Exportez ou importez la configuration complète : utilisateurs, apps, rôles et service accounts</small>
-                                </div>
-                            </div>
-
-                            <!-- Résumé état courant -->
-                            <div class="row g-3 mb-4" id="envSummaryRow">
-                                <div class="col-6 col-md-3">
-                                    <div class="card text-center h-100 border-0 bg-light">
-                                        <div class="card-body py-3">
-                                            <i class="bi bi-people fs-4 text-primary"></i>
-                                            <h4 class="mb-0 mt-1" id="envSummaryUsers">–</h4>
-                                            <small class="text-muted">Utilisateurs</small>
-                                        </div>
-                                    </div>
-                                </div>
-                                <div class="col-6 col-md-3">
-                                    <div class="card text-center h-100 border-0 bg-light">
-                                        <div class="card-body py-3">
-                                            <i class="bi bi-grid-3x3-gap fs-4 text-success"></i>
-                                            <h4 class="mb-0 mt-1" id="envSummaryApps">–</h4>
-                                            <small class="text-muted">Applications</small>
-                                        </div>
-                                    </div>
-                                </div>
-                                <div class="col-6 col-md-3">
-                                    <div class="card text-center h-100 border-0 bg-light">
-                                        <div class="card-body py-3">
-                                            <i class="bi bi-link-45deg fs-4 text-info"></i>
-                                            <h4 class="mb-0 mt-1" id="envSummaryRoles">–</h4>
-                                            <small class="text-muted">Rôles attribués</small>
-                                        </div>
-                                    </div>
-                                </div>
-                                <div class="col-6 col-md-3">
-                                    <div class="card text-center h-100 border-0 bg-light">
-                                        <div class="card-body py-3">
-                                            <i class="bi bi-robot fs-4 text-warning"></i>
-                                            <h4 class="mb-0 mt-1" id="envSummarySA">–</h4>
-                                            <small class="text-muted">Service Accounts</small>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-
-                            <div class="row g-4">
-                                <!-- ───── EXPORT ───── -->
-                                <div class="col-lg-6">
-                                    <div class="card h-100 shadow-sm">
-                                        <div class="card-header bg-primary bg-gradient text-white d-flex align-items-center">
-                                            <i class="bi bi-box-arrow-up me-2 fs-5"></i>
-                                            <div>
-                                                <strong>Exporter</strong>
-                                                <small class="d-block opacity-75">Générer un instantané JSON</small>
-                                            </div>
-                                        </div>
-                                        <div class="card-body">
-                                            <p class="text-muted small mb-3">
-                                                Produit un fichier JSON contenant l'intégralité de la configuration de ce HUB.
-                                                Utilisable pour <strong>cloner</strong> vers un autre serveur ou comme <strong>point de restauration</strong>.
-                                            </p>
-
-                                            <div class="mb-3">
-                                                <label class="form-label fw-semibold small text-uppercase text-muted">Options d'export</label>
-                                                <div class="form-check form-switch mb-2">
-                                                    <input class="form-check-input" type="checkbox" id="exportIncludeJwt">
-                                                    <label class="form-check-label" for="exportIncludeJwt">
-                                                        <i class="bi bi-key me-1 text-warning"></i>Clés JWT RSA
-                                                        <small class="text-muted d-block">Permet de conserver les sessions actives sur le serveur cible</small>
-                                                    </label>
-                                                </div>
-                                                <div class="form-check form-switch">
-                                                    <input class="form-check-input" type="checkbox" id="exportIncludeSaSecrets" checked>
-                                                    <label class="form-check-label" for="exportIncludeSaSecrets">
-                                                        <i class="bi bi-shield-lock me-1 text-danger"></i>Secrets M2M en clair
-                                                        <small class="text-muted d-block">Sans cela, les secrets devront être régénérés après import</small>
-                                                    </label>
-                                                </div>
-                                                <div class="form-check form-switch mt-2">
-                                                    <input class="form-check-input" type="checkbox" id="exportIncludeAppBackups">
-                                                    <label class="form-check-label" for="exportIncludeAppBackups">
-                                                        <i class="bi bi-hdd-stack me-1 text-success"></i>Sauvegardes des applications
-                                                        <small class="text-muted d-block">Inclut les 5 derniers backups par app (format ZIP)</small>
-                                                    </label>
-                                                </div>
-                                            </div>
-
-                                            <button class="btn btn-primary w-100" onclick="downloadBackupExport()">
-                                                <i class="bi bi-download me-2"></i>Télécharger l'export
-                                            </button>
-
-                                            <div class="alert alert-warning d-flex align-items-start mt-3 mb-0 py-2 small">
-                                                <i class="bi bi-exclamation-triangle-fill me-2 mt-1"></i>
-                                                <span>Le fichier contient des <strong>données sensibles</strong> (hash mots de passe, secrets M2M, clés privées). Stockez-le de manière sécurisée.</span>
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
-
-                                <!-- ───── IMPORT ───── -->
-                                <div class="col-lg-6">
-                                    <div class="card h-100 shadow-sm">
-                                        <div class="card-header bg-success bg-gradient text-white d-flex align-items-center">
-                                            <i class="bi bi-box-arrow-in-down me-2 fs-5"></i>
-                                            <div>
-                                                <strong>Importer</strong>
-                                                <small class="d-block opacity-75">Restaurer depuis un fichier JSON ou ZIP</small>
-                                            </div>
-                                        </div>
-                                        <div class="card-body">
-                                            <div class="mb-3">
-                                                <label class="form-label fw-semibold small text-uppercase text-muted">Fichier source</label>
-                                                <input type="file" class="form-control" id="importBackupFile" accept=".json,.zip" onchange="previewBackupFile()">
-                                            </div>
-
-                                            <!-- Preview -->
-                                            <div id="backupPreview" class="d-none mb-3">
-                                                <div class="card border-primary">
-                                                    <div class="card-body py-2">
-                                                        <div class="d-flex justify-content-between align-items-center mb-2">
-                                                            <h6 class="mb-0"><i class="bi bi-eye me-1"></i>Aperçu du fichier</h6>
-                                                            <small class="text-muted">v<span id="previewVersion">–</span> — <span id="previewDate">–</span></small>
-                                                        </div>
-                                                        <div class="row g-2 text-center small">
-                                                            <div class="col">
-                                                                <div class="bg-light rounded p-2">
-                                                                    <i class="bi bi-people text-primary"></i>
-                                                                    <strong class="d-block" id="previewUsers">0</strong>
-                                                                    <span class="text-muted" style="font-size:.75rem">Users</span>
-                                                                </div>
-                                                            </div>
-                                                            <div class="col">
-                                                                <div class="bg-light rounded p-2">
-                                                                    <i class="bi bi-grid-3x3-gap text-success"></i>
-                                                                    <strong class="d-block" id="previewApps">0</strong>
-                                                                    <span class="text-muted" style="font-size:.75rem">Apps</span>
-                                                                </div>
-                                                            </div>
-                                                            <div class="col">
-                                                                <div class="bg-light rounded p-2">
-                                                                    <i class="bi bi-robot text-warning"></i>
-                                                                    <strong class="d-block" id="previewSA">0</strong>
-                                                                    <span class="text-muted" style="font-size:.75rem">SA</span>
-                                                                </div>
-                                                            </div>
-                                                            <div class="col">
-                                                                <div class="bg-light rounded p-2">
-                                                                    <i class="bi bi-key text-info"></i>
-                                                                    <strong class="d-block" id="previewJwt">Non</strong>
-                                                                    <span class="text-muted" style="font-size:.75rem">JWT</span>
-                                                                </div>
-                                                            </div>
-                                                            <div class="col">
-                                                                <div class="bg-light rounded p-2">
-                                                                    <i class="bi bi-hdd-stack text-success"></i>
-                                                                    <strong class="d-block" id="previewBackups">0</strong>
-                                                                    <span class="text-muted" style="font-size:.75rem">Backups</span>
-                                                                </div>
-                                                            </div>
-                                                        </div>
-                                                        <div class="text-muted mt-1" style="font-size:.75rem">
-                                                            Exporté par <strong><span id="previewBy">–</span></strong>
-                                                        </div>
-                                                    </div>
-                                                </div>
-                                            </div>
-
-                                            <div class="mb-3">
-                                                <label class="form-label fw-semibold small text-uppercase text-muted">Mode d'import</label>
-                                                <select class="form-select" id="importMode">
-                                                    <option value="skip">Ignorer les existants</option>
-                                                    <option value="update">Mettre à jour les existants</option>
-                                                    <option value="error">Échouer si conflit</option>
-                                                </select>
-                                                <div class="form-text">Que faire si un utilisateur ou une app du fichier existe déjà sur ce HUB ?</div>
-                                            </div>
-
-                                            <div class="mb-3">
-                                                <div class="form-check form-switch">
-                                                    <input class="form-check-input" type="checkbox" id="importRestoreJwt">
-                                                    <label class="form-check-label" for="importRestoreJwt">
-                                                        <i class="bi bi-key me-1 text-warning"></i>Restaurer les clés JWT
-                                                        <small class="text-muted d-block">Les sessions des users survivront, mais un <strong>redémarrage du HUB</strong> sera nécessaire</small>
-                                                    </label>
-                                                </div>
-                                            </div>
-
-                                            <button class="btn btn-success w-100" onclick="executeBackupImport()" id="importBackupBtn" disabled>
-                                                <i class="bi bi-upload me-2"></i>Lancer l'import
-                                            </button>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-
-                            <!-- Import Result -->
-                            <div id="importResultCard" class="card mt-4 d-none shadow-sm">
-                                <div class="card-header" id="importResultHeader">
-                                    <i class="bi bi-check-circle me-2"></i>Résultat de l'import
-                                </div>
-                                <div class="card-body">
-                                    <div class="row g-3" id="importResultStats">
-                                        <!-- Stats will be loaded here -->
-                                    </div>
-                                    <div id="importResultWarnings" class="mt-3 d-none">
-                                        <h6 class="text-warning"><i class="bi bi-exclamation-triangle me-1"></i>Avertissements</h6>
-                                        <ul class="mb-0 small" id="importWarningsList"></ul>
-                                    </div>
-                                    <div id="importResultErrors" class="mt-3 d-none">
-                                        <h6 class="text-danger"><i class="bi bi-x-circle me-1"></i>Erreurs</h6>
-                                        <ul class="mb-0 small" id="importErrorsList"></ul>
-                                    </div>
-                                </div>
-                            </div>
-
-                            <!-- Légende — Ce qui est inclus / exclu -->
-                            <div class="row g-3 mt-3">
-                                <div class="col-md-7">
-                                    <div class="card border-0 bg-light">
-                                        <div class="card-body py-3">
-                                            <h6 class="mb-2"><i class="bi bi-check-circle text-success me-1"></i>Inclus dans l'export</h6>
-                                            <div class="row small">
-                                                <div class="col-6">
-                                                    <ul class="mb-0 ps-3">
-                                                        <li>Utilisateurs + mots de passe hashés</li>
-                                                        <li>Applications + URLs + icônes</li>
-                                                        <li>Rôles par utilisateur et par app</li>
-                                                    </ul>
-                                                </div>
-                                                <div class="col-6">
-                                                    <ul class="mb-0 ps-3">
-                                                        <li>Service Accounts M2M</li>
-                                                        <li>Secrets M2M <em>(optionnel)</em></li>
-                                                        <li>Sauvegardes des applications <em>(optionnel, format ZIP)</em></li>
-                                                        <li>Clés JWT RSA <em>(optionnel)</em></li>
-                                                    </ul>
-                                                </div>
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
-                                <div class="col-md-5">
-                                    <div class="card border-0 bg-light">
-                                        <div class="card-body py-3">
-                                            <h6 class="mb-2"><i class="bi bi-x-circle text-danger me-1"></i>Non inclus</h6>
-                                            <ul class="small mb-0 ps-3 text-muted">
-                                                <li>Sessions actives <em>(les users se reconnecteront)</em></li>
-                                                <li>Tokens révoqués</li>
-                                                <li>Logs d'audit <em>(propres à chaque instance)</em></li>
-                                            </ul>
-                                        </div>
-                                    </div>
+                        <button class="btn btn-primary btn-sm" onclick="showAddServiceAccountForm()">
+                            <i class="bi bi-plus-lg me-1"></i>Ajouter
+                        </button>
+                    </div>
+                    <div id="serviceAccountsTable" class="table-responsive">
+                        <!-- Table loaded dynamically -->
+                    </div>
+                </div>
+                <!-- App Backups Tab - Sauvegardes des Applications -->
+                <div class="tab-pane fade" id="tabAppBackups">
+                    <div class="d-flex justify-content-between align-items-center mb-3">
+                        <div>
+                            <h5 class="mb-0"><i class="bi bi-hdd-stack me-2"></i>Sauvegardes des Applications</h5>
+                            <small class="text-muted">Gestion centralisée des backups de toutes les applications</small>
+                        </div>
+                        <button class="btn btn-outline-secondary btn-sm" onclick="loadAppBackupsOverview()">
+                            <i class="bi bi-arrow-clockwise me-1"></i>Actualiser
+                        </button>
+                    </div>
+                    
+                    <!-- Stats globales -->
+                    <div class="row mb-4" id="appBackupsStats">
+                        <div class="col-md-3">
+                            <div class="card bg-light">
+                                <div class="card-body text-center py-3">
+                                    <h3 class="mb-0" id="statsAppsCount">0</h3>
+                                    <small class="text-muted">Applications</small>
                                 </div>
                             </div>
                         </div>
-                        <!-- App Backups Tab - Sauvegardes des Applications -->
-                        <div class="tab-pane fade" id="tabAppBackups">
-                            <div class="d-flex justify-content-between align-items-center mb-3">
-                                <div>
-                                    <h5 class="mb-0"><i class="bi bi-hdd-stack me-2"></i>Sauvegardes des Applications</h5>
-                                    <small class="text-muted">Gestion centralisée des backups de toutes les applications</small>
+                        <div class="col-md-3">
+                            <div class="card bg-light">
+                                <div class="card-body text-center py-3">
+                                    <h3 class="mb-0" id="statsTotalBackups">0</h3>
+                                    <small class="text-muted">Sauvegardes</small>
                                 </div>
-                                <button class="btn btn-outline-secondary btn-sm" onclick="loadAppBackupsOverview()">
-                                    <i class="bi bi-arrow-clockwise me-1"></i>Actualiser
-                                </button>
                             </div>
-                            
-                            <!-- Stats globales -->
-                            <div class="row mb-4" id="appBackupsStats">
-                                <div class="col-md-3">
-                                    <div class="card bg-light">
-                                        <div class="card-body text-center py-3">
-                                            <h3 class="mb-0" id="statsAppsCount">0</h3>
-                                            <small class="text-muted">Applications</small>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="card bg-light">
+                                <div class="card-body text-center py-3">
+                                    <h3 class="mb-0" id="statsTotalSize">0 B</h3>
+                                    <small class="text-muted">Stockage total</small>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="card bg-light">
+                                <div class="card-body text-center py-3">
+                                    <h3 class="mb-0" id="statsScheduledApps">0</h3>
+                                    <small class="text-muted">Planifiées</small>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Tableau des applications avec leurs backups -->
+                    <div class="table-responsive" id="appBackupsTable">
+                        <table class="table table-hover align-middle">
+                            <thead class="table-dark">
+                                <tr>
+                                    <th>Application</th>
+                                    <th>Mode</th>
+                                    <th>Dernier backup</th>
+                                    <th>Prochain</th>
+                                    <th>Backups</th>
+                                    <th>Taille</th>
+                                    <th class="text-end">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="appBackupsTableBody">
+                                <tr>
+                                    <td colspan="7" class="text-center text-muted py-4">
+                                        <i class="bi bi-hourglass-split me-2"></i>Chargement...
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    
+                    <!-- Légende des modes -->
+                    <div class="row mt-3">
+                        <div class="col-12">
+                            <small class="text-muted">
+                                <span class="badge bg-secondary me-2">Désactivé</span> Pas de sauvegarde
+                                <span class="badge bg-info ms-3 me-2">Manuel</span> Sauvegarde déclenchée à la demande via le HUB
+                                <span class="badge bg-success ms-3 me-2">Planifié</span> Sauvegarde automatique selon le cron
+                            </small>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Page Cloner / Migrer (sous-page de Admin) -->
+    <div id="cloneMigrateSection" class="container-fluid py-4 d-none" style="margin-top: 70px;">
+        <div class="container">
+            <!-- En-tête avec bouton retour -->
+            <div class="d-flex justify-content-between align-items-center mb-4">
+                <div>
+                    <button class="btn btn-link text-muted p-0 mb-2" onclick="showPage('admin')">
+                        <i class="bi bi-arrow-left me-1"></i>Retour à l'administration
+                    </button>
+                    <h1 class="h3 mb-1"><i class="bi bi-arrow-left-right me-2"></i>Cloner / Migrer l'environnement HUB</h1>
+                    <p class="text-muted mb-0">Exportez ou importez la configuration complète : utilisateurs, apps, rôles et service accounts</p>
+                </div>
+            </div>
+
+            <!-- Résumé état courant -->
+            <div class="row g-3 mb-4" id="envSummaryRow">
+                <div class="col-6 col-md-3">
+                    <div class="card text-center h-100 border-0 bg-light">
+                        <div class="card-body py-3">
+                            <i class="bi bi-people fs-4 text-primary"></i>
+                            <h4 class="mb-0 mt-1" id="envSummaryUsers">–</h4>
+                            <small class="text-muted">Utilisateurs</small>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-6 col-md-3">
+                    <div class="card text-center h-100 border-0 bg-light">
+                        <div class="card-body py-3">
+                            <i class="bi bi-grid-3x3-gap fs-4 text-success"></i>
+                            <h4 class="mb-0 mt-1" id="envSummaryApps">–</h4>
+                            <small class="text-muted">Applications</small>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-6 col-md-3">
+                    <div class="card text-center h-100 border-0 bg-light">
+                        <div class="card-body py-3">
+                            <i class="bi bi-link-45deg fs-4 text-info"></i>
+                            <h4 class="mb-0 mt-1" id="envSummaryRoles">–</h4>
+                            <small class="text-muted">Rôles attribués</small>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-6 col-md-3">
+                    <div class="card text-center h-100 border-0 bg-light">
+                        <div class="card-body py-3">
+                            <i class="bi bi-robot fs-4 text-warning"></i>
+                            <h4 class="mb-0 mt-1" id="envSummarySA">–</h4>
+                            <small class="text-muted">Service Accounts</small>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="row g-4">
+                <!-- ───── EXPORT ───── -->
+                <div class="col-lg-6">
+                    <div class="card h-100 shadow-sm">
+                        <div class="card-header bg-primary bg-gradient text-white d-flex align-items-center">
+                            <i class="bi bi-box-arrow-up me-2 fs-5"></i>
+                            <div>
+                                <strong>Exporter</strong>
+                                <small class="d-block opacity-75">Générer un instantané JSON</small>
+                            </div>
+                        </div>
+                        <div class="card-body">
+                            <p class="text-muted small mb-3">
+                                Produit un fichier JSON contenant l'intégralité de la configuration de ce HUB.
+                                Utilisable pour <strong>cloner</strong> vers un autre serveur ou comme <strong>point de restauration</strong>.
+                            </p>
+
+                            <div class="mb-3">
+                                <label class="form-label fw-semibold small text-uppercase text-muted">Options d'export</label>
+                                <div class="form-check form-switch mb-2">
+                                    <input class="form-check-input" type="checkbox" id="exportIncludeJwt">
+                                    <label class="form-check-label" for="exportIncludeJwt">
+                                        <i class="bi bi-key me-1 text-warning"></i>Clés JWT RSA
+                                        <small class="text-muted d-block">Permet de conserver les sessions actives sur le serveur cible</small>
+                                    </label>
+                                </div>
+                                <div class="form-check form-switch">
+                                    <input class="form-check-input" type="checkbox" id="exportIncludeSaSecrets" checked>
+                                    <label class="form-check-label" for="exportIncludeSaSecrets">
+                                        <i class="bi bi-shield-lock me-1 text-danger"></i>Secrets M2M en clair
+                                        <small class="text-muted d-block">Sans cela, les secrets devront être régénérés après import</small>
+                                    </label>
+                                </div>
+                                <div class="form-check form-switch mt-2">
+                                    <input class="form-check-input" type="checkbox" id="exportIncludeAppBackups">
+                                    <label class="form-check-label" for="exportIncludeAppBackups">
+                                        <i class="bi bi-hdd-stack me-1 text-success"></i>Sauvegardes des applications
+                                        <small class="text-muted d-block">Inclut les 5 derniers backups par app (format ZIP)</small>
+                                    </label>
+                                </div>
+                            </div>
+
+                            <button class="btn btn-primary w-100" onclick="downloadBackupExport()">
+                                <i class="bi bi-download me-2"></i>Télécharger l'export
+                            </button>
+
+                            <div class="alert alert-warning d-flex align-items-start mt-3 mb-0 py-2 small">
+                                <i class="bi bi-exclamation-triangle-fill me-2 mt-1"></i>
+                                <span>Le fichier contient des <strong>données sensibles</strong> (hash mots de passe, secrets M2M, clés privées). Stockez-le de manière sécurisée.</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ───── IMPORT ───── -->
+                <div class="col-lg-6">
+                    <div class="card h-100 shadow-sm">
+                        <div class="card-header bg-success bg-gradient text-white d-flex align-items-center">
+                            <i class="bi bi-box-arrow-in-down me-2 fs-5"></i>
+                            <div>
+                                <strong>Importer</strong>
+                                <small class="d-block opacity-75">Restaurer depuis un fichier JSON ou ZIP</small>
+                            </div>
+                        </div>
+                        <div class="card-body">
+                            <div class="mb-3">
+                                <label class="form-label fw-semibold small text-uppercase text-muted">Fichier source</label>
+                                <input type="file" class="form-control" id="importBackupFile" accept=".json,.zip" onchange="previewBackupFile()">
+                            </div>
+
+                            <!-- Preview -->
+                            <div id="backupPreview" class="d-none mb-3">
+                                <div class="card border-primary">
+                                    <div class="card-body py-2">
+                                        <div class="d-flex justify-content-between align-items-center mb-2">
+                                            <h6 class="mb-0"><i class="bi bi-eye me-1"></i>Aperçu du fichier</h6>
+                                            <small class="text-muted">v<span id="previewVersion">–</span> — <span id="previewDate">–</span></small>
+                                        </div>
+                                        <div class="row g-2 text-center small">
+                                            <div class="col">
+                                                <div class="bg-light rounded p-2">
+                                                    <i class="bi bi-people text-primary"></i>
+                                                    <strong class="d-block" id="previewUsers">0</strong>
+                                                    <span class="text-muted" style="font-size:.75rem">Users</span>
+                                                </div>
+                                            </div>
+                                            <div class="col">
+                                                <div class="bg-light rounded p-2">
+                                                    <i class="bi bi-grid-3x3-gap text-success"></i>
+                                                    <strong class="d-block" id="previewApps">0</strong>
+                                                    <span class="text-muted" style="font-size:.75rem">Apps</span>
+                                                </div>
+                                            </div>
+                                            <div class="col">
+                                                <div class="bg-light rounded p-2">
+                                                    <i class="bi bi-robot text-warning"></i>
+                                                    <strong class="d-block" id="previewSA">0</strong>
+                                                    <span class="text-muted" style="font-size:.75rem">SA</span>
+                                                </div>
+                                            </div>
+                                            <div class="col">
+                                                <div class="bg-light rounded p-2">
+                                                    <i class="bi bi-key text-info"></i>
+                                                    <strong class="d-block" id="previewJwt">Non</strong>
+                                                    <span class="text-muted" style="font-size:.75rem">JWT</span>
+                                                </div>
+                                            </div>
+                                            <div class="col">
+                                                <div class="bg-light rounded p-2">
+                                                    <i class="bi bi-hdd-stack text-success"></i>
+                                                    <strong class="d-block" id="previewBackups">0</strong>
+                                                    <span class="text-muted" style="font-size:.75rem">Backups</span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div class="text-muted mt-1" style="font-size:.75rem">
+                                            Exporté par <strong><span id="previewBy">–</span></strong>
                                         </div>
                                     </div>
                                 </div>
-                                <div class="col-md-3">
-                                    <div class="card bg-light">
-                                        <div class="card-body text-center py-3">
-                                            <h3 class="mb-0" id="statsTotalBackups">0</h3>
-                                            <small class="text-muted">Sauvegardes</small>
-                                        </div>
-                                    </div>
-                                </div>
-                                <div class="col-md-3">
-                                    <div class="card bg-light">
-                                        <div class="card-body text-center py-3">
-                                            <h3 class="mb-0" id="statsTotalSize">0 B</h3>
-                                            <small class="text-muted">Stockage total</small>
-                                        </div>
-                                    </div>
-                                </div>
-                                <div class="col-md-3">
-                                    <div class="card bg-light">
-                                        <div class="card-body text-center py-3">
-                                            <h3 class="mb-0" id="statsScheduledApps">0</h3>
-                                            <small class="text-muted">Planifiées</small>
-                                        </div>
-                                    </div>
+                            </div>
+
+                            <div class="mb-3">
+                                <label class="form-label fw-semibold small text-uppercase text-muted">Mode d'import</label>
+                                <select class="form-select" id="importMode">
+                                    <option value="skip">Ignorer les existants</option>
+                                    <option value="update">Mettre à jour les existants</option>
+                                    <option value="error">Échouer si conflit</option>
+                                </select>
+                                <div class="form-text">Que faire si un utilisateur ou une app du fichier existe déjà sur ce HUB ?</div>
+                            </div>
+
+                            <div class="mb-3">
+                                <div class="form-check form-switch">
+                                    <input class="form-check-input" type="checkbox" id="importRestoreJwt">
+                                    <label class="form-check-label" for="importRestoreJwt">
+                                        <i class="bi bi-key me-1 text-warning"></i>Restaurer les clés JWT
+                                        <small class="text-muted d-block">Les sessions des users survivront, mais un <strong>redémarrage du HUB</strong> sera nécessaire</small>
+                                    </label>
                                 </div>
                             </div>
-                            
-                            <!-- Tableau des applications avec leurs backups -->
-                            <div class="table-responsive" id="appBackupsTable">
-                                <table class="table table-hover align-middle">
-                                    <thead class="table-dark">
-                                        <tr>
-                                            <th>Application</th>
-                                            <th>Mode</th>
-                                            <th>Dernier backup</th>
-                                            <th>Prochain</th>
-                                            <th>Backups</th>
-                                            <th>Taille</th>
-                                            <th class="text-end">Actions</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody id="appBackupsTableBody">
-                                        <tr>
-                                            <td colspan="7" class="text-center text-muted py-4">
-                                                <i class="bi bi-hourglass-split me-2"></i>Chargement...
-                                            </td>
-                                        </tr>
-                                    </tbody>
-                                </table>
-                            </div>
-                            
-                            <!-- Légende des modes -->
-                            <div class="row mt-3">
-                                <div class="col-12">
-                                    <small class="text-muted">
-                                        <span class="badge bg-secondary me-2">Désactivé</span> Pas de sauvegarde
-                                        <span class="badge bg-info ms-3 me-2">Manuel</span> Sauvegarde déclenchée à la demande via le HUB
-                                        <span class="badge bg-success ms-3 me-2">Planifié</span> Sauvegarde automatique selon le cron
-                                    </small>
+
+                            <button class="btn btn-success w-100" onclick="executeBackupImport()" id="importBackupBtn" disabled>
+                                <i class="bi bi-upload me-2"></i>Lancer l'import
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Import Result -->
+            <div id="importResultCard" class="card mt-4 d-none shadow-sm">
+                <div class="card-header" id="importResultHeader">
+                    <i class="bi bi-check-circle me-2"></i>Résultat de l'import
+                </div>
+                <div class="card-body">
+                    <div class="row g-3" id="importResultStats">
+                        <!-- Stats will be loaded here -->
+                    </div>
+                    <div id="importResultWarnings" class="mt-3 d-none">
+                        <h6 class="text-warning"><i class="bi bi-exclamation-triangle me-1"></i>Avertissements</h6>
+                        <ul class="mb-0 small" id="importWarningsList"></ul>
+                    </div>
+                    <div id="importResultErrors" class="mt-3 d-none">
+                        <h6 class="text-danger"><i class="bi bi-x-circle me-1"></i>Erreurs</h6>
+                        <ul class="mb-0 small" id="importErrorsList"></ul>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Légende — Ce qui est inclus / exclu -->
+            <div class="row g-3 mt-3">
+                <div class="col-md-7">
+                    <div class="card border-0 bg-light">
+                        <div class="card-body py-3">
+                            <h6 class="mb-2"><i class="bi bi-check-circle text-success me-1"></i>Inclus dans l'export</h6>
+                            <div class="row small">
+                                <div class="col-6">
+                                    <ul class="mb-0 ps-3">
+                                        <li>Utilisateurs + mots de passe hashés</li>
+                                        <li>Applications + URLs + icônes</li>
+                                        <li>Rôles par utilisateur et par app</li>
+                                    </ul>
+                                </div>
+                                <div class="col-6">
+                                    <ul class="mb-0 ps-3">
+                                        <li>Service Accounts M2M</li>
+                                        <li>Secrets M2M <em>(optionnel)</em></li>
+                                        <li>Sauvegardes des applications <em>(optionnel, format ZIP)</em></li>
+                                        <li>Clés JWT RSA <em>(optionnel)</em></li>
+                                    </ul>
                                 </div>
                             </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-5">
+                    <div class="card border-0 bg-light">
+                        <div class="card-body py-3">
+                            <h6 class="mb-2"><i class="bi bi-x-circle text-danger me-1"></i>Non inclus</h6>
+                            <ul class="small mb-0 ps-3 text-muted">
+                                <li>Sessions actives <em>(les users se reconnecteront)</em></li>
+                                <li>Tokens révoqués</li>
+                                <li>Logs d'audit <em>(propres à chaque instance)</em></li>
+                            </ul>
                         </div>
                     </div>
                 </div>
@@ -1251,163 +1260,146 @@
 
     <!-- Add/Edit App Modal -->
     <div class="modal fade" id="appFormModal" tabindex="-1">
-        <div class="modal-dialog">
+        <div class="modal-dialog modal-lg">
             <div class="modal-content">
-                <div class="modal-header">
+                <div class="modal-header pb-0">
                     <h5 class="modal-title" id="appFormTitle">Nouvelle Application</h5>
                     <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
                 </div>
                 <form id="appForm" onsubmit="handleSaveApp(event)">
-                    <div class="modal-body">
+                    <div class="modal-body pt-3">
                         <input type="hidden" id="appId">
                         <input type="hidden" id="appMode" value="create">
                         
-                        <div class="row g-3">
-                            <!-- Nom et Slug (slug auto-généré) -->
-                            <div class="col-md-8">
-                                <label class="form-label">Nom *</label>
-                                <input type="text" class="form-control" id="appName" required>
+                        <!-- ── Identité ── -->
+                        <div class="row g-3 align-items-end mb-3">
+                            <div class="col-auto">
+                                <div class="app-form-preview" id="appFormPreview" onclick="toggleIconPicker()" title="Choisir l'icône" style="cursor:pointer">
+                                    <i id="iconPreview" class="bi bi-app"></i>
+                                </div>
+                                <input type="hidden" id="appIcon" value="bi-app">
+                                <input type="color" class="form-control form-control-color mt-1" id="appColor" value="#0d6efd" style="width:48px;height:28px" title="Couleur">
+                            </div>
+                            <div class="col">
+                                <label class="form-label mb-1">Nom *</label>
+                                <input type="text" class="form-control" id="appName" required placeholder="Mon Application">
                             </div>
                             <div class="col-md-4">
-                                <label class="form-label">Slug</label>
+                                <label class="form-label mb-1">Slug</label>
                                 <input type="text" class="form-control" id="appSlug" pattern="[a-z0-9\-]+" readonly>
                                 <small class="text-muted" id="slugHint">Généré automatiquement</small>
                             </div>
-                            
-                            <!-- Champs optionnels -->
-                            <div class="col-12" id="optionalFieldsSection">
-                                <div class="row g-3">
-                                    <div class="col-12">
-                                        <label class="form-label">Description</label>
-                                        <textarea class="form-control" id="appDescription" rows="2"></textarea>
+                        </div>
+
+                        <!-- Icon Picker -->
+                        <div id="iconPickerContainer" class="icon-picker-container d-none mb-3">
+                            <div class="icon-picker-header">
+                                <input type="text" class="form-control form-control-sm" id="iconSearchInput" placeholder="Rechercher une icône..." oninput="filterIcons()">
+                            </div>
+                            <div id="iconPickerGrid" class="icon-picker-grid">
+                            </div>
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label mb-1">Description</label>
+                            <input type="text" class="form-control" id="appDescription" placeholder="Courte description de l'application">
+                        </div>
+
+                        <!-- ── Réseau ── -->
+                        <div class="card border mb-3">
+                            <div class="card-header py-2 bg-light">
+                                <i class="bi bi-hdd-network me-2"></i><strong>Configuration réseau</strong>
+                            </div>
+                            <div class="card-body py-3">
+                                <!-- Mode ports (création) -->
+                                <div id="simplePortsSection">
+                                    <div class="form-check form-check-inline mb-3">
+                                        <input class="form-check-input" type="checkbox" id="appCustomHost" onchange="toggleCustomHost()">
+                                        <label class="form-check-label small" for="appCustomHost">Serveur différent du Hub</label>
                                     </div>
-                                    <div class="col-md-6">
-                                        <label class="form-label">Icône Bootstrap</label>
-                                        <div class="input-group">
-                                            <span class="input-group-text"><i id="iconPreview" class="bi bi-app"></i></span>
-                                            <input type="text" class="form-control" id="appIcon" value="bi-app" onchange="updateIconPreview()">
-                                            <button type="button" class="btn btn-outline-secondary" onclick="toggleIconPicker()" title="Choisir une icône">
-                                                <i class="bi bi-grid-3x3-gap"></i>
-                                            </button>
+                                    <div class="mb-3 d-none" id="customHostGroup">
+                                        <div class="input-group input-group-sm">
+                                            <span class="input-group-text"><i class="bi bi-hdd-network"></i></span>
+                                            <input type="text" class="form-control" id="appCustomHostValue" placeholder="192.168.1.100 ou mon-serveur.local">
                                         </div>
-                                        <!-- Grille de sélection d'icônes -->
-                                        <div id="iconPickerContainer" class="icon-picker-container d-none mt-2">
-                                            <div class="icon-picker-header">
-                                                <input type="text" class="form-control form-control-sm" id="iconSearchInput" placeholder="Rechercher une icône..." oninput="filterIcons()">
+                                    </div>
+                                    <div class="row g-2">
+                                        <div class="col-md-6">
+                                            <div class="input-group">
+                                                <span class="input-group-text"><i class="bi bi-hdd-rack me-1"></i> API *</span>
+                                                <input type="number" class="form-control" id="appApiPort" min="1" max="65535" required placeholder="8080" oninput="updateUrlPreview()">
                                             </div>
-                                            <div id="iconPickerGrid" class="icon-picker-grid">
-                                                <!-- Icons loaded dynamically -->
+                                        </div>
+                                        <div class="col-md-6">
+                                            <div class="input-group">
+                                                <span class="input-group-text"><i class="bi bi-window me-1"></i> Front</span>
+                                                <input type="number" class="form-control" id="appFrontendPort" min="1" max="65535" placeholder="3000" oninput="updateUrlPreview()">
+                                                <button type="button" class="btn btn-outline-secondary" id="btnFrontendHttps" onclick="toggleFrontendHttps()" title="HTTP (cliquer pour HTTPS)">
+                                                    <i class="bi bi-unlock" id="httpsIcon"></i>
+                                                </button>
+                                            </div>
+                                            <input type="hidden" id="appFrontendHttps" value="false">
+                                        </div>
+                                    </div>
+                                    <div id="urlPreview" class="mt-2 px-2 py-1 bg-light rounded small text-muted">
+                                        <span id="previewApiUrl"></span>
+                                        <span id="previewFrontendUrl" class="ms-3"></span>
+                                    </div>
+                                </div>
+
+                                <!-- Mode URLs directes (édition) -->
+                                <div id="advancedUrlsSection" class="d-none">
+                                    <div class="row g-2">
+                                        <div class="col-12">
+                                            <div class="input-group">
+                                                <span class="input-group-text"><i class="bi bi-hdd-rack me-1"></i> API *</span>
+                                                <input type="url" class="form-control" id="appApiUrl" placeholder="http://localhost:8080">
+                                            </div>
+                                        </div>
+                                        <div class="col-md-6">
+                                            <div class="input-group">
+                                                <span class="input-group-text"><i class="bi bi-window me-1"></i> Front</span>
+                                                <input type="url" class="form-control" id="appFrontendUrl" placeholder="http://localhost:3000">
+                                            </div>
+                                        </div>
+                                        <div class="col-md-6">
+                                            <div class="input-group">
+                                                <span class="input-group-text"><i class="bi bi-arrow-return-right me-1"></i> Callback</span>
+                                                <input type="url" class="form-control" id="appCallbackUrl" placeholder="/callback">
                                             </div>
                                         </div>
                                     </div>
-                                    <div class="col-md-6">
-                                        <label class="form-label">Couleur</label>
-                                        <input type="color" class="form-control form-control-color w-100" id="appColor" value="#0d6efd">
-                                    </div>
-                                </div>
-                            </div>
-                            
-                            <!-- Section simplifiée avec ports -->
-                            <div class="col-12" id="simplePortsSection">
-                                <hr>
-                                <h6 class="text-muted mb-3"><i class="bi bi-hdd-network me-2"></i>Configuration réseau</h6>
-                                <div class="form-check mb-3">
-                                    <input class="form-check-input" type="checkbox" id="appCustomHost" onchange="toggleCustomHost()">
-                                    <label class="form-check-label" for="appCustomHost">
-                                        Serveur différent du Hub
-                                    </label>
-                                </div>
-                                <div class="mb-3 d-none" id="customHostGroup">
-                                    <label class="form-label">Adresse du serveur</label>
-                                    <input type="text" class="form-control" id="appCustomHostValue" placeholder="192.168.1.100 ou mon-serveur.local">
-                                    <small class="text-muted">IP ou hostname du serveur hébergeant l'application</small>
-                                </div>
-                                <div class="row">
-                                    <div class="col-md-6">
-                                        <label class="form-label">Port API *</label>
-                                        <div class="input-group">
-                                            <span class="input-group-text"><i class="bi bi-hdd-rack"></i></span>
-                                            <input type="number" class="form-control" id="appApiPort" min="1" max="65535" required placeholder="8080">
-                                        </div>
-                                    </div>
-                                    <div class="col-md-6">
-                                        <label class="form-label">Port Frontend</label>
-                                        <div class="input-group">
-                                            <span class="input-group-text"><i class="bi bi-window"></i></span>
-                                            <input type="number" class="form-control" id="appFrontendPort" min="1" max="65535" placeholder="3000">
-                                        </div>
-                                        <div class="form-check mt-2">
-                                            <input class="form-check-input" type="checkbox" id="appFrontendHttps" onchange="updateUrlPreview()">
-                                            <label class="form-check-label small" for="appFrontendHttps">Frontend en HTTPS</label>
-                                        </div>
-                                    </div>
-                                </div>
-                                <div id="urlPreview" class="mt-3 p-2 bg-light rounded small">
-                                    <strong>URLs générées :</strong>
-                                    <div id="previewApiUrl" class="text-muted"></div>
-                                    <div id="previewFrontendUrl" class="text-muted"></div>
-                                </div>
-                            </div>
-                            
-                            <!-- Section avancée avec URLs (pour édition) -->
-                            <div class="col-12 d-none" id="advancedUrlsSection">
-                                <hr>
-                                <h6 class="text-muted mb-3"><i class="bi bi-link-45deg me-2"></i>URLs (mode avancé)</h6>
-                                <div class="mb-3">
-                                    <label class="form-label">URL API Backend *</label>
-                                    <input type="url" class="form-control" id="appApiUrl" placeholder="http://localhost:8080">
-                                </div>
-                                <div class="mb-3">
-                                    <label class="form-label">URL Frontend</label>
-                                    <input type="url" class="form-control" id="appFrontendUrl" placeholder="http://localhost:3000">
-                                </div>
-                                <div class="mb-3">
-                                    <label class="form-label">URL Callback</label>
-                                    <input type="url" class="form-control" id="appCallbackUrl" placeholder="http://localhost:3000/callback">
-                                </div>
-                            </div>
-                            
-                            <!-- Options -->
-                            <div class="col-12" id="advancedOptionsSection">
-                                <div class="row">
-                                    <div class="col-md-6">
-                                        <div class="form-check form-switch">
-                                            <input class="form-check-input" type="checkbox" id="appActive" checked>
-                                            <label class="form-check-label">Active</label>
-                                        </div>
-                                    </div>
-                                    <div class="col-md-6">
-                                        <div class="form-check form-switch">
-                                            <input class="form-check-input" type="checkbox" id="appRequiresAuth" checked>
-                                            <label class="form-check-label">Auth requise</label>
-                                        </div>
-                                    </div>
-                                </div>
-                                <div class="row mt-2">
-                                    <div class="col-12">
-                                        <div class="form-check form-switch">
-                                            <input class="form-check-input" type="checkbox" id="appIsSharedService">
-                                            <label class="form-check-label">
-                                                <i class="bi bi-share text-primary me-1"></i>Service partagé (M2M)
-                                            </label>
-                                        </div>
-                                        <small class="text-muted ms-4">Si activé, cette API sera accessible par tous les Service Accounts</small>
-                                    </div>
-                                </div>
-                            </div>
-                            
-                            <!-- Info M2M automatique (en création uniquement) -->
-                            <div class="col-12" id="m2mInfoSection">
-                                <div class="alert alert-info mb-0">
-                                    <i class="bi bi-robot me-2"></i>
-                                    <strong>Service Account M2M :</strong> créé automatiquement lorsque l'application s'enregistre au démarrage.
                                 </div>
                             </div>
                         </div>
+
+                        <!-- ── Options ── -->
+                        <div class="d-flex flex-wrap gap-3 mb-3" id="advancedOptionsSection">
+                            <div class="form-check form-switch">
+                                <input class="form-check-input" type="checkbox" id="appActive" checked>
+                                <label class="form-check-label" for="appActive">Active</label>
+                            </div>
+                            <div class="form-check form-switch">
+                                <input class="form-check-input" type="checkbox" id="appRequiresAuth" checked>
+                                <label class="form-check-label" for="appRequiresAuth">Auth requise</label>
+                            </div>
+                            <div class="form-check form-switch">
+                                <input class="form-check-input" type="checkbox" id="appIsSharedService">
+                                <label class="form-check-label" for="appIsSharedService">
+                                    <i class="bi bi-share text-primary me-1"></i>Service partagé (M2M)
+                                </label>
+                            </div>
+                        </div>
+
+                        <!-- Info M2M (création uniquement) -->
+                        <div class="alert alert-info py-2 mb-0 small" id="m2mInfoSection">
+                            <i class="bi bi-robot me-1"></i>
+                            Le <strong>Service Account M2M</strong> sera créé automatiquement lorsque l'application s'enregistrera au démarrage.
+                        </div>
                     </div>
-                    <div class="modal-footer">
-                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuler</button>
-                        <button type="submit" class="btn btn-primary" id="appSubmitBtn">
+                    <div class="modal-footer pt-0">
+                        <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Annuler</button>
+                        <button type="submit" class="btn btn-primary btn-sm" id="appSubmitBtn">
                             <i class="bi bi-check-lg me-1"></i>Enregistrer
                         </button>
                     </div>

@@ -6,6 +6,7 @@ from typing import List, Optional, Union, Dict
 import re
 import asyncio
 import ipaddress
+import time
 
 from pathlib import Path
 import logging
@@ -35,14 +36,18 @@ router = APIRouter(prefix="/api/apps", tags=["Applications"])
 settings = get_settings()
 logger = logging.getLogger(__name__)
 
+# Cache TTL pour get_docker_status_map (évite les appels Docker redondants)
+_docker_status_cache: Dict[str, any] = {"data": {}, "timestamp": 0.0}
+_DOCKER_STATUS_CACHE_TTL = 5.0  # secondes
+
 
 def get_docker_status_map() -> Dict[str, str]:
     """
     Récupère le statut Docker de tous les conteneurs et crée une map port -> status.
     Permet de déterminer si une application est en maintenance (conteneur arrêté).
     
-    Utilise directement le client Docker pour inclure les conteneurs arrêtés
-    dont les ports ne sont plus visibles.
+    Utilise un cache TTL de 5s pour éviter les appels Docker redondants
+    lors de requêtes simultanées.
     
     Note: Le SDK Docker est synchrone/bloquant, donc cette fonction doit être
     appelée via run_in_executor() depuis un contexte async.
@@ -50,6 +55,13 @@ def get_docker_status_map() -> Dict[str, str]:
     Returns:
         Dict[str, str]: Mapping port -> status ('running', 'exited', etc.)
     """
+    global _docker_status_cache
+    
+    # Vérifier le cache
+    now = time.monotonic()
+    if now - _docker_status_cache["timestamp"] < _DOCKER_STATUS_CACHE_TTL:
+        return _docker_status_cache["data"]
+    
     port_status_map = {}
     
     if not docker_scanner.is_available:
@@ -94,6 +106,9 @@ def get_docker_status_map() -> Dict[str, str]:
                             
     except Exception as e:
         logger.warning(f"Impossible de récupérer le statut Docker: {e}")
+    
+    # Mettre à jour le cache
+    _docker_status_cache = {"data": port_status_map, "timestamp": time.monotonic()}
     
     return port_status_map
 
@@ -469,7 +484,9 @@ async def get_apps_status(
     result = await db.execute(select(Application))
     apps = result.scalars().all()
     
-    async def check_app(app: Application) -> dict:
+    loop = asyncio.get_running_loop()
+    
+    async def check_app(app: Application, client: httpx.AsyncClient) -> dict:
         """Vérifie la connectivité d'une application"""
         status_data = {
             "id": app.id,
@@ -489,26 +506,24 @@ async def get_apps_status(
             return status_data
         
         try:
-            start = asyncio.get_event_loop().time()
-            # verify=False pour accepter les certificats auto-signés (PKI interne)
-            async with httpx.AsyncClient(timeout=5.0, verify=False) as client:
-                # Essayer d'abord /health, puis / en fallback
-                for endpoint in ["/health", "/api/health", "/"]:
-                    try:
-                        url = app.api_url.rstrip('/') + endpoint
-                        response = await client.get(url)
-                        elapsed = (asyncio.get_event_loop().time() - start) * 1000
-                        
-                        if response.status_code < 500:
-                            status_data["status"] = "online"
-                            status_data["response_time_ms"] = round(elapsed, 2)
-                            return status_data
-                    except Exception:
-                        continue
-                
-                # Aucun endpoint n'a répondu correctement
-                status_data["status"] = "offline"
-                status_data["error"] = "Aucun endpoint accessible"
+            start = loop.time()
+            # Essayer /api/health d'abord, puis / en fallback
+            for endpoint in ["/api/health", "/"]:
+                try:
+                    url = app.api_url.rstrip('/') + endpoint
+                    response = await client.get(url)
+                    elapsed = (loop.time() - start) * 1000
+                    
+                    if response.status_code < 500:
+                        status_data["status"] = "online"
+                        status_data["response_time_ms"] = round(elapsed, 2)
+                        return status_data
+                except Exception:
+                    continue
+            
+            # Aucun endpoint n'a répondu correctement
+            status_data["status"] = "offline"
+            status_data["error"] = "Aucun endpoint accessible"
         except httpx.TimeoutException:
             status_data["status"] = "offline"
             status_data["error"] = "Timeout (5s)"
@@ -521,8 +536,10 @@ async def get_apps_status(
         
         return status_data
     
-    # Vérifier toutes les apps en parallèle
-    status_results = await asyncio.gather(*[check_app(app) for app in apps])
+    # Vérifier toutes les apps en parallèle avec un seul client httpx réutilisé
+    # verify=False pour accepter les certificats auto-signés (PKI interne)
+    async with httpx.AsyncClient(timeout=5.0, verify=False) as client:
+        status_results = await asyncio.gather(*[check_app(app, client) for app in apps])
     
     # Statistiques globales
     online_count = sum(1 for s in status_results if s["status"] == "online")
@@ -581,11 +598,14 @@ async def get_docker_stats(
                 )
                 
                 # Calcul CPU %
-                cpu_delta = raw_stats['cpu_stats']['cpu_usage']['total_usage'] - \
-                           raw_stats['precpu_stats']['cpu_usage']['total_usage']
-                system_delta = raw_stats['cpu_stats']['system_cpu_usage'] - \
-                              raw_stats['precpu_stats']['system_cpu_usage']
-                num_cpus = raw_stats['cpu_stats'].get('online_cpus', 1)
+                cpu_stats = raw_stats.get('cpu_stats', {})
+                precpu_stats = raw_stats.get('precpu_stats', {})
+                cpu_usage = cpu_stats.get('cpu_usage', {})
+                precpu_usage = precpu_stats.get('cpu_usage', {})
+                
+                cpu_delta = cpu_usage.get('total_usage', 0) - precpu_usage.get('total_usage', 0)
+                system_delta = cpu_stats.get('system_cpu_usage', 0) - precpu_stats.get('system_cpu_usage', 0)
+                num_cpus = cpu_stats.get('online_cpus', 1)
                 cpu_percent = 0.0
                 if system_delta > 0:
                     cpu_percent = round((cpu_delta / system_delta) * num_cpus * 100, 1)
@@ -673,9 +693,13 @@ async def list_apps(
     user = user_result.scalar_one()
     user_roles_map = {ar.application.slug: ar.role for ar in user.app_roles}
     
-    # Récupérer le statut Docker de tous les conteneurs (appel bloquant → executor)
-    loop = asyncio.get_running_loop()
-    port_status_map = await loop.run_in_executor(None, get_docker_status_map)
+    # Récupérer le statut Docker uniquement pour les admins (appel bloquant → executor)
+    # Les utilisateurs non-admin n'ont pas besoin du statut Docker détaillé
+    if current_user.is_admin:
+        loop = asyncio.get_running_loop()
+        port_status_map = await loop.run_in_executor(None, get_docker_status_map)
+    else:
+        port_status_map = {}
     
     if current_user.is_admin:
         # Tri alphabétique par nom pour un ordre stable et prévisible
@@ -1847,9 +1871,9 @@ async def toggle_app_active(
     await log_action(
         db=db,
         action="app_toggled",
-        user=current_user,
+        user_id=current_user.id,
         details=f"Application '{app.name}' {status_label}",
-        app_slug=app.slug
+        target=app.slug
     )
     
     notify_event("apps_updated", {

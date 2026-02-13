@@ -12,7 +12,14 @@ let beaconToken = null;  // Token HMAC éphémère pour sécuriser beacon-logout
 const openedAppWindows = new Map();
 
 // Bootstrap instances
-let adminModal, appFormModal, userFormModal, serviceAccountFormModal, saCredentialsModal, toast;
+let appFormModal, userFormModal, serviceAccountFormModal, saCredentialsModal, toast;
+
+// Debounce pour les événements SSE apps_updated (évite les cascades de requêtes)
+let _sseAppsUpdateTimer = null;
+const SSE_DEBOUNCE_DELAY = 800; // ms
+
+// Tracking des tooltips Bootstrap pour éviter les fuites mémoire
+let _activeTooltips = [];
 
 // ===== Server-Sent Events (SSE) pour mises à jour temps réel =====
 let eventSource = null;
@@ -114,16 +121,16 @@ async function refreshAfterReconnect() {
         // Rafraîchir selon la page courante
         switch (currentPage) {
             case 'users':
-                loadUsers();
+                loadUsersPageData();
                 break;
             case 'service-accounts':
-                loadServiceAccounts();
+                loadAdminData();
                 break;
             case 'audit':
                 loadAuditPageOverview();
                 break;
             case 'apps-admin':
-                loadAllApps();
+                loadAdminData();
                 break;
         }
         
@@ -203,41 +210,28 @@ function handleSSEEvent(data) {
             const appName = data.data?.app_name || 'Application';
             showToast('Mise à jour', `${appName} ${appAction}`, toastType);
             
-            // Rafraîchir le token AVANT de mettre à jour l'UI si une app a été créée ou modifiée
-            // Cela garantit que le token contient les claims à jour (liste des apps)
-            // AVANT que l'utilisateur puisse cliquer sur la nouvelle app dans l'UI
-            const needsTokenRefresh = (data.data?.action === 'created' || data.data?.action === 'updated');
-            
-            if (needsTokenRefresh && !api._refreshPromise) {
-                // Attendre le refresh token AVANT de charger les apps dans l'UI
-                refreshTokenAfterAppChange(null, true).then(() => {
+            // Debounce : regrouper les mises à jour SSE rapprochées (ex: import batch)
+            // pour éviter des dizaines de requêtes API simultanées
+            if (_sseAppsUpdateTimer) clearTimeout(_sseAppsUpdateTimer);
+            _sseAppsUpdateTimer = setTimeout(() => {
+                _sseAppsUpdateTimer = null;
+                
+                const needsTokenRefresh = (data.data?.action === 'created' || data.data?.action === 'updated');
+                
+                const refreshUI = () => {
                     if (currentPage === 'apps-admin') {
-                        loadAllApps().then(() => {
-                            setTimeout(() => refreshAppsStatus(), 500);
-                        });
+                        loadAdminData();
                     } else {
                         loadApps();
                     }
-                }).catch(() => {
-                    // En cas d'échec du refresh, charger quand même l'UI
-                    if (currentPage === 'apps-admin') {
-                        loadAllApps().then(() => {
-                            setTimeout(() => refreshAppsStatus(), 500);
-                        });
-                    } else {
-                        loadApps();
-                    }
-                });
-            } else {
-                // Pas besoin de refresh token (suppression, etc.) — charger l'UI directement
-                if (currentPage === 'apps-admin') {
-                    loadAllApps().then(() => {
-                        setTimeout(() => refreshAppsStatus(), 500);
-                    });
+                };
+                
+                if (needsTokenRefresh && !api._refreshPromise) {
+                    refreshTokenAfterAppChange(null, true).then(refreshUI).catch(refreshUI);
                 } else {
-                    loadApps();
+                    refreshUI();
                 }
-            }
+            }, SSE_DEBOUNCE_DELAY);
             break;
         }
             
@@ -389,41 +383,36 @@ function clearPendingCallback() {
 // Initialize on DOM load
 document.addEventListener('DOMContentLoaded', () => {
     // Initialize Bootstrap components
-    adminModal = new bootstrap.Modal(document.getElementById('adminModal'));
     appFormModal = new bootstrap.Modal(document.getElementById('appFormModal'));
     userFormModal = new bootstrap.Modal(document.getElementById('userFormModal'));
     serviceAccountFormModal = new bootstrap.Modal(document.getElementById('serviceAccountFormModal'));
     saCredentialsModal = new bootstrap.Modal(document.getElementById('saCredentialsModal'));
     toast = new bootstrap.Toast(document.getElementById('toast'));
 
-    // Démarrer/arrêter le rafraîchissement de connectivité selon l'état de la modal admin
-    const adminModalEl = document.getElementById('adminModal');
-    adminModalEl.addEventListener('shown.bs.modal', () => {
-        // La modal admin s'ouvre - on est par défaut sur l'onglet apps
-        currentPage = 'apps-admin';
-        startConnectivityRefresh();
-    });
-    adminModalEl.addEventListener('hidden.bs.modal', () => {
-        // La modal admin se ferme - arrêter le rafraîchissement
-        currentPage = 'dashboard';
-        stopConnectivityRefresh();
-    });
-    
-    // Gérer le changement d'onglet dans la modal admin
-    const adminTabsEl = document.getElementById('adminTabs');
-    if (adminTabsEl) {
-        adminTabsEl.addEventListener('shown.bs.tab', (event) => {
+    // Mettre à jour le preview quand la couleur change
+    const appColorInput = document.getElementById('appColor');
+    if (appColorInput) {
+        appColorInput.addEventListener('input', updateAppFormPreview);
+    }
+
+    // Gérer le changement d'onglet dans la page admin
+    const adminPageTabsEl = document.getElementById('adminPageTabs');
+    if (adminPageTabsEl) {
+        adminPageTabsEl.addEventListener('shown.bs.tab', (event) => {
             const targetId = event.target.getAttribute('data-bs-target');
             if (targetId === '#tabApps') {
                 currentPage = 'apps-admin';
+                refreshAppsStatus();
+                refreshDockerStats();
                 startConnectivityRefresh();
             } else {
-                // Autre onglet (Approbations, Service Accounts)
+                // Autre onglet (Sauvegardes, Service Accounts)
                 stopConnectivityRefresh();
-                if (targetId === '#tabPendingApps') {
-                    currentPage = 'pending-apps';
-                } else if (targetId === '#tabServiceAccounts') {
+                if (targetId === '#tabServiceAccounts') {
                     currentPage = 'service-accounts';
+                    refreshServiceAccountsStatus();
+                } else if (targetId === '#tabAppBackups') {
+                    currentPage = 'app-backups';
                 }
             }
         });
@@ -682,6 +671,11 @@ function showPage(page) {
     document.getElementById('auditSection').classList.add('d-none');
     document.getElementById('usersSection').classList.add('d-none');
     document.getElementById('discoverySection').classList.add('d-none');
+    document.getElementById('adminSection').classList.add('d-none');
+    document.getElementById('cloneMigrateSection').classList.add('d-none');
+    
+    // Arrêter les timers admin si on quitte la page admin
+    stopConnectivityRefresh();
     
     // Réinitialiser les styles de navigation
     document.querySelectorAll('#adminNavigation .nav-link').forEach(link => {
@@ -727,6 +721,28 @@ function showPage(page) {
             document.getElementById('discoverySection').classList.remove('d-none');
             document.getElementById('navDiscovery')?.classList.add('active');
             loadDiscoveryPage();
+            break;
+        case 'admin':
+            if (!currentUser?.is_admin) {
+                showToast('Accès refusé', 'Vous devez être administrateur', 'danger');
+                return;
+            }
+            document.getElementById('adminSection').classList.remove('d-none');
+            currentPage = 'apps-admin';
+            loadAdminData();
+            loadPendingAppsCount();
+            refreshAppsStatus();
+            refreshDockerStats();
+            startConnectivityRefresh();
+            break;
+        case 'clone-migrate':
+            if (!currentUser?.is_admin) {
+                showToast('Accès refusé', 'Vous devez être administrateur', 'danger');
+                return;
+            }
+            document.getElementById('cloneMigrateSection').classList.remove('d-none');
+            currentPage = 'clone-migrate';
+            loadBackupInfo();
             break;
     }
 }
@@ -776,6 +792,8 @@ function showLoginScreen() {
     document.getElementById('auditSection').classList.add('d-none');
     document.getElementById('usersSection').classList.add('d-none');
     document.getElementById('discoverySection').classList.add('d-none');
+    document.getElementById('adminSection').classList.add('d-none');
+    document.getElementById('cloneMigrateSection').classList.add('d-none');
     document.getElementById('userInfo').classList.add('d-none');
     document.getElementById('logoutBtn').classList.add('d-none');
     document.getElementById('changePasswordBtn').classList.add('d-none');
@@ -1199,21 +1217,6 @@ function closeAllAppWindows() {
 }
 
 // ===== Admin Panel =====
-
-async function showAdminPanel() {
-    try {
-        await loadAdminData();
-        await loadPendingAppsCount();  // Charger le compteur d'apps en attente
-        adminModal.show();
-    } catch (error) {
-        console.error('Erreur chargement admin:', error);
-        // Si session expirée, l'événement hub:sessionExpired sera déclenché automatiquement
-        // On n'a plus besoin de gérer ça ici manuellement
-        if (error.message !== 'Session expirée') {
-            showToast('Erreur', 'Impossible de charger les données admin', 'danger');
-        }
-    }
-}
 
 async function loadAdminData() {
     console.log('loadAdminData: Chargement des données admin...');
@@ -1853,9 +1856,9 @@ function renderAppsTable(apps) {
         </table>
     `;
     
-    // Lancer automatiquement le test de connectivité et les stats Docker
-    refreshAppsStatus();
-    refreshDockerStats();
+    // Note: Les rafraîchissements de connectivité et stats Docker sont gérés
+    // par startConnectivityRefresh() déclenché par l'événement shown.bs.modal
+    // Ne pas les relancer ici pour éviter des appels API doublonnés
 }
 
 /**
@@ -1955,7 +1958,7 @@ async function showAddAppForm() {
             hubHost = config.host;
         } catch (e) {
             console.error('Impossible de récupérer le host du Hub:', e);
-            hubHost = window.location.hostname;  // Fallback
+            hubHost = window.location.hostname;
         }
     }
     
@@ -1972,30 +1975,27 @@ async function showAddAppForm() {
     document.getElementById('customHostGroup').classList.add('d-none');
     document.getElementById('appSlug').readOnly = true;
     document.getElementById('slugHint').textContent = 'Généré automatiquement';
-    const httpsCheckboxAdd = document.getElementById('appFrontendHttps');
-    if (httpsCheckboxAdd) httpsCheckboxAdd.checked = false;
+    document.getElementById('appFrontendHttps').value = 'false';
+    updateFrontendHttpsUI();
     
-    // Afficher les champs de création
-    document.getElementById('optionalFieldsSection').classList.remove('d-none');
+    // Afficher les éléments de création
     document.getElementById('advancedOptionsSection').classList.remove('d-none');
     document.getElementById('m2mInfoSection').classList.remove('d-none');
     
-    // Afficher mode simplifié (ports), masquer mode avancé (URLs)
+    // Mode simplifié (ports)
     document.getElementById('simplePortsSection').classList.remove('d-none');
     document.getElementById('advancedUrlsSection').classList.add('d-none');
     document.getElementById('appApiPort').required = true;
     document.getElementById('appApiUrl').required = false;
     
-    // Bouton
     document.getElementById('appSubmitBtn').innerHTML = '<i class="bi bi-check-lg me-1"></i>Enregistrer';
     
-    // Réinitialiser et masquer le picker d'icônes
     hideIconPicker();
     document.getElementById('iconSearchInput').value = '';
     
     updateIconPreview();
+    updateAppFormPreview();
     updateUrlPreview();
-    adminModal.hide();
     appFormModal.show();
 }
 
@@ -2036,7 +2036,14 @@ async function showDockerDetails(slug) {
         document.body.appendChild(modalEl);
     }
     
-    const modal = new bootstrap.Modal(modalEl);
+    const modal = bootstrap.Modal.getOrCreateInstance(modalEl);
+    // Réinitialiser le contenu avec le spinner de chargement
+    document.getElementById('dockerInfoContent').innerHTML = `
+        <div class="text-center py-4">
+            <div class="spinner-border text-primary" role="status"></div>
+            <p class="mt-2 text-muted">Chargement...</p>
+        </div>
+    `;
     modal.show();
     
     const content = document.getElementById('dockerInfoContent');
@@ -2248,26 +2255,18 @@ async function editApp(id) {
     const app = allApps.find(a => a.id === id);
     if (!app) {
         showToast('Erreur', 'Application non trouvée. Veuillez rafraîchir la page.', 'danger');
-        // Tenter de recharger les données
-        try {
-            await loadAdminData();
-        } catch (e) {
-            console.error('Impossible de recharger les apps:', e);
-        }
+        try { await loadAdminData(); } catch (e) { console.error('Impossible de recharger les apps:', e); }
         return;
     }
 
-    // Réinitialiser le formulaire avant de remplir les valeurs
     document.getElementById('appForm').reset();
     
     document.getElementById('appFormTitle').textContent = 'Modifier l\'Application';
     document.getElementById('appId').value = app.id;
     document.getElementById('appMode').value = 'edit';
     
-    // Afficher les champs d'édition
-    document.getElementById('optionalFieldsSection').classList.remove('d-none');
     document.getElementById('advancedOptionsSection').classList.remove('d-none');
-    document.getElementById('m2mInfoSection').classList.add('d-none');  // Masquer l'info M2M en édition
+    document.getElementById('m2mInfoSection').classList.add('d-none');
     
     document.getElementById('appName').value = app.name;
     document.getElementById('appName').required = true;
@@ -2284,22 +2283,20 @@ async function editApp(id) {
     document.getElementById('appRequiresAuth').checked = app.requires_auth;
     document.getElementById('appIsSharedService').checked = app.is_shared_service || false;
     
-    // En mode édition, afficher les URLs directes
+    // Mode édition : URLs directes
     document.getElementById('simplePortsSection').classList.add('d-none');
     document.getElementById('advancedUrlsSection').classList.remove('d-none');
     document.getElementById('appApiPort').required = false;
     document.getElementById('appApiUrl').required = true;
     
-    // Bouton en mode édition
     document.getElementById('appSubmitBtn').innerHTML = '<i class="bi bi-check-lg me-1"></i>Enregistrer';
     
-    // Réinitialiser et masquer le picker d'icônes
     hideIconPicker();
     document.getElementById('iconSearchInput').value = '';
     
     updateIconPreview();
+    updateAppFormPreview();
     
-    adminModal.hide();
     appFormModal.show();
 }
 
@@ -2314,10 +2311,8 @@ function updateUrlPreview() {
     const frontendPort = document.getElementById('appFrontendPort').value;
     const customHost = document.getElementById('appCustomHost').checked;
     const customHostValue = document.getElementById('appCustomHostValue').value;
-    const frontendHttpsEl = document.getElementById('appFrontendHttps');
-    const frontendHttps = frontendHttpsEl ? frontendHttpsEl.checked : false;
+    const frontendHttps = document.getElementById('appFrontendHttps').value === 'true';
     
-    // Utiliser le hub host (chargé depuis l'API) ou le custom host
     const host = customHost && customHostValue ? customHostValue : (hubHost || 'chargement...');
     
     const previewApi = document.getElementById('previewApiUrl');
@@ -2330,11 +2325,45 @@ function updateUrlPreview() {
     }
     
     if (frontendPort) {
-        const frontendProtocol = frontendHttps ? 'https' : 'http';
-        previewFrontend.innerHTML = `<i class="bi bi-window me-1"></i>Frontend: <code>${frontendProtocol}://${host}:${frontendPort}</code>`;
+        const protocol = frontendHttps ? 'https' : 'http';
+        previewFrontend.innerHTML = `<i class="bi bi-window me-1"></i>Front: <code>${protocol}://${host}:${frontendPort}</code>`;
     } else {
-        previewFrontend.innerHTML = '<i class="bi bi-window me-1"></i>Frontend: <span class="text-muted">Non défini</span>';
+        previewFrontend.innerHTML = '';
     }
+}
+
+function toggleFrontendHttps() {
+    const hidden = document.getElementById('appFrontendHttps');
+    hidden.value = hidden.value === 'true' ? 'false' : 'true';
+    updateFrontendHttpsUI();
+    updateUrlPreview();
+}
+
+function updateFrontendHttpsUI() {
+    const isHttps = document.getElementById('appFrontendHttps').value === 'true';
+    const icon = document.getElementById('httpsIcon');
+    const btn = document.getElementById('btnFrontendHttps');
+    if (!icon || !btn) return;
+    if (isHttps) {
+        icon.className = 'bi bi-lock-fill';
+        btn.classList.remove('btn-outline-secondary');
+        btn.classList.add('btn-success');
+        btn.title = 'HTTPS activé';
+    } else {
+        icon.className = 'bi bi-unlock';
+        btn.classList.remove('btn-success');
+        btn.classList.add('btn-outline-secondary');
+        btn.title = 'HTTP (cliquer pour HTTPS)';
+    }
+}
+
+function updateAppFormPreview() {
+    const icon = document.getElementById('appIcon').value;
+    const color = document.getElementById('appColor').value;
+    const preview = document.getElementById('appFormPreview');
+    if (!preview) return;
+    preview.style.background = color;
+    preview.querySelector('i').className = `bi ${icon}`;
 }
 
 async function handleSaveApp(event) {
@@ -2376,7 +2405,6 @@ async function handleSaveApp(event) {
             
             appFormModal.hide();
             await loadAdminData();
-            adminModal.show();
         } else {
             // Mode création - utiliser les ports (schéma simplifié)
             // Le M2M sera créé automatiquement quand l'app s'auto-enregistre
@@ -2391,7 +2419,7 @@ async function handleSaveApp(event) {
                 api_port: parseInt(document.getElementById('appApiPort').value),
                 frontend_port: document.getElementById('appFrontendPort').value ? 
                     parseInt(document.getElementById('appFrontendPort').value) : null,
-                frontend_https: document.getElementById('appFrontendHttps')?.checked || false,
+                frontend_https: document.getElementById('appFrontendHttps').value === 'true',
                 custom_host: customHost ? document.getElementById('appCustomHostValue').value : null,
                 requires_auth: document.getElementById('appRequiresAuth').checked,
                 is_shared_service: isSharedService,
@@ -2407,7 +2435,6 @@ async function handleSaveApp(event) {
             await refreshTokenAfterAppChange('création');
             
             await loadAdminData();
-            adminModal.show();
         }
         loadApps(); // Refresh dashboard
     } catch (error) {
@@ -2431,8 +2458,8 @@ async function deleteApp(id, name) {
 function updateIconPreview() {
     const icon = document.getElementById('appIcon').value;
     document.getElementById('iconPreview').className = `bi ${icon}`;
-    // Met à jour la sélection dans le picker si ouvert
     updateIconPickerSelection();
+    updateAppFormPreview();
 }
 
 // ===== Icon Picker =====
@@ -2650,7 +2677,6 @@ function showAddUserForm() {
     const mustChangePwdEl = document.getElementById('userMustChangePassword');
     if (mustChangePwdEl) mustChangePwdEl.checked = false;
     loadUserAppsCheckboxes([]);
-    adminModal.hide();
     userFormModal.show();
 }
 
@@ -2680,7 +2706,6 @@ async function editUser(id) {
     const userAppRoles = user.app_roles || [];
     loadUserAppsWithRoles(userAppRoles);
     
-    adminModal.hide();
     userFormModal.show();
 }
 
@@ -3134,7 +3159,6 @@ function showAddServiceAccountForm() {
     document.getElementById('saId').value = '';
     document.getElementById('saActive').checked = true;
     loadSaAppsCheckboxes([]);
-    adminModal.hide();
     serviceAccountFormModal.show();
 }
 
@@ -3151,7 +3175,6 @@ async function editServiceAccount(id) {
     const saAppIds = sa.applications?.map(a => a.id) || [];
     loadSaAppsCheckboxes(saAppIds);
     
-    adminModal.hide();
     serviceAccountFormModal.show();
 }
 
@@ -3205,9 +3228,17 @@ function loadSaAppsCheckboxes(selectedIds) {
     
     container.innerHTML = html;
     
-    // Initialiser les tooltips Bootstrap
+    // Disposer les anciens tooltips pour éviter les fuites mémoire
+    _activeTooltips.forEach(t => {
+        try { t.dispose(); } catch(e) {}
+    });
+    _activeTooltips = [];
+    
+    // Initialiser les nouveaux tooltips Bootstrap
     const tooltipTriggerList = container.querySelectorAll('[data-bs-toggle="tooltip"]');
-    tooltipTriggerList.forEach(el => new bootstrap.Tooltip(el));
+    tooltipTriggerList.forEach(el => {
+        _activeTooltips.push(new bootstrap.Tooltip(el));
+    });
 }
 
 async function handleSaveServiceAccount(event) {
@@ -3250,9 +3281,6 @@ async function handleSaveServiceAccount(event) {
         
         serviceAccountFormModal.hide();
         await loadAdminData();
-        if (id) {
-            adminModal.show();
-        }
     } catch (error) {
         showToast('Erreur', error.message, 'danger');
     }
@@ -3950,7 +3978,6 @@ async function showDockerScanModal() {
     document.getElementById('dockerShowAll').checked = false;
     updateDockerSelectionSummary();
     
-    adminModal.hide();
     dockerScanModal.show();
     
     // Lancer le scan
@@ -6461,9 +6488,8 @@ async function executeBackupImport() {
         
         if (result.success) {
             showToast('Import réussi', 'Les données ont été importées avec succès', 'success');
-            loadAllApps();
-            loadServiceAccounts();
-            loadUsers();
+            loadAdminData();
+            loadUsersPageData();
         } else {
             showToast('Import partiel', 'L\'import a terminé avec des erreurs', 'warning');
         }

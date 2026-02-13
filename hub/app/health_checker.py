@@ -116,8 +116,8 @@ async def check_app_health(app_slug: str, api_url: str) -> dict:
         
         # Client réutilisable avec configuration SSL depuis l'environnement
         client = _get_http_client()
-        # Essayer /api/health d'abord (standard des apps), puis /health, puis /
-        for endpoint in ["/api/health", "/health", "/"]:
+        # Essayer /api/health d'abord (standard des apps), puis / en fallback
+        for endpoint in ["/api/health", "/"]:
             try:
                 url = api_url.rstrip('/') + endpoint
                 response = await client.get(url)
