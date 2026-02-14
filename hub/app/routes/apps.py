@@ -6,14 +6,12 @@ from typing import List, Optional, Union, Dict
 import re
 import asyncio
 import ipaddress
-import time
 
 from pathlib import Path
 import logging
 
 from app.routes.events import notify_event, notify_stats_update
 from app.routes.app_backups import reassociate_orphan_backups
-from app.health_checker import get_app_health_status
 
 from app.database import get_db
 from app.models import Application, User, ServiceAccount, UserAppRole, ApprovalStatus, service_account_app_access, DEFAULT_ROLES
@@ -36,123 +34,7 @@ router = APIRouter(prefix="/api/apps", tags=["Applications"])
 settings = get_settings()
 logger = logging.getLogger(__name__)
 
-# Cache TTL pour get_docker_status_map (évite les appels Docker redondants)
-_docker_status_cache: Dict[str, any] = {"data": {}, "timestamp": 0.0}
-_DOCKER_STATUS_CACHE_TTL = 5.0  # secondes
 
-
-def get_docker_status_map() -> Dict[str, str]:
-    """
-    Récupère le statut Docker de tous les conteneurs et crée une map port -> status.
-    Permet de déterminer si une application est en maintenance (conteneur arrêté).
-    
-    Utilise un cache TTL de 5s pour éviter les appels Docker redondants
-    lors de requêtes simultanées.
-    
-    Note: Le SDK Docker est synchrone/bloquant, donc cette fonction doit être
-    appelée via run_in_executor() depuis un contexte async.
-    
-    Returns:
-        Dict[str, str]: Mapping port -> status ('running', 'exited', etc.)
-    """
-    global _docker_status_cache
-    
-    # Vérifier le cache
-    now = time.monotonic()
-    if now - _docker_status_cache["timestamp"] < _DOCKER_STATUS_CACHE_TTL:
-        return _docker_status_cache["data"]
-    
-    port_status_map = {}
-    
-    if not docker_scanner.is_available:
-        return port_status_map
-    
-    try:
-        # Accéder directement au client Docker pour tous les conteneurs
-        client = docker_scanner.client
-        if not client:
-            return port_status_map
-            
-        # Lister tous les conteneurs (y compris arrêtés)
-        containers = client.containers.list(all=True)
-        
-        for container in containers:
-            status = container.status  # 'running', 'exited', 'paused', etc.
-            
-            # Extraire les ports depuis les attributs du conteneur
-            # Fonctionne même pour les conteneurs arrêtés
-            attrs = container.attrs
-            
-            # Méthode 1: Ports depuis NetworkSettings (fonctionne pour running)
-            ports_data = container.ports or {}
-            for port_str, bindings in ports_data.items():
-                if bindings:
-                    for binding in bindings:
-                        host_port = binding.get('HostPort')
-                        if host_port:
-                            port_status_map[host_port] = status
-            
-            # Méthode 2: Ports depuis HostConfig (fonctionne pour tous)
-            host_config = attrs.get('HostConfig', {})
-            port_bindings = host_config.get('PortBindings') or {}
-            for port_str, bindings in port_bindings.items():
-                if bindings:
-                    for binding in bindings:
-                        host_port = binding.get('HostPort')
-                        if host_port:
-                            # Ne pas écraser si déjà présent (préférer la méthode 1)
-                            if host_port not in port_status_map:
-                                port_status_map[host_port] = status
-                            
-    except Exception as e:
-        logger.warning(f"Impossible de récupérer le statut Docker: {e}")
-    
-    # Mettre à jour le cache
-    _docker_status_cache = {"data": port_status_map, "timestamp": time.monotonic()}
-    
-    return port_status_map
-
-
-def get_docker_status_for_app(app: Application, port_status_map: Dict[str, str]) -> Optional[str]:
-    """
-    Détermine le statut Docker d'une application basé sur son URL API et frontend.
-    
-    Si l'un des deux services (API ou frontend) est arrêté, l'application est 
-    considérée comme en maintenance.
-    
-    Args:
-        app: Application à vérifier
-        port_status_map: Mapping des ports vers leurs statuts
-        
-    Returns:
-        'running' si tous les services sont en ligne,
-        'exited'/'stopped' si au moins un service est arrêté,
-        None si inconnu
-    """
-    import re
-    
-    statuses = []
-    
-    for url in [app.api_url, app.frontend_url]:
-        if not url:
-            continue
-        # Extraire le port de l'URL (format: http://host:port/...)
-        match = re.search(r':(\d+)', url)
-        if match:
-            port = match.group(1)
-            if port in port_status_map:
-                statuses.append(port_status_map[port])
-    
-    if not statuses:
-        return None
-    
-    # Si un des services est arrêté, l'app est en maintenance
-    for status in statuses:
-        if status != 'running':
-            return status
-    
-    # Tous les services sont running
-    return 'running'
 
 
 # ===== Fonctions Helper pour Services Partagés M2M =====
@@ -558,127 +440,6 @@ async def get_apps_status(
     }
 
 
-@router.get("/docker-stats")
-async def get_docker_stats(
-    _admin: User = Depends(get_current_admin)
-):
-    """
-    📊 Récupère les stats CPU/RAM des conteneurs Docker (admin uniquement).
-    
-    Retourne pour chaque port hôte :
-    - cpu_percent: % CPU utilisé
-    - memory_usage_mb: RAM utilisée en MB
-    - memory_limit_mb: Limite RAM en MB
-    - uptime_seconds: Durée de fonctionnement
-    """
-    from datetime import datetime, timezone
-    
-    if not docker_scanner.is_available:
-        return {
-            "stats": {},
-            "docker_available": False,
-            "timestamp": datetime.utcnow().isoformat()
-        }
-    
-    try:
-        client = docker_scanner.client
-        if not client:
-            return {"stats": {}, "docker_available": False, "timestamp": datetime.utcnow().isoformat()}
-        
-        loop = asyncio.get_running_loop()
-        containers = await loop.run_in_executor(None, lambda: client.containers.list())
-        
-        stats_map = {}
-        
-        async def get_container_stats(container):
-            """Récupère les stats d'un conteneur et les associe à ses ports"""
-            try:
-                # Timeout individuel de 5s par conteneur pour éviter qu'un seul
-                # conteneur lent ne bloque tous les autres
-                raw_stats = await asyncio.wait_for(
-                    loop.run_in_executor(
-                        None, lambda c=container: c.stats(stream=False)
-                    ),
-                    timeout=5.0
-                )
-                
-                # Calcul CPU %
-                cpu_stats = raw_stats.get('cpu_stats', {})
-                precpu_stats = raw_stats.get('precpu_stats', {})
-                cpu_usage = cpu_stats.get('cpu_usage', {})
-                precpu_usage = precpu_stats.get('cpu_usage', {})
-                
-                cpu_delta = cpu_usage.get('total_usage', 0) - precpu_usage.get('total_usage', 0)
-                system_delta = cpu_stats.get('system_cpu_usage', 0) - precpu_stats.get('system_cpu_usage', 0)
-                num_cpus = cpu_stats.get('online_cpus', 1)
-                cpu_percent = 0.0
-                if system_delta > 0:
-                    cpu_percent = round((cpu_delta / system_delta) * num_cpus * 100, 1)
-                
-                # RAM
-                mem_stats = raw_stats.get('memory_stats', {})
-                mem_usage = mem_stats.get('usage', 0) - mem_stats.get('stats', {}).get('cache', 0)
-                mem_limit = mem_stats.get('limit', 0)
-                
-                # Uptime
-                uptime_seconds = None
-                try:
-                    started_at = container.attrs.get('State', {}).get('StartedAt', '')
-                    if started_at:
-                        # Format Docker: 2024-01-15T10:30:00.123456789Z
-                        clean_ts = started_at.split('.')[0]  # Retirer les nanosecondes
-                        if clean_ts.endswith('Z'):
-                            clean_ts = clean_ts[:-1]
-                        start_time = datetime.fromisoformat(clean_ts).replace(tzinfo=timezone.utc)
-                        now = datetime.now(timezone.utc)
-                        uptime_seconds = int((now - start_time).total_seconds())
-                except Exception:
-                    pass
-                
-                stat_data = {
-                    "cpu_percent": cpu_percent,
-                    "memory_usage_mb": round(mem_usage / (1024 * 1024), 1),
-                    "memory_limit_mb": round(mem_limit / (1024 * 1024), 1),
-                    "uptime_seconds": uptime_seconds
-                }
-                
-                # Associer aux ports hôte
-                for port_str, bindings in (container.ports or {}).items():
-                    if bindings:
-                        for binding in bindings:
-                            host_port = binding.get('HostPort')
-                            if host_port:
-                                stats_map[host_port] = stat_data
-                                
-            except asyncio.TimeoutError:
-                logger.debug(f"Timeout stats pour {container.name}")
-            except Exception as e:
-                logger.debug(f"Stats indisponibles pour {container.name}: {e}")
-        
-        # Paralléliser avec timeout de 10s global
-        try:
-            await asyncio.wait_for(
-                asyncio.gather(*[get_container_stats(c) for c in containers], return_exceptions=True),
-                timeout=10.0
-            )
-        except asyncio.TimeoutError:
-            logger.warning("Timeout lors de la récupération des stats Docker")
-        
-        return {
-            "stats": stats_map,
-            "docker_available": True,
-            "timestamp": datetime.utcnow().isoformat()
-        }
-        
-    except Exception as e:
-        logger.error(f"Erreur récupération stats Docker: {e}")
-        return {
-            "stats": {},
-            "docker_available": False,
-            "timestamp": datetime.utcnow().isoformat()
-        }
-
-
 @router.get("/", response_model=List[AppResponseWithMyRole])
 async def list_apps(
     db: AsyncSession = Depends(get_db),
@@ -686,8 +447,9 @@ async def list_apps(
 ):
     """Liste les applications (admin voit tout, user voit les siennes)
     
-    Retourne également le rôle de l'utilisateur courant sur chaque app (my_role)
-    et le statut Docker du conteneur (docker_status: 'running', 'stopped', ou null)
+    Retourne également le rôle de l'utilisateur courant sur chaque app (my_role).
+    Les indicateurs Docker/health ne sont plus inclus ici pour une réponse instantanée.
+    Les changements de statut arrivent en temps réel via SSE.
     """
     logger.debug(f"list_apps appelé par {current_user.username} (is_admin={current_user.is_admin})")
     
@@ -700,14 +462,6 @@ async def list_apps(
     user = user_result.scalar_one()
     user_roles_map = {ar.application.slug: ar.role for ar in user.app_roles}
     
-    # Récupérer le statut Docker uniquement pour les admins (appel bloquant → executor)
-    # Les utilisateurs non-admin n'ont pas besoin du statut Docker détaillé
-    if current_user.is_admin:
-        loop = asyncio.get_running_loop()
-        port_status_map = await loop.run_in_executor(None, get_docker_status_map)
-    else:
-        port_status_map = {}
-    
     if current_user.is_admin:
         # Tri alphabétique par nom pour un ordre stable et prévisible
         result = await db.execute(
@@ -718,9 +472,7 @@ async def list_apps(
         return [
             AppResponseWithMyRole.from_app_with_role(
                 app, 
-                user_roles_map.get(app.slug),
-                get_docker_status_for_app(app, port_status_map),
-                get_app_health_status(app.slug)
+                user_roles_map.get(app.slug)
             )
             for app in apps
         ]
@@ -733,9 +485,7 @@ async def list_apps(
         return [
             AppResponseWithMyRole.from_app_with_role(
                 ar.application, 
-                ar.role,
-                get_docker_status_for_app(ar.application, port_status_map),
-                get_app_health_status(ar.application.slug)
+                ar.role
             )
             for ar in sorted_roles
         ]
@@ -910,11 +660,10 @@ async def list_all_apps_with_users(
     db: AsyncSession = Depends(get_db),
     _: User = Depends(get_current_admin)
 ):
-    """Liste toutes les applications avec leurs utilisateurs et statut Docker (admin uniquement)"""
-    # Récupérer le statut Docker de tous les conteneurs (appel bloquant → executor)
-    loop = asyncio.get_running_loop()
-    port_status_map = await loop.run_in_executor(None, get_docker_status_map)
+    """Liste toutes les applications avec leurs utilisateurs (admin uniquement)
     
+    Les indicateurs Docker/health arrivent via SSE en temps réel.
+    """
     result = await db.execute(
         select(Application).options(
             selectinload(Application.user_roles).selectinload(UserAppRole.user)
@@ -922,10 +671,7 @@ async def list_all_apps_with_users(
     )
     apps = result.scalars().all()
     return [
-        AppWithUsersAndDocker.from_orm_model_with_docker(
-            app,
-            get_docker_status_for_app(app, port_status_map)
-        )
+        AppWithUsersAndDocker.from_orm_model_with_docker(app)
         for app in apps
     ]
 
@@ -3108,6 +2854,60 @@ async def get_app_docker_info(
         
         if app.frontend_url:
             response.developer_info["frontend_url"] = app.frontend_url
+        
+        # Récupérer les stats CPU/RAM si le conteneur est running
+        if matching_container.status == 'running':
+            try:
+                from datetime import datetime, timezone
+                raw_stats = await asyncio.wait_for(
+                    loop.run_in_executor(
+                        None, lambda c=matching_container: c.stats(stream=False)
+                    ),
+                    timeout=5.0
+                )
+                
+                # Calcul CPU %
+                cpu_stats = raw_stats.get('cpu_stats', {})
+                precpu_stats = raw_stats.get('precpu_stats', {})
+                cpu_usage = cpu_stats.get('cpu_usage', {})
+                precpu_usage = precpu_stats.get('cpu_usage', {})
+                
+                cpu_delta = cpu_usage.get('total_usage', 0) - precpu_usage.get('total_usage', 0)
+                system_delta = cpu_stats.get('system_cpu_usage', 0) - precpu_stats.get('system_cpu_usage', 0)
+                num_cpus = cpu_stats.get('online_cpus', 1)
+                cpu_percent = 0.0
+                if system_delta > 0:
+                    cpu_percent = round((cpu_delta / system_delta) * num_cpus * 100, 1)
+                
+                # RAM
+                mem_stats = raw_stats.get('memory_stats', {})
+                mem_usage = mem_stats.get('usage', 0) - mem_stats.get('stats', {}).get('cache', 0)
+                mem_limit = mem_stats.get('limit', 0)
+                
+                # Uptime
+                uptime_seconds = None
+                try:
+                    started_at = matching_container.attrs.get('State', {}).get('StartedAt', '')
+                    if started_at:
+                        clean_ts = started_at.split('.')[0]
+                        if clean_ts.endswith('Z'):
+                            clean_ts = clean_ts[:-1]
+                        start_time = datetime.fromisoformat(clean_ts).replace(tzinfo=timezone.utc)
+                        now = datetime.now(timezone.utc)
+                        uptime_seconds = int((now - start_time).total_seconds())
+                except Exception:
+                    pass
+                
+                response.container_stats = {
+                    "cpu_percent": cpu_percent,
+                    "memory_usage_mb": round(mem_usage / (1024 * 1024), 1),
+                    "memory_limit_mb": round(mem_limit / (1024 * 1024), 1),
+                    "uptime_seconds": uptime_seconds
+                }
+            except asyncio.TimeoutError:
+                logger.debug(f"Timeout stats pour {matching_container.name}")
+            except Exception as e:
+                logger.debug(f"Stats indisponibles pour {matching_container.name}: {e}")
         
         logger.info(f"🔍 Docker info pour '{slug}' consulté par {current_user.username}")
         return response

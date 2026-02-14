@@ -185,10 +185,8 @@ class AppResponse(AppBase):
 
 
 class AppResponseWithMyRole(AppResponse):
-    """Application avec le rôle de l'utilisateur courant (pour le dashboard admin)"""
+    """Application avec le rôle de l'utilisateur courant (pour le dashboard)"""
     my_role: Optional[str] = None  # Rôle de l'utilisateur courant sur cette app (null si pas de rôle)
-    docker_status: Optional[str] = None  # Statut du conteneur Docker: 'running', 'stopped', 'unknown'
-    health_status: Optional[str] = None  # Statut de santé HTTP: 'healthy', 'unhealthy', None
     
     class Config:
         from_attributes = True
@@ -197,11 +195,9 @@ class AppResponseWithMyRole(AppResponse):
     def from_app_with_role(
         cls, 
         app, 
-        my_role: Optional[str] = None, 
-        docker_status: Optional[str] = None,
-        health_status: Optional[str] = None
+        my_role: Optional[str] = None
     ) -> "AppResponseWithMyRole":
-        """Crée une réponse avec le rôle de l'utilisateur courant, le statut Docker et le health status"""
+        """Crée une réponse avec le rôle de l'utilisateur courant"""
         # Gérer l'enum ApprovalStatus
         approval_status = ApprovalStatusEnum(app.approval_status.value) if app.approval_status else ApprovalStatusEnum.approved
         return cls(
@@ -221,9 +217,7 @@ class AppResponseWithMyRole(AppResponse):
             registered_from_ip=getattr(app, 'registered_from_ip', None),
             approval_status=approval_status,
             created_at=app.created_at,
-            my_role=my_role,
-            docker_status=docker_status,
-            health_status=health_status
+            my_role=my_role
         )
 
 
@@ -277,11 +271,12 @@ class AppWithUsers(AppResponse):
 
 
 class AppWithUsersAndDocker(AppWithUsers):
-    """Application avec utilisateurs et statut Docker pour l'admin"""
-    docker_status: Optional[str] = None  # 'running', 'exited', 'stopped', None
+    """Application avec utilisateurs pour l'admin"""
+    docker_status: Optional[str] = None  # Conservé pour compatibilité, toujours None
+    health_status: Optional[str] = None  # Conservé pour compatibilité, toujours None
     
     @classmethod
-    def from_orm_model_with_docker(cls, app, docker_status: Optional[str] = None) -> "AppWithUsersAndDocker":
+    def from_orm_model_with_docker(cls, app) -> "AppWithUsersAndDocker":
         """Convertit une Application ORM avec user_roles en AppWithUsersAndDocker"""
         users = [
             UserBriefWithRole(
@@ -311,8 +306,7 @@ class AppWithUsersAndDocker(AppWithUsers):
             registered_from_ip=getattr(app, 'registered_from_ip', None),
             approval_status=approval_status,
             created_at=app.created_at,
-            users=users,
-            docker_status=docker_status
+            users=users
         )
 
 
@@ -348,6 +342,9 @@ class DockerInfoResponse(BaseModel):
     
     # Message d'aide pour développeur
     developer_info: dict = {}
+    
+    # Stats CPU/RAM du conteneur (disponibles si le conteneur est running)
+    container_stats: Optional[dict] = None  # cpu_percent, memory_usage_mb, memory_limit_mb, uptime_seconds
 
 
 # ===== Docker Stats Schema =====

@@ -421,7 +421,6 @@ document.addEventListener('DOMContentLoaded', () => {
             if (targetId === '#tabApps') {
                 currentPage = 'apps-admin';
                 refreshAppsStatus();
-                refreshDockerStats();
                 startConnectivityRefresh();
             } else {
                 // Autre onglet (Sauvegardes, Service Accounts)
@@ -702,13 +701,6 @@ function showPage(page) {
     
     currentPage = page;
     
-    // Gérer le rafraîchissement des stats dashboard
-    if (page === 'dashboard') {
-        startDashboardStatsRefresh();
-    } else {
-        stopDashboardStatsRefresh();
-    }
-    
     switch(page) {
         case 'dashboard':
             document.getElementById('dashboardSection').classList.remove('d-none');
@@ -750,7 +742,6 @@ function showPage(page) {
             loadAdminData();
             loadPendingAppsCount();
             refreshAppsStatus();
-            refreshDockerStats();
             startConnectivityRefresh();
             break;
         case 'clone-migrate':
@@ -801,7 +792,6 @@ function showLoginScreen() {
     // S'assurer que le loading screen est caché et la navbar visible
     showNavbar();
     hideLoadingScreen();
-    stopDashboardStatsRefresh();
     
     currentUser = null;
     currentPage = 'dashboard';
@@ -963,7 +953,6 @@ async function loadApps() {
         // S'assurer que apps est un tableau
         if (Array.isArray(apps)) {
             renderAppsGrid(apps);
-            startDashboardStatsRefresh();
         } else {
             console.error('loadApps: réponse inattendue (pas un tableau):', apps);
             renderAppsGrid([]);
@@ -1014,24 +1003,21 @@ function renderAppsGrid(apps) {
     const isAdmin = currentUser?.is_admin;
 
     grid.innerHTML = apps.map(app => {
-        // Déterminer si l'app est en maintenance (conteneur Docker arrêté OU health check échoué)
-        const isDockerStopped = app.docker_status && app.docker_status !== 'running';
-        const isHealthUnhealthy = app.health_status === 'unhealthy';
-        const isInMaintenance = isDockerStopped || isHealthUnhealthy;
-        const isUnavailable = !app.is_active || isInMaintenance;
+        // Déterminer si l'app est inactive (désactivée par l'admin)
+        // Les statuts Docker/health arrivent en temps réel via SSE
+        const isUnavailable = !app.is_active;
         
         return `
         <div class="col-sm-6 col-md-4 col-lg-3">
             <div class="card app-card shadow-sm h-100 ${isUnavailable ? 'app-inactive' : ''}" 
                  data-app-slug="${app.slug}"
-                 onclick="${!isUnavailable ? `openApp('${app.slug}', '${app.frontend_url || ''}')` : `showToast('Application en maintenance', 'Cette application est temporairement indisponible.', 'warning')`}">
+                 onclick="${!isUnavailable ? `openApp('${app.slug}', '${app.frontend_url || ''}')` : `showToast('Application indisponible', 'Cette application est d\u00e9sactiv\u00e9e.', 'warning')`}">
                 <div class="card-body position-relative">
                     <div class="app-icon" style="background-color: ${app.color}">
                         <i class="${app.icon}"></i>
                     </div>
                     <h5>${escapeHtml(app.name)}</h5>
                     <p>${escapeHtml(app.description || 'Aucune description')}</p>
-                    <div class="app-card-stats" data-app-slug="${app.slug}"></div>
                     ${isAdmin ? `
                         <div class="app-role-selector mt-2" onclick="event.stopPropagation()">
                             <select class="form-select form-select-sm" 
@@ -1425,95 +1411,6 @@ let connectivityRefreshInterval = null;
 const CONNECTIVITY_REFRESH_DELAY = 30000; // 30 secondes
 
 /**
- * Intervalle de rafraîchissement des stats Docker (CPU/RAM)
- */
-let dockerStatsRefreshInterval = null;
-const DOCKER_STATS_REFRESH_DELAY = 60000; // 60 secondes
-
-/**
- * Intervalle de rafraîchissement des stats sur les tuiles du dashboard
- */
-let dashboardStatsRefreshInterval = null;
-
-/**
- * Rafraîchit les mini-indicateurs CPU/RAM sur les tuiles du dashboard
- */
-async function refreshDashboardStats() {
-    try {
-        const data = await api.getDockerStats();
-        if (!data.docker_available) return;
-        
-        document.querySelectorAll('.app-card-stats[data-app-slug]').forEach(el => {
-            const slug = el.getAttribute('data-app-slug');
-            const app = allApps?.find(a => a.slug === slug);
-            if (!app) return;
-            
-            let port = null;
-            try {
-                const url = new URL(app.api_url);
-                port = url.port;
-            } catch (e) {}
-            
-            if (!port || !data.stats[port]) {
-                el.classList.remove('loaded');
-                el.innerHTML = '';
-                return;
-            }
-            
-            const stats = data.stats[port];
-            const cpuColor = getStatsBarColor(stats.cpu_percent);
-            const memPercent = stats.memory_limit_mb > 0 
-                ? Math.min(100, Math.round((stats.memory_usage_mb / stats.memory_limit_mb) * 100)) 
-                : 0;
-            const memColor = getStatsBarColor(memPercent);
-            
-            // Convertir les classes Bootstrap en couleurs CSS
-            const colorMap = { 'bg-success': '#198754', 'bg-warning': '#ffc107', 'bg-danger': '#dc3545' };
-            
-            el.innerHTML = `
-                <span class="stat-item" title="CPU: ${stats.cpu_percent}%">
-                    <i class="bi bi-cpu" style="color: ${colorMap[cpuColor] || '#adb5bd'}"></i>
-                    <span class="stat-value" style="color: ${colorMap[cpuColor] || '#adb5bd'}">${stats.cpu_percent}%</span>
-                </span>
-                <span class="stat-item" title="RAM: ${Math.round(stats.memory_usage_mb)}M (${memPercent}%)">
-                    <i class="bi bi-memory" style="color: ${colorMap[memColor] || '#adb5bd'}"></i>
-                    <span class="stat-value" style="color: ${colorMap[memColor] || '#adb5bd'}">${Math.round(stats.memory_usage_mb)}M</span>
-                </span>
-            `;
-            el.classList.add('loaded');
-        });
-    } catch (error) {
-        console.error('Erreur stats dashboard:', error);
-    }
-}
-
-/**
- * Démarre le rafraîchissement périodique des stats sur le dashboard
- */
-function startDashboardStatsRefresh() {
-    if (dashboardStatsRefreshInterval) return;
-    
-    // Premier appel immédiat
-    refreshDashboardStats();
-    
-    dashboardStatsRefreshInterval = setInterval(() => {
-        if (currentPage === 'dashboard') {
-            refreshDashboardStats();
-        }
-    }, DOCKER_STATS_REFRESH_DELAY);
-}
-
-/**
- * Arrête le rafraîchissement des stats du dashboard
- */
-function stopDashboardStatsRefresh() {
-    if (dashboardStatsRefreshInterval) {
-        clearInterval(dashboardStatsRefreshInterval);
-        dashboardStatsRefreshInterval = null;
-    }
-}
-
-/**
  * Démarre le rafraîchissement périodique de la connectivité
  */
 function startConnectivityRefresh() {
@@ -1528,9 +1425,6 @@ function startConnectivityRefresh() {
     }, CONNECTIVITY_REFRESH_DELAY);
     
     console.log(`⏱️ Rafraîchissement connectivité activé (${CONNECTIVITY_REFRESH_DELAY/1000}s)`);
-    
-    // Démarrer aussi les stats Docker
-    startDockerStatsRefresh();
 }
 
 /**
@@ -1541,115 +1435,6 @@ function stopConnectivityRefresh() {
         clearInterval(connectivityRefreshInterval);
         connectivityRefreshInterval = null;
         console.log('⏱️ Rafraîchissement connectivité désactivé');
-    }
-    stopDockerStatsRefresh();
-}
-
-/**
- * Démarre le rafraîchissement périodique des stats Docker (CPU/RAM)
- */
-function startDockerStatsRefresh() {
-    if (dockerStatsRefreshInterval) return;
-    
-    dockerStatsRefreshInterval = setInterval(() => {
-        if (currentPage === 'apps-admin') {
-            console.log('📊 Rafraîchissement automatique des stats Docker...');
-            refreshDockerStats();
-        }
-    }, DOCKER_STATS_REFRESH_DELAY);
-    
-    console.log(`⏱️ Rafraîchissement stats Docker activé (${DOCKER_STATS_REFRESH_DELAY/1000}s)`);
-}
-
-/**
- * Arrête le rafraîchissement des stats Docker
- */
-function stopDockerStatsRefresh() {
-    if (dockerStatsRefreshInterval) {
-        clearInterval(dockerStatsRefreshInterval);
-        dockerStatsRefreshInterval = null;
-        console.log('⏱️ Rafraîchissement stats Docker désactivé');
-    }
-}
-
-/**
- * Détermine la couleur d'une barre de progression selon le pourcentage
- */
-function getStatsBarColor(percent) {
-    if (percent < 50) return 'bg-success';
-    if (percent < 80) return 'bg-warning';
-    return 'bg-danger';
-}
-
-/**
- * Rafraîchit les stats Docker (CPU/RAM) pour toutes les applications
- */
-async function refreshDockerStats() {
-    try {
-        const data = await api.getDockerStats();
-        if (!data.docker_available) {
-            console.log('🐳 Docker non disponible pour les stats');
-            return;
-        }
-        
-        console.log('📊 Stats Docker:', data.stats);
-        
-        // Pour chaque app dans le tableau, mettre à jour les barres
-        document.querySelectorAll('.app-status-cell[data-app-slug]').forEach(cell => {
-            const slug = cell.getAttribute('data-app-slug');
-            const statsContainer = cell.querySelector('.docker-stats[data-app-slug]');
-            if (!statsContainer) return;
-            
-            // Trouver la ligne de l'app et son URL API pour extraire le port
-            const row = cell.closest('tr');
-            if (!row) return;
-            
-            // Chercher dans les données allApps
-            const app = allApps?.find(a => a.slug === slug);
-            if (!app) return;
-            
-            // Extraire le port de l'URL API
-            let port = null;
-            try {
-                const url = new URL(app.api_url);
-                port = url.port;
-            } catch (e) {}
-            
-            if (!port || !data.stats[port]) {
-                // Pas de stats — garder le placeholder grisé
-                statsContainer.classList.add('docker-stats-placeholder');
-                return;
-            }
-            
-            const stats = data.stats[port];
-            const cpuColor = getStatsBarColor(stats.cpu_percent);
-            const memPercent = stats.memory_limit_mb > 0 
-                ? Math.min(100, Math.round((stats.memory_usage_mb / stats.memory_limit_mb) * 100)) 
-                : 0;
-            const memColor = getStatsBarColor(memPercent);
-            
-            // Retirer le placeholder et afficher les vraies données
-            statsContainer.classList.remove('docker-stats-placeholder');
-            statsContainer.innerHTML = `
-                <div class="docker-stats-row">
-                    <span class="docker-stats-label">CPU</span>
-                    <div class="progress docker-stats-bar">
-                        <div class="progress-bar ${cpuColor}" style="width: ${Math.min(100, stats.cpu_percent)}%"></div>
-                    </div>
-                    <span class="docker-stats-value">${stats.cpu_percent}%</span>
-                </div>
-                <div class="docker-stats-row">
-                    <span class="docker-stats-label">RAM</span>
-                    <div class="progress docker-stats-bar">
-                        <div class="progress-bar ${memColor}" style="width: ${memPercent}%"></div>
-                    </div>
-                    <span class="docker-stats-value">${Math.round(stats.memory_usage_mb)}M</span>
-                </div>
-            `;
-        });
-        
-    } catch (error) {
-        console.error('Erreur lors de la récupération des stats Docker:', error);
     }
 }
 
@@ -1752,27 +1537,10 @@ function renderAppsTable(apps) {
             </thead>
             <tbody id="appsTableBody">
                 ${apps.map(app => {
-                    // Icône Docker
-                    const dockerStatus = app.docker_status;
-                    let dockerIcon;
-                    if (!dockerStatus) {
-                        dockerIcon = '<i class="bi bi-question-circle text-muted" title="Docker: Inconnu"></i>';
-                    } else if (dockerStatus === 'running') {
-                        dockerIcon = '<i class="bi bi-play-circle-fill text-success" title="Docker: Running"></i>';
-                    } else {
-                        dockerIcon = '<i class="bi bi-pause-circle-fill text-warning" title="Docker: Maintenance"></i>';
-                    }
-                    
-                    // Icône Connectivité
-                    const healthStatus = app.health_status;
-                    let healthIcon;
-                    if (healthStatus === 'healthy') {
-                        healthIcon = '<i class="bi bi-wifi text-success" title="Connectivité: En ligne"></i>';
-                    } else if (healthStatus === 'unhealthy') {
-                        healthIcon = '<i class="bi bi-wifi-off text-danger" title="Connectivité: Hors ligne"></i>';
-                    } else {
-                        healthIcon = '<i class="bi bi-wifi text-muted" title="Connectivité: Vérification..."></i>';
-                    }
+                    // Les ic\u00f4nes Docker/Health sont d'abord en \u00e9tat "inconnu"
+                    // puis mises \u00e0 jour via SSE (docker_status_changed / app_health_changed)
+                    let dockerIcon = '<i class="bi bi-question-circle text-muted" title="Docker: Chargement..."></i>';
+                    let healthIcon = '<i class="bi bi-wifi text-muted" title="Connectivit\u00e9: V\u00e9rification..."></i>';
                     
                     // Badge approbation
                     let approvalBadge = '';
@@ -1836,22 +1604,6 @@ function renderAppsTable(apps) {
                             <div class="status-icons">
                                 ${dockerIcon}
                                 <span class="app-connectivity-icon">${healthIcon}</span>
-                            </div>
-                            <div class="docker-stats docker-stats-placeholder" data-app-slug="${app.slug}">
-                                <div class="docker-stats-row">
-                                    <span class="docker-stats-label">CPU</span>
-                                    <div class="progress docker-stats-bar">
-                                        <div class="progress-bar" style="width: 100%"></div>
-                                    </div>
-                                    <span class="docker-stats-value">--</span>
-                                </div>
-                                <div class="docker-stats-row">
-                                    <span class="docker-stats-label">RAM</span>
-                                    <div class="progress docker-stats-bar">
-                                        <div class="progress-bar" style="width: 100%"></div>
-                                    </div>
-                                    <span class="docker-stats-value">--</span>
-                                </div>
                             </div>
                         </td>
                         <td class="text-end text-nowrap">
@@ -2018,6 +1770,60 @@ async function showAddAppForm() {
 }
 
 // ===== Docker Details Modal =====
+
+/**
+ * Construit la carte HTML des stats CPU/RAM/Uptime d'un conteneur
+ */
+function buildContainerStatsCard(stats) {
+    const cpuPercent = (stats.cpu_percent || 0).toFixed(1);
+    const memUsage = (stats.memory_usage_mb || 0).toFixed(1);
+    const memLimit = (stats.memory_limit_mb || 0).toFixed(0);
+    const memPercent = memLimit > 0 ? ((stats.memory_usage_mb / stats.memory_limit_mb) * 100).toFixed(1) : 0;
+    const uptimeSec = stats.uptime_seconds || 0;
+
+    // Couleur selon le pourcentage
+    function barColor(pct) {
+        if (pct >= 80) return 'bg-danger';
+        if (pct >= 50) return 'bg-warning';
+        return 'bg-success';
+    }
+
+    // Formatage uptime
+    let uptimeStr = '';
+    if (uptimeSec >= 86400) {
+        const days = Math.floor(uptimeSec / 86400);
+        const hours = Math.floor((uptimeSec % 86400) / 3600);
+        uptimeStr = days + 'j ' + hours + 'h';
+    } else if (uptimeSec >= 3600) {
+        const hours = Math.floor(uptimeSec / 3600);
+        const mins = Math.floor((uptimeSec % 3600) / 60);
+        uptimeStr = hours + 'h ' + mins + 'min';
+    } else {
+        uptimeStr = Math.floor(uptimeSec / 60) + 'min';
+    }
+
+    return '<div class="card mb-3">'
+        + '<div class="card-header py-2"><i class="bi bi-speedometer2 me-2"></i>Ressources</div>'
+        + '<div class="card-body py-2">'
+        + '<div class="mb-2">'
+        + '<div class="d-flex justify-content-between"><small>CPU</small><small>' + cpuPercent + '%</small></div>'
+        + '<div class="progress" style="height: 8px;">'
+        + '<div class="progress-bar ' + barColor(parseFloat(cpuPercent)) + '" style="width: ' + cpuPercent + '%;"></div>'
+        + '</div>'
+        + '</div>'
+        + '<div class="mb-2">'
+        + '<div class="d-flex justify-content-between"><small>RAM</small><small>' + memUsage + ' / ' + memLimit + ' Mo (' + memPercent + '%)</small></div>'
+        + '<div class="progress" style="height: 8px;">'
+        + '<div class="progress-bar ' + barColor(parseFloat(memPercent)) + '" style="width: ' + memPercent + '%;"></div>'
+        + '</div>'
+        + '</div>'
+        + '<div class="d-flex justify-content-between">'
+        + '<small class="text-muted">Uptime</small>'
+        + '<small><i class="bi bi-clock me-1"></i>' + uptimeStr + '</small>'
+        + '</div>'
+        + '</div>'
+        + '</div>';
+}
 
 /**
  * Affiche les détails Docker d'une application
@@ -2197,8 +2003,11 @@ async function showDockerDetails(slug) {
                         </div>
                     </div>
                     
+                    <!-- Ressources CPU/RAM -->
+                    ${info.container_stats ? buildContainerStatsCard(info.container_stats) : ''}
+                    
                     <!-- Info développeur -->
-                    <div class="card border-info">
+                    <div class="card border-info mb-3">
                         <div class="card-header py-2 bg-info text-white"><i class="bi bi-code-slash me-2"></i>Pour développeurs</div>
                         <div class="card-body py-2">
                             <table class="table table-sm mb-0">

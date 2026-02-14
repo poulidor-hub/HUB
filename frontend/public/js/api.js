@@ -645,11 +645,6 @@ class HubAPI {
         return this.request('/apps/status');
     }
 
-    // Récupère les stats Docker (CPU/RAM) des conteneurs
-    async getDockerStats() {
-        return this.request('/apps/docker-stats');
-    }
-
     // Vérifie le statut de tous les Service Accounts
     async getServiceAccountsStatus() {
         return this.request('/service-accounts/status');
