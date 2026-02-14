@@ -178,12 +178,15 @@ class HubAPI {
                         console.log('Token rafraîchi par un autre appel pendant la requête');
                         return true;
                     }
-                    // Refresh token invalide - supprimer UNIQUEMENT le refresh token
-                    // On garde le token d'accès qui peut encore être valide
-                    console.warn('Refresh token invalide, suppression du refresh token uniquement');
-                    this.setRefreshToken(null);
-                    // Retourner false pour indiquer l'échec du refresh
-                    // Mais ne pas effacer le token d'accès - il sera invalidé naturellement
+                    // Refresh token invalide
+                    // Ne supprimer que si c'est une vraie erreur 401 (token révoqué/expiré)
+                    // Pas sur les erreurs transitoires (500, réseau, etc.)
+                    if (response.status === 401) {
+                        console.warn('Refresh token invalide (401), suppression');
+                        this.setRefreshToken(null);
+                    } else {
+                        console.warn('Refresh token échoué (status ' + response.status + '), token conservé');
+                    }
                     return false;
                 }
 

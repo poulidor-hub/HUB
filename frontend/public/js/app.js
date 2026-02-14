@@ -2227,9 +2227,6 @@ async function handleSaveApp(event) {
             await api.updateApp(id, data);
             showToast('Succès', 'Application modifiée', 'success');
             
-            // Rafraîchir le token pour refléter les modifications
-            await refreshTokenAfterAppChange('modification');
-            
             appFormModal.hide();
             await loadAdminData();
         } else {
