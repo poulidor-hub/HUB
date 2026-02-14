@@ -32,6 +32,9 @@ _user_connections: Dict[int, asyncio.Queue] = {}
 # Task de cleanup périodique
 _cleanup_task: Optional[asyncio.Task] = None
 
+# Event global de shutdown pour fermer proprement les SSE
+_shutdown_event: asyncio.Event = asyncio.Event()
+
 
 async def broadcast_event(event_type: str, data: Optional[dict] = None):
     """
@@ -186,6 +189,38 @@ def stop_cleanup_task():
             stop_health_checker()
 
 
+def force_stop_cleanup_task():
+    """Force l'arrêt de la tâche de cleanup (appelé au shutdown)."""
+    global _cleanup_task
+    if _cleanup_task and not _cleanup_task.done():
+        _cleanup_task.cancel()
+        _cleanup_task = None
+
+
+async def close_all_sse_connections():
+    """
+    Ferme proprement toutes les connexions SSE actives.
+    Appelé lors du shutdown de l'application pour débloquer les générateurs.
+    """
+    _shutdown_event.set()
+    
+    # Envoyer un message shutdown dans toutes les queues pour débloquer les wait_for
+    shutdown_msg = {"type": "shutdown", "timestamp": datetime.utcnow().isoformat()}
+    for queue in list(_connected_clients):
+        try:
+            queue.put_nowait(shutdown_msg)
+        except asyncio.QueueFull:
+            pass
+    
+    logger.info(f"📡 Signal shutdown envoyé à {len(_connected_clients)} client(s) SSE")
+
+
+def reset_shutdown_event():
+    """Réinitialise l'event de shutdown (utile après un reload)."""
+    global _shutdown_event
+    _shutdown_event = asyncio.Event()
+
+
 # =============================================================================
 # TRACKING UTILISATEUR VIA SSE
 # =============================================================================
@@ -232,6 +267,10 @@ async def event_generator(request: Request, queue: asyncio.Queue, user_id: Optio
         yield f"data: {json.dumps({'type': 'connected'})}\n\n"
         
         while True:
+            # Vérifier le shutdown global
+            if _shutdown_event.is_set():
+                break
+            
             # Vérifier si le client est toujours connecté
             if await request.is_disconnected():
                 break
@@ -239,6 +278,11 @@ async def event_generator(request: Request, queue: asyncio.Queue, user_id: Optio
             try:
                 # Attendre un événement avec timeout pour vérifier la connexion
                 event = await asyncio.wait_for(queue.get(), timeout=30.0)
+                
+                # Message shutdown = sortie immédiate
+                if event.get("type") == "shutdown":
+                    break
+                
                 yield f"data: {json.dumps(event)}\n\n"
             except asyncio.TimeoutError:
                 # Envoyer un ping pour maintenir la connexion

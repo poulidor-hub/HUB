@@ -244,6 +244,21 @@ async def lifespan(app: FastAPI):
     
     # Shutdown
     logger.info("👋 Arrêt du Hub...")
+    
+    # 1. Fermer toutes les connexions SSE actives (débloquer les générateurs)
+    from app.routes.events import close_all_sse_connections, force_stop_cleanup_task
+    await close_all_sse_connections()
+    force_stop_cleanup_task()
+    
+    # 2. Arrêter le health checker et fermer le client httpx
+    from app.health_checker import stop_health_checker, _close_http_client
+    stop_health_checker()
+    await _close_http_client()
+    
+    # Laisser le temps aux SSE de se terminer proprement
+    await asyncio.sleep(0.5)
+    
+    # 3. Annuler les tâches périodiques
     if _cleanup_task:
         _cleanup_task.cancel()
         try:
@@ -268,6 +283,8 @@ async def lifespan(app: FastAPI):
             await _backup_scheduler_task
         except asyncio.CancelledError:
             pass
+    
+    logger.info("✅ Shutdown terminé proprement")
 
 
 app = FastAPI(

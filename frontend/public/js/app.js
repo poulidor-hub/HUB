@@ -76,9 +76,27 @@ function initEventSource(isReconnect = false) {
             console.warn('SSE: erreur de connexion, reconnexion dans 5s...', error);
             eventSource.close();
             // Reconnexion automatique après 5 secondes
-            setTimeout(() => {
+            // Renouveler le beacon_token AVANT de reconnecter le SSE
+            // (le secret serveur est régénéré après un redémarrage/reload)
+            setTimeout(async () => {
                 if (api.token && currentUser) {
-                    initEventSource(true); // Marquer comme reconnexion
+                    try {
+                        const userValid = await api.getCurrentUser().catch(() => null);
+                        if (userValid) {
+                            currentUser = userValid;
+                            if (userValid.beacon_token) {
+                                beaconToken = userValid.beacon_token;
+                                console.log('🔑 Beacon token renouvelé avant reconnexion SSE');
+                            }
+                            initEventSource(true); // Reconnecter avec le nouveau token
+                        } else {
+                            // Session expirée, on tente quand même la reconnexion basique
+                            initEventSource(true);
+                        }
+                    } catch (e) {
+                        // API pas encore dispo, réessayer la reconnexion simple
+                        initEventSource(true);
+                    }
                 }
             }, 5000);
         };

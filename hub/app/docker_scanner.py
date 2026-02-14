@@ -423,6 +423,76 @@ class DockerScanner:
         except Exception as e:
             logger.warning(f"Erreur extraction ports pour {container.name}: {e}")
         
+        # Host network mode : les ports ne sont pas visibles via Docker port bindings
+        # On les détecte via labels hub.port, variables d'env ou directives EXPOSE
+        if not ports:
+            try:
+                network_mode = container.attrs.get('HostConfig', {}).get('NetworkMode', '')
+                if network_mode == 'host':
+                    ports = self._extract_host_mode_ports(container)
+            except Exception as e:
+                logger.warning(f"Erreur extraction ports host mode pour {container.name}: {e}")
+        
+        return ports
+    
+    def _extract_host_mode_ports(self, container) -> List[ContainerPort]:
+        """Extrait les ports d'un conteneur en mode host network.
+        
+        En mode host, le conteneur partage le réseau de l'hôte.
+        Les ports ne sont pas visibles via les Docker port bindings classiques.
+        On utilise (par ordre de priorité) :
+          1. Le label hub.port (déclaration explicite)
+          2. Les variables d'environnement (LISTEN_PORT, API_PORT, FRONTEND_PORT)
+          3. Les ports EXPOSE de l'image Docker
+        """
+        ports = []
+        labels = container.labels or {}
+        
+        # 1. Label explicite hub.port (priorité maximale)
+        hub_port = labels.get("hub.port")
+        if hub_port:
+            try:
+                port = int(hub_port)
+                ports.append(ContainerPort(container_port=port, host_port=port))
+                logger.debug(f"Port host mode {container.name}: {port} (label hub.port)")
+                return ports
+            except ValueError:
+                logger.warning(f"Label hub.port invalide pour {container.name}: {hub_port}")
+        
+        # 2. Variables d'environnement (LISTEN_PORT > API_PORT > FRONTEND_PORT)
+        try:
+            env_list = container.attrs.get('Config', {}).get('Env', [])
+            env_dict = {}
+            for env in env_list:
+                if '=' in env:
+                    key, value = env.split('=', 1)
+                    env_dict[key] = value
+            
+            for env_key in ('LISTEN_PORT', 'API_PORT', 'FRONTEND_PORT'):
+                env_port = env_dict.get(env_key)
+                if env_port:
+                    try:
+                        port = int(env_port)
+                        ports.append(ContainerPort(container_port=port, host_port=port))
+                        logger.debug(f"Port host mode {container.name}: {port} (env {env_key})")
+                        return ports
+                    except ValueError:
+                        continue
+        except Exception:
+            pass
+        
+        # 3. Fallback : ports EXPOSE de l'image
+        try:
+            exposed = container.attrs.get('Config', {}).get('ExposedPorts', {})
+            for port_str in exposed:
+                parts = port_str.split('/')
+                port = int(parts[0])
+                protocol = parts[1] if len(parts) > 1 else "tcp"
+                ports.append(ContainerPort(container_port=port, host_port=port, protocol=protocol))
+                logger.debug(f"Port host mode {container.name}: {port} (EXPOSE)")
+        except Exception:
+            pass
+        
         return ports
     
     def get_docker_info(self) -> Dict[str, Any]:

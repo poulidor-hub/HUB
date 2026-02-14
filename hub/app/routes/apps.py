@@ -593,8 +593,13 @@ async def get_docker_stats(
         async def get_container_stats(container):
             """Récupère les stats d'un conteneur et les associe à ses ports"""
             try:
-                raw_stats = await loop.run_in_executor(
-                    None, lambda c=container: c.stats(stream=False)
+                # Timeout individuel de 5s par conteneur pour éviter qu'un seul
+                # conteneur lent ne bloque tous les autres
+                raw_stats = await asyncio.wait_for(
+                    loop.run_in_executor(
+                        None, lambda c=container: c.stats(stream=False)
+                    ),
+                    timeout=5.0
                 )
                 
                 # Calcul CPU %
@@ -645,6 +650,8 @@ async def get_docker_stats(
                             if host_port:
                                 stats_map[host_port] = stat_data
                                 
+            except asyncio.TimeoutError:
+                logger.debug(f"Timeout stats pour {container.name}")
             except Exception as e:
                 logger.debug(f"Stats indisponibles pour {container.name}: {e}")
         
