@@ -1035,6 +1035,7 @@ class BulkUserCreate(BaseModel):
     is_active: bool = True
     must_change_password: bool = False
     can_change_password: bool = True
+    profile_id: Optional[int] = None
     app_roles: List[BulkUserAppRoleAssignment] = []
 
 

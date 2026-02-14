@@ -7847,13 +7847,159 @@ function updateBulkSelectedCount() {
 /**
  * Initialise le formulaire de création en masse
  */
-function initBulkCreateForm() {
+async function initBulkCreateForm() {
     const container = document.getElementById('bulkCreateUsersList');
     if (!container) return;
     
     container.innerHTML = '';
     addBulkCreateUserRow();
-    loadBulkAppSelection('bulkCreateAppSelect');
+    
+    // Charger les profils
+    await loadBulkProfileSelection();
+    
+    // Charger les apps pour le mode avancé
+    await loadBulkAdvancedApps();
+    
+    // Réinitialiser l'aperçu profil
+    const preview = document.getElementById('bulkProfilePreview');
+    if (preview) {
+        preview.classList.add('d-none');
+        preview.innerHTML = '';
+    }
+    
+    // Fermer le collapse avancé
+    const advancedEl = document.getElementById('bulkCreateAdvanced');
+    if (advancedEl) {
+        advancedEl.classList.remove('show');
+    }
+}
+
+/**
+ * Charge les profils dans le sélecteur de création en masse
+ */
+async function loadBulkProfileSelection() {
+    const select = document.getElementById('bulkCreateProfileSelect');
+    if (!select) return;
+    
+    try {
+        const profiles = allProfiles.length > 0
+            ? allProfiles
+            : await api.getProfiles();
+        allProfiles = profiles;
+        
+        select.innerHTML = '<option value="">-- Aucun profil --</option>' +
+            profiles.map(p => `
+                <option value="${p.id}" data-color="${p.color}">
+                    ${escapeHtml(p.name)} (${p.app_roles.length} app${p.app_roles.length !== 1 ? 's' : ''})
+                </option>
+            `).join('');
+    } catch (error) {
+        console.warn('Profils non disponibles:', error);
+        select.innerHTML = '<option value="">-- Aucun profil --</option>';
+    }
+}
+
+/**
+ * Charge les apps avec checkboxes + role selects pour le mode avancé
+ */
+async function loadBulkAdvancedApps() {
+    const container = document.getElementById('bulkCreateAdvancedApps');
+    if (!container) return;
+    
+    try {
+        const apps = allApps.length > 0
+            ? allApps
+            : await api.getAllApps();
+        allApps = apps;
+        
+        if (apps.length === 0) {
+            container.innerHTML = '<small class="text-muted">Aucune application disponible</small>';
+            return;
+        }
+        
+        container.innerHTML = apps.map(app => `
+            <div class="d-flex align-items-center mb-2 bulk-adv-app-row">
+                <div class="form-check me-3" style="min-width: 200px;">
+                    <input class="form-check-input bulk-adv-app-cb" type="checkbox" 
+                        value="${app.id}" id="bulkAdvApp${app.id}"
+                        onchange="toggleBulkAdvRole(${app.id})">
+                    <label class="form-check-label" for="bulkAdvApp${app.id}">
+                        <i class="${app.icon} me-1" style="color: ${app.color}"></i>
+                        ${escapeHtml(app.name)}
+                    </label>
+                </div>
+                <select class="form-select form-select-sm bulk-adv-role-select" 
+                    id="bulkAdvRole${app.id}" style="width: 120px;" disabled>
+                    <option value="">-- Rôle --</option>
+                    ${AVAILABLE_ROLES.map(r => `
+                        <option value="${r}"${r === 'user' ? ' selected' : ''}>
+                            ${r.charAt(0).toUpperCase() + r.slice(1)}
+                        </option>
+                    `).join('')}
+                </select>
+            </div>
+        `).join('');
+    } catch (error) {
+        console.error('Erreur chargement apps avancé:', error);
+        container.innerHTML = '<small class="text-danger">Erreur de chargement</small>';
+    }
+}
+
+/**
+ * Toggle le select de rôle pour une app en mode avancé
+ */
+function toggleBulkAdvRole(appId) {
+    const cb = document.getElementById(`bulkAdvApp${appId}`);
+    const sel = document.getElementById(`bulkAdvRole${appId}`);
+    if (cb.checked) {
+        sel.disabled = false;
+        if (!sel.value) sel.value = 'user';
+    } else {
+        sel.disabled = true;
+        sel.value = '';
+    }
+}
+
+/**
+ * Réagit au changement de profil dans la création en masse
+ */
+function onBulkProfileChange() {
+    const select = document.getElementById('bulkCreateProfileSelect');
+    const preview = document.getElementById('bulkProfilePreview');
+    if (!select || !preview) return;
+    
+    const profileId = parseInt(select.value);
+    if (!profileId) {
+        preview.classList.add('d-none');
+        preview.innerHTML = '';
+        return;
+    }
+    
+    const profile = allProfiles.find(p => p.id === profileId);
+    if (!profile) {
+        preview.classList.add('d-none');
+        return;
+    }
+    
+    preview.classList.remove('d-none');
+    preview.innerHTML = `
+        <div class="border rounded p-2 bg-white">
+            <span class="badge badge-profile mb-1" style="background-color: ${profile.color};">
+                ${escapeHtml(profile.name)}
+            </span>
+            <div class="d-flex flex-wrap gap-1 mt-1">
+                ${profile.app_roles.length > 0 
+                    ? profile.app_roles.map(ar => `
+                        <span class="badge bg-white text-dark border" style="font-size: 0.75em;">
+                            ${escapeHtml(ar.app_name)}
+                            <span class="badge ${getRoleBadgeColor(ar.role)}" style="font-size: 0.8em;">${ar.role}</span>
+                        </span>
+                    `).join('')
+                    : '<small class="text-muted">Aucune app</small>'
+                }
+            </div>
+        </div>
+    `;
 }
 
 /**
@@ -8038,15 +8184,41 @@ async function executeBulkDelete() {
 async function executeBulkCreate() {
     const rows = document.querySelectorAll('.bulk-create-row');
     const users = [];
-    const appId = parseInt(document.getElementById('bulkCreateAppSelect')?.value) || null;
-    const role = document.getElementById('bulkCreateRoleSelect')?.value || 'user';
+    
+    // Profil sélectionné
+    const profileId = parseInt(
+        document.getElementById('bulkCreateProfileSelect')?.value
+    ) || null;
+    
+    // Apps manuelles (mode avancé)
+    const manualAppRoles = [];
+    document.querySelectorAll('.bulk-adv-app-cb:checked').forEach(cb => {
+        const appId = parseInt(cb.value);
+        const role = document.getElementById(
+            `bulkAdvRole${appId}`
+        )?.value || 'user';
+        if (role) {
+            manualAppRoles.push({ app_id: appId, role: role });
+        }
+    });
     
     rows.forEach((row, index) => {
-        const username = row.querySelector(`[name="username_${row.dataset.index}"]`)?.value?.trim();
-        const email = row.querySelector(`[name="email_${row.dataset.index}"]`)?.value?.trim() || null;
-        const password = row.querySelector(`[name="password_${row.dataset.index}"]`)?.value;
-        const isAdmin = row.querySelector(`[name="isAdmin_${row.dataset.index}"]`)?.checked || false;
-        const mustChangePwd = row.querySelector(`[name="mustChangePwd_${row.dataset.index}"]`)?.checked || false;
+        const ri = row.dataset.index;
+        const username = row.querySelector(
+            `[name="username_${ri}"]`
+        )?.value?.trim();
+        const email = row.querySelector(
+            `[name="email_${ri}"]`
+        )?.value?.trim() || null;
+        const password = row.querySelector(
+            `[name="password_${ri}"]`
+        )?.value;
+        const isAdmin = row.querySelector(
+            `[name="isAdmin_${ri}"]`
+        )?.checked || false;
+        const mustChangePwd = row.querySelector(
+            `[name="mustChangePwd_${ri}"]`
+        )?.checked || false;
         
         if (username && password) {
             const userData = {
@@ -8057,12 +8229,12 @@ async function executeBulkCreate() {
                 is_active: true,
                 must_change_password: mustChangePwd,
                 can_change_password: true,
-                app_roles: []
+                app_roles: [...manualAppRoles]
             };
             
-            // Ajouter le rôle sur l'application si sélectionnée
-            if (appId) {
-                userData.app_roles.push({ app_id: appId, role: role });
+            // Ajouter le profil si sélectionné
+            if (profileId) {
+                userData.profile_id = profileId;
             }
             
             users.push(userData);
@@ -8074,12 +8246,24 @@ async function executeBulkCreate() {
     }
     
     // Demander confirmation
-    const confirmed = confirm(
-        `Vous allez créer ${users.length} utilisateur(s):\n\n` +
+    const profileName = profileId 
+        ? allProfiles.find(p => p.id === profileId)?.name 
+        : null;
+    const advCount = manualAppRoles.length;
+    
+    let confirmMsg = `Vous allez créer ${users.length} utilisateur(s):\n\n` +
         `${users.slice(0, 10).map(u => u.username).join('\n')}` +
-        (users.length > 10 ? `\n... et ${users.length - 10} autre(s)` : '') +
-        `\n\nConfirmer la création ?`
-    );
+        (users.length > 10 ? `\n... et ${users.length - 10} autre(s)` : '');
+    
+    if (profileName) {
+        confirmMsg += `\n\nProfil: ${profileName}`;
+    }
+    if (advCount > 0) {
+        confirmMsg += `\n${advCount} accès app manuel(s) supplémentaire(s)`;
+    }
+    confirmMsg += '\n\nConfirmer la création ?';
+    
+    const confirmed = confirm(confirmMsg);
     
     if (!confirmed) {
         throw new Error('Opération annulée par l\'utilisateur');

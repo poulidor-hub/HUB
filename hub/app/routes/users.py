@@ -8,7 +8,10 @@ import math
 
 from app.database import get_db
 from app.routes.events import notify_event, notify_stats_update
-from app.models import User, Application, UserAppRole, AppRole, DEFAULT_ROLES
+from app.models import (
+    User, Application, UserAppRole,
+    AppRole, DEFAULT_ROLES, Profile
+)
 from app.schemas import (
     UserCreate, UserUpdate, UserResponse, PaginatedUsersResponse,
     BulkUsersCreateRequest, BulkUsersCreateResponse, BulkUserCreateResult,
@@ -542,35 +545,73 @@ async def bulk_create_users(
                     ))
                     continue
             
+            # Vérifier le profil si fourni
+            profile = None
+            if user_data.profile_id:
+                profile_result = await db.execute(
+                    select(Profile)
+                    .options(
+                        selectinload(Profile.app_roles)
+                    )
+                    .where(
+                        Profile.id == user_data.profile_id
+                    )
+                )
+                profile = profile_result.scalar_one_or_none()
+
             # Créer l'utilisateur
             user = User(
                 username=user_data.username,
                 email=user_data.email,
-                hashed_password=get_password_hash(user_data.password),
+                hashed_password=get_password_hash(
+                    user_data.password
+                ),
                 is_admin=user_data.is_admin,
                 is_active=user_data.is_active,
-                must_change_password=user_data.must_change_password,
-                can_change_password=user_data.can_change_password
+                must_change_password=(
+                    user_data.must_change_password
+                ),
+                can_change_password=(
+                    user_data.can_change_password
+                ),
+                profile_id=(
+                    profile.id if profile else None
+                )
             )
             db.add(user)
             await db.flush()  # Pour obtenir l'ID
-            
-            # Ajouter les rôles sur les applications
+
+            # Construire la map des rôles finaux
+            # Profil d'abord, puis app_roles manuels
+            # (les manuels écrasent le profil par app)
+            final_roles = {}
+            if profile:
+                for par in profile.app_roles:
+                    final_roles[par.app_id] = par.role
             if user_data.app_roles:
-                app_ids = [ar.app_id for ar in user_data.app_roles]
-                apps_result = await db.execute(
-                    select(Application).where(Application.id.in_(app_ids))
-                )
-                existing_apps = {app.id for app in apps_result.scalars().all()}
-                
                 for ar in user_data.app_roles:
-                    if ar.app_id in existing_apps:
-                        user_app_role = UserAppRole(
-                            user_id=user.id,
-                            app_id=ar.app_id,
-                            role=ar.role
+                    final_roles[ar.app_id] = ar.role
+
+            # Vérifier que les apps existent
+            if final_roles:
+                apps_result = await db.execute(
+                    select(Application).where(
+                        Application.id.in_(
+                            list(final_roles.keys())
                         )
-                        db.add(user_app_role)
+                    )
+                )
+                existing_apps = {
+                    app.id
+                    for app in apps_result.scalars().all()
+                }
+                for app_id, role in final_roles.items():
+                    if app_id in existing_apps:
+                        db.add(UserAppRole(
+                            user_id=user.id,
+                            app_id=app_id,
+                            role=role
+                        ))
             
             results.append(BulkUserCreateResult(
                 username=user_data.username,
