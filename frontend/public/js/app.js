@@ -2615,6 +2615,14 @@ async function handleSaveUser(event) {
         can_change_password: document.getElementById('userCanChangePassword')?.checked ?? true
     };
     
+    // Profil
+    const profileVal = document.getElementById('userProfileSelect')?.value;
+    if (profileVal) {
+        data.profile_id = parseInt(profileVal);
+    } else {
+        data.profile_id = null;
+    }
+    
     // is_active n'est pas dans le schéma UserCreate, uniquement pour la mise à jour
     if (!isCreating) {
         data.is_active = document.getElementById('userActive').checked;
@@ -2644,8 +2652,14 @@ async function handleSaveUser(event) {
         if (id) {
             await api.updateUser(id, data);
         } else {
-            const newUser = await api.createUser(data);
+            // Ne pas envoyer profile_id dans la création (pas dans le schéma)
+            const { profile_id, ...createData } = data;
+            const newUser = await api.createUser(createData);
             userId = newUser.id;
+            // Mettre à jour le profil après création si nécessaire
+            if (profile_id) {
+                await api.updateUser(userId, { profile_id });
+            }
         }
         
         // Mettre à jour les accès et rôles
@@ -4811,27 +4825,137 @@ function renderPageSessionHistory(data) {
 
 // ===== Page Utilisateurs Dédiée =====
 
+let usersCurrentPage = 1;
+let usersPerPageVal = 50;
+let usersSearchTimer = null;
+let allProfiles = [];
+
+function debounceUsersSearch() {
+    clearTimeout(usersSearchTimer);
+    usersSearchTimer = setTimeout(() => {
+        usersCurrentPage = 1;
+        loadUsersPageData();
+    }, 300);
+}
+
+function changeUsersPerPage() {
+    usersPerPageVal = parseInt(document.getElementById('usersPerPage').value || 50);
+    usersCurrentPage = 1;
+    loadUsersPageData();
+}
+
+function changeUsersPage(page) {
+    usersCurrentPage = page;
+    loadUsersPageData();
+}
+
 async function loadUsersPageData() {
     try {
-        const [users, activeSessions, apps] = await Promise.all([
-            api.getUsers(),
+        const search = document.getElementById('usersSearchInput')?.value || '';
+        const appSlug = document.getElementById('usersFilterApp')?.value || '';
+        const role = document.getElementById('usersFilterRole')?.value || '';
+        const profileId = document.getElementById('usersFilterProfile')?.value || '';
+        const isActive = document.getElementById('usersFilterStatus')?.value || '';
+
+        const [paginatedData, activeSessions, apps] = await Promise.all([
+            api.getUsers({
+                page: usersCurrentPage,
+                perPage: usersPerPageVal,
+                search: search || undefined,
+                role: role || undefined,
+                appSlug: appSlug || undefined,
+                profileId: profileId !== '' ? parseInt(profileId) : undefined,
+                isActive: isActive !== '' ? isActive === 'true' : undefined
+            }),
             api.getActiveSessions().catch(() => ({ sessions: [] })),
             api.getAllApps()
         ]);
+
+        allApps = apps;
+        allUsersPage = paginatedData.users;
         
-        allUsersPage = users;
-        allApps = apps;  // Charger aussi les apps pour le formulaire d'édition utilisateur
+        // Stats (basées sur un appel stats séparé, ou estimées)
+        document.getElementById('usersStatTotal').textContent = paginatedData.total;
         
-        // Stats
-        document.getElementById('usersStatTotal').textContent = users.length;
-        document.getElementById('usersStatActive').textContent = users.filter(u => u.is_active).length;
-        document.getElementById('usersStatAdmins').textContent = users.filter(u => u.is_admin).length;
+        // Pour les stats actifs/admins/connectés, on fait un appel séparé si pas de filtre
+        if (!search && !appSlug && !role && profileId === '' && isActive === '') {
+            document.getElementById('usersStatActive').textContent = paginatedData.users.filter(u => u.is_active).length + (paginatedData.pages > 1 ? '+' : '');
+            document.getElementById('usersStatAdmins').textContent = paginatedData.users.filter(u => u.is_admin).length + (paginatedData.pages > 1 ? '+' : '');
+        }
         document.getElementById('usersStatConnected').textContent = activeSessions.active_count || 0;
+        document.getElementById('usersTabCount').textContent = paginatedData.total;
+
+        // Remplir les filtres apps/profils si pas encore fait
+        populateUsersFilters(apps);
         
-        renderUsersPageTable(users);
+        // Charger les profils pour le filtre
+        if (allProfiles.length === 0) {
+            try {
+                allProfiles = await api.getProfiles();
+                populateProfileFilter(allProfiles);
+            } catch (e) {
+                console.warn('Profils non disponibles:', e);
+            }
+        }
+
+        // Info pagination
+        const start = (paginatedData.page - 1) * paginatedData.per_page + 1;
+        const end = Math.min(paginatedData.page * paginatedData.per_page, paginatedData.total);
+        document.getElementById('usersPageInfo').textContent = 
+            paginatedData.total > 0 ? `${start}-${end} sur ${paginatedData.total}` : 'Aucun résultat';
+        
+        // Pagination
+        document.getElementById('usersPagePagination').innerHTML = 
+            renderPagination(paginatedData.page, paginatedData.pages, 'changeUsersPage');
+        
+        // Afficher/masquer barre pagination
+        document.getElementById('usersPagePaginationBar').classList.toggle('d-none', paginatedData.total === 0);
+
+        renderUsersPageTable(paginatedData.users);
     } catch (error) {
         console.error('Erreur chargement utilisateurs:', error);
         showToast('Erreur', 'Impossible de charger les utilisateurs', 'danger');
+    }
+}
+
+function populateUsersFilters(apps) {
+    const appSelect = document.getElementById('usersFilterApp');
+    if (appSelect && appSelect.options.length <= 1) {
+        apps.forEach(app => {
+            const opt = document.createElement('option');
+            opt.value = app.slug;
+            opt.textContent = app.name;
+            appSelect.appendChild(opt);
+        });
+    }
+}
+
+function populateProfileFilter(profiles) {
+    const profileSelect = document.getElementById('usersFilterProfile');
+    if (!profileSelect) return;
+    // Conserver 'Tous les profils' et 'Sans profil'
+    while (profileSelect.options.length > 2) {
+        profileSelect.remove(2);
+    }
+    profiles.forEach(p => {
+        const opt = document.createElement('option');
+        opt.value = p.id;
+        opt.textContent = p.name;
+        profileSelect.appendChild(opt);
+    });
+    
+    // Aussi le select dans le modal user
+    const userProfileSelect = document.getElementById('userProfileSelect');
+    if (userProfileSelect) {
+        while (userProfileSelect.options.length > 1) {
+            userProfileSelect.remove(1);
+        }
+        profiles.forEach(p => {
+            const opt = document.createElement('option');
+            opt.value = p.id;
+            opt.textContent = p.name;
+            userProfileSelect.appendChild(opt);
+        });
     }
 }
 
@@ -4842,7 +4966,7 @@ function renderUsersPageTable(users) {
         container.innerHTML = `
             <div class="text-center py-5 text-muted">
                 <i class="bi bi-people display-4"></i>
-                <p class="mt-2">Aucun utilisateur</p>
+                <p class="mt-2">Aucun utilisateur trouvé</p>
             </div>
         `;
         return;
@@ -4852,17 +4976,24 @@ function renderUsersPageTable(users) {
         <table class="table table-hover align-middle mb-0">
             <thead>
                 <tr>
+                    <th style="width: 30px;"></th>
                     <th>Utilisateur</th>
                     <th>Email</th>
                     <th>Rôle Hub</th>
-                    <th>Applications (Rôle)</th>
+                    <th>Profil</th>
+                    <th>Apps</th>
                     <th>Statut</th>
                     <th class="text-end">Actions</th>
                 </tr>
             </thead>
             <tbody>
                 ${users.map(user => `
-                    <tr>
+                    <tr class="user-row" id="userRow${user.id}">
+                        <td>
+                            <button class="btn btn-sm btn-link p-0 text-muted user-expand-btn" onclick="toggleUserApps(${user.id})" title="Voir les applications">
+                                <i class="bi bi-chevron-right"></i>
+                            </button>
+                        </td>
                         <td>
                             <strong>${escapeHtml(user.username)}</strong>
                             ${user.must_change_password ? '<i class="bi bi-key-fill text-warning ms-1" title="Doit changer son mot de passe"></i>' : ''}
@@ -4874,12 +5005,14 @@ function renderUsersPageTable(users) {
                                 : '<span class="badge bg-light text-dark">User</span>'}
                         </td>
                         <td>
-                            ${user.app_roles?.map(ar => `
-                                <span class="badge bg-secondary me-1">
-                                    ${escapeHtml(ar.app_name)} 
-                                    <small>(${ar.role})</small>
-                                </span>
-                            `).join('') || '<span class="text-muted">-</span>'}
+                            ${user.profile 
+                                ? `<span class="badge badge-profile" style="background-color: ${user.profile.color};">${escapeHtml(user.profile.name)}</span>` 
+                                : '<span class="text-muted small">-</span>'}
+                        </td>
+                        <td>
+                            <span class="badge bg-light text-dark border" title="${(user.app_roles || []).map(ar => ar.app_name + ' (' + ar.role + ')').join(', ')}">
+                                ${(user.app_roles || []).length} app${(user.app_roles || []).length !== 1 ? 's' : ''}
+                            </span>
                         </td>
                         <td>
                             ${user.is_active 
@@ -4902,19 +5035,414 @@ function renderUsersPageTable(users) {
                             </div>
                         </td>
                     </tr>
+                    <tr class="user-apps-detail d-none" id="userAppsDetail${user.id}">
+                        <td colspan="8" class="py-0 px-4 bg-light">
+                            <div class="py-2">
+                                ${(user.app_roles || []).length > 0 
+                                    ? `<div class="d-flex flex-wrap gap-1">
+                                        ${user.app_roles.map(ar => `
+                                            <span class="badge bg-white text-dark border me-1 mb-1">
+                                                <i class="bi bi-app me-1"></i>${escapeHtml(ar.app_name)} 
+                                                <span class="badge ${getRoleBadgeColor(ar.role)} ms-1">${ar.role}</span>
+                                            </span>
+                                        `).join('')}
+                                      </div>`
+                                    : '<span class="text-muted small"><i class="bi bi-dash-circle me-1"></i>Aucune application assignée</span>'}
+                            </div>
+                        </td>
+                    </tr>
                 `).join('')}
             </tbody>
         </table>
     `;
 }
 
+function toggleUserApps(userId) {
+    const detailRow = document.getElementById(`userAppsDetail${userId}`);
+    const btn = document.querySelector(`#userRow${userId} .user-expand-btn i`);
+    
+    if (detailRow.classList.contains('d-none')) {
+        detailRow.classList.remove('d-none');
+        btn.className = 'bi bi-chevron-down';
+    } else {
+        detailRow.classList.add('d-none');
+        btn.className = 'bi bi-chevron-right';
+    }
+}
+
+function getRoleBadgeColor(role) {
+    switch (role) {
+        case 'admin': return 'bg-danger';
+        case 'manager': return 'bg-warning text-dark';
+        case 'user': return 'bg-primary';
+        case 'viewer': return 'bg-info text-dark';
+        case 'service': return 'bg-dark';
+        default: return 'bg-secondary';
+    }
+}
+
 function filterUsersTable() {
-    const search = document.getElementById('usersSearchInput').value.toLowerCase();
-    const filtered = allUsersPage.filter(user => 
-        user.username.toLowerCase().includes(search) ||
-        (user.email && user.email.toLowerCase().includes(search))
-    );
-    renderUsersPageTable(filtered);
+    usersCurrentPage = 1;
+    loadUsersPageData();
+}
+
+// ===== Onglet Profils =====
+
+let profileFormModal = null;
+let applyProfileModal = null;
+
+async function loadProfilesTab() {
+    try {
+        const [profiles, apps] = await Promise.all([
+            api.getProfiles(),
+            allApps.length > 0 ? Promise.resolve(allApps) : api.getAllApps()
+        ]);
+        
+        allProfiles = profiles;
+        allApps = apps;
+        
+        // Stats
+        const totalAssigned = profiles.reduce((sum, p) => sum + p.user_count, 0);
+        document.getElementById('profilesStatTotal').textContent = profiles.length;
+        document.getElementById('profilesStatAssigned').textContent = totalAssigned;
+        document.getElementById('profilesTabCount').textContent = profiles.length;
+        
+        // Le nombre sans profil sera mis à jour quand on aura le total users
+        const totalUsersEl = document.getElementById('usersStatTotal');
+        const totalUsers = parseInt(totalUsersEl?.textContent) || 0;
+        document.getElementById('profilesStatUnassigned').textContent = Math.max(0, totalUsers - totalAssigned);
+        
+        populateProfileFilter(profiles);
+        renderProfilesList(profiles);
+    } catch (error) {
+        console.error('Erreur chargement profils:', error);
+        showToast('Erreur', 'Impossible de charger les profils', 'danger');
+    }
+}
+
+function renderProfilesList(profiles) {
+    const container = document.getElementById('profilesList');
+    
+    if (!profiles || profiles.length === 0) {
+        container.innerHTML = `
+            <div class="col-12 text-center py-5 text-muted">
+                <i class="bi bi-person-badge display-4"></i>
+                <h5 class="mt-3">Aucun profil créé</h5>
+                <p>Les profils permettent d'assigner un ensemble d'apps et de rôles en un seul clic.</p>
+                <button class="btn btn-primary" onclick="showProfileModal()">
+                    <i class="bi bi-plus-lg me-1"></i>Créer un profil
+                </button>
+            </div>
+        `;
+        return;
+    }
+    
+    container.innerHTML = profiles.map(profile => `
+        <div class="col-md-6 col-lg-4">
+            <div class="card h-100 profile-card">
+                <div class="card-header d-flex justify-content-between align-items-center py-2" style="border-left: 4px solid ${profile.color};">
+                    <div>
+                        <span class="badge badge-profile" style="background-color: ${profile.color}; font-size: 0.95em;">${escapeHtml(profile.name)}</span>
+                        <span class="badge bg-light text-dark ms-2">${profile.user_count} user${profile.user_count !== 1 ? 's' : ''}</span>
+                    </div>
+                    <div class="btn-group btn-group-sm">
+                        <button class="btn btn-outline-secondary" onclick="showProfileModal(${profile.id})" title="Modifier">
+                            <i class="bi bi-pencil"></i>
+                        </button>
+                        <button class="btn btn-outline-primary" onclick="showApplyProfileModal(${profile.id})" title="Appliquer à des utilisateurs">
+                            <i class="bi bi-person-plus"></i>
+                        </button>
+                        <button class="btn btn-outline-info" onclick="syncProfileUsers(${profile.id}, '${escapeHtml(profile.name)}')" title="Synchroniser les utilisateurs">
+                            <i class="bi bi-arrow-repeat"></i>
+                        </button>
+                        <button class="btn btn-outline-danger" onclick="deleteProfile(${profile.id}, '${escapeHtml(profile.name)}')" title="Supprimer">
+                            <i class="bi bi-trash"></i>
+                        </button>
+                    </div>
+                </div>
+                <div class="card-body py-2">
+                    ${profile.description ? `<p class="card-text small text-muted mb-2">${escapeHtml(profile.description)}</p>` : ''}
+                    <div class="d-flex flex-wrap gap-1">
+                        ${profile.app_roles.map(ar => `
+                            <span class="badge bg-white text-dark border" style="font-size: 0.75em;">
+                                ${escapeHtml(ar.app_name)} <span class="badge ${getRoleBadgeColor(ar.role)}" style="font-size: 0.8em;">${ar.role}</span>
+                            </span>
+                        `).join('')}
+                        ${profile.app_roles.length === 0 ? '<span class="text-muted small">Aucune application</span>' : ''}
+                    </div>
+                </div>
+            </div>
+        </div>
+    `).join('');
+}
+
+function showProfileModal(profileId = null) {
+    if (!profileFormModal) {
+        profileFormModal = new bootstrap.Modal(document.getElementById('profileFormModal'));
+    }
+    
+    document.getElementById('profileForm').reset();
+    document.getElementById('profileId').value = '';
+    document.getElementById('profileColor').value = '#6c757d';
+    updateProfilePreview();
+    
+    // Charger les apps dans le formulaire
+    loadProfileAppsCheckboxes([]);
+    
+    if (profileId) {
+        // Mode édition
+        const profile = allProfiles.find(p => p.id === profileId);
+        if (profile) {
+            document.getElementById('profileFormTitle').textContent = 'Modifier le Profil';
+            document.getElementById('profileId').value = profile.id;
+            document.getElementById('profileName').value = profile.name;
+            document.getElementById('profileDescription').value = profile.description || '';
+            document.getElementById('profileColor').value = profile.color || '#6c757d';
+            updateProfilePreview();
+            loadProfileAppsCheckboxes(profile.app_roles);
+        }
+    } else {
+        document.getElementById('profileFormTitle').textContent = 'Nouveau Profil';
+    }
+    
+    profileFormModal.show();
+}
+
+function updateProfilePreview() {
+    const color = document.getElementById('profileColor').value;
+    const name = document.getElementById('profileName').value || 'Profil';
+    const badge = document.getElementById('profilePreviewBadge');
+    badge.style.backgroundColor = color;
+    badge.textContent = name;
+}
+
+// Mettre à jour l'aperçu en temps réel
+document.addEventListener('DOMContentLoaded', () => {
+    const colorInput = document.getElementById('profileColor');
+    const nameInput = document.getElementById('profileName');
+    if (colorInput) colorInput.addEventListener('input', updateProfilePreview);
+    if (nameInput) nameInput.addEventListener('input', updateProfilePreview);
+});
+
+function loadProfileAppsCheckboxes(existingRoles) {
+    const container = document.getElementById('profileAppsCheckboxes');
+    if (!allApps || allApps.length === 0) {
+        container.innerHTML = '<small class="text-muted">Aucune application disponible</small>';
+        return;
+    }
+
+    const rolesByAppId = {};
+    existingRoles.forEach(ar => {
+        rolesByAppId[ar.app_id] = ar.role;
+    });
+
+    container.innerHTML = allApps.map(app => {
+        const currentRole = rolesByAppId[app.id] || '';
+        const isChecked = currentRole !== '';
+        
+        return `
+            <div class="d-flex align-items-center mb-2 app-role-row">
+                <div class="form-check me-3" style="min-width: 200px;">
+                    <input class="form-check-input profile-app-checkbox" type="checkbox" value="${app.id}" 
+                        id="profileApp${app.id}" ${isChecked ? 'checked' : ''}
+                        onchange="toggleProfileRoleSelect(${app.id})">
+                    <label class="form-check-label" for="profileApp${app.id}">
+                        <i class="${app.icon} me-1" style="color: ${app.color}"></i>
+                        ${escapeHtml(app.name)}
+                    </label>
+                </div>
+                <select class="form-select form-select-sm profile-role-select" id="profileAppRole${app.id}" 
+                    style="width: 120px;" ${isChecked ? '' : 'disabled'}>
+                    <option value="">-- Rôle --</option>
+                    ${AVAILABLE_ROLES.map(role => `
+                        <option value="${role}" ${currentRole === role ? 'selected' : ''}>
+                            ${role.charAt(0).toUpperCase() + role.slice(1)}
+                        </option>
+                    `).join('')}
+                </select>
+            </div>
+        `;
+    }).join('');
+}
+
+function toggleProfileRoleSelect(appId) {
+    const checkbox = document.getElementById(`profileApp${appId}`);
+    const roleSelect = document.getElementById(`profileAppRole${appId}`);
+    if (checkbox.checked) {
+        roleSelect.disabled = false;
+        if (!roleSelect.value) roleSelect.value = 'user';
+    } else {
+        roleSelect.disabled = true;
+        roleSelect.value = '';
+    }
+}
+
+function profileSelectAllApps(checked) {
+    document.querySelectorAll('.profile-app-checkbox').forEach(cb => {
+        cb.checked = checked;
+        const appId = cb.value;
+        const roleSelect = document.getElementById(`profileAppRole${appId}`);
+        if (checked) {
+            roleSelect.disabled = false;
+            if (!roleSelect.value) roleSelect.value = 'user';
+        } else {
+            roleSelect.disabled = true;
+            roleSelect.value = '';
+        }
+    });
+}
+
+async function handleSaveProfile(event) {
+    event.preventDefault();
+    
+    const id = document.getElementById('profileId').value;
+    const isCreating = !id;
+    
+    // Collecter les app_roles
+    const appRoles = [];
+    document.querySelectorAll('.profile-app-checkbox:checked').forEach(cb => {
+        const appId = parseInt(cb.value);
+        const role = document.getElementById(`profileAppRole${appId}`).value;
+        if (role) {
+            appRoles.push({ app_id: appId, role: role });
+        }
+    });
+    
+    const data = {
+        name: document.getElementById('profileName').value,
+        description: document.getElementById('profileDescription').value || null,
+        color: document.getElementById('profileColor').value,
+        app_roles: appRoles
+    };
+    
+    try {
+        if (isCreating) {
+            await api.createProfile(data);
+            showToast('Succès', `Profil "${data.name}" créé`, 'success');
+        } else {
+            await api.updateProfile(parseInt(id), data);
+            showToast('Succès', `Profil "${data.name}" modifié`, 'success');
+        }
+        
+        profileFormModal.hide();
+        allProfiles = []; // Forcer le rechargement
+        await loadProfilesTab();
+    } catch (error) {
+        showToast('Erreur', error.message, 'danger');
+    }
+}
+
+async function deleteProfile(id, name) {
+    if (!confirm(`Supprimer le profil "${name}" ?\n\nLes utilisateurs assignés à ce profil garderont leurs accès actuels.`)) return;
+    
+    try {
+        await api.deleteProfile(id);
+        showToast('Succès', `Profil "${name}" supprimé`, 'success');
+        allProfiles = [];
+        await loadProfilesTab();
+    } catch (error) {
+        showToast('Erreur', error.message, 'danger');
+    }
+}
+
+async function syncProfileUsers(id, name) {
+    if (!confirm(`Synchroniser tous les utilisateurs du profil "${name}" ?\n\nLeurs accès seront remis en conformité avec le profil.`)) return;
+    
+    try {
+        const result = await api.syncProfile(id);
+        showToast('Succès', result.message, 'success');
+        await loadUsersPageData();
+    } catch (error) {
+        showToast('Erreur', error.message, 'danger');
+    }
+}
+
+async function showApplyProfileModal(profileId) {
+    if (!applyProfileModal) {
+        applyProfileModal = new bootstrap.Modal(document.getElementById('applyProfileModal'));
+    }
+    
+    const profile = allProfiles.find(p => p.id === profileId);
+    if (!profile) return;
+    
+    document.getElementById('applyProfileId').value = profileId;
+    const nameBadge = document.getElementById('applyProfileName');
+    nameBadge.textContent = profile.name;
+    nameBadge.style.backgroundColor = profile.color;
+    
+    // Charger tous les users (sans pagination pour le sélecteur)
+    try {
+        const users = await api.getUsers({ page: 0 });  // page=0 = tous
+        renderApplyProfileUsersList(users, profileId);
+    } catch (error) {
+        showToast('Erreur', 'Impossible de charger les utilisateurs', 'danger');
+        return;
+    }
+    
+    applyProfileModal.show();
+}
+
+function renderApplyProfileUsersList(users, profileId) {
+    const container = document.getElementById('applyProfileUsersList');
+    container.innerHTML = users.map(user => `
+        <div class="form-check apply-profile-user-item mb-1">
+            <input class="form-check-input apply-profile-user-cb" type="checkbox" value="${user.id}" id="applyUser${user.id}"
+                ${user.profile?.id === profileId ? 'checked disabled' : ''}>
+            <label class="form-check-label small" for="applyUser${user.id}">
+                ${escapeHtml(user.username)}
+                ${user.profile ? `<span class="badge badge-profile ms-1" style="background-color: ${user.profile.color}; font-size: 0.7em;">${escapeHtml(user.profile.name)}</span>` : ''}
+                ${user.profile?.id === profileId ? '<span class="text-muted ms-1">(déjà assigné)</span>' : ''}
+            </label>
+        </div>
+    `).join('');
+    
+    // Stocker pour le filtre
+    container.dataset.allUsers = JSON.stringify(users.map(u => ({ id: u.id, username: u.username })));
+}
+
+function filterApplyProfileUsers() {
+    const search = document.getElementById('applyProfileSearchInput').value.toLowerCase();
+    document.querySelectorAll('.apply-profile-user-item').forEach(item => {
+        const label = item.querySelector('label').textContent.toLowerCase();
+        item.style.display = label.includes(search) ? '' : 'none';
+    });
+}
+
+async function handleApplyProfile() {
+    const profileId = parseInt(document.getElementById('applyProfileId').value);
+    const syncRoles = document.getElementById('applyProfileSyncRoles').checked;
+    
+    const selectedIds = [];
+    document.querySelectorAll('.apply-profile-user-cb:checked:not(:disabled)').forEach(cb => {
+        selectedIds.push(parseInt(cb.value));
+    });
+    
+    if (selectedIds.length === 0) {
+        showToast('Info', 'Aucun utilisateur sélectionné', 'warning');
+        return;
+    }
+    
+    try {
+        const result = await api.applyProfile(profileId, selectedIds, syncRoles);
+        showToast('Succès', result.message, 'success');
+        applyProfileModal.hide();
+        allProfiles = [];
+        await Promise.all([loadProfilesTab(), loadUsersPageData()]);
+    } catch (error) {
+        showToast('Erreur', error.message, 'danger');
+    }
+}
+
+// Fonctions pour le sélecteur de profil dans le modal user
+async function onUserProfileChange() {
+    const profileId = document.getElementById('userProfileSelect').value;
+    if (!profileId) return;
+    
+    // Charger le profil et pré-remplir les checkboxes apps
+    const profile = allProfiles.find(p => p.id === parseInt(profileId));
+    if (profile) {
+        loadUserAppsWithRoles(profile.app_roles);
+    }
 }
 
 function showAddUserFormPage() {
@@ -4930,17 +5458,23 @@ function showAddUserFormPage() {
     if (mustChangePwdEl) mustChangePwdEl.checked = false;
     const canChangePwdEl = document.getElementById('userCanChangePassword');
     if (canChangePwdEl) canChangePwdEl.checked = true;  // Par défaut, l'utilisateur peut changer son mdp
+    // Réinitialiser le profil
+    const profileSelect = document.getElementById('userProfileSelect');
+    if (profileSelect) profileSelect.value = '';
     loadUserAppsCheckboxes([]);
     userFormModal.show();
 }
 
 async function editUserPage(id) {
-    const user = allUsersPage.find(u => u.id === id);
+    let user = allUsersPage.find(u => u.id === id);
     if (!user) {
-        const users = await api.getUsers();
-        const foundUser = users.find(u => u.id === id);
-        if (!foundUser) return;
-        Object.assign(user, foundUser);
+        try {
+            const users = await api.getUsers({ page: 0 });
+            user = users.find(u => u.id === id);
+        } catch (e) {
+            console.error('Erreur chargement user:', e);
+        }
+        if (!user) return;
     }
 
     document.getElementById('userFormTitle').textContent = 'Modifier l\'Utilisateur';
@@ -4964,6 +5498,12 @@ async function editUserPage(id) {
     const canChangePwdEl = document.getElementById('userCanChangePassword');
     if (canChangePwdEl) {
         canChangePwdEl.checked = user.can_change_password !== false;  // Par défaut true
+    }
+    
+    // Sélectionner le profil
+    const profileSelect = document.getElementById('userProfileSelect');
+    if (profileSelect) {
+        profileSelect.value = user.profile?.id || '';
     }
     
     const userAppRoles = user.app_roles || [];

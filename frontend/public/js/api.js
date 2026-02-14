@@ -402,8 +402,15 @@ class HubAPI {
     }
 
     // Users
-    async getUsers() {
-        return this.request('/users/');
+    async getUsers(params = {}) {
+        const { page = 0, perPage = 50, search, role, appSlug, profileId, isActive } = params;
+        let url = `/users/?page=${page}&per_page=${perPage}`;
+        if (search) url += `&search=${encodeURIComponent(search)}`;
+        if (role) url += `&role=${encodeURIComponent(role)}`;
+        if (appSlug) url += `&app_slug=${encodeURIComponent(appSlug)}`;
+        if (profileId !== undefined && profileId !== null && profileId !== '') url += `&profile_id=${profileId}`;
+        if (isActive !== undefined && isActive !== null && isActive !== '') url += `&is_active=${isActive}`;
+        return this.request(url);
     }
 
     async createUser(userData) {
@@ -918,6 +925,57 @@ class HubAPI {
             method: 'POST',
             body: JSON.stringify({ removals })
         });
+    }
+
+    // ===== Profiles API =====
+    
+    async getProfiles() {
+        return this.request('/profiles/');
+    }
+    
+    async createProfile(profileData) {
+        return this.request('/profiles/', {
+            method: 'POST',
+            body: JSON.stringify(profileData)
+        });
+    }
+    
+    async updateProfile(id, profileData) {
+        return this.request(`/profiles/${id}`, {
+            method: 'PUT',
+            body: JSON.stringify(profileData)
+        });
+    }
+    
+    async deleteProfile(id) {
+        return this.request(`/profiles/${id}`, {
+            method: 'DELETE'
+        });
+    }
+    
+    async applyProfile(profileId, userIds, syncRoles = true) {
+        return this.request(`/profiles/${profileId}/apply`, {
+            method: 'POST',
+            body: JSON.stringify({ user_ids: userIds, sync_roles: syncRoles })
+        });
+    }
+    
+    async syncProfile(profileId) {
+        return this.request(`/profiles/${profileId}/sync`, {
+            method: 'POST'
+        });
+    }
+    
+    async detachProfile(profileId, userIds) {
+        return this.request(`/profiles/${profileId}/detach`, {
+            method: 'POST',
+            body: JSON.stringify({ user_ids: userIds, sync_roles: false })
+        });
+    }
+    
+    // Rôles disponibles
+    async getAvailableRoles() {
+        return this.request('/users/roles/available');
     }
 }
 

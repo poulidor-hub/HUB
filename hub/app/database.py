@@ -200,3 +200,40 @@ async def apply_migrations():
                         except Exception as e:
                             logger.warning(f"Migration 007 statement ignoré: {e}")
                 logger.info("✅ Migration 007 appliquée")
+        
+        # Vérifier si la migration 008 est nécessaire (profiles)
+        result = await conn.execute(text("""
+            SELECT table_name FROM information_schema.tables 
+            WHERE table_schema = 'public' AND table_name = 'profiles'
+        """))
+        if not result.fetchone():
+            logger.info("📦 Application de la migration 008_add_profiles...")
+            migration_file = migrations_dir / "008_add_profiles.sql"
+            if migration_file.exists():
+                sql = migration_file.read_text()
+                for statement in sql.split(';'):
+                    statement = statement.strip()
+                    if statement and not statement.startswith('--'):
+                        try:
+                            await conn.execute(text(statement))
+                        except Exception as e:
+                            logger.warning(f"Migration 008 statement ignoré: {e}")
+                logger.info("✅ Migration 008 appliquée")
+        else:
+            # Vérifier si la colonne profile_id existe sur users
+            result = await conn.execute(text("""
+                SELECT column_name FROM information_schema.columns 
+                WHERE table_name = 'users' AND column_name = 'profile_id'
+            """))
+            if not result.fetchone():
+                logger.info("📦 Ajout de la colonne profile_id sur users...")
+                try:
+                    await conn.execute(text(
+                        "ALTER TABLE users ADD COLUMN IF NOT EXISTS profile_id INTEGER REFERENCES profiles(id) ON DELETE SET NULL"
+                    ))
+                    await conn.execute(text(
+                        "CREATE INDEX IF NOT EXISTS idx_users_profile_id ON users(profile_id)"
+                    ))
+                    logger.info("✅ Colonne profile_id ajoutée")
+                except Exception as e:
+                    logger.warning(f"Ajout profile_id ignoré: {e}")

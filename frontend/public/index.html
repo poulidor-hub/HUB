@@ -729,82 +729,206 @@
             <div class="d-flex justify-content-between align-items-center mb-4">
                 <div>
                     <h1 class="h3 mb-1"><i class="bi bi-people me-2"></i>Gestion des Utilisateurs</h1>
-                    <p class="text-muted mb-0">Gérer les comptes utilisateurs et leurs accès aux applications</p>
+                    <p class="text-muted mb-0">Gérer les comptes utilisateurs, leurs profils et accès aux applications</p>
                 </div>
                 <div class="d-flex gap-2">
-                    <div class="input-group input-group-sm" style="width: 250px;">
-                        <span class="input-group-text"><i class="bi bi-search"></i></span>
-                        <input type="text" class="form-control" id="usersSearchInput" placeholder="Rechercher..." oninput="filterUsersTable()">
-                    </div>
-                    <!-- Boutons opérations en masse -->
-                    <div class="dropdown">
-                        <button class="btn btn-outline-secondary btn-sm dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false">
-                            <i class="bi bi-people-fill me-1"></i>Actions en masse
-                        </button>
-                        <ul class="dropdown-menu dropdown-menu-end">
-                            <li><h6 class="dropdown-header">Gestion des accès</h6></li>
-                            <li><a class="dropdown-item" href="#" onclick="showBulkOperationsModal('assign-roles'); return false;">
-                                <i class="bi bi-plus-circle text-success me-2"></i>Assigner des rôles
-                            </a></li>
-                            <li><a class="dropdown-item" href="#" onclick="showBulkOperationsModal('remove-access'); return false;">
-                                <i class="bi bi-dash-circle text-warning me-2"></i>Retirer des accès
-                            </a></li>
-                            <li><hr class="dropdown-divider"></li>
-                            <li><h6 class="dropdown-header">Gestion des utilisateurs</h6></li>
-                            <li><a class="dropdown-item" href="#" onclick="showBulkOperationsModal('create'); return false;">
-                                <i class="bi bi-person-plus text-primary me-2"></i>Créer en masse
-                            </a></li>
-                            <li><a class="dropdown-item" href="#" onclick="showBulkOperationsModal('delete'); return false;">
-                                <i class="bi bi-trash text-danger me-2"></i>Supprimer en masse
-                            </a></li>
-                        </ul>
-                    </div>
                     <button class="btn btn-primary btn-sm" onclick="showAddUserFormPage()">
                         <i class="bi bi-person-plus me-1"></i>Ajouter
                     </button>
                 </div>
             </div>
-            
-            <!-- Stats utilisateurs -->
-            <div class="row g-3 mb-4">
-                <div class="col-md-3">
-                    <div class="card border">
-                        <div class="card-body text-center">
-                            <h3 id="usersStatTotal" class="text-primary">-</h3>
-                            <small class="text-muted">Utilisateurs totaux</small>
+
+            <!-- Sous-navigation avec onglets -->
+            <ul class="nav nav-tabs mb-4" id="usersPageTabs">
+                <li class="nav-item">
+                    <button class="nav-link active" data-bs-toggle="tab" data-bs-target="#tabUsersList">
+                        <i class="bi bi-people me-1"></i>Utilisateurs
+                        <span id="usersTabCount" class="badge bg-secondary ms-1">0</span>
+                    </button>
+                </li>
+                <li class="nav-item">
+                    <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tabProfiles" onclick="loadProfilesTab()">
+                        <i class="bi bi-person-badge me-1"></i>Profils
+                        <span id="profilesTabCount" class="badge bg-secondary ms-1">0</span>
+                    </button>
+                </li>
+            </ul>
+
+            <div class="tab-content">
+                <!-- Onglet Utilisateurs -->
+                <div class="tab-pane fade show active" id="tabUsersList">
+                    <!-- Stats utilisateurs -->
+                    <div class="row g-3 mb-3">
+                        <div class="col-md-3">
+                            <div class="card border">
+                                <div class="card-body text-center py-2">
+                                    <h4 id="usersStatTotal" class="text-primary mb-0">-</h4>
+                                    <small class="text-muted">Total</small>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="card border">
+                                <div class="card-body text-center py-2">
+                                    <h4 id="usersStatActive" class="mb-0">-</h4>
+                                    <small class="text-muted">Actifs</small>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="card border">
+                                <div class="card-body text-center py-2">
+                                    <h4 id="usersStatAdmins" class="mb-0">-</h4>
+                                    <small class="text-muted">Admins</small>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="card border">
+                                <div class="card-body text-center py-2">
+                                    <h4 id="usersStatConnected" class="mb-0">-</h4>
+                                    <small class="text-muted">Connectés</small>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Barre de filtres -->
+                    <div class="card mb-3">
+                        <div class="card-body py-2">
+                            <div class="row g-2 align-items-end">
+                                <div class="col-md-3">
+                                    <div class="input-group input-group-sm">
+                                        <span class="input-group-text"><i class="bi bi-search"></i></span>
+                                        <input type="text" class="form-control" id="usersSearchInput" 
+                                            placeholder="Rechercher (nom, email, app)..." 
+                                            oninput="debounceUsersSearch()">
+                                    </div>
+                                </div>
+                                <div class="col-md-2">
+                                    <select class="form-select form-select-sm" id="usersFilterApp" onchange="loadUsersPageData()">
+                                        <option value="">Toutes les apps</option>
+                                    </select>
+                                </div>
+                                <div class="col-md-2">
+                                    <select class="form-select form-select-sm" id="usersFilterRole" onchange="loadUsersPageData()">
+                                        <option value="">Tous les rôles</option>
+                                        <option value="admin">Admin</option>
+                                        <option value="manager">Manager</option>
+                                        <option value="user">User</option>
+                                        <option value="viewer">Viewer</option>
+                                    </select>
+                                </div>
+                                <div class="col-md-2">
+                                    <select class="form-select form-select-sm" id="usersFilterProfile" onchange="loadUsersPageData()">
+                                        <option value="">Tous les profils</option>
+                                        <option value="-1">Sans profil</option>
+                                    </select>
+                                </div>
+                                <div class="col-md-2">
+                                    <select class="form-select form-select-sm" id="usersFilterStatus" onchange="loadUsersPageData()">
+                                        <option value="">Tous statuts</option>
+                                        <option value="true">Actifs</option>
+                                        <option value="false">Inactifs</option>
+                                    </select>
+                                </div>
+                                <div class="col-md-1 text-end">
+                                    <!-- Boutons opérations en masse -->
+                                    <div class="dropdown">
+                                        <button class="btn btn-outline-secondary btn-sm dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false" title="Actions en masse">
+                                            <i class="bi bi-people-fill"></i>
+                                        </button>
+                                        <ul class="dropdown-menu dropdown-menu-end">
+                                            <li><h6 class="dropdown-header">Gestion des accès</h6></li>
+                                            <li><a class="dropdown-item" href="#" onclick="showBulkOperationsModal('assign-roles'); return false;">
+                                                <i class="bi bi-plus-circle text-success me-2"></i>Assigner des rôles
+                                            </a></li>
+                                            <li><a class="dropdown-item" href="#" onclick="showBulkOperationsModal('remove-access'); return false;">
+                                                <i class="bi bi-dash-circle text-warning me-2"></i>Retirer des accès
+                                            </a></li>
+                                            <li><hr class="dropdown-divider"></li>
+                                            <li><h6 class="dropdown-header">Gestion des utilisateurs</h6></li>
+                                            <li><a class="dropdown-item" href="#" onclick="showBulkOperationsModal('create'); return false;">
+                                                <i class="bi bi-person-plus text-primary me-2"></i>Créer en masse
+                                            </a></li>
+                                            <li><a class="dropdown-item" href="#" onclick="showBulkOperationsModal('delete'); return false;">
+                                                <i class="bi bi-trash text-danger me-2"></i>Supprimer en masse
+                                            </a></li>
+                                        </ul>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Table des utilisateurs -->
+                    <div class="card">
+                        <div class="card-body p-0">
+                            <div id="usersPageTable" class="table-responsive"></div>
+                        </div>
+                        <div class="card-footer d-flex justify-content-between align-items-center py-2" id="usersPagePaginationBar">
+                            <small class="text-muted" id="usersPageInfo">-</small>
+                            <div class="d-flex align-items-center gap-3">
+                                <select class="form-select form-select-sm" id="usersPerPage" onchange="changeUsersPerPage()" style="width: 80px;">
+                                    <option value="25">25</option>
+                                    <option value="50" selected>50</option>
+                                    <option value="100">100</option>
+                                </select>
+                                <div id="usersPagePagination"></div>
+                            </div>
                         </div>
                     </div>
                 </div>
-                <div class="col-md-3">
-                    <div class="card border">
-                        <div class="card-body text-center">
-                            <h3 id="usersStatActive">-</h3>
-                            <small class="text-muted">Actifs</small>
+
+                <!-- Onglet Profils -->
+                <div class="tab-pane fade" id="tabProfiles">
+                    <div class="d-flex justify-content-between align-items-center mb-3">
+                        <div>
+                            <h5 class="mb-0"><i class="bi bi-person-badge me-1"></i>Profils d'accès</h5>
+                            <small class="text-muted">Modèles de rôles applicables en un clic (ex: Cadre, Agent, Admin SI)</small>
+                        </div>
+                        <div class="d-flex gap-2">
+                            <button class="btn btn-outline-secondary btn-sm" onclick="loadProfilesTab()">
+                                <i class="bi bi-arrow-clockwise me-1"></i>Actualiser
+                            </button>
+                            <button class="btn btn-primary btn-sm" onclick="showProfileModal()">
+                                <i class="bi bi-plus-lg me-1"></i>Nouveau profil
+                            </button>
                         </div>
                     </div>
-                </div>
-                <div class="col-md-3">
-                    <div class="card border">
-                        <div class="card-body text-center">
-                            <h3 id="usersStatAdmins">-</h3>
-                            <small class="text-muted">Administrateurs</small>
+
+                    <!-- Stats profils -->
+                    <div class="row g-3 mb-3" id="profilesStats">
+                        <div class="col-md-4">
+                            <div class="card border">
+                                <div class="card-body text-center py-2">
+                                    <h4 id="profilesStatTotal" class="text-primary mb-0">-</h4>
+                                    <small class="text-muted">Profils</small>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="card border">
+                                <div class="card-body text-center py-2">
+                                    <h4 id="profilesStatAssigned" class="mb-0">-</h4>
+                                    <small class="text-muted">Utilisateurs avec profil</small>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="card border">
+                                <div class="card-body text-center py-2">
+                                    <h4 id="profilesStatUnassigned" class="mb-0">-</h4>
+                                    <small class="text-muted">Sans profil</small>
+                                </div>
+                            </div>
                         </div>
                     </div>
-                </div>
-                <div class="col-md-3">
-                    <div class="card border">
-                        <div class="card-body text-center">
-                            <h3 id="usersStatConnected">-</h3>
-                            <small class="text-muted">Connectés maintenant</small>
-                        </div>
+
+                    <!-- Liste des profils -->
+                    <div id="profilesList" class="row g-3">
+                        <!-- Chargé dynamiquement -->
                     </div>
-                </div>
-            </div>
-            
-            <!-- Table des utilisateurs -->
-            <div class="card">
-                <div class="card-body p-0">
-                    <div id="usersPageTable" class="table-responsive"></div>
                 </div>
             </div>
         </div>
@@ -1463,8 +1587,16 @@
                                 </div>
                             </div>
                             <div class="col-12" id="userAppsSection">
-                                <label class="form-label">Applications autorisées</label>
-                                <div id="userAppsCheckboxes" class="border rounded p-2" style="max-height: 150px; overflow-y: auto;">
+                                <label class="form-label d-flex justify-content-between align-items-center">
+                                    <span>Applications autorisées</span>
+                                    <span class="d-flex gap-2 align-items-center">
+                                        <label class="form-label mb-0 small text-muted me-1">Profil :</label>
+                                        <select class="form-select form-select-sm" id="userProfileSelect" style="width: 160px;" onchange="onUserProfileChange()">
+                                            <option value="">Aucun profil</option>
+                                        </select>
+                                    </span>
+                                </label>
+                                <div id="userAppsCheckboxes" class="border rounded p-2" style="max-height: 200px; overflow-y: auto;">
                                     <!-- Checkboxes loaded dynamically -->
                                 </div>
                             </div>
@@ -1477,6 +1609,100 @@
                         </button>
                     </div>
                 </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- Profile Form Modal -->
+    <div class="modal fade" id="profileFormModal" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="profileFormTitle">Nouveau Profil</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <form id="profileForm" onsubmit="handleSaveProfile(event)">
+                    <div class="modal-body">
+                        <input type="hidden" id="profileId">
+                        <div class="row g-3">
+                            <div class="col-md-6">
+                                <label class="form-label">Nom du profil *</label>
+                                <input type="text" class="form-control" id="profileName" required placeholder="Ex: Cadre, Agent, Admin SI">
+                            </div>
+                            <div class="col-md-3">
+                                <label class="form-label">Couleur</label>
+                                <input type="color" class="form-control form-control-color" id="profileColor" value="#6c757d">
+                            </div>
+                            <div class="col-md-3">
+                                <label class="form-label">Aperçu</label>
+                                <div class="mt-1">
+                                    <span class="badge" id="profilePreviewBadge" style="background-color: #6c757d; font-size: 0.9em;">Cadre</span>
+                                </div>
+                            </div>
+                            <div class="col-12">
+                                <label class="form-label">Description</label>
+                                <textarea class="form-control" id="profileDescription" rows="2" placeholder="Description des droits de ce profil"></textarea>
+                            </div>
+                            <div class="col-12">
+                                <label class="form-label">Applications et rôles</label>
+                                <div class="mb-2 d-flex gap-2">
+                                    <button type="button" class="btn btn-outline-secondary btn-sm" onclick="profileSelectAllApps(true)">
+                                        <i class="bi bi-check-all me-1"></i>Tout cocher
+                                    </button>
+                                    <button type="button" class="btn btn-outline-secondary btn-sm" onclick="profileSelectAllApps(false)">
+                                        <i class="bi bi-x-lg me-1"></i>Tout décocher
+                                    </button>
+                                </div>
+                                <div id="profileAppsCheckboxes" class="border rounded p-2" style="max-height: 300px; overflow-y: auto;">
+                                    <!-- Checkboxes chargées dynamiquement -->
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuler</button>
+                        <button type="submit" class="btn btn-primary">
+                            <i class="bi bi-check-lg me-1"></i>Enregistrer
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- Apply Profile to Users Modal -->
+    <div class="modal fade" id="applyProfileModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">Appliquer le profil <span id="applyProfileName" class="badge" style="font-size: 0.9em;"></span></h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <input type="hidden" id="applyProfileId">
+                    <p class="text-muted small">Sélectionnez les utilisateurs auxquels appliquer ce profil. Leurs accès seront synchronisés avec les apps/rôles du profil.</p>
+                    <div class="mb-3">
+                        <div class="input-group input-group-sm">
+                            <span class="input-group-text"><i class="bi bi-search"></i></span>
+                            <input type="text" class="form-control" id="applyProfileSearchInput" placeholder="Filtrer les utilisateurs..." oninput="filterApplyProfileUsers()">
+                        </div>
+                    </div>
+                    <div class="form-check mb-2">
+                        <input class="form-check-input" type="checkbox" id="applyProfileSyncRoles" checked>
+                        <label class="form-check-label small" for="applyProfileSyncRoles">
+                            Synchroniser les rôles (remplacer les accès existants)
+                        </label>
+                    </div>
+                    <div id="applyProfileUsersList" class="border rounded p-2" style="max-height: 300px; overflow-y: auto;">
+                        <!-- Chargé dynamiquement -->
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuler</button>
+                    <button type="button" class="btn btn-primary" onclick="handleApplyProfile()">
+                        <i class="bi bi-check-lg me-1"></i>Appliquer
+                    </button>
+                </div>
             </div>
         </div>
     </div>

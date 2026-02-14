@@ -38,12 +38,78 @@ class UserUpdate(BaseModel):
     is_admin: Optional[bool] = None
     must_change_password: Optional[bool] = None
     can_change_password: Optional[bool] = None
+    profile_id: Optional[int] = None
 
 
 class PasswordChangeRequest(BaseModel):
     """Requête de changement de mot de passe par l'utilisateur"""
     current_password: str = Field(..., description="Mot de passe actuel")
     new_password: str = Field(..., min_length=8, description="Nouveau mot de passe (min 8 caractères)")
+
+
+# ===== Profile Schemas =====
+class ProfileAppRoleRequest(BaseModel):
+    """App + rôle pour un profil"""
+    app_id: int
+    role: str = "user"
+
+
+class ProfileCreate(BaseModel):
+    """Création d'un profil"""
+    name: str = Field(..., min_length=2, max_length=100)
+    description: Optional[str] = None
+    color: str = Field(default="#6c757d", max_length=7)
+    app_roles: List[ProfileAppRoleRequest] = []
+
+
+class ProfileUpdate(BaseModel):
+    """Mise à jour d'un profil"""
+    name: Optional[str] = Field(None, min_length=2, max_length=100)
+    description: Optional[str] = None
+    color: Optional[str] = Field(None, max_length=7)
+    app_roles: Optional[List[ProfileAppRoleRequest]] = None
+
+
+class ProfileAppRoleResponse(BaseModel):
+    """App + rôle d'un profil (réponse)"""
+    app_id: int
+    app_name: str
+    app_slug: str
+    role: str
+
+    class Config:
+        from_attributes = True
+
+
+class ProfileBriefResponse(BaseModel):
+    """Résumé d'un profil (pour affichage inline dans la liste users)"""
+    id: int
+    name: str
+    color: str
+
+    class Config:
+        from_attributes = True
+
+
+class ProfileResponse(BaseModel):
+    """Réponse complète d'un profil"""
+    id: int
+    name: str
+    description: Optional[str] = None
+    color: str = "#6c757d"
+    app_roles: List[ProfileAppRoleResponse] = []
+    user_count: int = 0
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class ProfileApplyRequest(BaseModel):
+    """Appliquer un profil à un ou plusieurs utilisateurs"""
+    user_ids: List[int] = Field(..., min_length=1)
+    sync_roles: bool = Field(default=True, description="Synchroniser les user_app_roles avec ceux du profil")
 
 
 # ===== User App Role Schema =====
@@ -75,6 +141,7 @@ class UserResponse(UserBase):
     can_change_password: bool = True
     created_at: datetime
     app_roles: List[UserAppRoleResponse] = []
+    profile: Optional[ProfileBriefResponse] = None
     
     class Config:
         from_attributes = True
@@ -86,6 +153,17 @@ class UserResponse(UserBase):
             UserAppRoleResponse.from_orm_model(uar) 
             for uar in user.app_roles
         ]
+        # Profil (peut être None)
+        profile_brief = None
+        try:
+            if user.profile_id and user.profile:
+                profile_brief = ProfileBriefResponse(
+                    id=user.profile.id,
+                    name=user.profile.name,
+                    color=user.profile.color or "#6c757d"
+                )
+        except Exception:
+            pass  # profile non chargé
         return cls(
             id=user.id,
             username=user.username,
@@ -95,7 +173,8 @@ class UserResponse(UserBase):
             must_change_password=user.must_change_password or False,
             can_change_password=user.can_change_password if user.can_change_password is not None else True,
             created_at=user.created_at,
-            app_roles=app_roles
+            app_roles=app_roles,
+            profile=profile_brief
         )
 
 
@@ -106,6 +185,15 @@ class UserBrief(BaseModel):
     
     class Config:
         from_attributes = True
+
+
+class PaginatedUsersResponse(BaseModel):
+    """Réponse paginée des utilisateurs"""
+    users: List[UserResponse] = []
+    total: int = 0
+    page: int = 1
+    per_page: int = 50
+    pages: int = 1
 
 
 class UserBriefWithRole(BaseModel):
@@ -1084,6 +1172,7 @@ class BulkRemoveAppAccessResponse(BaseModel):
 
 # Forward references
 UserResponse.model_rebuild()
+ProfileResponse.model_rebuild()
 ServiceAccountResponse.model_rebuild()
 ServiceAccountCreated.model_rebuild()
 DockerInfoResponse.model_rebuild()

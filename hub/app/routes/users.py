@@ -1,15 +1,16 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, delete
+from sqlalchemy import select, delete, func, or_
 from sqlalchemy.orm import selectinload
-from typing import List
+from typing import List, Optional
 from pydantic import BaseModel
+import math
 
 from app.database import get_db
 from app.routes.events import notify_event, notify_stats_update
 from app.models import User, Application, UserAppRole, AppRole, DEFAULT_ROLES
 from app.schemas import (
-    UserCreate, UserUpdate, UserResponse,
+    UserCreate, UserUpdate, UserResponse, PaginatedUsersResponse,
     BulkUsersCreateRequest, BulkUsersCreateResponse, BulkUserCreateResult,
     BulkUsersRolesUpdateRequest, BulkUsersRolesUpdateResponse, BulkUserRoleUpdateResult,
     BulkUsersDeleteRequest, BulkUsersDeleteResponse, BulkUserDeleteResult,
@@ -34,17 +35,105 @@ class UserAppsUpdate(BaseModel):
 
 @router.get("/")
 async def list_users(
+    page: int = Query(default=0, ge=0, description="Page (0 = pas de pagination, retourne tout)"),
+    per_page: int = Query(default=50, ge=10, le=200),
+    search: Optional[str] = Query(default=None, description="Recherche dans username, email, noms d'apps"),
+    role: Optional[str] = Query(default=None, description="Filtrer par rôle app (admin, manager, user, viewer)"),
+    app_slug: Optional[str] = Query(default=None, description="Filtrer par slug d'application"),
+    profile_id: Optional[int] = Query(default=None, description="Filtrer par profil"),
+    is_active: Optional[bool] = Query(default=None, description="Filtrer par statut actif"),
     db: AsyncSession = Depends(get_db),
     _: User = Depends(get_current_admin)
 ):
-    """Liste tous les utilisateurs (admin uniquement)"""
-    result = await db.execute(
-        select(User).options(
-            selectinload(User.app_roles).selectinload(UserAppRole.application)
+    """
+    Liste les utilisateurs avec pagination et filtres.
+    - page=0 : rétro-compatible, retourne TOUS les utilisateurs (List[UserResponse])
+    - page>=1 : pagination serveur avec filtres, retourne PaginatedUsersResponse
+    """
+    # Requête de base avec options de chargement
+    load_options = [
+        selectinload(User.app_roles).selectinload(UserAppRole.application),
+        selectinload(User.profile)
+    ]
+
+    # --- Mode rétro-compatible (page=0) : tout retourner ---
+    if page == 0:
+        result = await db.execute(
+            select(User).options(*load_options)
         )
+        users = result.scalars().all()
+        return [UserResponse.from_orm_model(u) for u in users]
+
+    # --- Mode paginé (page >= 1) ---
+    # Construire la requête avec filtres
+    base_query = select(User)
+
+    # Filtre par statut actif
+    if is_active is not None:
+        base_query = base_query.where(User.is_active == is_active)
+
+    # Filtre par profil
+    if profile_id is not None:
+        if profile_id == -1:
+            # -1 = utilisateurs sans profil
+            base_query = base_query.where(User.profile_id.is_(None))
+        else:
+            base_query = base_query.where(User.profile_id == profile_id)
+
+    # Filtre par app_slug et/ou rôle (nécessite un join)
+    if app_slug or role:
+        base_query = base_query.join(UserAppRole, User.id == UserAppRole.user_id)
+        if app_slug:
+            base_query = base_query.join(
+                Application, UserAppRole.app_id == Application.id
+            ).where(Application.slug == app_slug)
+        if role:
+            base_query = base_query.where(UserAppRole.role == role)
+        # Distinct car le join peut dupliquer les users
+        base_query = base_query.distinct()
+
+    # Recherche texte (username, email, noms d'apps)
+    if search:
+        search_term = f"%{search}%"
+        # Sous-requête pour les users qui matchent par app_name
+        app_match_subq = (
+            select(UserAppRole.user_id)
+            .join(Application, UserAppRole.app_id == Application.id)
+            .where(Application.name.ilike(search_term))
+        ).scalar_subquery()
+        
+        base_query = base_query.where(
+            or_(
+                User.username.ilike(search_term),
+                User.email.ilike(search_term),
+                User.id.in_(app_match_subq)
+            )
+        )
+
+    # Compter le total
+    count_query = select(func.count()).select_from(base_query.subquery())
+    total_result = await db.execute(count_query)
+    total = total_result.scalar() or 0
+    pages = max(1, math.ceil(total / per_page))
+
+    # Paginer et charger
+    paginated_query = (
+        base_query
+        .options(*load_options)
+        .order_by(User.username)
+        .offset((page - 1) * per_page)
+        .limit(per_page)
     )
-    users = result.scalars().all()
-    return [UserResponse.from_orm_model(u) for u in users]
+    result = await db.execute(paginated_query)
+    users = result.scalars().unique().all()
+
+    return PaginatedUsersResponse(
+        users=[UserResponse.from_orm_model(u) for u in users],
+        total=total,
+        page=page,
+        per_page=per_page,
+        pages=pages
+    )
 
 
 @router.post("/", status_code=status.HTTP_201_CREATED)
@@ -78,7 +167,10 @@ async def create_user(
     # Recharger avec les relations (vide pour un nouvel utilisateur)
     result = await db.execute(
         select(User)
-        .options(selectinload(User.app_roles).selectinload(UserAppRole.application))
+        .options(
+            selectinload(User.app_roles).selectinload(UserAppRole.application),
+            selectinload(User.profile)
+        )
         .where(User.id == user.id)
     )
     user = result.scalar_one()
@@ -99,7 +191,10 @@ async def get_user(
     """Récupère un utilisateur par ID (admin uniquement)"""
     result = await db.execute(
         select(User)
-        .options(selectinload(User.app_roles).selectinload(UserAppRole.application))
+        .options(
+            selectinload(User.app_roles).selectinload(UserAppRole.application),
+            selectinload(User.profile)
+        )
         .where(User.id == user_id)
     )
     user = result.scalar_one_or_none()
@@ -123,7 +218,10 @@ async def update_user(
     """Met à jour un utilisateur (admin uniquement)"""
     result = await db.execute(
         select(User)
-        .options(selectinload(User.app_roles).selectinload(UserAppRole.application))
+        .options(
+            selectinload(User.app_roles).selectinload(UserAppRole.application),
+            selectinload(User.profile)
+        )
         .where(User.id == user_id)
     )
     user = result.scalar_one_or_none()
@@ -156,7 +254,10 @@ async def update_user(
     # Recharger avec les relations
     result = await db.execute(
         select(User)
-        .options(selectinload(User.app_roles).selectinload(UserAppRole.application))
+        .options(
+            selectinload(User.app_roles).selectinload(UserAppRole.application),
+            selectinload(User.profile)
+        )
         .where(User.id == user_id)
     )
     user = result.scalar_one()
@@ -290,7 +391,10 @@ async def get_user_apps(
     """Récupère les applications et rôles d'un utilisateur"""
     result = await db.execute(
         select(User)
-        .options(selectinload(User.app_roles).selectinload(UserAppRole.application))
+        .options(
+            selectinload(User.app_roles).selectinload(UserAppRole.application),
+            selectinload(User.profile)
+        )
         .where(User.id == user_id)
     )
     user = result.scalar_one_or_none()

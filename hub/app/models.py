@@ -27,6 +27,42 @@ service_account_app_access = Table(
 )
 
 
+class ProfileAppRole(Base):
+    """Apps + rôles inclus dans un profil"""
+    __tablename__ = "profile_app_roles"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    profile_id = Column(Integer, ForeignKey('profiles.id', ondelete='CASCADE'), nullable=False)
+    app_id = Column(Integer, ForeignKey('applications.id', ondelete='CASCADE'), nullable=False)
+    role = Column(String(50), default="user", nullable=False)
+    
+    # Relations
+    profile = relationship("Profile", back_populates="app_roles")
+    application = relationship("Application", lazy="raise")
+    
+    def __repr__(self):
+        return f"<ProfileAppRole profile={self.profile_id} app={self.app_id} role={self.role}>"
+
+
+class Profile(Base):
+    """Profil-type (template de rôles) assignable aux utilisateurs"""
+    __tablename__ = "profiles"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(100), unique=True, nullable=False)
+    description = Column(Text)
+    color = Column(String(7), default="#6c757d")
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    # Relations
+    app_roles = relationship("ProfileAppRole", back_populates="profile", cascade="all, delete-orphan", lazy="raise")
+    users = relationship("User", back_populates="profile", lazy="raise")
+    
+    def __repr__(self):
+        return f"<Profile {self.name}>"
+
+
 class UserAppRole(Base):
     """Table d'association User <-> Application avec rôle"""
     __tablename__ = "user_app_roles"
@@ -72,11 +108,13 @@ class User(Base):
     is_admin = Column(Boolean, default=False)  # Admin du Hub (pas des apps)
     must_change_password = Column(Boolean, default=False)  # Forcer le changement de mdp à la prochaine connexion
     can_change_password = Column(Boolean, default=True)  # Autoriser l'utilisateur à changer son mdp (False pour comptes partagés)
+    profile_id = Column(Integer, ForeignKey('profiles.id', ondelete='SET NULL'), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
     # Relations (lazy='raise' pour forcer selectinload explicite en async)
     app_roles = relationship("UserAppRole", back_populates="user", cascade="all, delete-orphan", lazy="raise")
+    profile = relationship("Profile", back_populates="users", lazy="raise")
     
     @property
     def applications(self):
