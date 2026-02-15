@@ -98,6 +98,18 @@ body {
     font-weight: 600;
 }
 
+/* Version badge en bas à droite des cartes */
+.app-version-badge {
+    position: absolute;
+    bottom: 8px;
+    right: 10px;
+    font-size: 0.65rem;
+    color: var(--text-muted);
+    font-weight: 500;
+    opacity: 0.7;
+    letter-spacing: 0.02em;
+}
+
 .app-card .card-body {
     padding: 1.5rem;
 }

@@ -557,8 +557,6 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('appApiPort').addEventListener('input', updateUrlPreview);
     document.getElementById('appFrontendPort').addEventListener('input', updateUrlPreview);
     document.getElementById('appCustomHostValue').addEventListener('input', updateUrlPreview);
-    const httpsEl = document.getElementById('appFrontendHttps');
-    if (httpsEl) httpsEl.addEventListener('change', updateUrlPreview);
 });
 
 // ===== Authentication =====
@@ -1018,6 +1016,7 @@ function renderAppsGrid(apps) {
                     </div>
                     <h5>${escapeHtml(app.name)}</h5>
                     <p>${escapeHtml(app.description || 'Aucune description')}</p>
+                    ${app.app_version ? `<span class="app-version-badge">v${escapeHtml(app.app_version)}</span>` : ''}
                     ${isAdmin ? `
                         <div class="app-role-selector mt-2" onclick="event.stopPropagation()">
                             <select class="form-select form-select-sm" 
@@ -1135,6 +1134,10 @@ async function openApp(slug, frontendUrl) {
         showToast('Information', 'Cette application n\'a pas de frontend configuré', 'warning');
         return;
     }
+
+    // Toujours utiliser HTTP pour la redirection frontend
+    // (les apps gèrent elles-mêmes la redirection HTTPS si nécessaire)
+    frontendUrl = frontendUrl.replace(/^https:\/\//i, 'http://');
 
     // Nettoyer les références aux fenêtres déjà fermées
     cleanupClosedWindows();
@@ -1746,7 +1749,6 @@ async function showAddAppForm() {
     document.getElementById('appSlug').readOnly = true;
     document.getElementById('slugHint').textContent = 'Généré automatiquement';
     document.getElementById('appFrontendHttps').value = 'false';
-    updateFrontendHttpsUI();
     
     // Afficher les éléments de création
     document.getElementById('advancedOptionsSection').classList.remove('d-none');
@@ -2138,7 +2140,6 @@ function updateUrlPreview() {
     const frontendPort = document.getElementById('appFrontendPort').value;
     const customHost = document.getElementById('appCustomHost').checked;
     const customHostValue = document.getElementById('appCustomHostValue').value;
-    const frontendHttps = document.getElementById('appFrontendHttps').value === 'true';
     
     const host = customHost && customHostValue ? customHostValue : (hubHost || 'chargement...');
     
@@ -2152,35 +2153,9 @@ function updateUrlPreview() {
     }
     
     if (frontendPort) {
-        const protocol = frontendHttps ? 'https' : 'http';
-        previewFrontend.innerHTML = `<i class="bi bi-window me-1"></i>Front: <code>${protocol}://${host}:${frontendPort}</code>`;
+        previewFrontend.innerHTML = `<i class="bi bi-window me-1"></i>Front: <code>http://${host}:${frontendPort}</code>`;
     } else {
         previewFrontend.innerHTML = '';
-    }
-}
-
-function toggleFrontendHttps() {
-    const hidden = document.getElementById('appFrontendHttps');
-    hidden.value = hidden.value === 'true' ? 'false' : 'true';
-    updateFrontendHttpsUI();
-    updateUrlPreview();
-}
-
-function updateFrontendHttpsUI() {
-    const isHttps = document.getElementById('appFrontendHttps').value === 'true';
-    const icon = document.getElementById('httpsIcon');
-    const btn = document.getElementById('btnFrontendHttps');
-    if (!icon || !btn) return;
-    if (isHttps) {
-        icon.className = 'bi bi-lock-fill';
-        btn.classList.remove('btn-outline-secondary');
-        btn.classList.add('btn-success');
-        btn.title = 'HTTPS activé';
-    } else {
-        icon.className = 'bi bi-unlock';
-        btn.classList.remove('btn-success');
-        btn.classList.add('btn-outline-secondary');
-        btn.title = 'HTTP (cliquer pour HTTPS)';
     }
 }
 
@@ -2243,7 +2218,6 @@ async function handleSaveApp(event) {
                 api_port: parseInt(document.getElementById('appApiPort').value),
                 frontend_port: document.getElementById('appFrontendPort').value ? 
                     parseInt(document.getElementById('appFrontendPort').value) : null,
-                frontend_https: document.getElementById('appFrontendHttps').value === 'true',
                 custom_host: customHost ? document.getElementById('appCustomHostValue').value : null,
                 requires_auth: document.getElementById('appRequiresAuth').checked,
                 is_shared_service: isSharedService,

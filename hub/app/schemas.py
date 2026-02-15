@@ -218,6 +218,18 @@ class AppBase(BaseModel):
     frontend_url: Optional[str] = None
     callback_url: Optional[str] = None
     requires_auth: bool = True
+
+    @field_validator('frontend_url', mode='before')
+    @classmethod
+    def normalize_frontend_url_to_http(cls, v):
+        """Normalise frontend_url en HTTP.
+        
+        Les applications gèrent elles-mêmes la redirection HTTP→HTTPS,
+        le Hub ne doit donc utiliser que le port HTTP pour les redirections utilisateur.
+        """
+        if v and isinstance(v, str) and v.startswith("https://"):
+            return "http://" + v[len("https://"):]
+        return v
     is_shared_service: bool = Field(default=False, description="Si True, cette app est accessible par tous les service accounts")
 
 
@@ -252,6 +264,14 @@ class AppUpdate(BaseModel):
     requires_auth: Optional[bool] = None
     is_shared_service: Optional[bool] = None
 
+    @field_validator('frontend_url', mode='before')
+    @classmethod
+    def normalize_frontend_url_to_http(cls, v):
+        """Normalise frontend_url en HTTP (les apps gèrent elles-mêmes le HTTPS)"""
+        if v and isinstance(v, str) and v.startswith("https://"):
+            return "http://" + v[len("https://"):]
+        return v
+
 
 class AppResponse(AppBase):
     id: int
@@ -275,6 +295,7 @@ class AppResponse(AppBase):
 class AppResponseWithMyRole(AppResponse):
     """Application avec le rôle de l'utilisateur courant (pour le dashboard)"""
     my_role: Optional[str] = None  # Rôle de l'utilisateur courant sur cette app (null si pas de rôle)
+    app_version: Optional[str] = None  # Version de l'app (depuis le dernier backup)
     
     class Config:
         from_attributes = True
@@ -283,7 +304,8 @@ class AppResponseWithMyRole(AppResponse):
     def from_app_with_role(
         cls, 
         app, 
-        my_role: Optional[str] = None
+        my_role: Optional[str] = None,
+        app_version: Optional[str] = None
     ) -> "AppResponseWithMyRole":
         """Crée une réponse avec le rôle de l'utilisateur courant"""
         # Gérer l'enum ApprovalStatus
@@ -305,7 +327,8 @@ class AppResponseWithMyRole(AppResponse):
             registered_from_ip=getattr(app, 'registered_from_ip', None),
             approval_status=approval_status,
             created_at=app.created_at,
-            my_role=my_role
+            my_role=my_role,
+            app_version=app_version
         )
 
 

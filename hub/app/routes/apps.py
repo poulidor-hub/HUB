@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, func
 from sqlalchemy.orm import selectinload
 from typing import List, Optional, Union, Dict
 import re
@@ -14,7 +14,7 @@ from app.routes.events import notify_event, notify_stats_update
 from app.routes.app_backups import reassociate_orphan_backups
 
 from app.database import get_db
-from app.models import Application, User, ServiceAccount, UserAppRole, ApprovalStatus, service_account_app_access, DEFAULT_ROLES
+from app.models import Application, User, ServiceAccount, UserAppRole, ApprovalStatus, service_account_app_access, DEFAULT_ROLES, AppBackup
 from app.schemas import (
     AppCreate, AppCreateSimplified, AppUpdate, AppResponse, AppWithUsers, AppWithUsersAndDocker,
     AppResponseWithMyRole,
@@ -33,6 +33,18 @@ from app.docker_scanner import docker_scanner
 router = APIRouter(prefix="/api/apps", tags=["Applications"])
 settings = get_settings()
 logger = logging.getLogger(__name__)
+
+
+def normalize_frontend_url(url: str) -> str:
+    """
+    Normalise une URL frontend pour toujours utiliser HTTP.
+    
+    Les applications gèrent elles-mêmes la redirection HTTP→HTTPS,
+    le Hub ne doit donc utiliser que le port HTTP pour les redirections utilisateur.
+    """
+    if url and url.startswith("https://"):
+        return "http://" + url[len("https://"):]
+    return url
 
 
 
@@ -462,6 +474,29 @@ async def list_apps(
     user = user_result.scalar_one()
     user_roles_map = {ar.application.slug: ar.role for ar in user.app_roles}
     
+    # Récupérer la version de chaque app depuis le dernier backup
+    # Sous-requête : pour chaque app_slug, prendre le created_at max
+    latest_backup_subq = (
+        select(
+            AppBackup.app_slug,
+            func.max(AppBackup.created_at).label("max_created_at")
+        )
+        .where(AppBackup.app_version.isnot(None))
+        .group_by(AppBackup.app_slug)
+        .subquery()
+    )
+    # Jointure pour récupérer l'app_version du backup le plus récent
+    versions_result = await db.execute(
+        select(AppBackup.app_slug, AppBackup.app_version)
+        .join(
+            latest_backup_subq,
+            (AppBackup.app_slug == latest_backup_subq.c.app_slug) &
+            (AppBackup.created_at == latest_backup_subq.c.max_created_at)
+        )
+        .where(AppBackup.app_version.isnot(None))
+    )
+    app_versions_map = {row.app_slug: row.app_version for row in versions_result}
+    
     if current_user.is_admin:
         # Tri alphabétique par nom pour un ordre stable et prévisible
         result = await db.execute(
@@ -472,7 +507,8 @@ async def list_apps(
         return [
             AppResponseWithMyRole.from_app_with_role(
                 app, 
-                user_roles_map.get(app.slug)
+                user_roles_map.get(app.slug),
+                app_version=app_versions_map.get(app.slug)
             )
             for app in apps
         ]
@@ -485,7 +521,8 @@ async def list_apps(
         return [
             AppResponseWithMyRole.from_app_with_role(
                 ar.application, 
-                ar.role
+                ar.role,
+                app_version=app_versions_map.get(ar.application.slug)
             )
             for ar in sorted_roles
         ]
@@ -2242,6 +2279,11 @@ async def update_app(
         )
     
     update_data = app_data.model_dump(exclude_unset=True)
+    
+    # Normaliser les URLs frontend en HTTP
+    # (les apps gèrent elles-mêmes la redirection HTTPS)
+    if "frontend_url" in update_data and update_data["frontend_url"]:
+        update_data["frontend_url"] = normalize_frontend_url(update_data["frontend_url"])
     
     # Vérifier si is_shared_service change
     old_shared = app.is_shared_service
