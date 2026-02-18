@@ -273,9 +273,17 @@ async def get_app_openapi(
     db: AsyncSession = Depends(get_db),
 ):
     """
-    Récupère la spécification OpenAPI d'une application cible via proxy backend.
-    Élimine les problèmes CORS en passant par le serveur.
+    Récupère la spécification OpenAPI d'une application cible.
+    
+    Stratégie (priorité décroissante) :
+    1. Spec stockée en base (poussée par l'app via POST /me/openapi ou auto-registration)
+    2. Fetch live depuis l'app (/openapi.json, /api/openapi.json, etc.)
+    
+    La spec stockée est déjà filtrée (endpoints techniques exclus).
+    La spec fetchée en live est filtrée automatiquement avant retour.
     """
+    from app.routes.apps import filter_openapi_spec
+
     # Trouver l'application
     result = await db.execute(
         select(Application).where(Application.slug == slug, Application.is_active == True)
@@ -284,8 +292,22 @@ async def get_app_openapi(
     if not app:
         raise HTTPException(status_code=404, detail=f"Application '{slug}' non trouvée")
 
-    # Obtenir le token M2M
-    token = await _get_discovery_token(db)
+    # 1. Priorité : spec stockée en base
+    if app.api_endpoints and isinstance(app.api_endpoints, dict) and app.api_endpoints.get("paths"):
+        logger.info(f"✅ Spec OpenAPI pour {slug} depuis la base (poussée le {app.api_endpoints_updated_at})")
+        return {
+            "spec": app.api_endpoints,
+            "source": "stored",
+            "updated_at": str(app.api_endpoints_updated_at) if app.api_endpoints_updated_at else None,
+        }
+
+    # 2. Fallback : fetch live depuis l'app
+    try:
+        token = await _get_discovery_token(db)
+    except Exception as e:
+        logger.warning(f"⚠️ Impossible d'obtenir le token discovery pour {slug}: {e}")
+        return {"spec": None, "source": None, "message": f"Impossible d'obtenir le token discovery: {e}"}
+
     base_url = app.api_url.rstrip("/")
 
     async with _get_httpx_client() as client:
@@ -301,9 +323,14 @@ async def get_app_openapi(
                 )
                 if resp.status_code == 200:
                     try:
-                        spec = resp.json()
-                        logger.info(f"✅ Spec OpenAPI chargée pour {slug} depuis {path}")
-                        return {"spec": spec, "source": path}
+                        raw_spec = resp.json()
+                        # Filtrer les endpoints techniques
+                        filtered_spec, total_ep, filtered_ep = filter_openapi_spec(raw_spec)
+                        logger.info(
+                            f"✅ Spec OpenAPI fetchée pour {slug} depuis {path}: "
+                            f"{total_ep - filtered_ep} endpoints métier, {filtered_ep} techniques exclus"
+                        )
+                        return {"spec": filtered_spec, "source": path}
                     except Exception:
                         continue
             except Exception as e:

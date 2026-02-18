@@ -3,6 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 from sqlalchemy.orm import selectinload
 from typing import List, Optional, Union, Dict
+from datetime import datetime, timezone
 import re
 import asyncio
 import ipaddress
@@ -24,6 +25,7 @@ from app.schemas import (
     AppDiscoveryItem, DiscoverResponse,
     AppApprovalRequest, AppApprovalResponse, PendingAppsResponse,
     BatchImportRequest, BatchImportResponse, BatchAppResult,
+    AppOpenApiPush, AppOpenApiResponse,
 )
 from app.auth import get_current_admin, get_current_user, get_password_hash, get_settings, verify_token_not_revoked, oauth2_scheme
 from app.routes.service_accounts import save_service_account_credentials, delete_service_account_credentials
@@ -997,6 +999,13 @@ async def register_app(
                 existing_app.description = app_data.description
                 updated_fields.append("description mise à jour")
             
+            # Mettre à jour la spec OpenAPI si fournie
+            if app_data.api_endpoints:
+                filtered_spec, total_ep, filtered_ep = filter_openapi_spec(app_data.api_endpoints)
+                existing_app.api_endpoints = filtered_spec
+                existing_app.api_endpoints_updated_at = datetime.utcnow()
+                updated_fields.append(f"api_endpoints: {total_ep - filtered_ep} endpoints métier")
+            
             # Commit les changements si nécessaire
             if updated_fields:
                 await db.commit()
@@ -1087,6 +1096,14 @@ async def register_app(
         approval_status=ApprovalStatus.pending,  # En attente d'approbation admin
         is_active=False  # Inactive jusqu'à approbation
     )
+    
+    # Stocker la spec OpenAPI si fournie (avec filtrage automatique)
+    if app_data.api_endpoints:
+        filtered_spec, total_ep, filtered_ep = filter_openapi_spec(app_data.api_endpoints)
+        app.api_endpoints = filtered_spec
+        app.api_endpoints_updated_at = datetime.utcnow()
+        logger.info(f"📋 Spec OpenAPI reçue à l'enregistrement de '{app_data.slug}': {total_ep - filtered_ep} endpoints métier, {filtered_ep} techniques exclus")
+    
     db.add(app)
     await db.flush()
     
@@ -2001,6 +2018,196 @@ async def update_app_shared(
         "auto_approved": auto_approved,
         "shared_added_to_sa_count": shared_added_count
     }
+
+
+# ===== Filtrage des endpoints techniques =====
+
+# Patterns d'endpoints techniques à exclure automatiquement
+_FILTERED_PATH_PATTERNS = [
+    r"^/health$",
+    r"^/healthz$",
+    r"^/ready$",
+    r"^/readyz$",
+    r"^/live$",
+    r"^/livez$",
+    r"^/ping$",
+    r"^/status$",
+    r"^/metrics$",
+    r"^/openapi\.json$",
+    r"^/docs$",
+    r"^/docs/",
+    r"^/redoc$",
+    r"^/redoc/",
+    r"^/swagger",
+    r"^/api/health$",
+    r"^/api/ping$",
+    r"^/api/status$",
+    r"^/api/docs",
+    r"^/api/openapi\.json$",
+    r"^/api/redoc",
+    r".*/_debug",
+    r".*/__test",
+]
+
+# Tags OpenAPI à exclure
+_FILTERED_TAGS = {"health", "healthcheck", "debug", "internal", "test", "monitoring", "default"}
+
+
+def filter_openapi_spec(spec: dict) -> tuple:
+    """
+    Filtre une spec OpenAPI pour ne garder que les endpoints métier.
+    
+    Exclut :
+    - Les paths correspondant aux patterns techniques (health, docs, openapi, etc.)
+    - Les endpoints tagués avec des tags techniques (health, debug, internal, etc.)
+    
+    Returns:
+        (filtered_spec, total_endpoints, filtered_count)
+    """
+    if not spec or "paths" not in spec:
+        return spec, 0, 0
+
+    filtered_paths = {}
+    total_endpoints = 0
+    filtered_count = 0
+
+    for path, methods in spec.get("paths", {}).items():
+        # Vérifier si le path match un pattern technique
+        is_technical_path = any(
+            re.match(pattern, path, re.IGNORECASE)
+            for pattern in _FILTERED_PATH_PATTERNS
+        )
+
+        if is_technical_path:
+            # Compter les endpoints dans ce path
+            for method in methods:
+                if method.lower() in ("get", "post", "put", "patch", "delete", "head", "options"):
+                    total_endpoints += 1
+                    filtered_count += 1
+            continue
+
+        # Filtrer par tag au niveau de chaque méthode
+        filtered_methods = {}
+        for method, details in methods.items():
+            if method.lower() not in ("get", "post", "put", "patch", "delete", "head", "options"):
+                filtered_methods[method] = details  # Conserver parameters, etc.
+                continue
+
+            total_endpoints += 1
+            tags = {t.lower() for t in (details.get("tags") or [])}
+            if tags & _FILTERED_TAGS:
+                filtered_count += 1
+                continue
+
+            filtered_methods[method] = details
+
+        if filtered_methods:
+            filtered_paths[path] = filtered_methods
+
+    filtered_spec = {**spec, "paths": filtered_paths}
+    return filtered_spec, total_endpoints, filtered_count
+
+
+# ===== Push spec OpenAPI =====
+
+@router.post("/me/openapi")
+async def push_openapi_spec(
+    request: Request,
+    body: AppOpenApiPush,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Permet à une application de pousser sa spécification OpenAPI au Hub.
+    
+    ⚠️ Accessible UNIQUEMENT depuis les réseaux Docker (IP whitelist).
+    L'application doit fournir le header `X-Slug` avec son slug.
+    
+    La spec est automatiquement filtrée pour ne conserver que les 
+    endpoints métier (les endpoints techniques comme /health, /docs, 
+    /openapi.json sont exclus).
+    
+    Le Discovery Explorer utilisera cette spec stockée en priorité.
+    
+    **Exemple d'utilisation au démarrage de l'app :**
+    ```python
+    import httpx
+    from fastapi.openapi.utils import get_openapi
+    
+    spec = get_openapi(title=app.title, version=app.version, routes=app.routes)
+    httpx.post(
+        f"http://hub:8000/api/apps/me/openapi",
+        json={"openapi_spec": spec},
+        headers={"X-Slug": settings.app_slug}
+    )
+    ```
+    """
+    client_ip = request.client.host if request.client else None
+    
+    if not is_docker_network_ip(client_ip):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Accès autorisé uniquement depuis le réseau Docker (IP: {client_ip})"
+        )
+    
+    app_slug = request.headers.get("X-Slug")
+    if not app_slug:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Header X-Slug requis"
+        )
+    
+    result = await db.execute(
+        select(Application).where(Application.slug == app_slug)
+    )
+    app = result.scalar_one_or_none()
+    
+    if not app:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Application '{app_slug}' non trouvée"
+        )
+    
+    # Filtrer les endpoints techniques
+    filtered_spec, total_endpoints, filtered_count = filter_openapi_spec(body.openapi_spec)
+    business_count = total_endpoints - filtered_count
+    
+    # Stocker la spec filtrée
+    app.api_endpoints = filtered_spec
+    app.api_endpoints_updated_at = datetime.utcnow()
+    
+    await db.commit()
+    
+    logger.info(
+        f"📋 Spec OpenAPI reçue pour '{app_slug}': "
+        f"{business_count} endpoints métier, {filtered_count} techniques exclus"
+    )
+    
+    # Audit
+    await log_action(
+        db=db,
+        user_id=None,
+        action="push_openapi",
+        target=app_slug,
+        ip_address=client_ip,
+        user_agent=None,
+        details=f"Spec OpenAPI poussée: {business_count} endpoints métier, {filtered_count} exclus"
+    )
+    await db.commit()
+    
+    # Notifier les clients SSE
+    notify_event("apps_updated", {
+        "action": "openapi_updated",
+        "app_slug": app_slug,
+        "endpoints_count": business_count,
+    })
+    
+    return AppOpenApiResponse(
+        message=f"Spécification OpenAPI enregistrée pour '{app_slug}'",
+        app_slug=app_slug,
+        endpoints_count=business_count,
+        filtered_count=filtered_count,
+        updated_at=app.api_endpoints_updated_at,
+    )
 
 
 # ===== Endpoints d'Approbation Admin =====

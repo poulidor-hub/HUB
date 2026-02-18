@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, ForeignKey, Text, Table, Enum as SQLEnum
+from sqlalchemy import Column, Integer, String, Boolean, DateTime, ForeignKey, Text, Table, Enum as SQLEnum, JSON
 from sqlalchemy.orm import relationship
 from datetime import datetime, timezone
 from typing import Optional
@@ -170,6 +170,10 @@ class Application(Base):
     last_backup_id = Column(String(36), nullable=True)  # UUID du dernier backup
     next_backup_at = Column(DateTime, nullable=True)  # Prochain backup planifié
     last_backup_status = Column(String(20), nullable=True)  # success, failed, running
+    
+    # Spécification OpenAPI poussée par l'application (pour Discovery Explorer)
+    api_endpoints = Column(JSON, nullable=True)  # Spec OpenAPI complète ou filtrée
+    api_endpoints_updated_at = Column(DateTime, nullable=True)  # Date de dernière mise à jour de la spec
     
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

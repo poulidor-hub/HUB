@@ -1,5 +1,5 @@
 from pydantic import BaseModel, EmailStr, Field, field_validator
-from typing import Optional, List, Dict
+from typing import Optional, List, Dict, Any
 from datetime import datetime
 from enum import Enum
 
@@ -817,6 +817,7 @@ class AppRegisterRequest(BaseModel):
     frontend_port: Optional[int] = Field(None, ge=1, le=65535, description="Port du frontend (optionnel)")
     custom_host: Optional[str] = Field(None, description="Host/IP de l'application si hébergée sur un serveur distant (ex: 192.168.1.200)")
     is_shared: bool = Field(False, description="Si True, l'application sera accessible par tous les service accounts (M2M)")
+    api_endpoints: Optional[Dict[str, Any]] = Field(None, description="Spécification OpenAPI (JSON) décrivant les endpoints métier de l'application")
 
 
 class AppRegisterResponse(BaseModel):
@@ -826,6 +827,20 @@ class AppRegisterResponse(BaseModel):
     credentials: Optional[dict] = None  # client_id, client_secret (retourné une seule fois)
     is_new: bool  # True si nouvelle app, False si existante
     pending_approval: bool = False  # True si l'app est en attente d'approbation admin
+
+
+class AppOpenApiPush(BaseModel):
+    """Requête pour pousser la spécification OpenAPI d'une application"""
+    openapi_spec: Dict[str, Any] = Field(..., description="Spécification OpenAPI complète (JSON)")
+
+
+class AppOpenApiResponse(BaseModel):
+    """Réponse après push de la spec OpenAPI"""
+    message: str
+    app_slug: str
+    endpoints_count: int = Field(0, description="Nombre d'endpoints métier (après filtrage)")
+    filtered_count: int = Field(0, description="Nombre d'endpoints techniques exclus")
+    updated_at: datetime
 
 
 class AppApprovalRequest(BaseModel):
