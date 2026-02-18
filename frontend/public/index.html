@@ -497,145 +497,65 @@
         </div>
     </div>
 
-    <!-- Section Discovery M2M (page dédiée) -->
-    <div id="discoverySection" class="container-fluid py-4 d-none" style="margin-top: 70px;">
-        <div class="container">
-            <!-- En-tête -->
-            <div class="d-flex justify-content-between align-items-center mb-4">
-                <div>
-                    <h1 class="h3 mb-1"><i class="bi bi-diagram-3 me-2"></i>Discovery M2M</h1>
-                    <p class="text-muted mb-0">Découverte et test des endpoints API via authentification Machine-to-Machine</p>
+    <!-- Section Discovery — Explorateur d'APIs (page dédiée) -->
+    <div id="discoverySection" class="d-none" style="margin-top: 70px;">
+        <div class="discovery-layout">
+            <!-- ── Sidebar : liste des apps ── -->
+            <aside class="discovery-sidebar" id="discoverySidebar">
+                <div class="discovery-sidebar-header">
+                    <h6 class="mb-0"><i class="bi bi-collection me-2"></i>Applications</h6>
+                    <span class="badge bg-primary" id="discoveryAppCount">0</span>
                 </div>
-                <button class="btn btn-outline-secondary btn-sm" onclick="loadDiscoveryPage()">
-                    <i class="bi bi-arrow-clockwise"></i> Actualiser
-                </button>
-            </div>
-            
-            <!-- Sélection du Service Account -->
-            <div class="row mb-4">
-                <div class="col-lg-6">
-                    <div class="card">
-                        <div class="card-header">
-                            <i class="bi bi-key me-2"></i>Authentification M2M
-                        </div>
-                        <div class="card-body">
-                            <div class="mb-3">
-                                <label class="form-label">Service Account</label>
-                                <select class="form-select" id="discoverySaSelect" onchange="onDiscoverySaChange()">
-                                    <option value="">-- Sélectionner un Service Account --</option>
-                                </select>
-                                <small class="text-muted">Sélectionnez un SA pour charger ses credentials</small>
-                            </div>
-                            <div class="row g-3">
-                                <div class="col-md-6">
-                                    <label class="form-label">Client ID</label>
-                                    <input type="text" class="form-control font-monospace" id="discoveryClientId" placeholder="sa_xxx" readonly>
-                                </div>
-                                <div class="col-md-6">
-                                    <label class="form-label">Client Secret</label>
-                                    <div class="input-group">
-                                        <input type="password" class="form-control font-monospace" id="discoveryClientSecret" placeholder="Secret...">
-                                        <button class="btn btn-outline-secondary" type="button" onclick="toggleDiscoverySecretVisibility()">
-                                            <i class="bi bi-eye" id="discoverySecretEyeIcon"></i>
-                                        </button>
-                                    </div>
-                                    <small class="text-muted">Entrez manuellement ou chargez depuis les secrets</small>
-                                </div>
-                            </div>
-                            <div class="mt-3">
-                                <button class="btn btn-primary" onclick="getM2MToken()" id="discoveryGetTokenBtn">
-                                    <i class="bi bi-shield-lock me-1"></i>Obtenir Token M2M
-                                </button>
-                                <span id="discoveryTokenStatus" class="ms-2"></span>
-                            </div>
-                            <!-- Token obtenu -->
-                            <div id="discoveryTokenInfo" class="d-none mt-3">
-                                <div class="alert alert-success mb-0">
-                                    <div class="d-flex justify-content-between align-items-center">
-                                        <div>
-                                            <i class="bi bi-check-circle me-1"></i>
-                                            <strong>Token M2M actif</strong>
-                                            <small class="ms-2 text-muted" id="discoveryTokenExpiry"></small>
-                                        </div>
-                                        <button class="btn btn-sm btn-outline-success" onclick="copyDiscoveryToken()">
-                                            <i class="bi bi-clipboard me-1"></i>Copier
-                                        </button>
-                                    </div>
-                                    <div class="mt-2">
-                                        <code class="small" id="discoveryTokenPreview" style="word-break: break-all;"></code>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
+                <div class="px-2 py-2">
+                    <input type="text" class="form-control form-control-sm" id="discoveryAppSearch"
+                           placeholder="Rechercher une app…" oninput="filterDiscoveryApps()">
+                </div>
+                <div class="discovery-app-list" id="discoveryAppList">
+                    <div class="text-center text-muted py-4">
+                        <div class="spinner-border spinner-border-sm"></div>
+                        <p class="mt-2 small">Chargement…</p>
                     </div>
                 </div>
-                
-                <!-- Services partagés découverts -->
-                <div class="col-lg-6">
-                    <div class="card h-100">
-                        <div class="card-header d-flex justify-content-between align-items-center">
-                            <span><i class="bi bi-collection me-2"></i>Services Partagés</span>
-                            <span class="badge bg-primary" id="discoveryServicesCount">0</span>
-                        </div>
-                        <div class="card-body p-0" style="max-height: 300px; overflow-y: auto;">
-                            <div id="discoveryServicesList">
-                                <div class="text-center py-4 text-muted">
-                                    <i class="bi bi-arrow-left-circle display-4"></i>
-                                    <p class="mt-2">Obtenez un token M2M pour découvrir les services</p>
-                                </div>
-                            </div>
-                        </div>
+            </aside>
+
+            <!-- ── Zone principale ── -->
+            <main class="discovery-main">
+                <!-- En-tête -->
+                <div class="discovery-topbar">
+                    <div class="d-flex align-items-center gap-2">
+                        <i class="bi bi-terminal fs-5"></i>
+                        <h5 class="mb-0" id="discoveryAppTitle">Explorateur API</h5>
+                        <small class="text-muted" id="discoveryAppDesc"></small>
                     </div>
+                    <button class="btn btn-outline-secondary btn-sm" onclick="loadDiscoveryPage()" title="Actualiser">
+                        <i class="bi bi-arrow-clockwise"></i>
+                    </button>
                 </div>
-            </div>
-            
-            <!-- Test d'endpoint -->
-            <div class="card mb-4">
-                <div class="card-header d-flex justify-content-between align-items-center">
-                    <span><i class="bi bi-terminal me-2"></i>Test d'Endpoint</span>
-                    <small class="text-muted">Sélectionnez un service pour charger ses endpoints disponibles</small>
-                </div>
-                <div class="card-body">
-                    <!-- Sélection du service et endpoint -->
-                    <div class="row g-3 mb-3">
-                        <div class="col-md-4">
-                            <label class="form-label"><i class="bi bi-collection me-1"></i>Service cible</label>
-                            <select class="form-select" id="discoveryServiceSelect" onchange="onDiscoveryServiceChange()">
-                                <option value="">-- Sélectionner un service --</option>
-                            </select>
-                        </div>
-                        <div class="col-md-8">
-                            <label class="form-label"><i class="bi bi-signpost-split me-1"></i>Endpoint</label>
-                            <select class="form-select" id="discoveryEndpointSelect" onchange="onDiscoveryEndpointChange()" disabled>
-                                <option value="">-- Chargez d'abord les endpoints --</option>
-                            </select>
-                        </div>
+
+                <!-- Barre requêteur -->
+                <div class="discovery-requester" id="discoveryRequester">
+                    <!-- Sélecteur endpoint (si OpenAPI dispo) -->
+                    <div class="mb-3" id="discoveryEndpointRow">
+                        <label class="form-label fw-semibold"><i class="bi bi-signpost-split me-1"></i>Endpoint</label>
+                        <select class="form-select" id="discoveryEndpointSelect" onchange="onDiscoveryEndpointChange()" disabled>
+                            <option value="">— Sélectionnez une application —</option>
+                        </select>
                     </div>
-                    
+
                     <!-- Info endpoint sélectionné -->
-                    <div id="discoveryEndpointInfo" class="alert alert-light border mb-3 d-none">
-                        <div class="d-flex justify-content-between align-items-start">
-                            <div>
-                                <h6 class="mb-1">
-                                    <span class="badge me-2" id="discoveryEndpointMethod">GET</span>
-                                    <code id="discoveryEndpointPath">/api/...</code>
-                                </h6>
-                                <p class="mb-1 text-muted" id="discoveryEndpointDescription">Description de l'endpoint</p>
-                                <small class="text-muted">
-                                    <i class="bi bi-tag me-1"></i>Tags: <span id="discoveryEndpointTags">-</span>
-                                </small>
-                            </div>
-                            <button class="btn btn-sm btn-outline-primary" onclick="loadEndpointOpenApiSpec()" title="Voir la spec OpenAPI">
-                                <i class="bi bi-file-code"></i>
-                            </button>
+                    <div id="discoveryEndpointInfo" class="alert alert-light border mb-3 d-none py-2">
+                        <div class="d-flex align-items-center gap-2 flex-wrap">
+                            <span class="badge" id="discoveryEndpointMethod">GET</span>
+                            <code class="small" id="discoveryEndpointPath">/api/…</code>
+                            <span class="text-muted small" id="discoveryEndpointDescription"></span>
                         </div>
                     </div>
-                    
-                    <!-- Requête manuelle -->
-                    <div class="row g-3 align-items-end">
-                        <div class="col-md-2">
-                            <label class="form-label">Méthode</label>
-                            <select class="form-select" id="discoveryMethod">
+
+                    <!-- Ligne méthode + path + exécuter (mode manuel / override) -->
+                    <div class="row g-2 align-items-end mb-3">
+                        <div class="col-auto" style="width: 110px;">
+                            <label class="form-label small mb-1">Méthode</label>
+                            <select class="form-select form-select-sm" id="discoveryMethod">
                                 <option value="GET" selected>GET</option>
                                 <option value="POST">POST</option>
                                 <option value="PUT">PUT</option>
@@ -643,82 +563,104 @@
                                 <option value="DELETE">DELETE</option>
                             </select>
                         </div>
-                        <div class="col-md-6">
-                            <label class="form-label">URL de l'endpoint</label>
-                            <input type="text" class="form-control" id="discoveryUrl" placeholder="https://host:port/api/endpoint">
+                        <div class="col">
+                            <label class="form-label small mb-1">Path</label>
+                            <input type="text" class="form-control form-control-sm font-monospace" id="discoveryPath"
+                                   placeholder="/api/endpoint" oninput="onDiscoveryPathInput()">
                         </div>
-                        <div class="col-md-4">
-                            <button class="btn btn-success w-100" onclick="testDiscoveryEndpoint()" id="discoveryTestBtn">
+                        <div class="col-auto">
+                            <button class="btn btn-success btn-sm px-3" onclick="executeDiscoveryRequest()" id="discoveryExecBtn">
                                 <i class="bi bi-play-fill me-1"></i>Exécuter
                             </button>
                         </div>
                     </div>
-                    
-                    <!-- Paramètres de l'endpoint (si applicable) -->
-                    <div id="discoveryParamsSection" class="mt-3 d-none">
-                        <div class="d-flex justify-content-between align-items-center mb-2">
-                            <label class="form-label mb-0"><i class="bi bi-sliders me-1"></i>Paramètres</label>
-                            <small class="text-muted">Remplissez les paramètres requis</small>
-                        </div>
-                        <div id="discoveryParams" class="border rounded p-2 bg-light">
-                            <!-- Paramètres générés dynamiquement -->
-                        </div>
+
+                    <!-- Paramètres auto-générés -->
+                    <div id="discoveryParamsSection" class="mb-3 d-none">
+                        <label class="form-label small fw-semibold mb-1"><i class="bi bi-sliders me-1"></i>Paramètres</label>
+                        <div id="discoveryParams" class="border rounded p-2 bg-light"></div>
                     </div>
-                    
-                    <!-- Headers personnalisés -->
-                    <div class="mt-3">
-                        <div class="d-flex justify-content-between align-items-center mb-2">
-                            <label class="form-label mb-0">Headers personnalisés</label>
-                            <button class="btn btn-outline-secondary btn-sm" onclick="addDiscoveryHeader()">
-                                <i class="bi bi-plus"></i> Ajouter
+
+                    <!-- Query params manuels (mode fallback) -->
+                    <div id="discoveryQuerySection" class="mb-3 d-none">
+                        <div class="d-flex justify-content-between align-items-center mb-1">
+                            <label class="form-label small fw-semibold mb-0">Query params</label>
+                            <button class="btn btn-outline-secondary btn-sm py-0 px-1" onclick="addDiscoveryQueryParam()">
+                                <i class="bi bi-plus"></i>
                             </button>
                         </div>
-                        <div id="discoveryHeaders">
-                            <div class="row g-2 mb-2 discovery-header-row">
-                                <div class="col-5">
-                                    <input type="text" class="form-control form-control-sm" placeholder="Nom" value="Content-Type">
-                                </div>
-                                <div class="col-6">
-                                    <input type="text" class="form-control form-control-sm" placeholder="Valeur" value="application/json">
-                                </div>
-                                <div class="col-1">
-                                    <button class="btn btn-outline-danger btn-sm" onclick="removeDiscoveryHeader(this)">
-                                        <i class="bi bi-x"></i>
-                                    </button>
+                        <div id="discoveryQueryParams"></div>
+                    </div>
+
+                    <!-- Body JSON -->
+                    <div id="discoveryBodySection" class="mb-3 d-none">
+                        <label class="form-label small fw-semibold mb-1">Body (JSON)</label>
+                        <textarea class="form-control form-control-sm font-monospace" id="discoveryBody" rows="3"
+                                  placeholder='{"key": "value"}'></textarea>
+                    </div>
+                </div>
+
+                <!-- ── Zone résultats ── -->
+                <div class="discovery-results" id="discoveryResultsArea" style="display: none;">
+                    <!-- Barre d'infos + filtres -->
+                    <div class="discovery-results-toolbar">
+                        <div class="d-flex align-items-center gap-2 flex-wrap">
+                            <span class="badge" id="discoveryResultStatus">200</span>
+                            <small class="text-muted" id="discoveryResultTime">0ms</small>
+                            <small class="text-muted" id="discoveryResultCount"></small>
+                        </div>
+                        <div class="d-flex align-items-center gap-2 flex-wrap">
+                            <!-- Recherche texte -->
+                            <div class="input-group input-group-sm" style="width: 200px;">
+                                <span class="input-group-text"><i class="bi bi-search"></i></span>
+                                <input type="text" class="form-control" id="discoveryFilterSearch"
+                                       placeholder="Rechercher…" oninput="applyDiscoveryFilters()">
+                            </div>
+                            <!-- Filtre par champ -->
+                            <div class="input-group input-group-sm" style="width: 280px;">
+                                <select class="form-select" id="discoveryFilterField" onchange="applyDiscoveryFilters()" style="max-width: 100px;">
+                                    <option value="">Champ</option>
+                                </select>
+                                <select class="form-select" id="discoveryFilterOp" onchange="applyDiscoveryFilters()" style="max-width: 80px;">
+                                    <option value="contains">contient</option>
+                                    <option value="eq">=</option>
+                                    <option value="neq">≠</option>
+                                </select>
+                                <input type="text" class="form-control" id="discoveryFilterValue"
+                                       placeholder="Valeur" oninput="applyDiscoveryFilters()">
+                            </div>
+                            <!-- Sélection colonnes -->
+                            <div class="dropdown">
+                                <button class="btn btn-outline-secondary btn-sm dropdown-toggle" type="button"
+                                        data-bs-toggle="dropdown" data-bs-auto-close="outside">
+                                    <i class="bi bi-layout-three-columns"></i>
+                                </button>
+                                <div class="dropdown-menu dropdown-menu-end p-2" id="discoveryColumnSelector"
+                                     style="max-height: 300px; overflow-y: auto; min-width: 200px;">
                                 </div>
                             </div>
+                            <!-- Actions -->
+                            <button class="btn btn-outline-secondary btn-sm" onclick="copyDiscoveryResult()" title="Copier JSON">
+                                <i class="bi bi-clipboard"></i>
+                            </button>
+                            <button class="btn btn-outline-secondary btn-sm" onclick="clearDiscoveryResult()" title="Effacer">
+                                <i class="bi bi-x-circle"></i>
+                            </button>
                         </div>
                     </div>
-                    
-                    <!-- Body (pour POST/PUT/PATCH) -->
-                    <div class="mt-3" id="discoveryBodySection">
-                        <label class="form-label">Corps de la requête (JSON)</label>
-                        <textarea class="form-control font-monospace" id="discoveryBody" rows="4" placeholder='{"key": "value"}'></textarea>
+
+                    <!-- Tableau de résultats -->
+                    <div class="discovery-table-wrapper" id="discoveryTableWrapper">
+                        <table class="table table-sm table-hover table-bordered mb-0" id="discoveryResultTable">
+                            <thead id="discoveryTableHead"></thead>
+                            <tbody id="discoveryTableBody"></tbody>
+                        </table>
                     </div>
+
+                    <!-- Fallback JSON brut -->
+                    <pre class="discovery-raw-json d-none mb-0" id="discoveryResultRaw"></pre>
                 </div>
-            </div>
-            
-            <!-- Résultat -->
-            <div class="card" id="discoveryResultCard" style="display: none;">
-                <div class="card-header d-flex justify-content-between align-items-center">
-                    <span>
-                        <i class="bi bi-code-slash me-2"></i>Résultat
-                        <span class="badge ms-2" id="discoveryResultStatus"></span>
-                        <small class="text-muted ms-2" id="discoveryResultTime"></small>
-                    </span>
-                    <div>
-                        <button class="btn btn-outline-secondary btn-sm" onclick="copyDiscoveryResult()">
-                            <i class="bi bi-clipboard me-1"></i>Copier
-                        </button>
-                        <button class="btn btn-outline-secondary btn-sm" onclick="clearDiscoveryResult()">
-                            <i class="bi bi-x-circle me-1"></i>Effacer
-                        </button>
-                    </div>
-                </div>
-                <div class="card-body p-0">
-                    <pre class="mb-0 p-3" id="discoveryResultBody" style="max-height: 400px; overflow: auto; background: #f8f9fa;"></pre>
-                </div>
-            </div>
+            </main>
         </div>
     </div>
 

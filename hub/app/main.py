@@ -14,7 +14,7 @@ from app.database import init_db, async_session_maker, apply_migrations
 from app.models import User, ErrorLog
 from app.auth import get_password_hash, cleanup_expired_tokens
 from app.config import get_settings
-from app.routes import auth, users, apps, service_accounts, backup, audit, docs, events, app_backups, profiles
+from app.routes import auth, users, apps, service_accounts, backup, audit, docs, events, app_backups, profiles, discovery
 
 import logging
 
@@ -238,6 +238,10 @@ async def lifespan(app: FastAPI):
     
     # Démarrer le scheduler de backups
     _backup_scheduler_task = asyncio.create_task(periodic_backup_scheduler())
+    
+    # Initialiser le Service Account Discovery
+    from app.routes.discovery import init_discovery_service_account
+    await init_discovery_service_account()
     
     logger.info("✅ Hub prêt !")
     yield
@@ -512,6 +516,7 @@ app.include_router(docs.router)
 app.include_router(events.router)
 app.include_router(app_backups.router)
 app.include_router(profiles.router)
+app.include_router(discovery.router)
 
 
 @app.get("/health")

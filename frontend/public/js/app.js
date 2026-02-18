@@ -5776,490 +5776,269 @@ async function exportErrors() {
 
 
 // =============================================================================
-// DISCOVERY M2M - Test et exploration des endpoints
+// DISCOVERY — Explorateur d'APIs (nouvelle version)
 // =============================================================================
 
 // État global Discovery
-let discoveryM2MToken = null;
-let discoveryM2MTokenExpiry = null;
-let discoveryServices = [];
-let discoveryOpenApiSpecs = {}; // Cache des specs OpenAPI par service slug
-let discoverySelectedEndpoint = null; // Endpoint actuellement sélectionné
+let discoveryApps = [];                // Toutes les apps chargées
+let discoverySelectedApp = null;       // App actuellement sélectionnée {slug, name, ...}
+let discoveryOpenApiSpec = null;       // Spec OpenAPI de l'app sélectionnée
+let discoverySelectedEndpoint = null;  // Endpoint sélectionné depuis la spec
+let discoveryRawData = null;           // Données brutes de la dernière réponse (pour filtrage)
+let discoveryVisibleColumns = null;    // Set de colonnes visibles (null = toutes)
+let discoveryHasOpenApi = false;       // L'app sélectionnée a-t-elle une spec OpenAPI ?
 
 /**
- * Charge la page Discovery - initialise les Service Accounts et l'état
+ * Charge la page Discovery — liste les apps dans la sidebar
  */
 async function loadDiscoveryPage() {
     try {
-        // Charger les Service Accounts pour le sélecteur
-        const sas = await api.getServiceAccounts();
-        const select = document.getElementById('discoverySaSelect');
-        
-        // Vider et repeupler
-        select.innerHTML = '<option value="">-- Sélectionner un Service Account --</option>';
-        sas.forEach(sa => {
-            const opt = document.createElement('option');
-            opt.value = sa.id;
-            opt.textContent = `${sa.name} (${sa.is_active ? 'Actif' : 'Inactif'})`;
-            opt.dataset.clientId = sa.client_id;
-            opt.dataset.name = sa.name;
-            select.appendChild(opt);
-        });
-        
-        // Pré-sélectionner "Mon application" si disponible
-        const monAppSa = sas.find(sa => sa.name.toLowerCase().includes('mon-app') || sa.name.toLowerCase().includes('mon application'));
-        if (monAppSa) {
-            select.value = monAppSa.id;
-            onDiscoverySaChange();
+        const result = await api.getDiscoveryApps();
+        discoveryApps = result.apps || [];
+        document.getElementById('discoveryAppCount').textContent = result.total || 0;
+        renderDiscoveryAppList(discoveryApps);
+
+        // Restaurer la dernière app sélectionnée
+        const lastSlug = sessionStorage.getItem('discovery_last_app');
+        if (lastSlug) {
+            const app = discoveryApps.find(a => a.slug === lastSlug);
+            if (app) selectDiscoveryApp(app.slug);
         }
-        
     } catch (error) {
         console.error('Erreur chargement Discovery:', error);
-        showToast('Erreur', 'Impossible de charger les Service Accounts', 'danger');
+        showToast('Erreur', 'Impossible de charger les applications', 'danger');
     }
 }
 
 /**
- * Appelé quand on change le Service Account sélectionné
+ * Affiche la liste des apps dans la sidebar
  */
-function onDiscoverySaChange() {
-    const select = document.getElementById('discoverySaSelect');
-    const selected = select.options[select.selectedIndex];
-    
-    if (selected && selected.dataset.clientId) {
-        document.getElementById('discoveryClientId').value = selected.dataset.clientId;
-        document.getElementById('discoveryClientSecret').value = '';
-        
-        // Essayer de charger le secret depuis le fichier (via API)
-        loadDiscoverySecretForSa(selected.dataset.name);
-    } else {
-        document.getElementById('discoveryClientId').value = '';
-        document.getElementById('discoveryClientSecret').value = '';
-    }
-    
-    // Réinitialiser l'état du token
-    discoveryM2MToken = null;
-    discoveryM2MTokenExpiry = null;
-    document.getElementById('discoveryTokenInfo').classList.add('d-none');
-    document.getElementById('discoveryTokenStatus').innerHTML = '';
-}
+function renderDiscoveryAppList(apps) {
+    const container = document.getElementById('discoveryAppList');
 
-/**
- * Tente de charger le secret depuis les fichiers secrets (si disponible)
- */
-async function loadDiscoverySecretForSa(saName) {
-    // Le secret n'est pas stocké en base - il faut le saisir manuellement
-    // ou le lire depuis les fichiers secrets (non accessible depuis le frontend)
-    // On peut afficher une aide pour l'utilisateur
-    
-    const slug = saName.toLowerCase()
-        .replace(/[àâä]/g, 'a')
-        .replace(/[éèêë]/g, 'e')
-        .replace(/[îï]/g, 'i')
-        .replace(/[ôö]/g, 'o')
-        .replace(/[ùûü]/g, 'u')
-        .replace(/[^a-z0-9]+/g, '-')
-        .replace(/^-+|-+$/g, '');
-    
-    document.getElementById('discoveryClientSecret').placeholder = `Entrez le secret ou consultez secrets/service_accounts/sa_${slug}.env`;
-}
-
-/**
- * Toggle visibility du champ secret
- */
-function toggleDiscoverySecretVisibility() {
-    const input = document.getElementById('discoveryClientSecret');
-    const icon = document.getElementById('discoverySecretEyeIcon');
-    
-    if (input.type === 'password') {
-        input.type = 'text';
-        icon.classList.remove('bi-eye');
-        icon.classList.add('bi-eye-slash');
-    } else {
-        input.type = 'password';
-        icon.classList.remove('bi-eye-slash');
-        icon.classList.add('bi-eye');
-    }
-}
-
-/**
- * Obtient un token M2M avec les credentials fournis
- */
-async function getM2MToken() {
-    const clientId = document.getElementById('discoveryClientId').value.trim();
-    const clientSecret = document.getElementById('discoveryClientSecret').value.trim();
-    
-    if (!clientId || !clientSecret) {
-        showToast('Erreur', 'Client ID et Client Secret requis', 'warning');
+    if (!apps.length) {
+        container.innerHTML = '<div class="text-center text-muted py-4"><i class="bi bi-inbox fs-3"></i><p class="mt-2 small">Aucune application active</p></div>';
         return;
     }
-    
-    const btn = document.getElementById('discoveryGetTokenBtn');
-    const statusSpan = document.getElementById('discoveryTokenStatus');
-    
-    btn.disabled = true;
-    statusSpan.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Authentification...';
-    
-    try {
-        const result = await api.getM2MToken(clientId, clientSecret);
-        
-        discoveryM2MToken = result.access_token;
-        // Calculer l'expiration (par défaut 1h si non spécifié)
-        const expiresIn = result.expires_in || 3600;
-        discoveryM2MTokenExpiry = new Date(Date.now() + expiresIn * 1000);
-        
-        // Afficher le succès
-        statusSpan.innerHTML = '<span class="text-success"><i class="bi bi-check-circle me-1"></i>Authentifié</span>';
-        
-        const tokenInfo = document.getElementById('discoveryTokenInfo');
-        tokenInfo.classList.remove('d-none');
-        document.getElementById('discoveryTokenExpiry').textContent = `Expire à ${discoveryM2MTokenExpiry.toLocaleTimeString()}`;
-        document.getElementById('discoveryTokenPreview').textContent = discoveryM2MToken.substring(0, 50) + '...';
-        
-        // Charger automatiquement les services partagés
-        await discoverSharedServices();
-        
-        showToast('Succès', 'Token M2M obtenu avec succès', 'success');
-        
-    } catch (error) {
-        console.error('Erreur obtention token M2M:', error);
-        statusSpan.innerHTML = `<span class="text-danger"><i class="bi bi-x-circle me-1"></i>${error.message}</span>`;
-        discoveryM2MToken = null;
-        discoveryM2MTokenExpiry = null;
-        document.getElementById('discoveryTokenInfo').classList.add('d-none');
-    } finally {
-        btn.disabled = false;
-    }
-}
 
-/**
- * Découvre les services partagés via l'endpoint /api/apps/discover
- */
-async function discoverSharedServices() {
-    if (!discoveryM2MToken) {
-        showToast('Erreur', 'Obtenez d\'abord un token M2M', 'warning');
-        return;
-    }
-    
-    const container = document.getElementById('discoveryServicesList');
-    container.innerHTML = '<div class="text-center py-3"><div class="spinner-border spinner-border-sm"></div> Découverte...</div>';
-    
-    try {
-        const result = await api.discoverServices(discoveryM2MToken);
-        discoveryServices = result.shared_services || [];
-        
-        document.getElementById('discoveryServicesCount').textContent = result.total_shared || 0;
-        
-        // Mettre à jour le sélecteur de services pour le test d'endpoint
-        updateDiscoveryServiceSelect();
-        
-        if (discoveryServices.length === 0) {
-            container.innerHTML = `
-                <div class="text-center py-4 text-muted">
-                    <i class="bi bi-inbox display-4"></i>
-                    <p class="mt-2">Aucun service partagé disponible</p>
-                    <small>Les applications marquées "is_shared_service" apparaîtront ici</small>
+    container.innerHTML = apps.map(app => `
+        <div class="discovery-app-item ${discoverySelectedApp?.slug === app.slug ? 'active' : ''}"
+             onclick="selectDiscoveryApp('${escapeHtml(app.slug)}')" data-slug="${escapeHtml(app.slug)}">
+            <div class="d-flex align-items-center gap-2">
+                <i class="bi ${escapeHtml(app.icon || 'bi-app')}" style="color: ${escapeHtml(app.color || '#6c757d')}; font-size: 1.1rem;"></i>
+                <div class="flex-grow-1 overflow-hidden">
+                    <div class="fw-semibold text-truncate" style="font-size: 0.85rem;">${escapeHtml(app.name)}</div>
+                    <div class="text-muted text-truncate" style="font-size: 0.72rem;">${escapeHtml(app.slug)}</div>
                 </div>
-            `;
-            return;
-        }
-        
-        container.innerHTML = `
-            <div class="list-group list-group-flush">
-                ${discoveryServices.map(svc => `
-                    <div class="list-group-item list-group-item-action" style="cursor: pointer;" onclick="selectDiscoveryService('${escapeHtml(svc.api_url)}')">
-                        <div class="d-flex justify-content-between align-items-center">
-                            <div>
-                                <strong>${escapeHtml(svc.name)}</strong>
-                                <span class="badge bg-secondary ms-2">${escapeHtml(svc.slug)}</span>
-                            </div>
-                            <i class="bi bi-arrow-right text-muted"></i>
-                        </div>
-                        <small class="text-muted">${escapeHtml(svc.description || 'Aucune description')}</small>
-                        <div class="mt-1">
-                            <code class="small">${escapeHtml(svc.api_url)}</code>
-                        </div>
-                    </div>
-                `).join('')}
+                ${app.is_shared_service ? '<span class="badge bg-info-subtle text-info-emphasis" style="font-size: 0.65rem;">shared</span>' : ''}
             </div>
-        `;
-        
-    } catch (error) {
-        console.error('Erreur découverte services:', error);
-        container.innerHTML = `
-            <div class="text-center py-4 text-danger">
-                <i class="bi bi-exclamation-triangle display-4"></i>
-                <p class="mt-2">${escapeHtml(error.message)}</p>
-            </div>
-        `;
-    }
+        </div>
+    `).join('');
 }
 
 /**
- * Sélectionne un service et pré-remplit l'URL
+ * Filtre la liste des apps dans la sidebar
  */
-function selectDiscoveryService(apiUrl) {
-    document.getElementById('discoveryUrl').value = apiUrl;
-    showToast('Service sélectionné', 'URL pré-remplie, ajoutez l\'endpoint souhaité', 'info');
+function filterDiscoveryApps() {
+    const q = document.getElementById('discoveryAppSearch').value.toLowerCase().trim();
+    const filtered = q
+        ? discoveryApps.filter(a => a.name.toLowerCase().includes(q) || a.slug.toLowerCase().includes(q) || (a.description || '').toLowerCase().includes(q))
+        : discoveryApps;
+    renderDiscoveryAppList(filtered);
 }
 
 /**
- * Met à jour le sélecteur de services après découverte
+ * Sélectionne une app dans la sidebar et charge sa spec OpenAPI
  */
-function updateDiscoveryServiceSelect() {
-    const select = document.getElementById('discoveryServiceSelect');
-    select.innerHTML = '<option value="">-- Sélectionner un service --</option>';
-    
-    discoveryServices.forEach(svc => {
-        const opt = document.createElement('option');
-        opt.value = svc.slug;
-        opt.textContent = `${svc.name} (${svc.slug})`;
-        opt.dataset.apiUrl = svc.api_url;
-        opt.dataset.name = svc.name;
-        select.appendChild(opt);
+async function selectDiscoveryApp(slug) {
+    const app = discoveryApps.find(a => a.slug === slug);
+    if (!app) return;
+
+    discoverySelectedApp = app;
+    sessionStorage.setItem('discovery_last_app', slug);
+
+    // Mettre à jour la sidebar
+    document.querySelectorAll('.discovery-app-item').forEach(el => {
+        el.classList.toggle('active', el.dataset.slug === slug);
     });
-    
-    // Réinitialiser le sélecteur d'endpoints
+
+    // Mettre à jour l'en-tête
+    document.getElementById('discoveryAppTitle').textContent = app.name;
+    document.getElementById('discoveryAppDesc').textContent = app.description || '';
+
+    // Réinitialiser
+    discoveryOpenApiSpec = null;
+    discoverySelectedEndpoint = null;
+    discoveryHasOpenApi = false;
+    clearDiscoveryResult();
+
     const endpointSelect = document.getElementById('discoveryEndpointSelect');
-    endpointSelect.innerHTML = '<option value="">-- Sélectionnez d\'abord un service --</option>';
+    endpointSelect.innerHTML = '<option value="">⏳ Chargement des endpoints…</option>';
     endpointSelect.disabled = true;
     document.getElementById('discoveryEndpointInfo').classList.add('d-none');
     document.getElementById('discoveryParamsSection').classList.add('d-none');
-}
+    document.getElementById('discoveryBodySection').classList.add('d-none');
+    document.getElementById('discoveryPath').value = '/';
+    document.getElementById('discoveryMethod').value = 'GET';
 
-/**
- * Appelé quand on change le service sélectionné
- */
-async function onDiscoveryServiceChange() {
-    const select = document.getElementById('discoveryServiceSelect');
-    const selected = select.options[select.selectedIndex];
-    const endpointSelect = document.getElementById('discoveryEndpointSelect');
-    
-    if (!selected || !selected.value) {
-        endpointSelect.innerHTML = '<option value="">-- Sélectionnez d\'abord un service --</option>';
-        endpointSelect.disabled = true;
-        document.getElementById('discoveryEndpointInfo').classList.add('d-none');
-        document.getElementById('discoveryParamsSection').classList.add('d-none');
-        return;
-    }
-    
-    const slug = selected.value;
-    const apiUrl = selected.dataset.apiUrl;
-    
-    // Pré-remplir l'URL de base
-    document.getElementById('discoveryUrl').value = apiUrl;
-    
-    // Charger la spec OpenAPI du service
-    endpointSelect.innerHTML = '<option value="">⏳ Chargement des endpoints...</option>';
-    endpointSelect.disabled = true;
-    
+    // Charger la spec OpenAPI via le proxy backend
     try {
-        const spec = await loadServiceOpenApiSpec(slug, apiUrl);
-        
-        if (spec && spec.paths) {
-            populateEndpointSelect(spec, apiUrl);
+        const result = await api.getAppOpenApi(slug);
+
+        if (result.spec && result.spec.paths) {
+            discoveryOpenApiSpec = result.spec;
+            discoveryHasOpenApi = true;
+            populateDiscoveryEndpointSelect(result.spec);
+            document.getElementById('discoveryEndpointRow').classList.remove('d-none');
+            document.getElementById('discoveryQuerySection').classList.add('d-none');
         } else {
-            endpointSelect.innerHTML = '<option value="">❌ Spec OpenAPI non disponible</option>';
-            showToast('Info', 'Ce service ne fournit pas de spécification OpenAPI', 'warning');
+            // Pas de spec OpenAPI — mode manuel
+            discoveryHasOpenApi = false;
+            endpointSelect.innerHTML = '<option value="">Pas de spec OpenAPI — mode manuel</option>';
+            endpointSelect.disabled = true;
+            document.getElementById('discoveryQuerySection').classList.remove('d-none');
+            showToast('Info', `${app.name} n'a pas de spécification OpenAPI — mode manuel activé`, 'info');
         }
     } catch (error) {
-        console.error('Erreur chargement spec OpenAPI:', error);
-        endpointSelect.innerHTML = '<option value="">❌ Erreur chargement</option>';
-        showToast('Erreur', 'Impossible de charger les endpoints: ' + error.message, 'danger');
+        console.error('Erreur chargement OpenAPI:', error);
+        endpointSelect.innerHTML = '<option value="">❌ Erreur de chargement</option>';
+        document.getElementById('discoveryQuerySection').classList.remove('d-none');
     }
-}
-
-/**
- * Charge la spécification OpenAPI d'un service
- */
-async function loadServiceOpenApiSpec(slug, apiUrl) {
-    // Vérifier le cache
-    if (discoveryOpenApiSpecs[slug]) {
-        return discoveryOpenApiSpecs[slug];
-    }
-    
-    // Essayer différents chemins pour OpenAPI
-    const openApiPaths = ['/openapi.json', '/api/openapi.json', '/docs/openapi.json', '/swagger.json'];
-    
-    for (const path of openApiPaths) {
-        try {
-            const url = apiUrl.replace(/\/$/, '') + path;
-            const response = await fetch(url, {
-                headers: {
-                    'Authorization': `Bearer ${discoveryM2MToken}`,
-                    'Accept': 'application/json'
-                }
-            });
-            
-            if (response.ok) {
-                const spec = await response.json();
-                discoveryOpenApiSpecs[slug] = spec;
-                console.log(`✅ Spec OpenAPI chargée depuis ${url}`);
-                return spec;
-            }
-        } catch (e) {
-            // Continuer avec le chemin suivant
-        }
-    }
-    
-    return null;
 }
 
 /**
  * Remplit le sélecteur d'endpoints depuis la spec OpenAPI
  */
-function populateEndpointSelect(spec, baseUrl) {
+function populateDiscoveryEndpointSelect(spec) {
     const select = document.getElementById('discoveryEndpointSelect');
-    select.innerHTML = '<option value="">-- Sélectionner un endpoint --</option>';
-    
-    // Grouper par tag
+    select.innerHTML = '<option value="">— Sélectionner un endpoint —</option>';
+
     const endpointsByTag = {};
-    const methodColors = {
-        'get': 'success',
-        'post': 'primary',
-        'put': 'warning',
-        'patch': 'info',
-        'delete': 'danger'
-    };
-    
+
     for (const [path, methods] of Object.entries(spec.paths || {})) {
         for (const [method, details] of Object.entries(methods)) {
-            if (['get', 'post', 'put', 'patch', 'delete'].includes(method.toLowerCase())) {
-                const tags = details.tags || ['Autre'];
-                const tag = tags[0];
-                
-                if (!endpointsByTag[tag]) {
-                    endpointsByTag[tag] = [];
-                }
-                
-                endpointsByTag[tag].push({
-                    method: method.toUpperCase(),
-                    path: path,
-                    summary: details.summary || '',
-                    description: details.description || '',
-                    operationId: details.operationId || '',
-                    parameters: details.parameters || [],
-                    requestBody: details.requestBody || null,
-                    responses: details.responses || {},
-                    tags: tags
-                });
-            }
+            if (!['get', 'post', 'put', 'patch', 'delete'].includes(method.toLowerCase())) continue;
+            const tag = (details.tags || ['Autre'])[0];
+            if (!endpointsByTag[tag]) endpointsByTag[tag] = [];
+
+            endpointsByTag[tag].push({
+                method: method.toUpperCase(),
+                path,
+                summary: details.summary || '',
+                description: details.description || '',
+                operationId: details.operationId || '',
+                parameters: details.parameters || [],
+                requestBody: details.requestBody || null,
+                responses: details.responses || {},
+                tags: details.tags || ['Autre'],
+            });
         }
     }
-    
-    // Créer les optgroups
+
     for (const [tag, endpoints] of Object.entries(endpointsByTag)) {
         const optgroup = document.createElement('optgroup');
         optgroup.label = `📁 ${tag}`;
-        
-        endpoints.forEach((ep, idx) => {
+        endpoints.forEach(ep => {
             const opt = document.createElement('option');
-            const methodBadge = `[${ep.method}]`;
             opt.value = JSON.stringify(ep);
-            opt.textContent = `${methodBadge} ${ep.path} - ${ep.summary || ep.operationId || 'Sans description'}`;
-            opt.dataset.method = ep.method;
-            opt.dataset.path = ep.path;
+            opt.textContent = `[${ep.method}] ${ep.path} — ${ep.summary || ep.operationId || 'Sans description'}`;
             optgroup.appendChild(opt);
         });
-        
         select.appendChild(optgroup);
     }
-    
+
     select.disabled = false;
-    showToast('Endpoints chargés', `${Object.values(endpointsByTag).flat().length} endpoints disponibles`, 'success');
+    const total = Object.values(endpointsByTag).flat().length;
+    showToast('Endpoints chargés', `${total} endpoint(s) disponible(s)`, 'success');
 }
 
 /**
- * Appelé quand on sélectionne un endpoint
+ * Appelé quand on sélectionne un endpoint dans le dropdown
  */
 function onDiscoveryEndpointChange() {
     const select = document.getElementById('discoveryEndpointSelect');
-    const selected = select.options[select.selectedIndex];
-    
-    if (!selected || !selected.value) {
+    const val = select.value;
+
+    if (!val) {
         document.getElementById('discoveryEndpointInfo').classList.add('d-none');
         document.getElementById('discoveryParamsSection').classList.add('d-none');
+        document.getElementById('discoveryBodySection').classList.add('d-none');
         discoverySelectedEndpoint = null;
         return;
     }
-    
+
     try {
-        const endpoint = JSON.parse(selected.value);
-        discoverySelectedEndpoint = endpoint;
-        
-        // Afficher les infos de l'endpoint
-        const infoDiv = document.getElementById('discoveryEndpointInfo');
-        infoDiv.classList.remove('d-none');
-        
-        // Méthode avec couleur
+        const ep = JSON.parse(val);
+        discoverySelectedEndpoint = ep;
+
+        // Badge méthode
         const methodBadge = document.getElementById('discoveryEndpointMethod');
-        const methodColors = {
-            'GET': 'bg-success',
-            'POST': 'bg-primary',
-            'PUT': 'bg-warning text-dark',
-            'PATCH': 'bg-info',
-            'DELETE': 'bg-danger'
-        };
-        methodBadge.className = `badge ${methodColors[endpoint.method] || 'bg-secondary'}`;
-        methodBadge.textContent = endpoint.method;
-        
-        document.getElementById('discoveryEndpointPath').textContent = endpoint.path;
-        document.getElementById('discoveryEndpointDescription').textContent = 
-            endpoint.description || endpoint.summary || 'Pas de description disponible';
-        document.getElementById('discoveryEndpointTags').textContent = endpoint.tags.join(', ');
-        
-        // Mettre à jour la méthode et l'URL
-        document.getElementById('discoveryMethod').value = endpoint.method;
-        
-        // Construire l'URL complète
-        const serviceSelect = document.getElementById('discoveryServiceSelect');
-        const baseUrl = serviceSelect.options[serviceSelect.selectedIndex]?.dataset.apiUrl || '';
-        document.getElementById('discoveryUrl').value = baseUrl.replace(/\/$/, '') + endpoint.path;
-        
-        // Générer les paramètres s'il y en a
-        generateEndpointParams(endpoint);
-        
-        // Générer le body exemple si POST/PUT/PATCH
-        if (['POST', 'PUT', 'PATCH'].includes(endpoint.method) && endpoint.requestBody) {
-            generateRequestBodyExample(endpoint.requestBody);
+        const colors = { GET: 'bg-success', POST: 'bg-primary', PUT: 'bg-warning text-dark', PATCH: 'bg-info', DELETE: 'bg-danger' };
+        methodBadge.className = `badge ${colors[ep.method] || 'bg-secondary'}`;
+        methodBadge.textContent = ep.method;
+        document.getElementById('discoveryEndpointPath').textContent = ep.path;
+        document.getElementById('discoveryEndpointDescription').textContent = ep.description || ep.summary || '';
+        document.getElementById('discoveryEndpointInfo').classList.remove('d-none');
+
+        // Remplir les champs de requête
+        document.getElementById('discoveryMethod').value = ep.method;
+        document.getElementById('discoveryPath').value = ep.path;
+
+        // Paramètres
+        generateDiscoveryParams(ep);
+
+        // Body
+        if (['POST', 'PUT', 'PATCH'].includes(ep.method) && ep.requestBody) {
+            document.getElementById('discoveryBodySection').classList.remove('d-none');
+            generateDiscoveryBodyExample(ep.requestBody);
         } else {
+            document.getElementById('discoveryBodySection').classList.add('d-none');
             document.getElementById('discoveryBody').value = '';
         }
-        
     } catch (e) {
         console.error('Erreur parsing endpoint:', e);
     }
 }
 
 /**
- * Génère les champs de paramètres pour l'endpoint
+ * Appelé quand l'utilisateur tape manuellement un path
  */
-function generateEndpointParams(endpoint) {
-    const paramsSection = document.getElementById('discoveryParamsSection');
-    const paramsContainer = document.getElementById('discoveryParams');
-    
+function onDiscoveryPathInput() {
+    // Désélectionner l'endpoint du dropdown si l'utilisateur modifie le path
+    const select = document.getElementById('discoveryEndpointSelect');
+    if (select.value) {
+        // Vérifier si le path correspond encore
+        try {
+            const ep = JSON.parse(select.value);
+            if (document.getElementById('discoveryPath').value.trim() !== ep.path) {
+                select.value = '';
+                discoverySelectedEndpoint = null;
+                document.getElementById('discoveryEndpointInfo').classList.add('d-none');
+            }
+        } catch (e) { /* ignore */ }
+    }
+}
+
+/**
+ * Génère les champs de paramètres pour un endpoint
+ */
+function generateDiscoveryParams(endpoint) {
+    const section = document.getElementById('discoveryParamsSection');
+    const container = document.getElementById('discoveryParams');
     const params = endpoint.parameters || [];
-    
-    if (params.length === 0) {
-        paramsSection.classList.add('d-none');
+
+    if (!params.length) {
+        section.classList.add('d-none');
         return;
     }
-    
-    paramsSection.classList.remove('d-none');
-    paramsContainer.innerHTML = '';
-    
+
+    section.classList.remove('d-none');
+    container.innerHTML = '';
+
     params.forEach(param => {
+        const typeIcon = { path: 'bi-link-45deg', query: 'bi-question-circle', header: 'bi-card-heading' }[param.in] || 'bi-tag';
         const row = document.createElement('div');
-        row.className = 'row g-2 mb-2 align-items-center';
-        
-        const isRequired = param.required || false;
-        const paramType = param.in; // path, query, header
-        const typeIcon = {
-            'path': 'bi-link-45deg',
-            'query': 'bi-question-circle',
-            'header': 'bi-card-heading'
-        }[paramType] || 'bi-tag';
-        
+        row.className = 'row g-2 mb-1 align-items-center';
         row.innerHTML = `
             <div class="col-md-3">
                 <div class="input-group input-group-sm">
@@ -6268,80 +6047,63 @@ function generateEndpointParams(endpoint) {
                 </div>
             </div>
             <div class="col-md-5">
-                <input type="text" class="form-control form-control-sm discovery-param-value" 
-                       data-param-name="${escapeHtml(param.name)}" 
-                       data-param-in="${paramType}"
+                <input type="text" class="form-control form-control-sm discovery-param-value"
+                       data-param-name="${escapeHtml(param.name)}"
+                       data-param-in="${param.in}"
                        placeholder="${escapeHtml(param.description || param.schema?.type || 'valeur')}"
-                       ${isRequired ? 'required' : ''}>
+                       ${param.required ? 'required' : ''}>
             </div>
             <div class="col-md-4">
                 <small class="text-muted">
-                    ${isRequired ? '<span class="badge bg-danger me-1">Requis</span>' : ''}
-                    <span class="badge bg-secondary">${paramType}</span>
+                    ${param.required ? '<span class="badge bg-danger me-1">Requis</span>' : ''}
+                    <span class="badge bg-secondary">${param.in}</span>
                     ${param.schema?.type ? `<span class="badge bg-light text-dark">${param.schema.type}</span>` : ''}
                 </small>
             </div>
         `;
-        
-        paramsContainer.appendChild(row);
+        container.appendChild(row);
     });
-    
-    // Ajouter listener pour mettre à jour l'URL en temps réel
-    paramsContainer.querySelectorAll('.discovery-param-value').forEach(input => {
-        input.addEventListener('input', updateDiscoveryUrlWithParams);
+
+    // Mettre à jour le path en temps réel
+    container.querySelectorAll('.discovery-param-value').forEach(input => {
+        input.addEventListener('input', updateDiscoveryPathWithParams);
     });
 }
 
 /**
- * Met à jour l'URL avec les paramètres remplis
+ * Met à jour le path avec les paramètres remplis
  */
-function updateDiscoveryUrlWithParams() {
+function updateDiscoveryPathWithParams() {
     if (!discoverySelectedEndpoint) return;
-    
-    const serviceSelect = document.getElementById('discoveryServiceSelect');
-    const baseUrl = serviceSelect.options[serviceSelect.selectedIndex]?.dataset.apiUrl || '';
+
     let path = discoverySelectedEndpoint.path;
-    
     const queryParams = [];
-    
+
     document.querySelectorAll('.discovery-param-value').forEach(input => {
-        const paramName = input.dataset.paramName;
-        const paramIn = input.dataset.paramIn;
-        const value = input.value.trim();
-        
-        if (value) {
-            if (paramIn === 'path') {
-                // Remplacer {param} dans le path
-                path = path.replace(`{${paramName}}`, encodeURIComponent(value));
-            } else if (paramIn === 'query') {
-                queryParams.push(`${encodeURIComponent(paramName)}=${encodeURIComponent(value)}`);
-            }
-        }
+        const name = input.dataset.paramName;
+        const loc = input.dataset.paramIn;
+        const val = input.value.trim();
+        if (!val) return;
+        if (loc === 'path') path = path.replace(`{${name}}`, encodeURIComponent(val));
+        else if (loc === 'query') queryParams.push(`${encodeURIComponent(name)}=${encodeURIComponent(val)}`);
     });
-    
-    let fullUrl = baseUrl.replace(/\/$/, '') + path;
-    if (queryParams.length > 0) {
-        fullUrl += '?' + queryParams.join('&');
-    }
-    
-    document.getElementById('discoveryUrl').value = fullUrl;
+
+    let fullPath = path;
+    if (queryParams.length) fullPath += '?' + queryParams.join('&');
+    document.getElementById('discoveryPath').value = fullPath;
 }
 
 /**
- * Génère un exemple de body pour les requêtes POST/PUT/PATCH
+ * Génère un exemple de body depuis la spec OpenAPI
  */
-function generateRequestBodyExample(requestBody) {
-    const bodyTextarea = document.getElementById('discoveryBody');
-    
+function generateDiscoveryBodyExample(requestBody) {
+    const textarea = document.getElementById('discoveryBody');
     try {
-        const content = requestBody.content;
-        const jsonContent = content?.['application/json'];
-        
+        const jsonContent = requestBody?.content?.['application/json'];
         if (jsonContent?.schema) {
-            const example = generateSchemaExample(jsonContent.schema);
-            bodyTextarea.value = JSON.stringify(example, null, 2);
+            textarea.value = JSON.stringify(generateSchemaExample(jsonContent.schema), null, 2);
         } else if (jsonContent?.example) {
-            bodyTextarea.value = JSON.stringify(jsonContent.example, null, 2);
+            textarea.value = JSON.stringify(jsonContent.example, null, 2);
         }
     } catch (e) {
         console.warn('Impossible de générer exemple body:', e);
@@ -6349,34 +6111,21 @@ function generateRequestBodyExample(requestBody) {
 }
 
 /**
- * Génère un exemple à partir d'un schéma JSON
+ * Génère un exemple à partir d'un schéma JSON (récursif)
  */
 function generateSchemaExample(schema, depth = 0) {
-    if (depth > 5) return null; // Éviter la récursion infinie
-    
-    if (schema.example !== undefined) {
-        return schema.example;
-    }
-    
-    if (schema.$ref) {
-        // Référence à un composant - retourner un placeholder
-        return { "_ref": schema.$ref.split('/').pop() };
-    }
-    
+    if (depth > 5) return null;
+    if (schema.example !== undefined) return schema.example;
+    if (schema.$ref) return { '_ref': schema.$ref.split('/').pop() };
+
     switch (schema.type) {
-        case 'object':
+        case 'object': {
             const obj = {};
-            if (schema.properties) {
-                for (const [key, prop] of Object.entries(schema.properties)) {
-                    obj[key] = generateSchemaExample(prop, depth + 1);
-                }
-            }
+            for (const [k, v] of Object.entries(schema.properties || {})) obj[k] = generateSchemaExample(v, depth + 1);
             return obj;
+        }
         case 'array':
-            if (schema.items) {
-                return [generateSchemaExample(schema.items, depth + 1)];
-            }
-            return [];
+            return schema.items ? [generateSchemaExample(schema.items, depth + 1)] : [];
         case 'string':
             if (schema.enum) return schema.enum[0];
             if (schema.format === 'date') return '2024-01-01';
@@ -6387,55 +6136,28 @@ function generateSchemaExample(schema, depth = 0) {
         case 'number':
             return schema.default || schema.minimum || 0;
         case 'boolean':
-            return schema.default || true;
+            return schema.default !== undefined ? schema.default : true;
         default:
             return null;
     }
 }
 
 /**
- * Affiche la spec OpenAPI complète de l'endpoint sélectionné
+ * Ajoute une ligne de query param manuel
  */
-function loadEndpointOpenApiSpec() {
-    if (!discoverySelectedEndpoint) {
-        showToast('Info', 'Sélectionnez d\'abord un endpoint', 'info');
-        return;
-    }
-    
-    // Afficher dans le résultat
-    document.getElementById('discoveryResultCard').style.display = 'block';
-    document.getElementById('discoveryResultStatus').textContent = 'OpenAPI Spec';
-    document.getElementById('discoveryResultStatus').className = 'badge bg-info';
-    document.getElementById('discoveryResultTime').textContent = '';
-    document.getElementById('discoveryResultBody').textContent = JSON.stringify(discoverySelectedEndpoint, null, 2);
-}
-
-/**
- * Copie le token M2M dans le presse-papier
- */
-function copyDiscoveryToken() {
-    if (discoveryM2MToken) {
-        navigator.clipboard.writeText(discoveryM2MToken);
-        showToast('Copié', 'Token M2M copié dans le presse-papier', 'success');
-    }
-}
-
-/**
- * Ajoute une ligne de header personnalisé
- */
-function addDiscoveryHeader() {
-    const container = document.getElementById('discoveryHeaders');
+function addDiscoveryQueryParam() {
+    const container = document.getElementById('discoveryQueryParams');
     const row = document.createElement('div');
-    row.className = 'row g-2 mb-2 discovery-header-row';
+    row.className = 'row g-1 mb-1 discovery-qp-row';
     row.innerHTML = `
         <div class="col-5">
-            <input type="text" class="form-control form-control-sm" placeholder="Nom">
+            <input type="text" class="form-control form-control-sm" placeholder="clé">
         </div>
         <div class="col-6">
-            <input type="text" class="form-control form-control-sm" placeholder="Valeur">
+            <input type="text" class="form-control form-control-sm" placeholder="valeur">
         </div>
         <div class="col-1">
-            <button class="btn btn-outline-danger btn-sm" onclick="removeDiscoveryHeader(this)">
+            <button class="btn btn-outline-danger btn-sm py-0" onclick="this.closest('.discovery-qp-row').remove()">
                 <i class="bi bi-x"></i>
             </button>
         </div>
@@ -6443,45 +6165,40 @@ function addDiscoveryHeader() {
     container.appendChild(row);
 }
 
-/**
- * Supprime une ligne de header
- */
-function removeDiscoveryHeader(btn) {
-    btn.closest('.discovery-header-row').remove();
-}
+// ─── Exécution de la requête ─────────────────────────────────────────
 
 /**
- * Teste un endpoint avec le token M2M
+ * Exécute la requête via le proxy backend
  */
-async function testDiscoveryEndpoint() {
-    if (!discoveryM2MToken) {
-        showToast('Erreur', 'Obtenez d\'abord un token M2M', 'warning');
+async function executeDiscoveryRequest() {
+    if (!discoverySelectedApp) {
+        showToast('Erreur', 'Sélectionnez d\'abord une application', 'warning');
         return;
     }
-    
+
     const method = document.getElementById('discoveryMethod').value;
-    const url = document.getElementById('discoveryUrl').value.trim();
-    
-    if (!url) {
-        showToast('Erreur', 'URL de l\'endpoint requise', 'warning');
+    let path = document.getElementById('discoveryPath').value.trim();
+
+    if (!path) {
+        showToast('Erreur', 'Chemin de l\'endpoint requis', 'warning');
         return;
     }
-    
-    // Récupérer les headers personnalisés
-    const headers = {};
-    document.querySelectorAll('.discovery-header-row').forEach(row => {
-        const inputs = row.querySelectorAll('input');
-        const name = inputs[0]?.value.trim();
-        const value = inputs[1]?.value.trim();
-        if (name) {
-            headers[name] = value;
-        }
-    });
-    
-    // Ajouter le token Authorization
-    headers['Authorization'] = `Bearer ${discoveryM2MToken}`;
-    
-    // Body pour POST/PUT/PATCH
+
+    // Collecter les query params manuels (mode fallback)
+    let queryParams = null;
+    const qpRows = document.querySelectorAll('.discovery-qp-row');
+    if (qpRows.length > 0) {
+        queryParams = {};
+        qpRows.forEach(row => {
+            const inputs = row.querySelectorAll('input');
+            const k = inputs[0]?.value.trim();
+            const v = inputs[1]?.value.trim();
+            if (k) queryParams[k] = v;
+        });
+        if (Object.keys(queryParams).length === 0) queryParams = null;
+    }
+
+    // Body
     let body = null;
     if (['POST', 'PUT', 'PATCH'].includes(method)) {
         const bodyText = document.getElementById('discoveryBody').value.trim();
@@ -6494,86 +6211,366 @@ async function testDiscoveryEndpoint() {
             }
         }
     }
-    
-    const btn = document.getElementById('discoveryTestBtn');
+
+    const btn = document.getElementById('discoveryExecBtn');
     btn.disabled = true;
-    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Exécution...';
-    
-    const startTime = Date.now();
-    
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>…';
+
     try {
-        const response = await fetch(url, {
-            method: method,
-            headers: headers,
-            body: body ? JSON.stringify(body) : null
-        });
-        
-        const duration = Date.now() - startTime;
-        
-        // Afficher le résultat
-        document.getElementById('discoveryResultCard').style.display = 'block';
-        
-        const statusBadge = document.getElementById('discoveryResultStatus');
-        statusBadge.textContent = `${response.status} ${response.statusText}`;
-        statusBadge.className = `badge ${response.ok ? 'bg-success' : 'bg-danger'}`;
-        
-        document.getElementById('discoveryResultTime').textContent = `${duration}ms`;
-        
-        // Parser la réponse
-        let responseText;
-        const contentType = response.headers.get('content-type') || '';
-        
-        if (contentType.includes('application/json')) {
-            const json = await response.json();
-            responseText = JSON.stringify(json, null, 2);
-        } else {
-            responseText = await response.text();
-        }
-        
-        document.getElementById('discoveryResultBody').textContent = responseText;
-        
-        if (response.ok) {
-            showToast('Succès', `${method} ${response.status} - ${duration}ms`, 'success');
-        } else {
-            showToast('Erreur', `${method} ${response.status} ${response.statusText}`, 'warning');
-        }
-        
+        const result = await api.proxyRequest(
+            discoverySelectedApp.slug,
+            method,
+            path,
+            queryParams,
+            null, // headers gérés par le proxy
+            body
+        );
+
+        renderDiscoveryResults(result);
+
     } catch (error) {
-        console.error('Erreur test endpoint:', error);
-        
-        document.getElementById('discoveryResultCard').style.display = 'block';
-        
-        const statusBadge = document.getElementById('discoveryResultStatus');
-        statusBadge.textContent = 'Erreur';
-        statusBadge.className = 'badge bg-danger';
-        
-        document.getElementById('discoveryResultTime').textContent = `${Date.now() - startTime}ms`;
-        document.getElementById('discoveryResultBody').textContent = `Erreur: ${error.message}\n\nCela peut être dû à:\n- CORS bloqué par le serveur distant\n- URL incorrecte\n- Serveur non accessible`;
-        
+        console.error('Erreur proxy:', error);
         showToast('Erreur', error.message, 'danger');
+
+        // Afficher l'erreur dans la zone résultats
+        document.getElementById('discoveryResultsArea').style.display = '';
+        document.getElementById('discoveryResultStatus').textContent = 'Erreur';
+        document.getElementById('discoveryResultStatus').className = 'badge bg-danger';
+        document.getElementById('discoveryResultTime').textContent = '';
+        document.getElementById('discoveryResultCount').textContent = '';
+        document.getElementById('discoveryTableWrapper').classList.add('d-none');
+        const raw = document.getElementById('discoveryResultRaw');
+        raw.classList.remove('d-none');
+        raw.textContent = `Erreur: ${error.message}`;
     } finally {
         btn.disabled = false;
         btn.innerHTML = '<i class="bi bi-play-fill me-1"></i>Exécuter';
     }
 }
 
+// ─── Rendu des résultats ─────────────────────────────────────────────
+
 /**
- * Copie le résultat dans le presse-papier
+ * Affiche les résultats dans la zone dédiée
+ */
+function renderDiscoveryResults(result) {
+    const area = document.getElementById('discoveryResultsArea');
+    area.style.display = '';
+
+    // Status badge
+    const statusBadge = document.getElementById('discoveryResultStatus');
+    statusBadge.textContent = `${result.status} ${result.status_text || ''}`.trim();
+    statusBadge.className = `badge ${result.status >= 200 && result.status < 300 ? 'bg-success' : result.status >= 400 ? 'bg-danger' : 'bg-warning text-dark'}`;
+
+    document.getElementById('discoveryResultTime').textContent = `${result.elapsed_ms}ms`;
+
+    // Erreur de connexion ?
+    if (result.error) {
+        document.getElementById('discoveryResultCount').textContent = '';
+        document.getElementById('discoveryTableWrapper').classList.add('d-none');
+        const raw = document.getElementById('discoveryResultRaw');
+        raw.classList.remove('d-none');
+        raw.textContent = `Erreur: ${result.error}`;
+        discoveryRawData = null;
+        return;
+    }
+
+    // Déterminer les données
+    const data = result.body != null ? result.body : result.body_text;
+    discoveryRawData = data;
+    discoveryVisibleColumns = null;
+
+    // Essayer le rendu tableau
+    if (data && typeof data === 'object') {
+        // Si c'est un tableau d'objets → tableau multi-lignes
+        let rows = null;
+        if (Array.isArray(data)) {
+            rows = data;
+        } else if (Array.isArray(data.items)) {
+            rows = data.items;
+        } else if (Array.isArray(data.data)) {
+            rows = data.data;
+        } else if (Array.isArray(data.results)) {
+            rows = data.results;
+        }
+
+        if (rows && rows.length > 0 && typeof rows[0] === 'object' && !Array.isArray(rows[0])) {
+            renderDiscoveryTable(rows);
+            return;
+        }
+
+        // Objet unique → tableau clé/valeur
+        if (!Array.isArray(data)) {
+            renderDiscoveryObjectTable(data);
+            return;
+        }
+    }
+
+    // Fallback : JSON brut
+    document.getElementById('discoveryResultCount').textContent = '';
+    document.getElementById('discoveryTableWrapper').classList.add('d-none');
+    const raw = document.getElementById('discoveryResultRaw');
+    raw.classList.remove('d-none');
+    raw.textContent = typeof data === 'string' ? data : JSON.stringify(data, null, 2);
+}
+
+/**
+ * Rend un tableau multi-lignes (array d'objets)
+ */
+function renderDiscoveryTable(rows) {
+    document.getElementById('discoveryTableWrapper').classList.remove('d-none');
+    document.getElementById('discoveryResultRaw').classList.add('d-none');
+    document.getElementById('discoveryResultCount').textContent = `${rows.length} résultat(s)`;
+
+    // Collecter toutes les clés
+    const allKeys = new Set();
+    rows.forEach(row => {
+        if (row && typeof row === 'object') Object.keys(row).forEach(k => allKeys.add(k));
+    });
+    const columns = Array.from(allKeys);
+
+    // Initialiser les colonnes visibles (toutes par défaut)
+    if (!discoveryVisibleColumns) {
+        discoveryVisibleColumns = new Set(columns);
+    }
+
+    // Peupler le sélecteur de colonnes
+    populateDiscoveryColumnSelector(columns);
+
+    // Peupler le filtre par champ
+    const fieldSelect = document.getElementById('discoveryFilterField');
+    const prevField = fieldSelect.value;
+    fieldSelect.innerHTML = '<option value="">Champ</option>';
+    columns.forEach(col => {
+        const opt = document.createElement('option');
+        opt.value = col;
+        opt.textContent = col;
+        if (col === prevField) opt.selected = true;
+        fieldSelect.appendChild(opt);
+    });
+
+    // Détecter les types par colonne
+    const colTypes = {};
+    columns.forEach(col => {
+        colTypes[col] = detectDiscoveryFieldType(rows.map(r => r?.[col]));
+    });
+
+    // Construire le thead
+    const thead = document.getElementById('discoveryTableHead');
+    thead.innerHTML = '';
+    const headerRow = document.createElement('tr');
+    columns.forEach(col => {
+        if (!discoveryVisibleColumns.has(col)) return;
+        const th = document.createElement('th');
+        th.className = 'discovery-th';
+        const typeColors = { string: 'text-bg-secondary', number: 'text-bg-primary', boolean: 'text-bg-info', object: 'text-bg-warning', array: 'text-bg-warning', null: 'text-bg-light' };
+        th.innerHTML = `${escapeHtml(col)} <span class="badge ${typeColors[colTypes[col]] || 'text-bg-light'}" style="font-size: 0.6rem;">${colTypes[col]}</span>`;
+        headerRow.appendChild(th);
+    });
+    thead.appendChild(headerRow);
+
+    // Construire le tbody
+    const tbody = document.getElementById('discoveryTableBody');
+    tbody.innerHTML = '';
+
+    // Appliquer les filtres
+    let filtered = applyDiscoveryDataFilters(rows, columns);
+    document.getElementById('discoveryResultCount').textContent = `${filtered.length}/${rows.length} résultat(s)`;
+
+    filtered.forEach(row => {
+        const tr = document.createElement('tr');
+        columns.forEach(col => {
+            if (!discoveryVisibleColumns.has(col)) return;
+            const td = document.createElement('td');
+            td.className = 'discovery-td';
+            const val = row?.[col];
+            td.innerHTML = formatDiscoveryCellValue(val);
+            tr.appendChild(td);
+        });
+        tbody.appendChild(tr);
+    });
+}
+
+/**
+ * Rend un objet unique sous forme clé/valeur
+ */
+function renderDiscoveryObjectTable(obj) {
+    document.getElementById('discoveryTableWrapper').classList.remove('d-none');
+    document.getElementById('discoveryResultRaw').classList.add('d-none');
+    document.getElementById('discoveryResultCount').textContent = `${Object.keys(obj).length} champ(s)`;
+
+    // Pas de sélecteur de colonnes pour un objet
+    document.getElementById('discoveryColumnSelector').innerHTML = '';
+
+    const thead = document.getElementById('discoveryTableHead');
+    thead.innerHTML = '<tr><th class="discovery-th">Champ</th><th class="discovery-th">Type</th><th class="discovery-th">Valeur</th></tr>';
+
+    const tbody = document.getElementById('discoveryTableBody');
+    tbody.innerHTML = '';
+
+    for (const [key, val] of Object.entries(obj)) {
+        const tr = document.createElement('tr');
+        const typeName = val === null ? 'null' : Array.isArray(val) ? 'array' : typeof val;
+        const typeColors = { string: 'text-bg-secondary', number: 'text-bg-primary', boolean: 'text-bg-info', object: 'text-bg-warning', array: 'text-bg-warning', null: 'text-bg-light' };
+        tr.innerHTML = `
+            <td class="discovery-td fw-semibold">${escapeHtml(key)}</td>
+            <td class="discovery-td"><span class="badge ${typeColors[typeName] || 'text-bg-light'}" style="font-size: 0.65rem;">${typeName}</span></td>
+            <td class="discovery-td">${formatDiscoveryCellValue(val)}</td>
+        `;
+        tbody.appendChild(tr);
+    }
+}
+
+/**
+ * Formate une valeur pour l'affichage dans une cellule
+ */
+function formatDiscoveryCellValue(val) {
+    if (val === null || val === undefined) return '<span class="text-muted fst-italic">null</span>';
+    if (typeof val === 'boolean') return `<span class="badge ${val ? 'text-bg-success' : 'text-bg-secondary'}">${val}</span>`;
+    if (typeof val === 'number') return `<span class="text-primary">${val}</span>`;
+    if (typeof val === 'object') {
+        const json = JSON.stringify(val);
+        if (json.length > 80) return `<code class="small" title="${escapeHtml(json)}">${escapeHtml(json.substring(0, 77))}…</code>`;
+        return `<code class="small">${escapeHtml(json)}</code>`;
+    }
+    // String
+    const str = String(val);
+    if (str.length > 100) return `<span title="${escapeHtml(str)}">${escapeHtml(str.substring(0, 97))}…</span>`;
+    return escapeHtml(str);
+}
+
+/**
+ * Détecte le type dominant d'une colonne
+ */
+function detectDiscoveryFieldType(values) {
+    const types = {};
+    for (const v of values) {
+        if (v === null || v === undefined) { types['null'] = (types['null'] || 0) + 1; continue; }
+        if (Array.isArray(v)) { types['array'] = (types['array'] || 0) + 1; continue; }
+        const t = typeof v;
+        types[t] = (types[t] || 0) + 1;
+    }
+    // Retourner le type le plus fréquent (hors null)
+    let best = 'null', bestCount = 0;
+    for (const [t, c] of Object.entries(types)) {
+        if (t !== 'null' && c > bestCount) { best = t; bestCount = c; }
+    }
+    return best;
+}
+
+// ─── Filtres ─────────────────────────────────────────────────────────
+
+/**
+ * Peuple le sélecteur de colonnes visibles
+ */
+function populateDiscoveryColumnSelector(columns) {
+    const container = document.getElementById('discoveryColumnSelector');
+    container.innerHTML = '';
+    columns.forEach(col => {
+        const div = document.createElement('div');
+        div.className = 'form-check';
+        div.innerHTML = `
+            <input class="form-check-input" type="checkbox" id="disc_col_${escapeHtml(col)}"
+                   value="${escapeHtml(col)}" ${discoveryVisibleColumns?.has(col) ? 'checked' : ''} onchange="toggleDiscoveryColumn('${escapeHtml(col)}')">
+            <label class="form-check-label small" for="disc_col_${escapeHtml(col)}">${escapeHtml(col)}</label>
+        `;
+        container.appendChild(div);
+    });
+}
+
+/**
+ * Toggle la visibilité d'une colonne
+ */
+function toggleDiscoveryColumn(col) {
+    if (!discoveryVisibleColumns) return;
+    if (discoveryVisibleColumns.has(col)) {
+        discoveryVisibleColumns.delete(col);
+    } else {
+        discoveryVisibleColumns.add(col);
+    }
+    applyDiscoveryFilters();
+}
+
+/**
+ * Applique tous les filtres et re-rend le tableau
+ */
+function applyDiscoveryFilters() {
+    if (!discoveryRawData) return;
+
+    // Retrouver les rows
+    let rows = null;
+    if (Array.isArray(discoveryRawData)) {
+        rows = discoveryRawData;
+    } else if (typeof discoveryRawData === 'object') {
+        rows = discoveryRawData.items || discoveryRawData.data || discoveryRawData.results;
+    }
+
+    if (rows && Array.isArray(rows) && rows.length > 0 && typeof rows[0] === 'object') {
+        renderDiscoveryTable(rows);
+    }
+}
+
+/**
+ * Applique les filtres de données sur les rows
+ */
+function applyDiscoveryDataFilters(rows, columns) {
+    let result = [...rows];
+
+    // Filtre par champ
+    const field = document.getElementById('discoveryFilterField')?.value;
+    const op = document.getElementById('discoveryFilterOp')?.value;
+    const val = document.getElementById('discoveryFilterValue')?.value?.trim();
+    if (field && val) {
+        result = result.filter(row => {
+            const cellVal = String(row?.[field] ?? '').toLowerCase();
+            const searchVal = val.toLowerCase();
+            switch (op) {
+                case 'eq': return cellVal === searchVal;
+                case 'neq': return cellVal !== searchVal;
+                case 'contains':
+                default: return cellVal.includes(searchVal);
+            }
+        });
+    }
+
+    // Recherche texte globale
+    const search = document.getElementById('discoveryFilterSearch')?.value?.trim().toLowerCase();
+    if (search) {
+        result = result.filter(row => {
+            return columns.some(col => {
+                const v = row?.[col];
+                return String(v ?? '').toLowerCase().includes(search);
+            });
+        });
+    }
+
+    return result;
+}
+
+/**
+ * Copie le JSON brut dans le presse-papier
  */
 function copyDiscoveryResult() {
-    const result = document.getElementById('discoveryResultBody').textContent;
-    if (result) {
-        navigator.clipboard.writeText(result);
+    if (discoveryRawData) {
+        const text = typeof discoveryRawData === 'string' ? discoveryRawData : JSON.stringify(discoveryRawData, null, 2);
+        navigator.clipboard.writeText(text);
         showToast('Copié', 'Résultat copié dans le presse-papier', 'success');
     }
 }
 
 /**
- * Efface le résultat
+ * Efface les résultats
  */
 function clearDiscoveryResult() {
-    document.getElementById('discoveryResultCard').style.display = 'none';
-    document.getElementById('discoveryResultBody').textContent = '';
+    document.getElementById('discoveryResultsArea').style.display = 'none';
+    document.getElementById('discoveryTableBody').innerHTML = '';
+    document.getElementById('discoveryTableHead').innerHTML = '';
+    document.getElementById('discoveryResultRaw').textContent = '';
+    document.getElementById('discoveryFilterSearch').value = '';
+    document.getElementById('discoveryFilterField').value = '';
+    document.getElementById('discoveryFilterValue').value = '';
+    discoveryRawData = null;
+    discoveryVisibleColumns = null;
 }
 
 // ===== Cloner / Migrer — Export & Import d'environnement =====
