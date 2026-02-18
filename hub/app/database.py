@@ -237,3 +237,22 @@ async def apply_migrations():
                     logger.info("✅ Colonne profile_id ajoutée")
                 except Exception as e:
                     logger.warning(f"Ajout profile_id ignoré: {e}")
+
+        # Vérifier si la migration 009 est nécessaire (api_endpoints)
+        result = await conn.execute(text("""
+            SELECT column_name FROM information_schema.columns 
+            WHERE table_name = 'applications' AND column_name = 'api_endpoints'
+        """))
+        if not result.fetchone():
+            logger.info("📦 Application de la migration 009_add_api_endpoints...")
+            migration_file = migrations_dir / "009_add_api_endpoints.sql"
+            if migration_file.exists():
+                sql = migration_file.read_text()
+                for statement in sql.split(';'):
+                    statement = statement.strip()
+                    if statement and not statement.startswith('--'):
+                        try:
+                            await conn.execute(text(statement))
+                        except Exception as e:
+                            logger.warning(f"Migration 009 statement ignoré: {e}")
+                logger.info("✅ Migration 009 appliquée")
