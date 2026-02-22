@@ -838,10 +838,15 @@ class HubAPI {
      * @param {boolean} restoreJwtKeys - Restaurer les clés JWT
      * @returns {Promise<Object>} Résultat de l'import
      */
-    async importBackup(backupData, importMode = 'skip', restoreJwtKeys = false) {
+    async importBackup(backupData, importMode = 'skip', restoreJwtKeys = false, includeOptions = {}) {
         const payload = {
             import_mode: importMode,
             restore_jwt_keys: restoreJwtKeys,
+            include_users: includeOptions.include_users !== false,
+            include_applications: includeOptions.include_applications !== false,
+            include_user_app_roles: includeOptions.include_user_app_roles !== false,
+            include_service_accounts: includeOptions.include_service_accounts !== false,
+            include_app_backups: includeOptions.include_app_backups !== false,
             users: backupData.users || [],
             applications: backupData.applications || [],
             user_app_roles: backupData.user_app_roles || [],
@@ -864,11 +869,16 @@ class HubAPI {
      * @param {boolean} restoreJwtKeys - Restaurer les clés JWT
      * @returns {Promise<Object>} Résultat de l'import
      */
-    async importBackupFile(file, importMode = 'skip', restoreJwtKeys = false) {
+    async importBackupFile(file, importMode = 'skip', restoreJwtKeys = false, includeOptions = {}) {
         const formData = new FormData();
         formData.append('file', file);
         formData.append('import_mode', importMode);
         formData.append('restore_jwt_keys', restoreJwtKeys);
+        formData.append('include_users', includeOptions.include_users !== false);
+        formData.append('include_applications', includeOptions.include_applications !== false);
+        formData.append('include_user_app_roles', includeOptions.include_user_app_roles !== false);
+        formData.append('include_service_accounts', includeOptions.include_service_accounts !== false);
+        formData.append('include_app_backups', includeOptions.include_app_backups !== false);
         
         const response = await fetch(`${API_BASE}/admin/backup/import/upload`, {
             method: 'POST',

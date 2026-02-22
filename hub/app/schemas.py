@@ -690,6 +690,13 @@ class BackupImport(BaseModel):
     """Structure d'import avec options"""
     import_mode: ImportMode = ImportMode.skip
     restore_jwt_keys: bool = False
+    # Flags de sélection : choisir quelles catégories importer
+    include_users: bool = True
+    include_applications: bool = True
+    include_user_app_roles: bool = True
+    include_service_accounts: bool = True
+    include_app_backups: bool = True
+    # Données
     users: List[UserExport] = []
     applications: List[AppExport] = []
     user_app_roles: List[UserAppRoleExport] = []

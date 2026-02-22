@@ -6707,6 +6707,13 @@ async function previewBackupFile() {
             document.getElementById('previewBackups').textContent = preview.app_backups_count;
             document.getElementById('previewVersion').textContent = preview.version || '–';
             
+            // Mettre à jour les compteurs des checkboxes de sélection
+            document.getElementById('importCountUsers').textContent = preview.users_count;
+            document.getElementById('importCountApps').textContent = preview.apps_count;
+            document.getElementById('importCountRoles').textContent = preview.user_app_roles_count || 0;
+            document.getElementById('importCountSA').textContent = preview.service_accounts_count;
+            document.getElementById('importCountBackups').textContent = preview.app_backups_count;
+            
             if (preview.exported_at) {
                 const date = new Date(preview.exported_at);
                 document.getElementById('previewDate').textContent = date.toLocaleString('fr-FR');
@@ -6741,6 +6748,13 @@ async function previewBackupFile() {
                 document.getElementById('previewJwt').textContent = backupFileData.jwt_private_key_b64 ? 'Oui' : 'Non';
                 document.getElementById('previewBackups').textContent = (backupFileData.app_backups || []).length;
                 document.getElementById('previewVersion').textContent = backupFileData.version || '–';
+                
+                // Mettre à jour les compteurs des checkboxes de sélection
+                document.getElementById('importCountUsers').textContent = (backupFileData.users || []).length;
+                document.getElementById('importCountApps').textContent = (backupFileData.applications || []).length;
+                document.getElementById('importCountRoles').textContent = (backupFileData.user_app_roles || []).length;
+                document.getElementById('importCountSA').textContent = (backupFileData.service_accounts || []).length;
+                document.getElementById('importCountBackups').textContent = (backupFileData.app_backups || []).length;
                 
                 if (backupFileData.exported_at) {
                     const date = new Date(backupFileData.exported_at);
@@ -6777,19 +6791,39 @@ async function executeBackupImport() {
     const importMode = document.getElementById('importMode').value;
     const restoreJwt = document.getElementById('importRestoreJwt').checked;
     
+    // Catégories sélectionnées
+    const includeOptions = {
+        include_users: document.getElementById('importIncludeUsers').checked,
+        include_applications: document.getElementById('importIncludeApps').checked,
+        include_user_app_roles: document.getElementById('importIncludeRoles').checked,
+        include_service_accounts: document.getElementById('importIncludeSA').checked,
+        include_app_backups: document.getElementById('importIncludeBackups').checked
+    };
+    
     // Compteurs pour la confirmation
     const usersCount = backupIsZip ? backupFileData.users.length : (backupFileData.users || []).length;
     const appsCount = backupIsZip ? backupFileData.applications.length : (backupFileData.applications || []).length;
     const saCount = backupIsZip ? backupFileData.service_accounts.length : (backupFileData.service_accounts || []).length;
     const backupsCount = backupIsZip ? backupFileData.app_backups.length : (backupFileData.app_backups || []).length;
     
-    let confirmMsg = `Vous allez importer:
-- ${usersCount} utilisateurs
-- ${appsCount} applications
-- ${saCount} service accounts`;
+    let confirmMsg = `Vous allez importer:`;
+    if (includeOptions.include_users) confirmMsg += `\n- ${usersCount} utilisateurs`;
+    if (includeOptions.include_applications) confirmMsg += `\n- ${appsCount} applications`;
+    if (includeOptions.include_service_accounts) confirmMsg += `\n- ${saCount} service accounts`;
     
-    if (backupsCount > 0) {
+    if (includeOptions.include_app_backups && backupsCount > 0) {
         confirmMsg += `\n- ${backupsCount} backups d'applications`;
+    }
+    
+    // Catégories exclues
+    const excluded = [];
+    if (!includeOptions.include_users) excluded.push('utilisateurs');
+    if (!includeOptions.include_applications) excluded.push('applications');
+    if (!includeOptions.include_user_app_roles) excluded.push('associations user-app');
+    if (!includeOptions.include_service_accounts) excluded.push('service accounts');
+    if (!includeOptions.include_app_backups) excluded.push('backups apps');
+    if (excluded.length > 0) {
+        confirmMsg += `\n\n🚫 Exclus: ${excluded.join(', ')}`;
     }
     
     confirmMsg += `\n\nMode: ${importMode.toUpperCase()}`;
@@ -6813,10 +6847,10 @@ async function executeBackupImport() {
         
         if (backupIsZip) {
             // Upload du fichier ZIP via le nouvel endpoint
-            result = await api.importBackupFile(backupFileRef, importMode, restoreJwt);
+            result = await api.importBackupFile(backupFileRef, importMode, restoreJwt, includeOptions);
         } else {
             // Import JSON classique
-            result = await api.importBackup(backupFileData, importMode, restoreJwt);
+            result = await api.importBackup(backupFileData, importMode, restoreJwt, includeOptions);
         }
         
         displayImportResult(result);

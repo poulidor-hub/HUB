@@ -7,7 +7,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
-from sqlalchemy.exc import MissingGreenlet
+from sqlalchemy.exc import MissingGreenlet, IntegrityError
 from typing import Optional
 from datetime import datetime, timezone
 import json
@@ -308,207 +308,258 @@ async def _do_import(
     try:
         # 1. Import des applications (d'abord car référencées par users et SA)
         app_id_map = {}  # slug -> id
-        for app_data in backup.applications:
-            existing = await db.execute(
-                select(Application).where(Application.slug == app_data.slug)
-            )
-            existing_app = existing.scalar_one_or_none()
-            
-            if existing_app:
-                if mode == ImportMode.error:
-                    raise HTTPException(
-                        status_code=status.HTTP_409_CONFLICT,
-                        detail=f"Application '{app_data.slug}' existe déjà"
-                    )
-                elif mode == ImportMode.skip:
-                    result.apps_skipped += 1
-                    app_id_map[app_data.slug] = existing_app.id
-                    continue
-                elif mode == ImportMode.update:
-                    # Mise à jour
-                    existing_app.name = app_data.name
-                    existing_app.description = app_data.description
-                    existing_app.icon = app_data.icon
-                    existing_app.color = app_data.color
-                    existing_app.api_url = app_data.api_url
-                    existing_app.frontend_url = app_data.frontend_url
-                    existing_app.callback_url = app_data.callback_url
-                    existing_app.is_active = app_data.is_active
-                    existing_app.requires_auth = app_data.requires_auth
-                    existing_app.is_shared_service = app_data.is_shared_service
-                    # Restaurer le statut d'approbation
-                    if app_data.approval_status:
-                        existing_app.approval_status = ApprovalStatus(app_data.approval_status)
-                    existing_app.approved_at = app_data.approved_at
-                    existing_app.rejection_reason = app_data.rejection_reason
-                    result.apps_updated += 1
-                    app_id_map[app_data.slug] = existing_app.id
-            else:
-                # Création
-                new_app = Application(
-                    name=app_data.name,
-                    slug=app_data.slug,
-                    description=app_data.description,
-                    icon=app_data.icon,
-                    color=app_data.color,
-                    api_url=app_data.api_url,
-                    frontend_url=app_data.frontend_url,
-                    callback_url=app_data.callback_url,
-                    is_active=app_data.is_active,
-                    requires_auth=app_data.requires_auth,
-                    is_shared_service=app_data.is_shared_service,
-                    approval_status=ApprovalStatus(app_data.approval_status) if app_data.approval_status else ApprovalStatus.approved,
-                    approved_at=app_data.approved_at,
-                    rejection_reason=app_data.rejection_reason
+        if backup.include_applications:
+            for app_data in backup.applications:
+                existing = await db.execute(
+                    select(Application).where(Application.slug == app_data.slug)
                 )
-                db.add(new_app)
-                await db.flush()
-                app_id_map[app_data.slug] = new_app.id
-                result.apps_created += 1
+                existing_app = existing.scalar_one_or_none()
                 
-                # Créer les rôles disponibles
-                for role_data in app_data.available_roles:
-                    app_role = AppRole(
-                        app_id=new_app.id,
-                        name=role_data.name,
-                        description=role_data.description
+                if existing_app:
+                    if mode == ImportMode.error:
+                        raise HTTPException(
+                            status_code=status.HTTP_409_CONFLICT,
+                            detail=f"Application '{app_data.slug}' existe déjà"
+                        )
+                    elif mode == ImportMode.skip:
+                        result.apps_skipped += 1
+                        app_id_map[app_data.slug] = existing_app.id
+                        continue
+                    elif mode == ImportMode.update:
+                        # Mise à jour
+                        existing_app.name = app_data.name
+                        existing_app.description = app_data.description
+                        existing_app.icon = app_data.icon
+                        existing_app.color = app_data.color
+                        existing_app.api_url = app_data.api_url
+                        existing_app.frontend_url = app_data.frontend_url
+                        existing_app.callback_url = app_data.callback_url
+                        existing_app.is_active = app_data.is_active
+                        existing_app.requires_auth = app_data.requires_auth
+                        existing_app.is_shared_service = app_data.is_shared_service
+                        # Restaurer le statut d'approbation
+                        if app_data.approval_status:
+                            existing_app.approval_status = ApprovalStatus(app_data.approval_status)
+                        existing_app.approved_at = app_data.approved_at
+                        existing_app.rejection_reason = app_data.rejection_reason
+                        result.apps_updated += 1
+                        app_id_map[app_data.slug] = existing_app.id
+                else:
+                    # Création
+                    new_app = Application(
+                        name=app_data.name,
+                        slug=app_data.slug,
+                        description=app_data.description,
+                        icon=app_data.icon,
+                        color=app_data.color,
+                        api_url=app_data.api_url,
+                        frontend_url=app_data.frontend_url,
+                        callback_url=app_data.callback_url,
+                        is_active=app_data.is_active,
+                        requires_auth=app_data.requires_auth,
+                        is_shared_service=app_data.is_shared_service,
+                        approval_status=ApprovalStatus(app_data.approval_status) if app_data.approval_status else ApprovalStatus.approved,
+                        approved_at=app_data.approved_at,
+                        rejection_reason=app_data.rejection_reason
                     )
-                    db.add(app_role)
+                    db.add(new_app)
+                    await db.flush()
+                    app_id_map[app_data.slug] = new_app.id
+                    result.apps_created += 1
+                    
+                    # Créer les rôles disponibles
+                    for role_data in app_data.available_roles:
+                        app_role = AppRole(
+                            app_id=new_app.id,
+                            name=role_data.name,
+                            description=role_data.description
+                        )
+                        db.add(app_role)
+        else:
+            result.warnings.append("Import des applications désactivé")
+        
+        # Résoudre les app_id manquants depuis la base (nécessaire pour roles/SA même si apps non importées)
+        for app_data in backup.applications:
+            if app_data.slug not in app_id_map:
+                existing = await db.execute(
+                    select(Application).where(Application.slug == app_data.slug)
+                )
+                existing_app = existing.scalar_one_or_none()
+                if existing_app:
+                    app_id_map[app_data.slug] = existing_app.id
         
         # 2. Import des utilisateurs
         user_id_map = {}  # username -> id
-        for user_data in backup.users:
-            existing = await db.execute(
-                select(User).where(User.username == user_data.username)
-            )
-            existing_user = existing.scalar_one_or_none()
-            
-            if existing_user:
-                if mode == ImportMode.error:
-                    raise HTTPException(
-                        status_code=status.HTTP_409_CONFLICT,
-                        detail=f"Utilisateur '{user_data.username}' existe déjà"
-                    )
-                elif mode == ImportMode.skip:
-                    result.users_skipped += 1
-                    user_id_map[user_data.username] = existing_user.id
-                    continue
-                elif mode == ImportMode.update:
-                    existing_user.email = user_data.email
-                    existing_user.hashed_password = user_data.hashed_password
-                    existing_user.is_active = user_data.is_active
-                    existing_user.is_admin = user_data.is_admin
-                    existing_user.must_change_password = user_data.must_change_password
-                    existing_user.can_change_password = user_data.can_change_password
-                    result.users_updated += 1
-                    user_id_map[user_data.username] = existing_user.id
-            else:
-                new_user = User(
-                    username=user_data.username,
-                    email=user_data.email,
-                    hashed_password=user_data.hashed_password,
-                    is_active=user_data.is_active,
-                    is_admin=user_data.is_admin,
-                    must_change_password=user_data.must_change_password,
-                    can_change_password=user_data.can_change_password
+        if backup.include_users:
+            for user_data in backup.users:
+                existing = await db.execute(
+                    select(User).where(User.username == user_data.username)
                 )
-                db.add(new_user)
-                await db.flush()
-                user_id_map[user_data.username] = new_user.id
-                result.users_created += 1
+                existing_user = existing.scalar_one_or_none()
+                
+                # Si non trouvé par username, vérifier par email (contrainte unique)
+                if not existing_user and user_data.email:
+                    existing_by_email = await db.execute(
+                        select(User).where(User.email == user_data.email)
+                    )
+                    existing_user = existing_by_email.scalar_one_or_none()
+                    if existing_user:
+                        result.warnings.append(
+                            f"User '{user_data.username}' matché par email '{user_data.email}' "
+                            f"(username existant: '{existing_user.username}')"
+                        )
+                
+                if existing_user:
+                    if mode == ImportMode.error:
+                        raise HTTPException(
+                            status_code=status.HTTP_409_CONFLICT,
+                            detail=f"Utilisateur '{user_data.username}' existe déjà"
+                        )
+                    elif mode == ImportMode.skip:
+                        result.users_skipped += 1
+                        user_id_map[user_data.username] = existing_user.id
+                        continue
+                    elif mode == ImportMode.update:
+                        existing_user.email = user_data.email
+                        existing_user.hashed_password = user_data.hashed_password
+                        existing_user.is_active = user_data.is_active
+                        existing_user.is_admin = user_data.is_admin
+                        existing_user.must_change_password = user_data.must_change_password
+                        existing_user.can_change_password = user_data.can_change_password
+                        result.users_updated += 1
+                        user_id_map[user_data.username] = existing_user.id
+                else:
+                    try:
+                        new_user = User(
+                            username=user_data.username,
+                            email=user_data.email,
+                            hashed_password=user_data.hashed_password,
+                            is_active=user_data.is_active,
+                            is_admin=user_data.is_admin,
+                            must_change_password=user_data.must_change_password,
+                            can_change_password=user_data.can_change_password
+                        )
+                        db.add(new_user)
+                        await db.flush()
+                        user_id_map[user_data.username] = new_user.id
+                        result.users_created += 1
+                    except IntegrityError as e:
+                        await db.rollback()
+                        result.warnings.append(
+                            f"User '{user_data.username}' ignoré (conflit d'intégrité: {str(e).split(chr(10))[0]})"
+                        )
+                        result.users_skipped += 1
+        else:
+            result.warnings.append("Import des utilisateurs désactivé")
+        
+        # Résoudre les user_id manquants depuis la base (nécessaire pour roles même si users non importés)
+        for user_data in backup.users:
+            if user_data.username not in user_id_map:
+                existing = await db.execute(
+                    select(User).where(User.username == user_data.username)
+                )
+                existing_user = existing.scalar_one_or_none()
+                if existing_user:
+                    user_id_map[user_data.username] = existing_user.id
         
         # 3. Import des associations user-app-role
-        for uar_data in backup.user_app_roles:
-            user_id = user_id_map.get(uar_data.username)
-            app_id = app_id_map.get(uar_data.app_slug)
-            
-            if not user_id:
-                result.warnings.append(f"User '{uar_data.username}' non trouvé pour role")
-                continue
-            if not app_id:
-                result.warnings.append(f"App '{uar_data.app_slug}' non trouvée pour role")
-                continue
-            
-            # Vérifier si l'association existe
-            existing_uar = await db.execute(
-                select(UserAppRole).where(
-                    UserAppRole.user_id == user_id,
-                    UserAppRole.app_id == app_id
-                )
-            )
-            if existing_uar.scalar_one_or_none():
-                if mode == ImportMode.update:
-                    # Mettre à jour le rôle
-                    await db.execute(
-                        UserAppRole.__table__.update()
-                        .where(UserAppRole.user_id == user_id)
-                        .where(UserAppRole.app_id == app_id)
-                        .values(role=uar_data.role)
+        if backup.include_user_app_roles:
+            for uar_data in backup.user_app_roles:
+                user_id = user_id_map.get(uar_data.username)
+                app_id = app_id_map.get(uar_data.app_slug)
+                
+                if not user_id:
+                    result.warnings.append(f"User '{uar_data.username}' non trouvé pour role")
+                    continue
+                if not app_id:
+                    result.warnings.append(f"App '{uar_data.app_slug}' non trouvée pour role")
+                    continue
+                
+                # Vérifier si l'association existe
+                existing_uar = await db.execute(
+                    select(UserAppRole).where(
+                        UserAppRole.user_id == user_id,
+                        UserAppRole.app_id == app_id
                     )
-                continue
-            
-            new_uar = UserAppRole(
-                user_id=user_id,
-                app_id=app_id,
-                role=uar_data.role
-            )
-            db.add(new_uar)
-            result.user_app_roles_created += 1
+                )
+                if existing_uar.scalar_one_or_none():
+                    if mode == ImportMode.update:
+                        # Mettre à jour le rôle
+                        await db.execute(
+                            UserAppRole.__table__.update()
+                            .where(UserAppRole.user_id == user_id)
+                            .where(UserAppRole.app_id == app_id)
+                            .values(role=uar_data.role)
+                        )
+                    continue
+                
+                new_uar = UserAppRole(
+                    user_id=user_id,
+                    app_id=app_id,
+                    role=uar_data.role
+                )
+                db.add(new_uar)
+                result.user_app_roles_created += 1
+        else:
+            result.warnings.append("Import des associations user-app désactivé")
         
         # 4. Import des service accounts
-        for sa_data in backup.service_accounts:
-            existing = await db.execute(
-                select(ServiceAccount).where(ServiceAccount.client_id == sa_data.client_id)
-            )
-            existing_sa = existing.scalar_one_or_none()
-            
-            if existing_sa:
-                if mode == ImportMode.error:
-                    raise HTTPException(
-                        status_code=status.HTTP_409_CONFLICT,
-                        detail=f"Service Account '{sa_data.client_id}' existe déjà"
-                    )
-                elif mode == ImportMode.skip:
-                    result.service_accounts_skipped += 1
-                    continue
-                elif mode == ImportMode.update:
-                    existing_sa.name = sa_data.name
-                    existing_sa.description = sa_data.description
-                    existing_sa.client_secret_hash = sa_data.client_secret_hash
-                    existing_sa.is_active = sa_data.is_active
-                    
-                    # Mettre à jour les applications
-                    app_ids = [app_id_map[slug] for slug in sa_data.app_slugs if slug in app_id_map]
-                    apps_to_add = await db.execute(
-                        select(Application).where(Application.id.in_(app_ids))
-                    )
-                    existing_sa.applications = list(apps_to_add.scalars().all())
-                    
-                    result.service_accounts_updated += 1
-            else:
-                new_sa = ServiceAccount(
-                    name=sa_data.name,
-                    client_id=sa_data.client_id,
-                    client_secret_hash=sa_data.client_secret_hash,
-                    description=sa_data.description,
-                    is_active=sa_data.is_active
+        if backup.include_service_accounts:
+            for sa_data in backup.service_accounts:
+                existing = await db.execute(
+                    select(ServiceAccount).where(ServiceAccount.client_id == sa_data.client_id)
                 )
-                db.add(new_sa)
-                await db.flush()
+                existing_sa = existing.scalar_one_or_none()
                 
-                # Associer les applications
-                app_ids = [app_id_map[slug] for slug in sa_data.app_slugs if slug in app_id_map]
-                if app_ids:
-                    apps_to_add = await db.execute(
-                        select(Application).where(Application.id.in_(app_ids))
+                if existing_sa:
+                    if mode == ImportMode.error:
+                        raise HTTPException(
+                            status_code=status.HTTP_409_CONFLICT,
+                            detail=f"Service Account '{sa_data.client_id}' existe déjà"
+                        )
+                    elif mode == ImportMode.skip:
+                        result.service_accounts_skipped += 1
+                        continue
+                    elif mode == ImportMode.update:
+                        existing_sa.name = sa_data.name
+                        existing_sa.description = sa_data.description
+                        existing_sa.client_secret_hash = sa_data.client_secret_hash
+                        existing_sa.is_active = sa_data.is_active
+                        
+                        # Mettre à jour les applications
+                        app_ids = [app_id_map[slug] for slug in sa_data.app_slugs if slug in app_id_map]
+                        apps_to_add = await db.execute(
+                            select(Application).where(Application.id.in_(app_ids))
+                        )
+                        existing_sa.applications = list(apps_to_add.scalars().all())
+                        
+                        result.service_accounts_updated += 1
+                else:
+                    new_sa = ServiceAccount(
+                        name=sa_data.name,
+                        client_id=sa_data.client_id,
+                        client_secret_hash=sa_data.client_secret_hash,
+                        description=sa_data.description,
+                        is_active=sa_data.is_active
                     )
-                    new_sa.applications = list(apps_to_add.scalars().all())
-                
-                result.service_accounts_created += 1
-                
-                # Sauvegarder le secret en clair si disponible
-                if sa_data.client_secret_plain:
-                    _write_sa_secret(sa_data.client_id, sa_data.client_secret_plain, sa_data.app_slugs)
+                    db.add(new_sa)
+                    await db.flush()
+                    
+                    # Associer les applications
+                    app_ids = [app_id_map[slug] for slug in sa_data.app_slugs if slug in app_id_map]
+                    if app_ids:
+                        apps_to_add = await db.execute(
+                            select(Application).where(Application.id.in_(app_ids))
+                        )
+                        new_sa.applications = list(apps_to_add.scalars().all())
+                    
+                    result.service_accounts_created += 1
+                    
+                    # Sauvegarder le secret en clair si disponible
+                    if sa_data.client_secret_plain:
+                        _write_sa_secret(sa_data.client_id, sa_data.client_secret_plain, sa_data.app_slugs)
+        else:
+            result.warnings.append("Import des service accounts désactivé")
         
         # 5. Import des clés JWT
         if backup.jwt_private_key_b64 and backup.jwt_public_key_b64:
@@ -524,7 +575,7 @@ async def _do_import(
         await db.commit()
         
         # 6. Import des backups d'applications (après commit pour avoir les app_id)
-        if backup.app_backups and zip_file:
+        if backup.include_app_backups and backup.app_backups and zip_file:
             logger.info(f"📦 Import de {len(backup.app_backups)} backup(s) d'applications...")
             for ab_data in backup.app_backups:
                 try:
@@ -699,6 +750,11 @@ async def import_from_upload(
     file: UploadFile = File(..., description="Fichier JSON ou archive ZIP d'export"),
     import_mode: str = Form("skip"),
     restore_jwt_keys: bool = Form(False),
+    include_users: bool = Form(True),
+    include_applications: bool = Form(True),
+    include_user_app_roles: bool = Form(True),
+    include_service_accounts: bool = Form(True),
+    include_app_backups: bool = Form(True),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_admin)
 ):
@@ -761,6 +817,11 @@ async def import_from_upload(
         backup_data = BackupImport(
             import_mode=mode,
             restore_jwt_keys=restore_jwt_keys,
+            include_users=include_users,
+            include_applications=include_applications,
+            include_user_app_roles=include_user_app_roles,
+            include_service_accounts=include_service_accounts,
+            include_app_backups=include_app_backups,
             users=env_json.get("users", []),
             applications=env_json.get("applications", []),
             user_app_roles=env_json.get("user_app_roles", []),
