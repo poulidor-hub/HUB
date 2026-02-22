@@ -22,7 +22,7 @@ from pathlib import Path
 import logging
 
 from app.database import get_db
-from app.models import User, Application, UserAppRole, ServiceAccount, AppRole, ApprovalStatus, AppBackup
+from app.models import User, Application, UserAppRole, ServiceAccount, AppRole, ApprovalStatus, AppBackup, service_account_app_access
 from app.auth import get_current_admin, get_password_hash
 from app.schemas import (
     BackupExport, BackupImport, ImportResult, ImportMode,
@@ -507,7 +507,9 @@ async def _do_import(
         if backup.include_service_accounts:
             for sa_data in backup.service_accounts:
                 existing = await db.execute(
-                    select(ServiceAccount).where(ServiceAccount.client_id == sa_data.client_id)
+                    select(ServiceAccount)
+                    .options(selectinload(ServiceAccount.applications))
+                    .where(ServiceAccount.client_id == sa_data.client_id)
                 )
                 existing_sa = existing.scalar_one_or_none()
                 
@@ -545,13 +547,14 @@ async def _do_import(
                     db.add(new_sa)
                     await db.flush()
                     
-                    # Associer les applications
+                    # Associer les applications via la table d'association directement
                     app_ids = [app_id_map[slug] for slug in sa_data.app_slugs if slug in app_id_map]
-                    if app_ids:
-                        apps_to_add = await db.execute(
-                            select(Application).where(Application.id.in_(app_ids))
+                    for aid in app_ids:
+                        await db.execute(
+                            service_account_app_access.insert().values(
+                                service_account_id=new_sa.id, app_id=aid
+                            )
                         )
-                        new_sa.applications = list(apps_to_add.scalars().all())
                     
                     result.service_accounts_created += 1
                     

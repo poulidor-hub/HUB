@@ -29,7 +29,7 @@ from sqlalchemy.orm import selectinload
 from sqlalchemy.exc import IntegrityError
 
 from app.database import async_session_maker, init_db
-from app.models import User, Application, UserAppRole, ServiceAccount, AppRole, ApprovalStatus
+from app.models import User, Application, UserAppRole, ServiceAccount, AppRole, ApprovalStatus, service_account_app_access
 
 
 class ImportMode(str, Enum):
@@ -343,7 +343,7 @@ async def import_environment(
             if include_service_accounts:
                 for sa_data in data.get("service_accounts", []):
                     existing = await db.execute(
-                        select(ServiceAccount).where(ServiceAccount.client_id == sa_data["client_id"])
+                        select(ServiceAccount).options(selectinload(ServiceAccount.applications)).where(ServiceAccount.client_id == sa_data["client_id"])
                     )
                     existing_sa = existing.scalar_one_or_none()
                     
@@ -361,13 +361,21 @@ async def import_environment(
                                 existing_sa.client_secret_hash = sa_data["client_secret_hash"]
                                 existing_sa.is_active = sa_data.get("is_active", True)
                                 
-                                # Mettre à jour les applications
+                                # Mettre à jour les applications via la table d'association
                                 app_ids = [app_id_map[slug] for slug in sa_data.get("app_slugs", []) if slug in app_id_map]
-                                if app_ids:
-                                    apps = await db.execute(
-                                        select(Application).where(Application.id.in_(app_ids))
+                                # Supprimer les anciennes associations
+                                await db.execute(
+                                    service_account_app_access.delete().where(
+                                        service_account_app_access.c.service_account_id == existing_sa.id
                                     )
-                                    existing_sa.applications = list(apps.scalars().all())
+                                )
+                                # Insérer les nouvelles associations
+                                for aid in app_ids:
+                                    await db.execute(
+                                        service_account_app_access.insert().values(
+                                            service_account_id=existing_sa.id, app_id=aid
+                                        )
+                                    )
                             print(f"   🔄 Update: {sa_data['name']}")
                             result["service_accounts_updated"] += 1
                     else:
@@ -382,13 +390,14 @@ async def import_environment(
                             db.add(new_sa)
                             await db.flush()
                             
-                            # Associer les applications
+                            # Associer les applications via la table d'association
                             app_ids = [app_id_map[slug] for slug in sa_data.get("app_slugs", []) if slug in app_id_map]
-                            if app_ids:
-                                apps = await db.execute(
-                                    select(Application).where(Application.id.in_(app_ids))
+                            for aid in app_ids:
+                                await db.execute(
+                                    service_account_app_access.insert().values(
+                                        service_account_id=new_sa.id, app_id=aid
+                                    )
                                 )
-                                new_sa.applications = list(apps.scalars().all())
                         
                         print(f"   ✅ Créé: {sa_data['name']} ({sa_data['client_id'][:20]}...)")
                         result["service_accounts_created"] += 1
