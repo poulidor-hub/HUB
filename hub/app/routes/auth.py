@@ -122,7 +122,6 @@ async def login_for_token(
         
         if refresh_obj.user:
             user = refresh_obj.user
-            roles = ["admin"] if user.is_admin else ["user"]
             apps = user.get_apps_with_roles()  # Dict {app_slug: role}
             sub = user.username
             
@@ -131,14 +130,12 @@ async def login_for_token(
             await update_session_activity(db, user.id)
         else:
             sa = refresh_obj.service_account
-            roles = ["service_account"]
             # Service accounts ont accès "service" aux apps
             apps = {app.slug: "service" for app in sa.applications}
             sub = sa.client_id
         
         token, expire, jti = create_access_token(
             username=sub,
-            roles=roles,
             apps=apps,
             is_service_account=refresh_obj.service_account_id is not None
         )
@@ -181,13 +178,11 @@ async def login_for_token(
         # Mettre à jour last_used_at
         service_account.last_used_at = datetime.utcnow()
         
-        roles = ["service_account"]
         # Service accounts ont accès "service" aux apps (accès M2M)
         apps = {app.slug: "service" for app in service_account.applications}
         
         token, expire, jti = create_access_token(
             username=client_id,
-            roles=roles,
             apps=apps,
             is_service_account=True
         )
@@ -236,13 +231,11 @@ async def login_for_token(
             detail="Compte désactivé"
         )
     
-    # Construire les rôles globaux et apps avec rôles
-    roles = ["admin"] if user.is_admin else ["user"]
+    # Construire les apps avec rôles
     apps = user.get_apps_with_roles()  # Dict {app_slug: role}
     
     token, expire, jti = create_access_token(
         username=user.username,
-        roles=roles,
         apps=apps
     )
     
@@ -315,12 +308,10 @@ async def login_with_redirect(
             detail="Compte désactivé"
         )
     
-    roles = ["admin"] if user.is_admin else ["user"]
     apps = user.get_apps_with_roles()  # Dict {app_slug: role}
     
     token, expire, jti = create_access_token(
         username=user.username,
-        roles=roles,
         apps=apps
     )
     
@@ -659,7 +650,6 @@ async def introspect_token(
         return TokenIntrospection(
             active=True,
             sub=payload.get("sub"),
-            roles=payload.get("roles"),
             apps=payload.get("apps"),
             exp=payload.get("exp"),
             iat=payload.get("iat"),
@@ -697,13 +687,11 @@ async def refresh_access_token(
     
     if refresh_obj.user:
         user = refresh_obj.user
-        roles = ["admin"] if user.is_admin else ["user"]
         apps = user.get_apps_with_roles()  # Dict {app_slug: role}
         sub = user.username
         is_sa = False
     else:
         sa = refresh_obj.service_account
-        roles = ["service_account"]
         # Service accounts ont accès "service" aux apps
         apps = {app.slug: "service" for app in sa.applications}
         sub = sa.client_id
@@ -711,7 +699,6 @@ async def refresh_access_token(
     
     token, expire, jti = create_access_token(
         username=sub,
-        roles=roles,
         apps=apps,
         is_service_account=is_sa
     )
@@ -794,7 +781,6 @@ async def sso_login(
             )
     
     # 4. Créer le token avec accès à l'app
-    roles = ["admin"] if user.is_admin else ["user"]
     apps = user.get_apps_with_roles()
     
     # S'assurer que l'app demandée est dans les apps (admin a toujours accès)
@@ -803,7 +789,6 @@ async def sso_login(
     
     token, expire, jti = create_access_token(
         username=user.username,
-        roles=roles,
         apps=apps
     )
     

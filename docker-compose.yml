@@ -24,6 +24,7 @@ services:
   hub-api:
     build:
       context: ./hub
+      network: host
       args:
         # UID de l'utilisateur hôte pour accéder aux fichiers montés (certs/ca/ca.key)
         # Définir HOST_UID=$(id -u) dans .env ou exporter avant docker compose up
@@ -87,7 +88,9 @@ services:
 
   # ===== FRONTEND (Nginx) =====
   hub-frontend:
-    build: ./frontend
+    build:
+      context: ./frontend
+      network: host
     container_name: hub-frontend
     restart: unless-stopped
     ports:

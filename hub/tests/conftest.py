@@ -178,7 +178,6 @@ def user_token(test_user: User) -> str:
     """Génère un token pour l'utilisateur de test"""
     token, _, _ = create_access_token(
         username=test_user.username,
-        roles=["user"],
         apps={}
     )
     return token
@@ -189,7 +188,6 @@ def admin_token(admin_user: User) -> str:
     """Génère un token pour l'admin"""
     token, _, _ = create_access_token(
         username=admin_user.username,
-        roles=["admin"],
         apps={}
     )
     return token
@@ -249,10 +247,8 @@ async def create_test_user_with_token(
     await session.commit()
     await session.refresh(user)
     
-    roles = ["admin"] if is_admin else ["user"]
     token, _, _ = create_access_token(
         username=user.username,
-        roles=roles,
         apps={}
     )
     

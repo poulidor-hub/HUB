@@ -84,7 +84,6 @@ class TestJWTCreation:
         """create_access_token retourne un tuple (token, expiry, jti)"""
         token, expire, jti = create_access_token(
             username="testuser",
-            roles=["user"],
             apps={"app1": "user"}
         )
         
@@ -96,7 +95,6 @@ class TestJWTCreation:
         """Le token expire selon la config par défaut"""
         _, expire, _ = create_access_token(
             username="testuser",
-            roles=["user"],
             apps={}
         )
         
@@ -111,7 +109,6 @@ class TestJWTCreation:
         custom_delta = timedelta(hours=2)
         _, expire, _ = create_access_token(
             username="testuser",
-            roles=["user"],
             apps={},
             expires_delta=custom_delta
         )
@@ -123,7 +120,6 @@ class TestJWTCreation:
         """Token pour service account"""
         token, _, _ = create_access_token(
             username="sa_client123",
-            roles=["service_account"],
             apps={"app1": "service"},
             is_service_account=True
         )
@@ -140,14 +136,12 @@ class TestJWTVerification:
         """Vérification d'un token valide"""
         token, _, _ = create_access_token(
             username="testuser",
-            roles=["user"],
             apps={"app1": "admin"}
         )
         
         payload = verify_token(token)
         
         assert payload["sub"] == "testuser"
-        assert payload["roles"] == ["user"]
         assert payload["apps"] == {"app1": "admin"}
         assert "exp" in payload
         assert "iat" in payload
@@ -160,7 +154,6 @@ class TestJWTVerification:
         # Créer un token déjà expiré
         token, _, _ = create_access_token(
             username="testuser",
-            roles=["user"],
             apps={},
             expires_delta=timedelta(seconds=-10)  # Déjà expiré
         )
@@ -184,7 +177,6 @@ class TestJWTVerification:
         """Vérifier la structure complète du payload"""
         token, _, jti = create_access_token(
             username="testuser",
-            roles=["admin"],
             apps={"app1": "admin", "app2": "user"},
             is_service_account=False
         )
@@ -192,7 +184,6 @@ class TestJWTVerification:
         payload = verify_token(token)
         
         assert payload["sub"] == "testuser"
-        assert payload["roles"] == ["admin"]
         assert payload["apps"] == {"app1": "admin", "app2": "user"}
         assert payload["jti"] == jti
         assert payload["type"] == "user"

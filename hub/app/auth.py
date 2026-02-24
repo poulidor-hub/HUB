@@ -39,8 +39,7 @@ def generate_jti() -> str:
 
 def create_access_token(
     username: str,
-    roles: List[str],
-    apps: dict,  # Changé de List[str] à dict {app_slug: role}
+    apps: dict,  # Dict {app_slug: role}
     expires_delta: Optional[timedelta] = None,
     is_service_account: bool = False
 ) -> tuple[str, datetime, str]:
@@ -48,7 +47,6 @@ def create_access_token(
     
     Args:
         username: Nom d'utilisateur ou client_id
-        roles: Rôles globaux (["admin"] pour hub admin, ["service_account"] pour SA)
         apps: Dict des applications avec leurs rôles {"app_slug": "role"}
         is_service_account: True si c'est un service account
     
@@ -64,7 +62,6 @@ def create_access_token(
     
     payload = {
         "sub": username,
-        "roles": roles,          # Rôles globaux Hub
         "apps": apps,            # Dict {app_slug: role_in_app}
         "exp": expire,
         "iat": datetime.utcnow(),
