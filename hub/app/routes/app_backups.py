@@ -1198,7 +1198,6 @@ async def restore_backup_to_app(
     # Créer un token M2M avec rôle admin
     m2m_token, _, _ = create_access_token(
         username=sa.client_id,
-        roles=["service_account"],
         apps={slug: "admin"},
         expires_delta=timedelta(minutes=10),
         is_service_account=True
@@ -1329,7 +1328,6 @@ async def restore_uploaded_backup_to_app(
     # Créer un token M2M avec rôle admin
     m2m_token, _, _ = create_access_token(
         username=sa.client_id,
-        roles=["service_account"],
         apps={slug: "admin"},
         expires_delta=timedelta(minutes=10),
         is_service_account=True
