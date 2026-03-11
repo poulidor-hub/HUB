@@ -1004,6 +1004,7 @@ function renderAppsGrid(apps) {
         // Déterminer si l'app est inactive (désactivée par l'admin)
         // Les statuts Docker/health arrivent en temps réel via SSE
         const isUnavailable = !app.is_active;
+        const appVersionLabel = formatAppVersionLabel(app.app_version);
         
         return `
         <div class="col-sm-6 col-md-4 col-lg-3">
@@ -1016,7 +1017,7 @@ function renderAppsGrid(apps) {
                     </div>
                     <h5>${escapeHtml(app.name)}</h5>
                     <p>${escapeHtml(app.description || 'Aucune description')}</p>
-                    ${app.app_version ? `<span class="app-version-badge">v${escapeHtml(app.app_version)}</span>` : ''}
+                    ${appVersionLabel ? `<span class="app-version-badge">${escapeHtml(appVersionLabel)}</span>` : ''}
                     ${isAdmin ? `
                         <div class="app-role-selector mt-2" onclick="event.stopPropagation()">
                             <select class="form-select form-select-sm" 
@@ -2689,6 +2690,16 @@ function escapeHtml(text) {
     const div = document.createElement('div');
     div.textContent = text;
     return div.innerHTML;
+}
+
+function formatAppVersionLabel(version) {
+    if (version === null || version === undefined) return '';
+    const raw = String(version).trim();
+    if (!raw) return '';
+
+    // Uniformise l'affichage pour éviter les doublons de préfixe (ex: "vv1.2.3").
+    const normalized = raw.replace(/^[vV]\s*/, '');
+    return normalized ? `v${normalized}` : '';
 }
 
 // ===== Approbation des Applications =====
