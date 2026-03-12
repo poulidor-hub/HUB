@@ -263,6 +263,18 @@ body {
 }
 
 /* Responsive */
+@media (max-width: 991.98px) {
+    .navbar-user-actions {
+        padding: 0.5rem 0;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+    }
+    
+    #adminNavigation .navbar-nav {
+        padding: 0.5rem 0;
+    }
+}
+
 @media (max-width: 768px) {
     .app-card .card-body {
         padding: 1rem;

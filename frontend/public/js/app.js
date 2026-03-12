@@ -681,6 +681,12 @@ function showDashboard() {
 let currentPage = 'dashboard';
 
 function showPage(page) {
+    // Fermer le menu mobile si ouvert
+    const navbarCollapse = document.getElementById('navbarContent');
+    if (navbarCollapse?.classList.contains('show')) {
+        bootstrap.Collapse.getInstance(navbarCollapse)?.hide();
+    }
+    
     // Masquer toutes les sections
     document.getElementById('dashboardSection').classList.add('d-none');
     document.getElementById('auditSection').classList.add('d-none');
