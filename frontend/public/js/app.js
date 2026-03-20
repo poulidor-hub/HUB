@@ -7723,10 +7723,11 @@ function showBulkOperationsModal(mode) {
     const removeSection = document.getElementById('bulkRemoveSection');
     const deleteSection = document.getElementById('bulkDeleteSection');
     const createSection = document.getElementById('bulkCreateSection');
+    const csvImportSection = document.getElementById('bulkCsvImportSection');
     const userSelectionSection = document.getElementById('bulkUserSelectionSection');
     
     // Masquer toutes les sections
-    [assignSection, removeSection, deleteSection, createSection].forEach(s => {
+    [assignSection, removeSection, deleteSection, createSection, csvImportSection].forEach(s => {
         if (s) s.classList.add('d-none');
     });
     
@@ -7757,6 +7758,12 @@ function showBulkOperationsModal(mode) {
             if (createSection) createSection.classList.remove('d-none');
             if (userSelectionSection) userSelectionSection.classList.add('d-none');
             initBulkCreateForm();
+            break;
+        case 'csv-import':
+            modalTitle.innerHTML = '<i class="bi bi-filetype-csv me-2"></i>Importer depuis CSV';
+            if (csvImportSection) csvImportSection.classList.remove('d-none');
+            if (userSelectionSection) userSelectionSection.classList.add('d-none');
+            resetCsvImport();
             break;
     }
     
@@ -8144,6 +8151,9 @@ async function executeBulkOperation() {
             case 'create':
                 result = await executeBulkCreate();
                 break;
+            case 'csv-import':
+                result = await executeCsvImport();
+                break;
             default:
                 throw new Error('Mode d\'opération non reconnu');
         }
@@ -8433,6 +8443,244 @@ function displayBulkResult(result) {
     } else {
         showToast('Succès', 'Opération en masse terminée', 'success');
     }
+}
+
+// =============================================================================
+// CSV Import
+// =============================================================================
+
+// Stockage des données CSV parsées côté client (pour conserver les mots de passe)
+let csvParsedData = [];
+let csvPreviewData = null;
+
+/**
+ * Télécharge le template CSV
+ */
+async function downloadCsvTemplate() {
+    try {
+        await api.downloadCsvTemplate();
+        showToast('Succès', 'Template CSV téléchargé', 'success');
+    } catch (error) {
+        showToast('Erreur', error.message, 'danger');
+    }
+}
+
+/**
+ * Callback quand un fichier CSV est sélectionné dans l'input
+ */
+function onCsvFileSelected(input) {
+    const btn = document.getElementById('csvAnalyzeBtn');
+    if (btn) {
+        btn.disabled = !input.files || input.files.length === 0;
+    }
+}
+
+/**
+ * Réinitialise l'interface d'import CSV
+ */
+function resetCsvImport() {
+    csvParsedData = [];
+    csvPreviewData = null;
+    
+    const step1 = document.getElementById('csvStep1');
+    const step2 = document.getElementById('csvStep2');
+    if (step1) step1.classList.remove('d-none');
+    if (step2) step2.classList.add('d-none');
+    
+    const fileInput = document.getElementById('csvFileInput');
+    if (fileInput) fileInput.value = '';
+    
+    const analyzeBtn = document.getElementById('csvAnalyzeBtn');
+    if (analyzeBtn) analyzeBtn.disabled = true;
+    
+    document.getElementById('bulkResultSection')?.classList.add('d-none');
+}
+
+/**
+ * Parse un CSV côté client pour extraire les mots de passe
+ */
+function parseCsvLocally(text) {
+    const lines = text.split(/\r?\n/);
+    if (lines.length < 2) return [];
+    
+    // Détecter le séparateur
+    const sep = lines[0].includes(';') ? ';' : ',';
+    
+    const results = [];
+    for (let i = 1; i < lines.length; i++) {
+        const line = lines[i].trim();
+        if (!line || line.startsWith('#')) continue;
+        
+        const parts = line.split(sep);
+        results.push({
+            username: (parts[0] || '').trim(),
+            password: (parts[1] || '').trim(),
+            profile: (parts[2] || '').trim()
+        });
+    }
+    return results;
+}
+
+/**
+ * Analyse le fichier CSV : parse local + envoi au backend pour validation
+ */
+async function analyzeCsvFile() {
+    const fileInput = document.getElementById('csvFileInput');
+    if (!fileInput?.files?.length) return;
+    
+    const file = fileInput.files[0];
+    
+    if (file.size > 1048576) {
+        showToast('Erreur', 'Le fichier CSV ne doit pas dépasser 1 Mo', 'danger');
+        return;
+    }
+    
+    const analyzeBtn = document.getElementById('csvAnalyzeBtn');
+    if (analyzeBtn) {
+        analyzeBtn.disabled = true;
+        analyzeBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Analyse...';
+    }
+    
+    try {
+        // Parser le CSV localement pour conserver les mots de passe
+        const text = await file.text();
+        csvParsedData = parseCsvLocally(text);
+        
+        // Envoyer au backend pour validation
+        csvPreviewData = await api.previewCsvUpload(file);
+        
+        // Afficher le preview
+        renderCsvPreview(csvPreviewData);
+        
+    } catch (error) {
+        showToast('Erreur', error.message, 'danger');
+    } finally {
+        if (analyzeBtn) {
+            analyzeBtn.disabled = false;
+            analyzeBtn.innerHTML = '<i class="bi bi-search me-1"></i>Analyser';
+        }
+    }
+}
+
+/**
+ * Affiche le tableau de preview CSV
+ */
+function renderCsvPreview(data) {
+    const step1 = document.getElementById('csvStep1');
+    const step2 = document.getElementById('csvStep2');
+    if (step1) step1.classList.add('d-none');
+    if (step2) step2.classList.remove('d-none');
+    
+    // Résumé
+    const summary = document.getElementById('csvPreviewSummary');
+    if (summary) {
+        summary.innerHTML = `
+            <div class="d-flex gap-3 flex-wrap">
+                <span class="badge bg-primary fs-6">${data.total_lines} ligne(s)</span>
+                <span class="badge bg-success fs-6">${data.total_valid} valide(s)</span>
+                ${data.total_warnings > 0 ? `<span class="badge bg-warning text-dark fs-6">${data.total_warnings} avertissement(s)</span>` : ''}
+                ${data.total_errors > 0 ? `<span class="badge bg-danger fs-6">${data.total_errors} erreur(s)</span>` : ''}
+            </div>
+        `;
+    }
+    
+    // Tableau
+    const tbody = document.getElementById('csvPreviewBody');
+    if (!tbody) return;
+    
+    tbody.innerHTML = data.lines.map(line => {
+        const statusIcon = line.is_valid
+            ? '<i class="bi bi-check-circle-fill text-success"></i>'
+            : '<i class="bi bi-x-circle-fill text-danger"></i>';
+        
+        // Profil
+        let profileHtml = '<span class="text-muted">—</span>';
+        if (line.profile_matched) {
+            profileHtml = `<span class="badge" style="background-color: ${escapeHtml(line.profile_matched.color)}">${escapeHtml(line.profile_matched.name)}</span>`;
+        } else if (line.profile_ignored && line.profile_requested) {
+            profileHtml = `<span class="badge bg-danger text-decoration-line-through" title="Profil non trouvé">${escapeHtml(line.profile_requested)}</span>`;
+        }
+        
+        // Erreurs/warnings
+        let details = '';
+        if (line.errors.length > 0) {
+            details += line.errors.map(e => `<div class="text-danger small"><i class="bi bi-x-circle me-1"></i>${escapeHtml(e)}</div>`).join('');
+        }
+        if (line.warnings.length > 0) {
+            details += line.warnings.map(w => `<div class="text-warning small"><i class="bi bi-exclamation-triangle me-1"></i>${escapeHtml(w)}</div>`).join('');
+        }
+        
+        const rowClass = line.is_valid ? '' : 'table-danger';
+        
+        return `
+            <tr class="${rowClass}">
+                <td>${line.line_number}</td>
+                <td>${escapeHtml(line.username)}${details}</td>
+                <td><code>${'•'.repeat(Math.min(line.password_length, 12))}</code> <small class="text-muted">(${line.password_length})</small></td>
+                <td>${profileHtml}</td>
+                <td class="text-center">${statusIcon}</td>
+            </tr>
+        `;
+    }).join('');
+    
+    // Message de confirmation
+    const confirmMsg = document.getElementById('csvConfirmMessage');
+    const confirmBtn = document.getElementById('csvConfirmBtn');
+    
+    if (data.total_valid > 0) {
+        confirmMsg.innerHTML = `
+            <i class="bi bi-info-circle me-1"></i>
+            <strong>${data.total_valid}</strong> utilisateur(s) seront créés avec le rôle <strong>user</strong>.<br>
+            Ils devront changer leur mot de passe à la première connexion.
+            ${data.total_errors > 0 ? `<br><span class="text-danger">${data.total_errors} ligne(s) en erreur seront ignorées.</span>` : ''}
+        `;
+        confirmBtn.disabled = false;
+    } else {
+        confirmMsg.innerHTML = `
+            <i class="bi bi-exclamation-triangle me-1"></i>
+            Aucun utilisateur valide à créer. Corrigez les erreurs dans votre fichier CSV.
+        `;
+        confirmBtn.disabled = true;
+    }
+    
+    // Masquer le bouton Exécuter du modal (on utilise notre propre bouton Confirmer)
+    const modalFooterBtn = document.querySelector('#bulkOperationsModal .modal-footer .btn-primary');
+    if (modalFooterBtn) modalFooterBtn.classList.add('d-none');
+}
+
+/**
+ * Exécute l'import CSV après confirmation
+ */
+async function executeCsvImport() {
+    if (!csvPreviewData || !csvParsedData.length) {
+        throw new Error('Aucune donnée CSV à importer');
+    }
+    
+    const validLines = csvPreviewData.lines.filter(l => l.is_valid);
+    if (validLines.length === 0) {
+        throw new Error('Aucun utilisateur valide à créer');
+    }
+    
+    // Construire les users à créer en combinant les données du preview (profil résolu) 
+    // avec les données parsées localement (mots de passe)
+    const users = validLines.map(line => {
+        // Retrouver le mdp depuis les données parsées localement
+        const localData = csvParsedData.find(d => d.username === line.username);
+        
+        return {
+            username: line.username,
+            password: localData ? localData.password : '',
+            is_admin: false,
+            is_active: true,
+            must_change_password: true,
+            can_change_password: true,
+            profile_id: line.profile_matched ? line.profile_matched.id : null,
+            app_roles: []
+        };
+    });
+    
+    // Appeler l'endpoint bulk/create existant
+    return await api.bulkCreateUsers(users);
 }
 
 // =============================================================================

@@ -1030,6 +1030,44 @@ class HubAPI {
     async getAvailableRoles() {
         return this.request('/users/roles/available');
     }
+
+    // ===== CSV Import =====
+
+    async downloadCsvTemplate() {
+        const response = await fetch(`${this.baseUrl}/users/csv/template`, {
+            headers: this.getHeaders()
+        });
+        if (!response.ok) {
+            const error = await response.json().catch(() => ({ detail: 'Erreur téléchargement' }));
+            throw new Error(error.detail || 'Erreur téléchargement template');
+        }
+        const blob = await response.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'import_users_template.csv';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    }
+
+    async previewCsvUpload(file) {
+        const formData = new FormData();
+        formData.append('file', file);
+        const response = await fetch(`${this.baseUrl}/users/csv/preview`, {
+            method: 'POST',
+            headers: {
+                'Authorization': this.getHeaders()['Authorization']
+            },
+            body: formData
+        });
+        if (!response.ok) {
+            const error = await response.json().catch(() => ({ detail: 'Erreur analyse CSV' }));
+            throw new Error(error.detail || 'Erreur analyse CSV');
+        }
+        return response.json();
+    }
 }
 
 const api = new HubAPI();

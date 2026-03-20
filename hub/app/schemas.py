@@ -1218,6 +1218,31 @@ class BulkRemoveAppAccessResponse(BaseModel):
     results: List[BulkRemoveAppAccessResult]
 
 
+# ─── CSV Import Schemas ───
+
+class CsvUserPreviewLine(BaseModel):
+    """Résultat de validation d'une ligne du CSV d'import"""
+    line_number: int
+    username: str
+    password_length: int
+    profile_requested: Optional[str] = None
+    profile_matched: Optional[ProfileBriefResponse] = None
+    profile_ignored: bool = False
+    is_valid: bool = True
+    errors: List[str] = []
+    warnings: List[str] = []
+
+
+class CsvPreviewResponse(BaseModel):
+    """Réponse de preview d'un import CSV"""
+    lines: List[CsvUserPreviewLine]
+    total_lines: int
+    total_valid: int
+    total_errors: int
+    total_warnings: int
+    available_profiles: List[ProfileBriefResponse] = []
+
+
 # Forward references
 UserResponse.model_rebuild()
 ProfileResponse.model_rebuild()

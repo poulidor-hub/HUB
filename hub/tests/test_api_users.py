@@ -2,10 +2,11 @@
 Tests d'intégration pour les endpoints API des utilisateurs
 """
 import pytest
+import io
 from httpx import AsyncClient
 
 from app.auth import create_access_token, get_password_hash
-from app.models import User
+from app.models import User, Profile
 from tests.conftest import get_auth_header
 
 
@@ -266,3 +267,285 @@ class TestUsersEndpoints:
         
         # Le endpoint peut ne pas exister, donc on vérifie juste le code
         assert response.status_code in [200, 404]  # 404 si endpoint non implémenté
+
+
+class TestCsvImport:
+    """Tests pour les endpoints CSV d'import d'utilisateurs"""
+
+    def _admin_token(self, admin_user):
+        token, _, _ = create_access_token(
+            username=admin_user.username,
+            apps={}
+        )
+        return token
+
+    def _user_token(self, test_user):
+        token, _, _ = create_access_token(
+            username=test_user.username,
+            apps={}
+        )
+        return token
+
+    @pytest.mark.asyncio
+    async def test_download_csv_template(self, client: AsyncClient, admin_user: User):
+        """Admin peut télécharger le template CSV"""
+        token = self._admin_token(admin_user)
+        response = await client.get(
+            "/api/users/csv/template",
+            headers=get_auth_header(token)
+        )
+        assert response.status_code == 200
+        assert "text/csv" in response.headers["content-type"]
+        assert "import_users_template.csv" in response.headers.get("content-disposition", "")
+        content = response.text
+        assert "username" in content
+        assert "password" in content
+        assert "profile" in content
+
+    @pytest.mark.asyncio
+    async def test_download_csv_template_forbidden_for_user(self, client: AsyncClient, test_user: User):
+        """User standard ne peut pas télécharger le template CSV"""
+        token = self._user_token(test_user)
+        response = await client.get(
+            "/api/users/csv/template",
+            headers=get_auth_header(token)
+        )
+        assert response.status_code == 403
+
+    @pytest.mark.asyncio
+    async def test_preview_csv_valid(self, client: AsyncClient, admin_user: User, async_session):
+        """Preview CSV avec des données valides"""
+        # Créer un profil de test
+        profile = Profile(name="Cadre", description="Test", color="#007bff")
+        async_session.add(profile)
+        await async_session.commit()
+
+        token = self._admin_token(admin_user)
+        csv_content = "username,password,profile\njean.dupont,MotDePasse123,Cadre\nmarie.martin,Secret456!,\n"
+        files = {"file": ("test.csv", io.BytesIO(csv_content.encode()), "text/csv")}
+        response = await client.post(
+            "/api/users/csv/preview",
+            headers=get_auth_header(token),
+            files=files
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["total_lines"] == 2
+        assert data["total_valid"] == 2
+        assert data["total_errors"] == 0
+        # Premier user a un profil matché
+        assert data["lines"][0]["profile_matched"] is not None
+        assert data["lines"][0]["profile_matched"]["name"] == "Cadre"
+        # Deuxième user n'a pas de profil
+        assert data["lines"][1]["profile_matched"] is None
+        assert data["lines"][1]["profile_ignored"] is False
+
+    @pytest.mark.asyncio
+    async def test_preview_csv_unknown_profile(self, client: AsyncClient, admin_user: User, async_session):
+        """Preview CSV avec un profil inexistant → warning, profil ignoré"""
+        profile = Profile(name="Agent", description="Test", color="#28a745")
+        async_session.add(profile)
+        await async_session.commit()
+
+        token = self._admin_token(admin_user)
+        csv_content = "username,password,profile\nuser1,Password123,ProfilInexistant\n"
+        files = {"file": ("test.csv", io.BytesIO(csv_content.encode()), "text/csv")}
+        response = await client.post(
+            "/api/users/csv/preview",
+            headers=get_auth_header(token),
+            files=files
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["total_valid"] == 1  # User est quand même valide
+        assert data["total_warnings"] > 0
+        assert data["lines"][0]["profile_ignored"] is True
+        assert data["lines"][0]["profile_matched"] is None
+
+    @pytest.mark.asyncio
+    async def test_preview_csv_existing_username(self, client: AsyncClient, admin_user: User, test_user: User):
+        """Preview CSV avec un username déjà existant → erreur"""
+        token = self._admin_token(admin_user)
+        csv_content = f"username,password,profile\n{test_user.username},Password123,\n"
+        files = {"file": ("test.csv", io.BytesIO(csv_content.encode()), "text/csv")}
+        response = await client.post(
+            "/api/users/csv/preview",
+            headers=get_auth_header(token),
+            files=files
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["total_errors"] == 1
+        assert data["lines"][0]["is_valid"] is False
+        assert any("existe" in e for e in data["lines"][0]["errors"])
+
+    @pytest.mark.asyncio
+    async def test_preview_csv_duplicate_in_csv(self, client: AsyncClient, admin_user: User):
+        """Preview CSV avec des doublons dans le CSV → erreur sur le second"""
+        token = self._admin_token(admin_user)
+        csv_content = "username,password,profile\nduplicateuser,Password123,\nduplicateuser,OtherPass123,\n"
+        files = {"file": ("test.csv", io.BytesIO(csv_content.encode()), "text/csv")}
+        response = await client.post(
+            "/api/users/csv/preview",
+            headers=get_auth_header(token),
+            files=files
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["lines"][0]["is_valid"] is True
+        assert data["lines"][1]["is_valid"] is False
+        assert any("Doublon" in e for e in data["lines"][1]["errors"])
+
+    @pytest.mark.asyncio
+    async def test_preview_csv_short_password(self, client: AsyncClient, admin_user: User):
+        """Preview CSV avec un mot de passe trop court → erreur"""
+        token = self._admin_token(admin_user)
+        csv_content = "username,password,profile\nuser1,abc,\n"
+        files = {"file": ("test.csv", io.BytesIO(csv_content.encode()), "text/csv")}
+        response = await client.post(
+            "/api/users/csv/preview",
+            headers=get_auth_header(token),
+            files=files
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["total_errors"] == 1
+        assert any("court" in e for e in data["lines"][0]["errors"])
+
+    @pytest.mark.asyncio
+    async def test_preview_csv_empty_username(self, client: AsyncClient, admin_user: User):
+        """Preview CSV avec un username vide → erreur"""
+        token = self._admin_token(admin_user)
+        csv_content = "username,password,profile\n,Password123,\n"
+        files = {"file": ("test.csv", io.BytesIO(csv_content.encode()), "text/csv")}
+        response = await client.post(
+            "/api/users/csv/preview",
+            headers=get_auth_header(token),
+            files=files
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["total_errors"] == 1
+        assert data["lines"][0]["is_valid"] is False
+
+    @pytest.mark.asyncio
+    async def test_preview_csv_empty_file(self, client: AsyncClient, admin_user: User):
+        """Preview CSV avec un fichier vide → erreur 400"""
+        token = self._admin_token(admin_user)
+        files = {"file": ("test.csv", io.BytesIO(b""), "text/csv")}
+        response = await client.post(
+            "/api/users/csv/preview",
+            headers=get_auth_header(token),
+            files=files
+        )
+        assert response.status_code == 400
+
+    @pytest.mark.asyncio
+    async def test_preview_csv_bad_headers(self, client: AsyncClient, admin_user: User):
+        """Preview CSV avec des mauvais headers → erreur 400"""
+        token = self._admin_token(admin_user)
+        csv_content = "nom,motdepasse,role\nuser1,Password123,admin\n"
+        files = {"file": ("test.csv", io.BytesIO(csv_content.encode()), "text/csv")}
+        response = await client.post(
+            "/api/users/csv/preview",
+            headers=get_auth_header(token),
+            files=files
+        )
+        assert response.status_code == 400
+
+    @pytest.mark.asyncio
+    async def test_preview_csv_too_many_lines(self, client: AsyncClient, admin_user: User):
+        """Preview CSV avec plus de 100 lignes → erreur 400"""
+        token = self._admin_token(admin_user)
+        lines = ["username,password,profile"]
+        for i in range(101):
+            lines.append(f"user{i},Password123,")
+        csv_content = "\n".join(lines)
+        files = {"file": ("test.csv", io.BytesIO(csv_content.encode()), "text/csv")}
+        response = await client.post(
+            "/api/users/csv/preview",
+            headers=get_auth_header(token),
+            files=files
+        )
+        assert response.status_code == 400
+
+    @pytest.mark.asyncio
+    async def test_preview_csv_semicolon_separator(self, client: AsyncClient, admin_user: User, async_session):
+        """Preview CSV avec séparateur point-virgule (Excel FR)"""
+        profile = Profile(name="Agent", description="Test", color="#28a745")
+        async_session.add(profile)
+        await async_session.commit()
+
+        token = self._admin_token(admin_user)
+        csv_content = "username;password;profile\nuser.test;Password123;Agent\n"
+        files = {"file": ("test.csv", io.BytesIO(csv_content.encode()), "text/csv")}
+        response = await client.post(
+            "/api/users/csv/preview",
+            headers=get_auth_header(token),
+            files=files
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["total_valid"] == 1
+        assert data["lines"][0]["profile_matched"]["name"] == "Agent"
+
+    @pytest.mark.asyncio
+    async def test_preview_csv_forbidden_for_user(self, client: AsyncClient, test_user: User):
+        """User standard ne peut pas uploader un CSV"""
+        token = self._user_token(test_user)
+        csv_content = "username,password,profile\nuser1,Password123,\n"
+        files = {"file": ("test.csv", io.BytesIO(csv_content.encode()), "text/csv")}
+        response = await client.post(
+            "/api/users/csv/preview",
+            headers=get_auth_header(token),
+            files=files
+        )
+        assert response.status_code == 403
+
+    @pytest.mark.asyncio
+    async def test_preview_csv_not_csv_file(self, client: AsyncClient, admin_user: User):
+        """Preview avec un fichier non-CSV → erreur 400"""
+        token = self._admin_token(admin_user)
+        files = {"file": ("test.txt", io.BytesIO(b"hello world"), "text/plain")}
+        response = await client.post(
+            "/api/users/csv/preview",
+            headers=get_auth_header(token),
+            files=files
+        )
+        assert response.status_code == 400
+
+    @pytest.mark.asyncio
+    async def test_preview_csv_profile_case_insensitive(self, client: AsyncClient, admin_user: User, async_session):
+        """Le matching de profil est case-insensitive"""
+        profile = Profile(name="Cadre Supérieur", description="Test", color="#007bff")
+        async_session.add(profile)
+        await async_session.commit()
+
+        token = self._admin_token(admin_user)
+        csv_content = "username,password,profile\nuser1,Password123,cadre supérieur\n"
+        files = {"file": ("test.csv", io.BytesIO(csv_content.encode()), "text/csv")}
+        response = await client.post(
+            "/api/users/csv/preview",
+            headers=get_auth_header(token),
+            files=files
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["lines"][0]["profile_matched"] is not None
+        assert data["lines"][0]["profile_matched"]["name"] == "Cadre Supérieur"
+
+    @pytest.mark.asyncio
+    async def test_preview_csv_comment_lines_ignored(self, client: AsyncClient, admin_user: User):
+        """Les lignes commençant par # sont ignorées"""
+        token = self._admin_token(admin_user)
+        csv_content = "username,password,profile\n# ceci est un commentaire,ignoré,ignoré\nuser1,Password123,\n"
+        files = {"file": ("test.csv", io.BytesIO(csv_content.encode()), "text/csv")}
+        response = await client.post(
+            "/api/users/csv/preview",
+            headers=get_auth_header(token),
+            files=files
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["total_lines"] == 1
+        assert data["lines"][0]["username"] == "user1"
