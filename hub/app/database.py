@@ -51,6 +51,12 @@ async def init_db():
         await conn.run_sync(Base.metadata.create_all)
 
 
+def _strip_sql_comments(sql_block: str) -> str:
+    """Retire les lignes de commentaires SQL (--) d'un bloc et renvoie le SQL nettoyé."""
+    lines = [line for line in sql_block.splitlines() if not line.strip().startswith('--')]
+    return '\n'.join(lines).strip()
+
+
 async def apply_migrations():
     """
     Applique les migrations SQL si nécessaires.
@@ -77,8 +83,8 @@ async def apply_migrations():
             if migration_file.exists():
                 sql = migration_file.read_text()
                 for statement in sql.split(';'):
-                    statement = statement.strip()
-                    if statement and not statement.startswith('--'):
+                    statement = _strip_sql_comments(statement)
+                    if statement:
                         try:
                             await conn.execute(text(statement))
                         except Exception as e:
@@ -96,8 +102,8 @@ async def apply_migrations():
             if migration_file.exists():
                 sql = migration_file.read_text()
                 for statement in sql.split(';'):
-                    statement = statement.strip()
-                    if statement and not statement.startswith('--'):
+                    statement = _strip_sql_comments(statement)
+                    if statement:
                         try:
                             await conn.execute(text(statement))
                         except Exception as e:
@@ -115,8 +121,8 @@ async def apply_migrations():
             if migration_file.exists():
                 sql = migration_file.read_text()
                 for statement in sql.split(';'):
-                    statement = statement.strip()
-                    if statement and not statement.startswith('--'):
+                    statement = _strip_sql_comments(statement)
+                    if statement:
                         try:
                             await conn.execute(text(statement))
                         except Exception as e:
@@ -134,8 +140,8 @@ async def apply_migrations():
             if migration_file.exists():
                 sql = migration_file.read_text()
                 for statement in sql.split(';'):
-                    statement = statement.strip()
-                    if statement and not statement.startswith('--'):
+                    statement = _strip_sql_comments(statement)
+                    if statement:
                         try:
                             await conn.execute(text(statement))
                         except Exception as e:
@@ -153,8 +159,8 @@ async def apply_migrations():
             if migration_file.exists():
                 sql = migration_file.read_text()
                 for statement in sql.split(';'):
-                    statement = statement.strip()
-                    if statement and not statement.startswith('--'):
+                    statement = _strip_sql_comments(statement)
+                    if statement:
                         try:
                             await conn.execute(text(statement))
                         except Exception as e:
@@ -172,8 +178,8 @@ async def apply_migrations():
             if migration_file.exists():
                 sql = migration_file.read_text()
                 for statement in sql.split(';'):
-                    statement = statement.strip()
-                    if statement and not statement.startswith('--'):
+                    statement = _strip_sql_comments(statement)
+                    if statement:
                         try:
                             await conn.execute(text(statement))
                         except Exception as e:
@@ -193,8 +199,8 @@ async def apply_migrations():
             if migration_file.exists():
                 sql = migration_file.read_text()
                 for statement in sql.split(';'):
-                    statement = statement.strip()
-                    if statement and not statement.startswith('--'):
+                    statement = _strip_sql_comments(statement)
+                    if statement:
                         try:
                             await conn.execute(text(statement))
                         except Exception as e:
@@ -212,8 +218,8 @@ async def apply_migrations():
             if migration_file.exists():
                 sql = migration_file.read_text()
                 for statement in sql.split(';'):
-                    statement = statement.strip()
-                    if statement and not statement.startswith('--'):
+                    statement = _strip_sql_comments(statement)
+                    if statement:
                         try:
                             await conn.execute(text(statement))
                         except Exception as e:
@@ -249,8 +255,8 @@ async def apply_migrations():
             if migration_file.exists():
                 sql = migration_file.read_text()
                 for statement in sql.split(';'):
-                    statement = statement.strip()
-                    if statement and not statement.startswith('--'):
+                    statement = _strip_sql_comments(statement)
+                    if statement:
                         try:
                             await conn.execute(text(statement))
                         except Exception as e:
@@ -268,8 +274,8 @@ async def apply_migrations():
             if migration_file.exists():
                 sql = migration_file.read_text()
                 for statement in sql.split(';'):
-                    statement = statement.strip()
-                    if statement and not statement.startswith('--'):
+                    statement = _strip_sql_comments(statement)
+                    if statement:
                         try:
                             await conn.execute(text(statement))
                         except Exception as e:
