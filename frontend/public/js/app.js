@@ -8145,7 +8145,8 @@ async function executeBulkOperation() {
                 throw new Error('Mode d\'opération non reconnu');
         }
         
-        // Afficher le résultat
+        // Fermer la modale et afficher le résultat en toast
+        if (bulkOperationsModal) bulkOperationsModal.hide();
         displayBulkResult(result);
         
         // Rafraîchir la liste des utilisateurs
@@ -8668,6 +8669,20 @@ async function executeCsvImport() {
     
     // Appeler l'endpoint bulk/create existant
     return await api.bulkCreateUsers(users);
+}
+
+/**
+ * Wrapper pour le bouton "Confirmer la création" CSV : exécute l'import puis ferme la modale
+ */
+async function confirmCsvImport() {
+    try {
+        const result = await executeCsvImport();
+        if (bulkOperationsModal) bulkOperationsModal.hide();
+        displayBulkResult(result);
+        await loadUsersPageData();
+    } catch (error) {
+        showToast('Erreur', error.message, 'danger');
+    }
 }
 
 // =============================================================================
