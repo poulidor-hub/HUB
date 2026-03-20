@@ -189,6 +189,212 @@ async def create_user(
     return UserResponse.from_orm_model(user)
 
 
+# ===== Import CSV =====
+
+@router.get("/csv/template")
+async def download_csv_template(
+    _: User = Depends(get_current_admin)
+):
+    """
+    Télécharge un template CSV pour l'import d'utilisateurs en masse.
+    Colonnes : username, password, profile
+    """
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["username", "password", "profile"])
+    writer.writerow(["# jean.dupont", "MotDePasse123", "Cadre"])
+    writer.writerow(["# marie.martin", "Secret456!", "Agent"])
+    content = output.getvalue()
+    
+    return StreamingResponse(
+        io.BytesIO(content.encode("utf-8-sig")),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=import_users_template.csv"}
+    )
+
+
+@router.post("/csv/preview", response_model=CsvPreviewResponse)
+async def preview_csv_import(
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_admin)
+):
+    """
+    Analyse un fichier CSV et retourne un aperçu de ce qui sera créé.
+    Ne crée aucun utilisateur — lecture seule.
+    
+    Le CSV doit avoir 3 colonnes : username, password, profile
+    - Le profil doit correspondre exactement à un profil existant (case-insensitive)
+    - Si le profil n'est pas trouvé, l'utilisateur sera créé sans profil (warning)
+    - Tous les utilisateurs seront créés avec le rôle "user" et must_change_password=true
+    """
+    if not file.filename or not file.filename.lower().endswith(".csv"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Le fichier doit être au format CSV (.csv)"
+        )
+    
+    # Lire le contenu du fichier (limite 1 Mo)
+    content_bytes = await file.read()
+    if len(content_bytes) > 1_048_576:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Le fichier CSV ne doit pas dépasser 1 Mo"
+        )
+    
+    # Décoder le contenu (supporter UTF-8 BOM)
+    try:
+        content = content_bytes.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        try:
+            content = content_bytes.decode("latin-1")
+        except UnicodeDecodeError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Encodage du fichier non supporté. Utilisez UTF-8 ou Latin-1."
+            )
+    
+    # Parser le CSV (supporter , et ;)
+    if ";" in content.split("\n")[0]:
+        dialect_delimiter = ";"
+    else:
+        dialect_delimiter = ","
+    
+    reader = csv.reader(io.StringIO(content), delimiter=dialect_delimiter)
+    rows = list(reader)
+    
+    if len(rows) == 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Le fichier CSV est vide"
+        )
+    
+    # Vérifier les headers
+    headers = [h.strip().lower() for h in rows[0]]
+    if headers[:3] != ["username", "password", "profile"]:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Le fichier CSV doit avoir les colonnes : username, password, profile"
+        )
+    
+    # Filtrer les lignes de données (ignorer les commentaires et les lignes vides)
+    data_rows = []
+    for row in rows[1:]:
+        if not row or all(cell.strip() == "" for cell in row):
+            continue
+        if row[0].strip().startswith("#"):
+            continue
+        data_rows.append(row)
+    
+    if len(data_rows) == 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Le fichier CSV ne contient aucune ligne de données"
+        )
+    
+    if len(data_rows) > 100:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Le fichier CSV ne doit pas dépasser 100 lignes de données"
+        )
+    
+    # Charger les profils existants
+    profiles_result = await db.execute(select(Profile))
+    profiles = profiles_result.scalars().all()
+    profiles_by_name = {p.name.lower(): p for p in profiles}
+    
+    # Charger les usernames existants
+    existing_result = await db.execute(select(User.username))
+    existing_usernames = {u.lower() for u in existing_result.scalars().all()}
+    
+    # Tracker les doublons dans le CSV
+    csv_usernames_seen = {}
+    
+    lines = []
+    total_valid = 0
+    total_errors = 0
+    total_warnings = 0
+    
+    for idx, row in enumerate(data_rows, start=1):
+        errors = []
+        warnings = []
+        
+        # Extraire les valeurs
+        username = row[0].strip() if len(row) > 0 else ""
+        password = row[1].strip() if len(row) > 1 else ""
+        profile_name = row[2].strip() if len(row) > 2 else ""
+        
+        # Valider username
+        if not username:
+            errors.append("Nom d'utilisateur requis")
+        elif len(username) < 3:
+            errors.append("Nom d'utilisateur trop court (min 3 caractères)")
+        elif len(username) > 50:
+            errors.append("Nom d'utilisateur trop long (max 50 caractères)")
+        elif username.lower() in existing_usernames:
+            errors.append(f"L'utilisateur '{username}' existe déjà")
+        elif username.lower() in csv_usernames_seen:
+            errors.append(f"Doublon dans le CSV (ligne {csv_usernames_seen[username.lower()]})")
+        
+        if username and username.lower() not in csv_usernames_seen:
+            csv_usernames_seen[username.lower()] = idx
+        
+        # Valider password
+        if not password:
+            errors.append("Mot de passe requis")
+        elif len(password) < 8:
+            errors.append("Mot de passe trop court (min 8 caractères)")
+        
+        # Résoudre le profil
+        profile_matched = None
+        profile_ignored = False
+        if profile_name:
+            profile_obj = profiles_by_name.get(profile_name.lower())
+            if profile_obj:
+                profile_matched = ProfileBriefResponse(
+                    id=profile_obj.id,
+                    name=profile_obj.name,
+                    color=profile_obj.color
+                )
+            else:
+                profile_ignored = True
+                warnings.append(f"Profil '{profile_name}' non trouvé, sera ignoré")
+        
+        is_valid = len(errors) == 0
+        if is_valid:
+            total_valid += 1
+        else:
+            total_errors += 1
+        if warnings:
+            total_warnings += len(warnings)
+        
+        lines.append(CsvUserPreviewLine(
+            line_number=idx,
+            username=username,
+            password_length=len(password),
+            profile_requested=profile_name if profile_name else None,
+            profile_matched=profile_matched,
+            profile_ignored=profile_ignored,
+            is_valid=is_valid,
+            errors=errors,
+            warnings=warnings
+        ))
+    
+    available_profiles = [
+        ProfileBriefResponse(id=p.id, name=p.name, color=p.color)
+        for p in profiles
+    ]
+    
+    return CsvPreviewResponse(
+        lines=lines,
+        total_lines=len(lines),
+        total_valid=total_valid,
+        total_errors=total_errors,
+        total_warnings=total_warnings,
+        available_profiles=available_profiles
+    )
+
+
 @router.get("/{user_id}")
 async def get_user(
     user_id: int,
@@ -1174,210 +1380,4 @@ async def bulk_remove_app_access(
         total_success=len(results) - failed_count,
         total_failed=failed_count,
         results=results
-    )
-
-
-# ===== Import CSV =====
-
-@router.get("/csv/template")
-async def download_csv_template(
-    _: User = Depends(get_current_admin)
-):
-    """
-    Télécharge un template CSV pour l'import d'utilisateurs en masse.
-    Colonnes : username, password, profile
-    """
-    output = io.StringIO()
-    writer = csv.writer(output)
-    writer.writerow(["username", "password", "profile"])
-    writer.writerow(["# jean.dupont", "MotDePasse123", "Cadre"])
-    writer.writerow(["# marie.martin", "Secret456!", "Agent"])
-    content = output.getvalue()
-    
-    return StreamingResponse(
-        io.BytesIO(content.encode("utf-8-sig")),
-        media_type="text/csv",
-        headers={"Content-Disposition": "attachment; filename=import_users_template.csv"}
-    )
-
-
-@router.post("/csv/preview", response_model=CsvPreviewResponse)
-async def preview_csv_import(
-    file: UploadFile = File(...),
-    db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_admin)
-):
-    """
-    Analyse un fichier CSV et retourne un aperçu de ce qui sera créé.
-    Ne crée aucun utilisateur — lecture seule.
-    
-    Le CSV doit avoir 3 colonnes : username, password, profile
-    - Le profil doit correspondre exactement à un profil existant (case-insensitive)
-    - Si le profil n'est pas trouvé, l'utilisateur sera créé sans profil (warning)
-    - Tous les utilisateurs seront créés avec le rôle "user" et must_change_password=true
-    """
-    if not file.filename or not file.filename.lower().endswith(".csv"):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Le fichier doit être au format CSV (.csv)"
-        )
-    
-    # Lire le contenu du fichier (limite 1 Mo)
-    content_bytes = await file.read()
-    if len(content_bytes) > 1_048_576:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Le fichier CSV ne doit pas dépasser 1 Mo"
-        )
-    
-    # Décoder le contenu (supporter UTF-8 BOM)
-    try:
-        content = content_bytes.decode("utf-8-sig")
-    except UnicodeDecodeError:
-        try:
-            content = content_bytes.decode("latin-1")
-        except UnicodeDecodeError:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Encodage du fichier non supporté. Utilisez UTF-8 ou Latin-1."
-            )
-    
-    # Parser le CSV (supporter , et ;)
-    if ";" in content.split("\n")[0]:
-        dialect_delimiter = ";"
-    else:
-        dialect_delimiter = ","
-    
-    reader = csv.reader(io.StringIO(content), delimiter=dialect_delimiter)
-    rows = list(reader)
-    
-    if len(rows) == 0:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Le fichier CSV est vide"
-        )
-    
-    # Vérifier les headers
-    headers = [h.strip().lower() for h in rows[0]]
-    if headers[:3] != ["username", "password", "profile"]:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Le fichier CSV doit avoir les colonnes : username, password, profile"
-        )
-    
-    # Filtrer les lignes de données (ignorer les commentaires et les lignes vides)
-    data_rows = []
-    for row in rows[1:]:
-        if not row or all(cell.strip() == "" for cell in row):
-            continue
-        if row[0].strip().startswith("#"):
-            continue
-        data_rows.append(row)
-    
-    if len(data_rows) == 0:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Le fichier CSV ne contient aucune ligne de données"
-        )
-    
-    if len(data_rows) > 100:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Le fichier CSV ne doit pas dépasser 100 lignes de données"
-        )
-    
-    # Charger les profils existants
-    profiles_result = await db.execute(select(Profile))
-    profiles = profiles_result.scalars().all()
-    profiles_by_name = {p.name.lower(): p for p in profiles}
-    
-    # Charger les usernames existants
-    existing_result = await db.execute(select(User.username))
-    existing_usernames = {u.lower() for u in existing_result.scalars().all()}
-    
-    # Tracker les doublons dans le CSV
-    csv_usernames_seen = {}
-    
-    lines = []
-    total_valid = 0
-    total_errors = 0
-    total_warnings = 0
-    
-    for idx, row in enumerate(data_rows, start=1):
-        errors = []
-        warnings = []
-        
-        # Extraire les valeurs
-        username = row[0].strip() if len(row) > 0 else ""
-        password = row[1].strip() if len(row) > 1 else ""
-        profile_name = row[2].strip() if len(row) > 2 else ""
-        
-        # Valider username
-        if not username:
-            errors.append("Nom d'utilisateur requis")
-        elif len(username) < 3:
-            errors.append("Nom d'utilisateur trop court (min 3 caractères)")
-        elif len(username) > 50:
-            errors.append("Nom d'utilisateur trop long (max 50 caractères)")
-        elif username.lower() in existing_usernames:
-            errors.append(f"L'utilisateur '{username}' existe déjà")
-        elif username.lower() in csv_usernames_seen:
-            errors.append(f"Doublon dans le CSV (ligne {csv_usernames_seen[username.lower()]})")
-        
-        if username and username.lower() not in csv_usernames_seen:
-            csv_usernames_seen[username.lower()] = idx
-        
-        # Valider password
-        if not password:
-            errors.append("Mot de passe requis")
-        elif len(password) < 8:
-            errors.append("Mot de passe trop court (min 8 caractères)")
-        
-        # Résoudre le profil
-        profile_matched = None
-        profile_ignored = False
-        if profile_name:
-            profile_obj = profiles_by_name.get(profile_name.lower())
-            if profile_obj:
-                profile_matched = ProfileBriefResponse(
-                    id=profile_obj.id,
-                    name=profile_obj.name,
-                    color=profile_obj.color
-                )
-            else:
-                profile_ignored = True
-                warnings.append(f"Profil '{profile_name}' non trouvé, sera ignoré")
-        
-        is_valid = len(errors) == 0
-        if is_valid:
-            total_valid += 1
-        else:
-            total_errors += 1
-        if warnings:
-            total_warnings += len(warnings)
-        
-        lines.append(CsvUserPreviewLine(
-            line_number=idx,
-            username=username,
-            password_length=len(password),
-            profile_requested=profile_name if profile_name else None,
-            profile_matched=profile_matched,
-            profile_ignored=profile_ignored,
-            is_valid=is_valid,
-            errors=errors,
-            warnings=warnings
-        ))
-    
-    available_profiles = [
-        ProfileBriefResponse(id=p.id, name=p.name, color=p.color)
-        for p in profiles
-    ]
-    
-    return CsvPreviewResponse(
-        lines=lines,
-        total_lines=len(lines),
-        total_valid=total_valid,
-        total_errors=total_errors,
-        total_warnings=total_warnings,
-        available_profiles=available_profiles
     )

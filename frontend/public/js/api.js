@@ -1034,7 +1034,7 @@ class HubAPI {
     // ===== CSV Import =====
 
     async downloadCsvTemplate() {
-        const response = await fetch(`${this.baseUrl}/users/csv/template`, {
+        const response = await fetch(`${API_BASE}/users/csv/template`, {
             headers: this.getHeaders()
         });
         if (!response.ok) {
@@ -1055,7 +1055,7 @@ class HubAPI {
     async previewCsvUpload(file) {
         const formData = new FormData();
         formData.append('file', file);
-        const response = await fetch(`${this.baseUrl}/users/csv/preview`, {
+        const response = await fetch(`${API_BASE}/users/csv/preview`, {
             method: 'POST',
             headers: {
                 'Authorization': this.getHeaders()['Authorization']
