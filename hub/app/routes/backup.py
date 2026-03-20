@@ -151,7 +151,8 @@ async def _do_export(
         UserAppRoleExport(
             username=uar.user.username,
             app_slug=uar.application.slug,
-            role=uar.role
+            role=uar.role,
+            source=uar.source or "manual"
         )
         for uar in user_app_roles
     ]
@@ -496,7 +497,8 @@ async def _do_import(
                 new_uar = UserAppRole(
                     user_id=user_id,
                     app_id=app_id,
-                    role=uar_data.role
+                    role=uar_data.role,
+                    source=uar_data.source if hasattr(uar_data, 'source') else "manual"
                 )
                 db.add(new_uar)
                 result.user_app_roles_created += 1

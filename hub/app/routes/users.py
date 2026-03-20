@@ -348,19 +348,31 @@ async def set_user_apps(
                 detail=f"Application {assignment.app_id} non trouvée"
             )
     
-    # Supprimer les anciens rôles
+    # Supprimer uniquement les rôles manuels (préserver ceux du profil)
     await db.execute(
-        delete(UserAppRole).where(UserAppRole.user_id == user_id)
+        delete(UserAppRole).where(
+            UserAppRole.user_id == user_id,
+            UserAppRole.source == "manual"
+        )
     )
     
-    # Créer les nouveaux rôles
+    # Collecter les app_id déjà couverts par le profil
+    profile_app_ids = {
+        ar.app_id for ar in user.app_roles if ar.source == "profile"
+    }
+    
+    # Créer les nouveaux rôles manuels (ignorer si déjà couvert par le profil)
     result_assignments = []
     for assignment in updates.assignments:
         app = existing_apps[assignment.app_id]
+        if assignment.app_id in profile_app_ids:
+            # App déjà gérée par le profil, on ne crée pas de doublon
+            continue
         user_app_role = UserAppRole(
             user_id=user_id,
             app_id=assignment.app_id,
-            role=assignment.role
+            role=assignment.role,
+            source="manual"
         )
         db.add(user_app_role)
         result_assignments.append({
@@ -415,7 +427,8 @@ async def get_user_apps(
                 "app_id": ar.app_id,
                 "app_name": ar.application.name,
                 "app_slug": ar.application.slug,
-                "role": ar.role
+                "role": ar.role,
+                "source": ar.source
             }
             for ar in user.app_roles
         ]
@@ -582,22 +595,24 @@ async def bulk_create_users(
             await db.flush()  # Pour obtenir l'ID
 
             # Construire la map des rôles finaux
-            # Profil d'abord, puis app_roles manuels
-            # (les manuels écrasent le profil par app)
-            final_roles = {}
+            # Profil d'abord (source='profile'), puis app_roles manuels (source='manual')
+            profile_roles = {}
+            manual_roles = {}
             if profile:
                 for par in profile.app_roles:
-                    final_roles[par.app_id] = par.role
+                    profile_roles[par.app_id] = par.role
             if user_data.app_roles:
                 for ar in user_data.app_roles:
-                    final_roles[ar.app_id] = ar.role
+                    if ar.app_id not in profile_roles:
+                        manual_roles[ar.app_id] = ar.role
 
             # Vérifier que les apps existent
-            if final_roles:
+            all_app_ids = set(profile_roles.keys()) | set(manual_roles.keys())
+            if all_app_ids:
                 apps_result = await db.execute(
                     select(Application).where(
                         Application.id.in_(
-                            list(final_roles.keys())
+                            list(all_app_ids)
                         )
                     )
                 )
@@ -605,12 +620,21 @@ async def bulk_create_users(
                     app.id
                     for app in apps_result.scalars().all()
                 }
-                for app_id, role in final_roles.items():
+                for app_id, role in profile_roles.items():
                     if app_id in existing_apps:
                         db.add(UserAppRole(
                             user_id=user.id,
                             app_id=app_id,
-                            role=role
+                            role=role,
+                            source="profile"
+                        ))
+                for app_id, role in manual_roles.items():
+                    if app_id in existing_apps:
+                        db.add(UserAppRole(
+                            user_id=user.id,
+                            app_id=app_id,
+                            role=role,
+                            source="manual"
                         ))
             
             results.append(BulkUserCreateResult(
@@ -712,25 +736,42 @@ async def bulk_update_user_roles(
                     ))
                     continue
             
-            # Supprimer les anciens rôles
+            # Supprimer uniquement les rôles manuels (préserver ceux du profil)
             await db.execute(
-                delete(UserAppRole).where(UserAppRole.user_id == update.user_id)
+                delete(UserAppRole).where(
+                    UserAppRole.user_id == update.user_id,
+                    UserAppRole.source == "manual"
+                )
             )
             
-            # Créer les nouveaux rôles
+            # Récupérer les app_id déjà couverts par le profil
+            profile_roles_result = await db.execute(
+                select(UserAppRole.app_id).where(
+                    UserAppRole.user_id == update.user_id,
+                    UserAppRole.source == "profile"
+                )
+            )
+            profile_app_ids = {row[0] for row in profile_roles_result.all()}
+            
+            # Créer les nouveaux rôles (ignorer ceux déjà gérés par le profil)
+            roles_created = 0
             for ar in update.app_roles:
+                if ar.app_id in profile_app_ids:
+                    continue
                 user_app_role = UserAppRole(
                     user_id=update.user_id,
                     app_id=ar.app_id,
-                    role=ar.role
+                    role=ar.role,
+                    source="manual"
                 )
                 db.add(user_app_role)
+                roles_created += 1
             
             results.append(BulkUserRoleUpdateResult(
                 user_id=update.user_id,
                 username=user.username,
                 success=True,
-                roles_updated=len(update.app_roles)
+                roles_updated=roles_created
             ))
             updated_count += 1
             
@@ -967,7 +1008,8 @@ async def bulk_assign_app_roles(
                     new_role = UserAppRole(
                         user_id=user_id,
                         app_id=assignment.app_id,
-                        role=assignment.role
+                        role=assignment.role,
+                        source="manual"
                     )
                     db.add(new_role)
                     results.append(BulkAppRoleAssignResult(

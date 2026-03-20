@@ -71,6 +71,7 @@ class UserAppRole(Base):
     user_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
     app_id = Column(Integer, ForeignKey('applications.id', ondelete='CASCADE'), nullable=False)
     role = Column(String(50), default="user", nullable=False)  # admin, manager, user, viewer, etc.
+    source = Column(String(20), default="manual", nullable=False)  # "manual" ou "profile"
     created_at = Column(DateTime, default=datetime.utcnow)
     
     # Relations
@@ -78,7 +79,7 @@ class UserAppRole(Base):
     application = relationship("Application", back_populates="user_roles")
     
     def __repr__(self):
-        return f"<UserAppRole user={self.user_id} app={self.app_id} role={self.role}>"
+        return f"<UserAppRole user={self.user_id} app={self.app_id} role={self.role} source={self.source}>"
 
 
 class AppRole(Base):

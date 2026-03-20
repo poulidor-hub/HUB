@@ -1690,6 +1690,7 @@ function renderUsersTable(users) {
                         <td>
                             ${user.app_roles?.map(ar => `
                                 <span class="badge me-1" style="background-color: ${getRoleBadgeColor(ar.role)}">
+                                    ${ar.source === 'profile' ? '<i class="bi bi-person-badge"></i> ' : ''}
                                     ${escapeHtml(ar.app_name)} 
                                     <small>(${ar.role})</small>
                                 </span>
@@ -2525,29 +2526,37 @@ function loadUserAppsWithRoles(userAppRoles) {
         return;
     }
 
-    // Créer un map des rôles par app_id
+    // Créer un map des rôles et sources par app_id
     const rolesByAppId = {};
+    const sourceByAppId = {};
     userAppRoles.forEach(ar => {
         rolesByAppId[ar.app_id] = ar.role;
+        sourceByAppId[ar.app_id] = ar.source || 'manual';
     });
 
     container.innerHTML = allApps.map(app => {
         const currentRole = rolesByAppId[app.id] || '';
+        const source = sourceByAppId[app.id] || 'manual';
         const isChecked = currentRole !== '';
+        const isFromProfile = source === 'profile';
         
         return `
             <div class="d-flex align-items-center mb-2 app-role-row">
                 <div class="form-check me-3" style="min-width: 200px;">
                     <input class="form-check-input app-checkbox" type="checkbox" value="${app.id}" 
                         id="userApp${app.id}" ${isChecked ? 'checked' : ''}
+                        ${isFromProfile ? 'disabled' : ''}
+                        data-source="${source}"
                         onchange="toggleRoleSelect(${app.id})">
                     <label class="form-check-label" for="userApp${app.id}">
                         <i class="${app.icon} me-1" style="color: ${app.color}"></i>
                         ${escapeHtml(app.name)}
+                        ${isFromProfile ? '<i class="bi bi-person-badge text-info ms-1" title="Géré par le profil"></i>' : ''}
                     </label>
                 </div>
                 <select class="form-select form-select-sm role-select" id="userAppRole${app.id}" 
-                    style="width: 120px;" ${isChecked ? '' : 'disabled'}>
+                    style="width: 120px;" ${isChecked && !isFromProfile ? '' : 'disabled'}
+                    data-source="${source}">
                     <option value="">-- Rôle --</option>
                     ${AVAILABLE_ROLES.map(role => `
                         <option value="${role}" ${currentRole === role ? 'selected' : ''}>
@@ -2555,6 +2564,7 @@ function loadUserAppsWithRoles(userAppRoles) {
                         </option>
                     `).join('')}
                 </select>
+                ${isFromProfile ? '<small class="text-info ms-2"><i class="bi bi-lock"></i> Profil</small>' : ''}
             </div>
         `;
     }).join('');
@@ -2614,11 +2624,14 @@ async function handleSaveUser(event) {
         data.password = password;
     }
 
-    // Récupérer les apps et leurs rôles
+    // Récupérer les apps et leurs rôles (uniquement les manuels, pas ceux du profil)
     const assignments = [];
     allApps.forEach(app => {
         const checkbox = document.getElementById(`userApp${app.id}`);
         const roleSelect = document.getElementById(`userAppRole${app.id}`);
+        
+        // Ignorer les apps gérées par le profil (source='profile')
+        if (checkbox?.dataset?.source === 'profile') return;
         
         if (checkbox?.checked && roleSelect?.value) {
             assignments.push({
@@ -5001,7 +5014,7 @@ function renderUsersPageTable(users) {
                                 : '<span class="text-muted small">-</span>'}
                         </td>
                         <td>
-                            <span class="badge bg-light text-dark border" title="${(user.app_roles || []).map(ar => ar.app_name + ' (' + ar.role + ')').join(', ')}">
+                            <span class="badge bg-light text-dark border" title="${(user.app_roles || []).map(ar => ar.app_name + ' (' + ar.role + ')' + (ar.source === 'profile' ? ' [profil]' : '')).join(', ')}">
                                 ${(user.app_roles || []).length} app${(user.app_roles || []).length !== 1 ? 's' : ''}
                             </span>
                         </td>
@@ -5032,8 +5045,9 @@ function renderUsersPageTable(users) {
                                 ${(user.app_roles || []).length > 0 
                                     ? `<div class="d-flex flex-wrap gap-1">
                                         ${user.app_roles.map(ar => `
-                                            <span class="badge bg-white text-dark border me-1 mb-1">
-                                                <i class="bi bi-app me-1"></i>${escapeHtml(ar.app_name)} 
+                                            <span class="badge bg-white text-dark border me-1 mb-1" title="Source: ${ar.source === 'profile' ? 'Profil' : 'Manuel'}">
+                                                ${ar.source === 'profile' ? '<i class="bi bi-person-badge me-1 text-info" title="Via profil"></i>' : '<i class="bi bi-hand-index me-1 text-secondary" title="Manuel"></i>'}
+                                                ${escapeHtml(ar.app_name)} 
                                                 <span class="badge ${getRoleBadgeColor(ar.role)} ms-1">${ar.role}</span>
                                             </span>
                                         `).join('')}
@@ -5427,13 +5441,37 @@ async function handleApplyProfile() {
 // Fonctions pour le sélecteur de profil dans le modal user
 async function onUserProfileChange() {
     const profileId = document.getElementById('userProfileSelect').value;
-    if (!profileId) return;
+    const userId = document.getElementById('userId').value;
     
-    // Charger le profil et pré-remplir les checkboxes apps
-    const profile = allProfiles.find(p => p.id === parseInt(profileId));
-    if (profile) {
-        loadUserAppsWithRoles(profile.app_roles);
+    // Récupérer les rôles manuels actuels de l'utilisateur (ceux cochés manuellement)
+    const currentManualRoles = [];
+    allApps.forEach(app => {
+        const checkbox = document.getElementById(`userApp${app.id}`);
+        const roleSelect = document.getElementById(`userAppRole${app.id}`);
+        if (checkbox?.dataset?.source !== 'profile' && checkbox?.checked && roleSelect?.value) {
+            currentManualRoles.push({ app_id: app.id, role: roleSelect.value, source: 'manual' });
+        }
+    });
+    
+    // Construire la liste combinée : rôles du profil + rôles manuels
+    const combinedRoles = [...currentManualRoles];
+    if (profileId) {
+        const profile = allProfiles.find(p => p.id === parseInt(profileId));
+        if (profile) {
+            const profileAppIds = new Set(profile.app_roles.map(ar => ar.app_id));
+            // Ajouter les rôles du profil avec source='profile'
+            profile.app_roles.forEach(ar => {
+                combinedRoles.push({ app_id: ar.app_id, role: ar.role, source: 'profile' });
+            });
+            // Retirer les manuels qui sont déjà couverts par le profil
+            const filteredRoles = combinedRoles.filter(ar => !(ar.source === 'manual' && profileAppIds.has(ar.app_id)));
+            loadUserAppsWithRoles(filteredRoles);
+            return;
+        }
     }
+    
+    // Pas de profil sélectionné : tout est manuel
+    loadUserAppsWithRoles(currentManualRoles);
 }
 
 function showAddUserFormPage() {

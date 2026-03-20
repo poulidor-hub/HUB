@@ -118,6 +118,7 @@ class UserAppRoleResponse(BaseModel):
     app_name: str
     app_slug: str
     role: str
+    source: str = "manual"
     
     class Config:
         from_attributes = True
@@ -129,7 +130,8 @@ class UserAppRoleResponse(BaseModel):
             app_id=uar.app_id,
             app_name=uar.application.name,
             app_slug=uar.application.slug,
-            role=uar.role
+            role=uar.role,
+            source=uar.source or "manual"
         )
 
 
@@ -640,6 +642,7 @@ class UserAppRoleExport(BaseModel):
     username: str
     app_slug: str
     role: str
+    source: str = "manual"
 
 
 class ServiceAccountExport(BaseModel):

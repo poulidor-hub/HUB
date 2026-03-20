@@ -20,6 +20,29 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/profiles", tags=["Profiles"])
 
 
+async def _sync_user_profile_roles(db: AsyncSession, user_id: int, profile_app_roles):
+    """
+    Synchronise les rôles source='profile' d'un utilisateur avec les app_roles du profil.
+    Préserve les rôles source='manual' ajoutés individuellement.
+    """
+    # Supprimer uniquement les rôles provenant du profil
+    await db.execute(
+        delete(UserAppRole).where(
+            UserAppRole.user_id == user_id,
+            UserAppRole.source == "profile"
+        )
+    )
+    # Recréer les rôles du profil
+    for par in profile_app_roles:
+        uar = UserAppRole(
+            user_id=user_id,
+            app_id=par.app_id,
+            role=par.role,
+            source="profile"
+        )
+        db.add(uar)
+
+
 def _build_profile_response(profile, user_count: int = 0) -> ProfileResponse:
     """Construit une ProfileResponse depuis un ORM Profile"""
     app_roles = []
@@ -226,6 +249,33 @@ async def update_profile(
             )
             db.add(par)
 
+        # Auto-sync : propager les changements aux utilisateurs ayant ce profil
+        await db.flush()  # S'assurer que les nouveaux ProfileAppRole ont un ID
+        result = await db.execute(
+            select(Profile).options(
+                selectinload(Profile.app_roles)
+            ).where(Profile.id == profile_id)
+        )
+        updated_profile = result.scalar_one()
+
+        users_result = await db.execute(
+            select(User).where(User.profile_id == profile_id)
+        )
+        profile_users = users_result.scalars().all()
+
+        for user in profile_users:
+            await _sync_user_profile_roles(db, user.id, updated_profile.app_roles)
+
+        if profile_users:
+            for user in profile_users:
+                notify_event("user_permissions_changed", {
+                    "user_id": user.id,
+                    "username": user.username,
+                    "profile_id": profile_id,
+                    "action": "auto_sync"
+                })
+            logger.info(f"🔄 Auto-sync profil '{profile_data.name or profile.name}' → {len(profile_users)} utilisateur(s)")
+
     await db.commit()
 
     # Recharger
@@ -253,7 +303,7 @@ async def delete_profile(
     db: AsyncSession = Depends(get_db),
     _: User = Depends(get_current_admin)
 ):
-    """Supprime un profil (les users gardent leurs app_roles, juste profile_id=NULL)"""
+    """Supprime un profil. Supprime les rôles source='profile' des utilisateurs concernés, préserve les manuels."""
     result = await db.execute(
         select(Profile).where(Profile.id == profile_id)
     )
@@ -262,8 +312,29 @@ async def delete_profile(
         raise HTTPException(status_code=404, detail="Profil non trouvé")
 
     profile_name = profile.name
+
+    # Supprimer les rôles source='profile' des utilisateurs ayant ce profil
+    users_result = await db.execute(
+        select(User).where(User.profile_id == profile_id)
+    )
+    users = users_result.scalars().all()
+    for user in users:
+        await db.execute(
+            delete(UserAppRole).where(
+                UserAppRole.user_id == user.id,
+                UserAppRole.source == "profile"
+            )
+        )
+
     await db.delete(profile)
     await db.commit()
+
+    for user in users:
+        notify_event("user_permissions_changed", {
+            "user_id": user.id,
+            "username": user.username,
+            "action": "profile_deleted"
+        })
 
     notify_event("profiles_updated", {"action": "deleted", "profile_id": profile_id, "name": profile_name})
     logger.info(f"🗑️ Profil supprimé: {profile_name}")
@@ -279,8 +350,8 @@ async def apply_profile(
     """
     Applique un profil à un ou plusieurs utilisateurs.
     - Assigne profile_id sur les users
-    - Si sync_roles=True : synchronise les user_app_roles avec ceux du profil
-      (remplace TOUS les rôles de l'utilisateur par ceux du profil)
+    - Si sync_roles=True : synchronise les user_app_roles source='profile'
+      (préserve les rôles ajoutés manuellement par l'admin)
     """
     # Charger le profil avec ses app_roles
     result = await db.execute(
@@ -308,18 +379,7 @@ async def apply_profile(
         user.profile_id = profile_id
 
         if request.sync_roles:
-            # Supprimer tous les user_app_roles existants
-            await db.execute(
-                delete(UserAppRole).where(UserAppRole.user_id == user.id)
-            )
-            # Créer les nouveaux basés sur le profil
-            for par in profile.app_roles:
-                uar = UserAppRole(
-                    user_id=user.id,
-                    app_id=par.app_id,
-                    role=par.role
-                )
-                db.add(uar)
+            await _sync_user_profile_roles(db, user.id, profile.app_roles)
 
         updated_count += 1
 
@@ -354,7 +414,7 @@ async def sync_profile(
     """
     Re-synchronise tous les utilisateurs du profil.
     Utile après modification des app_roles du profil.
-    Remplace les user_app_roles de chaque user assigné à ce profil.
+    Ne touche qu'aux rôles source='profile', préserve les rôles manuels.
     """
     # Charger le profil avec ses app_roles
     result = await db.execute(
@@ -380,18 +440,7 @@ async def sync_profile(
 
     synced_count = 0
     for user in users:
-        # Supprimer les user_app_roles existants
-        await db.execute(
-            delete(UserAppRole).where(UserAppRole.user_id == user.id)
-        )
-        # Recréer depuis le profil
-        for par in profile.app_roles:
-            uar = UserAppRole(
-                user_id=user.id,
-                app_id=par.app_id,
-                role=par.role
-            )
-            db.add(uar)
+        await _sync_user_profile_roles(db, user.id, profile.app_roles)
         synced_count += 1
 
     await db.commit()
@@ -423,7 +472,8 @@ async def detach_profile(
 ):
     """
     Détache le profil des utilisateurs spécifiés (profile_id → NULL).
-    Ne touche PAS aux user_app_roles existants.
+    Supprime les rôles source='profile' de ces utilisateurs.
+    Les rôles manuels sont préservés.
     """
     result = await db.execute(
         select(User).where(
@@ -435,8 +485,22 @@ async def detach_profile(
 
     for user in users:
         user.profile_id = None
+        # Supprimer les rôles provenant du profil
+        await db.execute(
+            delete(UserAppRole).where(
+                UserAppRole.user_id == user.id,
+                UserAppRole.source == "profile"
+            )
+        )
 
     await db.commit()
+
+    for user in users:
+        notify_event("user_permissions_changed", {
+            "user_id": user.id,
+            "username": user.username,
+            "action": "profile_detached"
+        })
 
     return {
         "message": f"Profil détaché de {len(users)} utilisateur(s)",

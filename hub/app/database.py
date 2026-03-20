@@ -256,3 +256,22 @@ async def apply_migrations():
                         except Exception as e:
                             logger.warning(f"Migration 009 statement ignoré: {e}")
                 logger.info("✅ Migration 009 appliquée")
+
+        # Vérifier si la migration 010 est nécessaire (source sur user_app_roles)
+        result = await conn.execute(text("""
+            SELECT column_name FROM information_schema.columns 
+            WHERE table_name = 'user_app_roles' AND column_name = 'source'
+        """))
+        if not result.fetchone():
+            logger.info("📦 Application de la migration 010_add_user_app_role_source...")
+            migration_file = migrations_dir / "010_add_user_app_role_source.sql"
+            if migration_file.exists():
+                sql = migration_file.read_text()
+                for statement in sql.split(';'):
+                    statement = statement.strip()
+                    if statement and not statement.startswith('--'):
+                        try:
+                            await conn.execute(text(statement))
+                        except Exception as e:
+                            logger.warning(f"Migration 010 statement ignoré: {e}")
+                logger.info("✅ Migration 010 appliquée")
