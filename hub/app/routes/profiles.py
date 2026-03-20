@@ -23,24 +23,66 @@ router = APIRouter(prefix="/api/profiles", tags=["Profiles"])
 async def _sync_user_profile_roles(db: AsyncSession, user_id: int, profile_app_roles):
     """
     Synchronise les rôles source='profile' d'un utilisateur avec les app_roles du profil.
-    Préserve les rôles source='manual' ajoutés individuellement.
+    Mode additif :
+    - Ajoute les rôles pour les nouvelles apps du profil
+    - Supprime les rôles 'profile' des apps retirées du profil
+    - Met à jour le rôle si changé dans le profil
+    - Ne touche JAMAIS aux rôles source='manual'
+    - Ne crée pas de doublon si l'app est déjà assignée manuellement
     """
-    # Supprimer uniquement les rôles provenant du profil
-    await db.execute(
-        delete(UserAppRole).where(
-            UserAppRole.user_id == user_id,
-            UserAppRole.source == "profile"
-        )
+    # Récupérer les rôles actuels de l'utilisateur
+    result = await db.execute(
+        select(UserAppRole).where(UserAppRole.user_id == user_id)
     )
-    # Recréer les rôles du profil
-    for par in profile_app_roles:
-        uar = UserAppRole(
-            user_id=user_id,
-            app_id=par.app_id,
-            role=par.role,
-            source="profile"
+    current_roles = result.scalars().all()
+
+    # Indexer par (app_id, source)
+    current_by_app = {}  # app_id -> {source: UserAppRole}
+    for role in current_roles:
+        if role.app_id not in current_by_app:
+            current_by_app[role.app_id] = {}
+        current_by_app[role.app_id][role.source] = role
+
+    # Apps cibles du profil
+    profile_app_ids = {par.app_id for par in profile_app_roles}
+    current_profile_app_ids = {
+        app_id for app_id, sources in current_by_app.items()
+        if "profile" in sources
+    }
+
+    # 1. Supprimer les rôles 'profile' pour les apps retirées du profil
+    apps_to_remove = current_profile_app_ids - profile_app_ids
+    if apps_to_remove:
+        await db.execute(
+            delete(UserAppRole).where(
+                UserAppRole.user_id == user_id,
+                UserAppRole.source == "profile",
+                UserAppRole.app_id.in_(apps_to_remove)
+            )
         )
-        db.add(uar)
+
+    # 2. Ajouter ou mettre à jour les rôles du profil
+    for par in profile_app_roles:
+        app_sources = current_by_app.get(par.app_id, {})
+
+        # Si l'app est déjà assignée manuellement, ne pas créer de doublon
+        if "manual" in app_sources:
+            continue
+
+        if "profile" in app_sources:
+            # Mettre à jour le rôle si changé
+            existing = app_sources["profile"]
+            if existing.role != par.role:
+                existing.role = par.role
+        else:
+            # Nouvelle app du profil → ajouter
+            uar = UserAppRole(
+                user_id=user_id,
+                app_id=par.app_id,
+                role=par.role,
+                source="profile"
+            )
+            db.add(uar)
 
 
 def _build_profile_response(profile, user_count: int = 0) -> ProfileResponse:

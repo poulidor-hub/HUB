@@ -5157,9 +5157,6 @@ function renderProfilesList(profiles) {
                         <button class="btn btn-outline-primary" onclick="showApplyProfileModal(${profile.id})" title="Appliquer à des utilisateurs">
                             <i class="bi bi-person-plus"></i>
                         </button>
-                        <button class="btn btn-outline-info" onclick="syncProfileUsers(${profile.id}, '${escapeHtml(profile.name)}')" title="Synchroniser les utilisateurs">
-                            <i class="bi bi-arrow-repeat"></i>
-                        </button>
                         <button class="btn btn-outline-danger" onclick="deleteProfile(${profile.id}, '${escapeHtml(profile.name)}')" title="Supprimer">
                             <i class="bi bi-trash"></i>
                         </button>
@@ -5350,17 +5347,7 @@ async function deleteProfile(id, name) {
     }
 }
 
-async function syncProfileUsers(id, name) {
-    if (!confirm(`Synchroniser tous les utilisateurs du profil "${name}" ?\n\nLeurs accès seront remis en conformité avec le profil.`)) return;
-    
-    try {
-        const result = await api.syncProfile(id);
-        showToast('Succès', result.message, 'success');
-        await loadUsersPageData();
-    } catch (error) {
-        showToast('Erreur', error.message, 'danger');
-    }
-}
+
 
 async function showApplyProfileModal(profileId) {
     if (!applyProfileModal) {
