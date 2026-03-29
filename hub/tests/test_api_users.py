@@ -6,7 +6,7 @@ import io
 from httpx import AsyncClient
 
 from app.auth import create_access_token, get_password_hash
-from app.models import User, Profile
+from app.models import User, Profile, Application, UserAppRole
 from tests.conftest import get_auth_header
 
 
@@ -267,6 +267,159 @@ class TestUsersEndpoints:
         
         # Le endpoint peut ne pas exister, donc on vérifie juste le code
         assert response.status_code in [200, 404]  # 404 si endpoint non implémenté
+
+
+class TestM2MBulkUserRoles:
+    """Tests pour l'endpoint M2M de récupération bulk des rôles utilisateurs"""
+
+    async def _get_service_account_token(self, client: AsyncClient, service_account) -> str:
+        response = await client.post(
+            "/api/auth/token",
+            data={
+                "grant_type": "client_credentials",
+                "client_id": service_account.client_id,
+                "client_secret": "secret123"
+            }
+        )
+        assert response.status_code == 200
+        return response.json()["access_token"]
+
+    @pytest.mark.asyncio
+    async def test_m2m_bulk_roles_returns_only_active_and_allowed_apps(
+        self,
+        client: AsyncClient,
+        async_session,
+        service_account,
+        test_user: User,
+        test_app: Application,
+    ):
+        """Le endpoint M2M retourne uniquement les apps actives autorisées pour le SA"""
+        from app.models import service_account_app_access
+
+        profile = Profile(name="Profil Hub Vision", description="Test", color="#123456")
+        async_session.add(profile)
+        await async_session.commit()
+        await async_session.refresh(profile)
+
+        test_user.profile_id = profile.id
+        await async_session.commit()
+
+        second_user = User(
+            username="followed2",
+            email="followed2@example.com",
+            hashed_password=get_password_hash("testpass123"),
+            is_active=True,
+            is_admin=False,
+        )
+
+        hidden_app = Application(
+            name="Hidden App",
+            slug="hidden-app",
+            api_url="http://localhost:8010",
+            is_active=True,
+            requires_auth=True,
+        )
+        inactive_allowed_app = Application(
+            name="Inactive Allowed",
+            slug="inactive-allowed",
+            api_url="http://localhost:8011",
+            is_active=False,
+            requires_auth=True,
+        )
+
+        async_session.add_all([second_user, hidden_app, inactive_allowed_app])
+        await async_session.commit()
+        await async_session.refresh(second_user)
+        await async_session.refresh(hidden_app)
+        await async_session.refresh(inactive_allowed_app)
+
+        # Le service account a accès à test_app via fixture + à inactive_allowed_app
+        await async_session.execute(
+            service_account_app_access.insert().values(
+                service_account_id=service_account.id,
+                app_id=inactive_allowed_app.id,
+            )
+        )
+
+        async_session.add_all([
+            UserAppRole(user_id=test_user.id, app_id=test_app.id, role="manager"),
+            UserAppRole(user_id=test_user.id, app_id=hidden_app.id, role="admin"),
+            UserAppRole(user_id=test_user.id, app_id=inactive_allowed_app.id, role="viewer"),
+            UserAppRole(user_id=second_user.id, app_id=test_app.id, role="user"),
+        ])
+        await async_session.commit()
+
+        token = await self._get_service_account_token(client, service_account)
+
+        response = await client.post(
+            "/api/users/m2m/app-roles/bulk",
+            json={
+                "identifiers": [
+                    test_user.username,
+                    second_user.username,
+                    "unknown-user",
+                ]
+            },
+            headers=get_auth_header(token),
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+
+        assert data["unknown-user"] == {"profile": None, "apps": []}
+
+        assert data[test_user.username]["profile"] == {
+            "id": profile.id,
+            "name": "Profil Hub Vision",
+            "color": "#123456",
+        }
+        assert data[test_user.username]["apps"] == [
+            {"app_slug": "test-app", "role": "manager"}
+        ]
+
+        assert data[second_user.username]["profile"] is None
+        assert data[second_user.username]["apps"] == [
+            {"app_slug": "test-app", "role": "user"}
+        ]
+
+    @pytest.mark.asyncio
+    async def test_m2m_bulk_roles_forbidden_for_human_user(self, client: AsyncClient, test_user: User):
+        """Un token utilisateur ne peut pas appeler le endpoint M2M"""
+        token, _, _ = create_access_token(
+            username=test_user.username,
+            apps={},
+        )
+
+        response = await client.post(
+            "/api/users/m2m/app-roles/bulk",
+            json={"identifiers": [test_user.username]},
+            headers=get_auth_header(token),
+        )
+
+        assert response.status_code == 403
+
+    @pytest.mark.asyncio
+    async def test_m2m_bulk_roles_normalizes_and_deduplicates_identifiers(
+        self,
+        client: AsyncClient,
+        service_account,
+        test_user: User,
+    ):
+        """Les identifiants sont trim et dédupliqués avant traitement"""
+        token = await self._get_service_account_token(client, service_account)
+
+        response = await client.post(
+            "/api/users/m2m/app-roles/bulk",
+            json={"identifiers": [f" {test_user.username} ", test_user.username]},
+            headers=get_auth_header(token),
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+
+        assert list(data.keys()) == [test_user.username]
+        assert data[test_user.username]["profile"] is None
+        assert isinstance(data[test_user.username]["apps"], list)
 
 
 class TestCsvImport:

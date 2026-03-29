@@ -249,3 +249,70 @@ Intégrez le push dans le `lifespan` de votre app pour que la spec soit toujours
 | `/api/apps/me/openapi` | `POST` | Pousser la spec OpenAPI (header `X-Slug` requis) |
 | `/api/apps/register` | `POST` | Auto-registration avec champ optionnel `api_endpoints` |
 | `/api/discovery/apps/{slug}/openapi` | `GET` | Lire la spec d'une app (admin, utilisé par le Discovery Explorer) |
+
+---
+
+## Endpoint M2M exemple-app (bulk rôles Hub)
+
+Pour synchroniser les rôles Hub d'une liste d'employés suivis, utilisez l'endpoint bulk ci-dessous.
+
+### Endpoint
+
+- `POST /api/users/m2m/app-roles/bulk`
+
+### Authentification
+
+- **Obligatoire**: token M2M (`grant_type=client_credentials`)
+- Les tokens utilisateurs humains sont refusés (`403`)
+
+### Requête
+
+```json
+{
+    "identifiers": ["nomad1", "nomad2", "nomad3"]
+}
+```
+
+Contraintes:
+
+- `identifiers` requis
+- min `1`, max `500` identifiants
+- trim automatique des valeurs
+- déduplication automatique
+
+### Réponse
+
+La réponse est un dictionnaire dont la clé est l'identifiant demandé (nomAD/username Hub), avec le profil Hub et les apps/roles visibles :
+
+```json
+{
+    "nomad1": {
+        "profile": {"id": 2, "name": "Profil Vision", "color": "#0d6efd"},
+        "apps": [
+            {"app_slug": "salarie", "role": "manager"},
+            {"app_slug": "telecom", "role": "viewer"}
+        ]
+    },
+    "nomad2": {
+        "profile": null,
+        "apps": []
+    },
+    "nomad3": {
+        "profile": null,
+        "apps": [
+            {"app_slug": "salarie", "role": "user"}
+        ]
+    }
+}
+```
+
+`profile = null` signifie qu'aucun profil Hub n'est assigné pour cet identifiant.
+
+`apps = []` signifie qu'aucun rôle visible n'est retourné pour cet identifiant.
+
+### Périmètre de sécurité appliqué
+
+- uniquement les **applications actives** (`is_active=true`)
+- uniquement les applications autorisées pour le **service account appelant**
+
+Cela limite la surface d'exposition et évite un export global de tous les utilisateurs Hub.

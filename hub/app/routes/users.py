@@ -3,7 +3,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, delete, func, or_
 from sqlalchemy.orm import selectinload
-from typing import List, Optional
+from typing import List, Optional, Dict, Union
 from pydantic import BaseModel
 import math
 import csv
@@ -12,7 +12,7 @@ import io
 from app.database import get_db
 from app.routes.events import notify_event, notify_stats_update
 from app.models import (
-    User, Application, UserAppRole,
+    User, Application, UserAppRole, ServiceAccount,
     AppRole, DEFAULT_ROLES, Profile
 )
 from app.schemas import (
@@ -22,9 +22,10 @@ from app.schemas import (
     BulkUsersDeleteRequest, BulkUsersDeleteResponse, BulkUserDeleteResult,
     BulkAppRolesAssignRequest, BulkAppRolesAssignResponse, BulkAppRoleAssignResult,
     BulkRemoveAppAccessRequest, BulkRemoveAppAccessResponse, BulkRemoveAppAccessResult,
-    CsvUserPreviewLine, CsvPreviewResponse, ProfileBriefResponse
+    CsvUserPreviewLine, CsvPreviewResponse, ProfileBriefResponse,
+    M2MObservedUsersRolesRequest, M2MObservedAppRole, M2MObservedUserData
 )
-from app.auth import get_current_admin, get_password_hash, revoke_all_user_tokens
+from app.auth import get_current_admin, get_current_entity, get_password_hash, revoke_all_user_tokens
 
 router = APIRouter(prefix="/api/users", tags=["Users"])
 
@@ -38,6 +39,79 @@ class UserAppRoleAssignment(BaseModel):
 class UserAppsUpdate(BaseModel):
     """Liste des applications avec rôles pour un utilisateur"""
     assignments: List[UserAppRoleAssignment]
+
+
+@router.post("/m2m/app-roles/bulk", response_model=Dict[str, M2MObservedUserData])
+async def m2m_bulk_user_app_roles(
+    request: M2MObservedUsersRolesRequest,
+    db: AsyncSession = Depends(get_db),
+    current_entity: Union[User, ServiceAccount] = Depends(get_current_entity)
+):
+    """
+    Retourne les rôles applicatifs observables pour une liste d'identifiants utilisateur.
+
+    Endpoint réservé aux Service Accounts (authentification M2M) et limité :
+    - aux applications actives
+    - aux applications autorisées pour le service account appelant
+    """
+    if isinstance(current_entity, User):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Cet endpoint est réservé aux Service Accounts (authentification M2M)"
+        )
+
+    identifiers: List[str] = []
+    seen = set()
+    for identifier in request.identifiers:
+        if identifier in seen:
+            continue
+        seen.add(identifier)
+        identifiers.append(identifier)
+
+    response_map: Dict[str, M2MObservedUserData] = {
+        identifier: M2MObservedUserData(profile=None, apps=[])
+        for identifier in identifiers
+    }
+
+    if not identifiers:
+        return response_map
+
+    users_result = await db.execute(
+        select(User.username, Profile.id, Profile.name, Profile.color)
+        .outerjoin(Profile, User.profile_id == Profile.id)
+        .where(User.username.in_(identifiers))
+    )
+    for username, profile_id, profile_name, profile_color in users_result.all():
+        if profile_id is None:
+            continue
+        response_map[username].profile = ProfileBriefResponse(
+            id=profile_id,
+            name=profile_name,
+            color=profile_color or "#6c757d"
+        )
+
+    allowed_app_slugs = {
+        app.slug for app in current_entity.applications
+    }
+    if not allowed_app_slugs:
+        return response_map
+
+    result = await db.execute(
+        select(User.username, Application.slug, UserAppRole.role)
+        .join(UserAppRole, User.id == UserAppRole.user_id)
+        .join(Application, Application.id == UserAppRole.app_id)
+        .where(User.username.in_(identifiers))
+        .where(Application.is_active == True)
+        .where(Application.slug.in_(allowed_app_slugs))
+        .order_by(User.username, Application.slug)
+    )
+
+    for username, app_slug, role in result.all():
+        response_map[username].apps.append(
+            M2MObservedAppRole(app_slug=app_slug, role=role)
+        )
+
+    return response_map
 
 
 @router.get("/")

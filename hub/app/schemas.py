@@ -1218,6 +1218,34 @@ class BulkRemoveAppAccessResponse(BaseModel):
     results: List[BulkRemoveAppAccessResult]
 
 
+class M2MObservedUsersRolesRequest(BaseModel):
+    """Requête M2M pour récupérer les rôles applicatifs par identifiant utilisateur"""
+    identifiers: List[str] = Field(..., min_length=1, max_length=500)
+
+    @field_validator("identifiers")
+    @classmethod
+    def validate_identifiers(cls, value: List[str]) -> List[str]:
+        cleaned = []
+        for item in value:
+            normalized = (item or "").strip()
+            if not normalized:
+                raise ValueError("Chaque identifiant doit être non vide")
+            cleaned.append(normalized)
+        return cleaned
+
+
+class M2MObservedAppRole(BaseModel):
+    """Rôle applicatif observé pour un utilisateur"""
+    app_slug: str
+    role: str
+
+
+class M2MObservedUserData(BaseModel):
+    """Données observées pour un utilisateur Hub"""
+    profile: Optional[ProfileBriefResponse] = None
+    apps: List[M2MObservedAppRole] = []
+
+
 # ─── CSV Import Schemas ───
 
 class CsvUserPreviewLine(BaseModel):
