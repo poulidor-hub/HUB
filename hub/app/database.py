@@ -59,288 +59,76 @@ def _strip_sql_comments(sql_block: str) -> str:
 
 async def apply_migrations():
     """
-    Applique les migrations SQL si nécessaires.
-    Vérifie d'abord si les colonnes existent avant d'appliquer.
+    Applique automatiquement les migrations SQL depuis le dossier migrations/.
+    Utilise une table schema_migrations pour suivre les migrations appliquées.
+    Les fichiers doivent suivre le format NNN_description.sql (ex: 001_add_column.sql).
     """
     migrations_dir = Path("/code/migrations")
     if not migrations_dir.exists():
-        # Mode local
+        # Mode local (hors Docker)
         migrations_dir = Path(__file__).parent.parent / "migrations"
-    
+
     if not migrations_dir.exists():
         logger.warning("⚠️ Dossier migrations non trouvé")
         return
-    
+
+    # Lister et trier les fichiers de migration
+    migration_files = sorted(migrations_dir.glob("*.sql"))
+    if not migration_files:
+        return
+
     async with engine.begin() as conn:
-        # Vérifier si la migration 001 est nécessaire (must_change_password)
-        result = await conn.execute(text("""
-            SELECT column_name FROM information_schema.columns 
-            WHERE table_name = 'users' AND column_name = 'must_change_password'
+        # Créer la table de suivi si elle n'existe pas
+        await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS schema_migrations (
+                version VARCHAR(10) PRIMARY KEY,
+                filename VARCHAR(255) NOT NULL,
+                applied_at TIMESTAMP DEFAULT NOW()
+            )
         """))
-        if not result.fetchone():
-            logger.info("📦 Application de la migration 001_add_must_change_password...")
-            migration_file = migrations_dir / "001_add_must_change_password.sql"
-            if migration_file.exists():
-                sql = migration_file.read_text()
-                for statement in sql.split(';'):
-                    statement = _strip_sql_comments(statement)
-                    if statement:
-                        try:
-                            await conn.execute(text(statement))
-                        except Exception as e:
-                            logger.warning(f"Migration 001 statement ignoré: {e}")
-                logger.info("✅ Migration 001 appliquée")
-        
-        # Vérifier si la migration 002 est nécessaire (approval_status)
-        result = await conn.execute(text("""
-            SELECT column_name FROM information_schema.columns 
-            WHERE table_name = 'applications' AND column_name = 'approval_status'
-        """))
-        if not result.fetchone():
-            logger.info("📦 Application de la migration 002_add_app_approval_status...")
-            migration_file = migrations_dir / "002_add_app_approval_status.sql"
-            if migration_file.exists():
-                sql = migration_file.read_text()
-                for statement in sql.split(';'):
-                    statement = _strip_sql_comments(statement)
-                    if statement:
-                        try:
-                            await conn.execute(text(statement))
-                        except Exception as e:
-                            logger.warning(f"Migration 002 statement ignoré: {e}")
-                logger.info("✅ Migration 002 appliquée")
-        
-        # Vérifier si la migration 003 est nécessaire (enrichissement audit_logs + error_logs)
-        result = await conn.execute(text("""
-            SELECT column_name FROM information_schema.columns 
-            WHERE table_name = 'audit_logs' AND column_name = 'request_id'
-        """))
-        if not result.fetchone():
-            logger.info("📦 Application de la migration 003_add_audit_enrichment...")
-            migration_file = migrations_dir / "003_add_audit_enrichment.sql"
-            if migration_file.exists():
-                sql = migration_file.read_text()
-                for statement in sql.split(';'):
-                    statement = _strip_sql_comments(statement)
-                    if statement:
-                        try:
-                            await conn.execute(text(statement))
-                        except Exception as e:
-                            logger.warning(f"Migration 003 statement ignoré: {e}")
-                logger.info("✅ Migration 003 appliquée")
-        
-        # Vérifier si la migration 004 est nécessaire (can_change_password)
-        result = await conn.execute(text("""
-            SELECT column_name FROM information_schema.columns 
-            WHERE table_name = 'users' AND column_name = 'can_change_password'
-        """))
-        if not result.fetchone():
-            logger.info("📦 Application de la migration 004_add_can_change_password...")
-            migration_file = migrations_dir / "004_add_can_change_password.sql"
-            if migration_file.exists():
-                sql = migration_file.read_text()
-                for statement in sql.split(';'):
-                    statement = _strip_sql_comments(statement)
-                    if statement:
-                        try:
-                            await conn.execute(text(statement))
-                        except Exception as e:
-                            logger.warning(f"Migration 004 statement ignoré: {e}")
-                logger.info("✅ Migration 004 appliquée")
-        
-        # Vérifier si la migration 005 est nécessaire (remote app fields)
-        result = await conn.execute(text("""
-            SELECT column_name FROM information_schema.columns 
-            WHERE table_name = 'applications' AND column_name = 'is_remote'
-        """))
-        if not result.fetchone():
-            logger.info("📦 Application de la migration 005_add_remote_app_fields...")
-            migration_file = migrations_dir / "005_add_remote_app_fields.sql"
-            if migration_file.exists():
-                sql = migration_file.read_text()
-                for statement in sql.split(';'):
-                    statement = _strip_sql_comments(statement)
-                    if statement:
-                        try:
-                            await conn.execute(text(statement))
-                        except Exception as e:
-                            logger.warning(f"Migration 005 statement ignoré: {e}")
-                logger.info("✅ Migration 005 appliquée")
-        
-        # Vérifier si la migration 006 est nécessaire (app_backups table + scheduling fields)
-        result = await conn.execute(text("""
-            SELECT table_name FROM information_schema.tables 
-            WHERE table_schema = 'public' AND table_name = 'app_backups'
-        """))
-        if not result.fetchone():
-            logger.info("📦 Application de la migration 006_add_app_backups...")
-            migration_file = migrations_dir / "006_add_app_backups.sql"
-            if migration_file.exists():
-                sql = migration_file.read_text()
-                for statement in sql.split(';'):
-                    statement = _strip_sql_comments(statement)
-                    if statement:
-                        try:
-                            await conn.execute(text(statement))
-                        except Exception as e:
-                            logger.warning(f"Migration 006 statement ignoré: {e}")
-                logger.info("✅ Migration 006 appliquée")
-        
-        # Vérifier si la migration 007 est nécessaire (preserve backups on app delete)
-        # On vérifie si la contrainte FK utilise SET NULL (au lieu de CASCADE)
-        result = await conn.execute(text("""
-            SELECT confdeltype FROM pg_constraint 
-            WHERE conname = 'app_backups_app_id_fkey'
-        """))
-        row = result.fetchone()
-        if row and row[0] != 'n':  # 'n' = SET NULL, 'c' = CASCADE
-            logger.info("📦 Application de la migration 007_preserve_backups_on_app_delete...")
-            migration_file = migrations_dir / "007_preserve_backups_on_app_delete.sql"
-            if migration_file.exists():
-                sql = migration_file.read_text()
-                for statement in sql.split(';'):
-                    statement = _strip_sql_comments(statement)
-                    if statement:
-                        try:
-                            await conn.execute(text(statement))
-                        except Exception as e:
-                            logger.warning(f"Migration 007 statement ignoré: {e}")
-                logger.info("✅ Migration 007 appliquée")
-        
-        # Vérifier si la migration 008 est nécessaire (profiles)
-        result = await conn.execute(text("""
-            SELECT table_name FROM information_schema.tables 
-            WHERE table_schema = 'public' AND table_name = 'profiles'
-        """))
-        if not result.fetchone():
-            logger.info("📦 Application de la migration 008_add_profiles...")
-            migration_file = migrations_dir / "008_add_profiles.sql"
-            if migration_file.exists():
-                sql = migration_file.read_text()
-                for statement in sql.split(';'):
-                    statement = _strip_sql_comments(statement)
-                    if statement:
-                        try:
-                            await conn.execute(text(statement))
-                        except Exception as e:
-                            logger.warning(f"Migration 008 statement ignoré: {e}")
-                logger.info("✅ Migration 008 appliquée")
-        else:
-            # Vérifier si la colonne profile_id existe sur users
-            # (sauf si migration 011 multi-profils a déjà supprimé cette colonne)
-            up_check = await conn.execute(text("""
-                SELECT table_name FROM information_schema.tables 
-                WHERE table_schema = 'public' AND table_name = 'user_profiles'
+
+        # Vérifier si c'est une migration depuis l'ancien système manuel
+        result = await conn.execute(text("SELECT COUNT(*) FROM schema_migrations"))
+        count = result.scalar()
+
+        if count == 0:
+            # Vérifier si la base a déjà des tables (upgrade depuis le système manuel)
+            result = await conn.execute(text("""
+                SELECT table_name FROM information_schema.tables
+                WHERE table_schema = 'public' AND table_name = 'users'
             """))
-            if not up_check.fetchone():
-                result = await conn.execute(text("""
-                    SELECT column_name FROM information_schema.columns 
-                    WHERE table_name = 'users' AND column_name = 'profile_id'
-                """))
-                if not result.fetchone():
-                    logger.info("📦 Ajout de la colonne profile_id sur users...")
+            if result.fetchone():
+                # BD existante → marquer toutes les migrations actuelles comme appliquées
+                logger.info("📦 Détection d'une BD existante, indexation des migrations déjà appliquées...")
+                for mf in migration_files:
+                    version = mf.name.split('_')[0]
+                    await conn.execute(text(
+                        "INSERT INTO schema_migrations (version, filename) VALUES (:v, :f) ON CONFLICT DO NOTHING"
+                    ), {"v": version, "f": mf.name})
+                logger.info(f"✅ {len(migration_files)} migrations indexées")
+                return
+
+        # Récupérer les migrations déjà appliquées
+        result = await conn.execute(text("SELECT version FROM schema_migrations"))
+        applied = {row[0] for row in result.fetchall()}
+
+        # Appliquer les nouvelles migrations dans l'ordre
+        for mf in migration_files:
+            version = mf.name.split('_')[0]
+            if version in applied:
+                continue
+
+            logger.info(f"📦 Application de la migration {mf.name}...")
+            sql = mf.read_text()
+            for statement in sql.split(';'):
+                statement = _strip_sql_comments(statement)
+                if statement:
                     try:
-                        await conn.execute(text(
-                            "ALTER TABLE users ADD COLUMN IF NOT EXISTS profile_id INTEGER REFERENCES profiles(id) ON DELETE SET NULL"
-                        ))
-                        await conn.execute(text(
-                            "CREATE INDEX IF NOT EXISTS idx_users_profile_id ON users(profile_id)"
-                        ))
-                        logger.info("✅ Colonne profile_id ajoutée")
+                        await conn.execute(text(statement))
                     except Exception as e:
-                        logger.warning(f"Ajout profile_id ignoré: {e}")
+                        logger.warning(f"Migration {mf.name} statement ignoré: {e}")
 
-        # Vérifier si la migration 009 est nécessaire (api_endpoints)
-        result = await conn.execute(text("""
-            SELECT column_name FROM information_schema.columns 
-            WHERE table_name = 'applications' AND column_name = 'api_endpoints'
-        """))
-        if not result.fetchone():
-            logger.info("📦 Application de la migration 009_add_api_endpoints...")
-            migration_file = migrations_dir / "009_add_api_endpoints.sql"
-            if migration_file.exists():
-                sql = migration_file.read_text()
-                for statement in sql.split(';'):
-                    statement = _strip_sql_comments(statement)
-                    if statement:
-                        try:
-                            await conn.execute(text(statement))
-                        except Exception as e:
-                            logger.warning(f"Migration 009 statement ignoré: {e}")
-                logger.info("✅ Migration 009 appliquée")
-
-        # Vérifier si la migration 010 est nécessaire (source sur user_app_roles)
-        result = await conn.execute(text("""
-            SELECT column_name FROM information_schema.columns 
-            WHERE table_name = 'user_app_roles' AND column_name = 'source'
-        """))
-        if not result.fetchone():
-            logger.info("📦 Application de la migration 010_add_user_app_role_source...")
-            migration_file = migrations_dir / "010_add_user_app_role_source.sql"
-            if migration_file.exists():
-                sql = migration_file.read_text()
-                for statement in sql.split(';'):
-                    statement = _strip_sql_comments(statement)
-                    if statement:
-                        try:
-                            await conn.execute(text(statement))
-                        except Exception as e:
-                            logger.warning(f"Migration 010 statement ignoré: {e}")
-                logger.info("✅ Migration 010 appliquée")
-
-        # Vérifier si la migration 011 est nécessaire (multi-profils user_profiles)
-        result = await conn.execute(text("""
-            SELECT table_name FROM information_schema.tables 
-            WHERE table_schema = 'public' AND table_name = 'user_profiles'
-        """))
-        if not result.fetchone():
-            logger.info("📦 Application de la migration 011_multi_profiles...")
-            migration_file = migrations_dir / "011_multi_profiles.sql"
-            if migration_file.exists():
-                sql = migration_file.read_text()
-                for statement in sql.split(';'):
-                    statement = _strip_sql_comments(statement)
-                    if statement:
-                        try:
-                            await conn.execute(text(statement))
-                        except Exception as e:
-                            logger.warning(f"Migration 011 statement ignoré: {e}")
-                logger.info("✅ Migration 011 appliquée")
-
-        # Vérifier si la migration 012 est nécessaire (category sur applications)
-        result = await conn.execute(text("""
-            SELECT column_name FROM information_schema.columns 
-            WHERE table_name = 'applications' AND column_name = 'category'
-        """))
-        if not result.fetchone():
-            logger.info("📦 Application de la migration 012_add_app_categories...")
-            migration_file = migrations_dir / "012_add_app_categories.sql"
-            if migration_file.exists():
-                sql = migration_file.read_text()
-                for statement in sql.split(';'):
-                    statement = _strip_sql_comments(statement)
-                    if statement:
-                        try:
-                            await conn.execute(text(statement))
-                        except Exception as e:
-                            logger.warning(f"Migration 012 statement ignoré: {e}")
-                logger.info("✅ Migration 012 appliquée")
-
-        # Vérifier si la migration 013 est nécessaire (user_favorites)
-        result = await conn.execute(text("""
-            SELECT table_name FROM information_schema.tables 
-            WHERE table_schema = 'public' AND table_name = 'user_favorites'
-        """))
-        if not result.fetchone():
-            logger.info("📦 Application de la migration 013_add_user_favorites...")
-            migration_file = migrations_dir / "013_add_user_favorites.sql"
-            if migration_file.exists():
-                sql = migration_file.read_text()
-                for statement in sql.split(';'):
-                    statement = _strip_sql_comments(statement)
-                    if statement:
-                        try:
-                            await conn.execute(text(statement))
-                        except Exception as e:
-                            logger.warning(f"Migration 013 statement ignoré: {e}")
-                logger.info("✅ Migration 013 appliquée")
+            await conn.execute(text(
+                "INSERT INTO schema_migrations (version, filename) VALUES (:v, :f)"
+            ), {"v": version, "f": mf.name})
+            logger.info(f"✅ Migration {mf.name} appliquée")

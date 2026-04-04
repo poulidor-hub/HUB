@@ -761,8 +761,12 @@ async def create_app(
     
     frontend_url = None
     callback_url = None
+    frontend_https_port = getattr(app_data, 'frontend_https_port', None)
     if app_data.frontend_port:
-        frontend_url = f"http://{host}:{app_data.frontend_port}"
+        if frontend_https_port:
+            frontend_url = f"https://{host}:{frontend_https_port}"
+        else:
+            frontend_url = f"http://{host}:{app_data.frontend_port}"
         callback_url = f"{frontend_url}/callback"
     
     # Créer l'application avec les URLs construites
@@ -775,6 +779,7 @@ async def create_app(
         api_url=api_url,
         frontend_url=frontend_url,
         callback_url=callback_url,
+        frontend_https_port=frontend_https_port,
         requires_auth=app_data.requires_auth,
         is_shared_service=app_data.is_shared_service
     )
@@ -969,8 +974,12 @@ async def register_app(
                 logger.info(f"🔄 Mise à jour api_url: {old_value} → {new_api_url}")
             
             # Mettre à jour frontend URL si port fourni
+            frontend_https_port = getattr(app_data, 'frontend_https_port', None)
             if app_data.frontend_port:
-                new_frontend_url = f"http://{host}:{app_data.frontend_port}"
+                if frontend_https_port:
+                    new_frontend_url = f"https://{host}:{frontend_https_port}"
+                else:
+                    new_frontend_url = f"http://{host}:{app_data.frontend_port}"
             else:
                 new_frontend_url = None
             
@@ -980,6 +989,13 @@ async def register_app(
                 existing_app.callback_url = f"{new_frontend_url}/callback"
                 updated_fields.append(f"frontend_url: {old_value} → {new_frontend_url}")
                 logger.info(f"🔄 Mise à jour frontend_url: {old_value} → {new_frontend_url}")
+            
+            # Mettre à jour frontend_https_port
+            if existing_app.frontend_https_port != frontend_https_port:
+                old_https_port = existing_app.frontend_https_port
+                existing_app.frontend_https_port = frontend_https_port
+                updated_fields.append(f"frontend_https_port: {old_https_port} → {frontend_https_port}")
+                logger.info(f"🔄 Mise à jour frontend_https_port: {old_https_port} → {frontend_https_port}")
             
             # Mettre à jour is_shared_service si différent
             if existing_app.is_shared_service != app_data.is_shared:
@@ -1080,8 +1096,12 @@ async def register_app(
     api_url = f"http://{host}:{app_data.api_port}"
     
     # Construire l'URL frontend si port fourni
+    frontend_https_port = getattr(app_data, 'frontend_https_port', None)
     if app_data.frontend_port:
-        frontend_url = f"http://{host}:{app_data.frontend_port}"
+        if frontend_https_port:
+            frontend_url = f"https://{host}:{frontend_https_port}"
+        else:
+            frontend_url = f"http://{host}:{app_data.frontend_port}"
     else:
         frontend_url = None
     callback_url = f"{frontend_url}/callback" if frontend_url else None
@@ -1103,6 +1123,7 @@ async def register_app(
         api_url=api_url,
         frontend_url=frontend_url,
         callback_url=callback_url,
+        frontend_https_port=frontend_https_port,
         requires_auth=True,
         is_shared_service=app_data.is_shared,  # Permet l'accès M2M si True
         is_remote=is_remote,  # Marquer comme app distante si custom_host fourni
@@ -1284,8 +1305,12 @@ async def admin_auto_register_app(
             updated_fields.append(f"api_url: {old_value} → {new_api_url}")
         
         # Mettre à jour frontend URL si port fourni
+        frontend_https_port = getattr(app_data, 'frontend_https_port', None)
         if app_data.frontend_port:
-            new_frontend_url = f"http://{host}:{app_data.frontend_port}"
+            if frontend_https_port:
+                new_frontend_url = f"https://{host}:{frontend_https_port}"
+            else:
+                new_frontend_url = f"http://{host}:{app_data.frontend_port}"
         else:
             new_frontend_url = None
         
@@ -1294,6 +1319,12 @@ async def admin_auto_register_app(
             existing_app.frontend_url = new_frontend_url
             existing_app.callback_url = f"{new_frontend_url}/callback"
             updated_fields.append(f"frontend_url: {old_value} → {new_frontend_url}")
+        
+        # Mettre à jour frontend_https_port
+        if existing_app.frontend_https_port != frontend_https_port:
+            old_https_port = existing_app.frontend_https_port
+            existing_app.frontend_https_port = frontend_https_port
+            updated_fields.append(f"frontend_https_port: {old_https_port} → {frontend_https_port}")
         
         # Mettre à jour le nom si fourni et différent
         if app_data.name and existing_app.name != app_data.name:
@@ -1357,8 +1388,12 @@ async def admin_auto_register_app(
     api_url = f"http://{host}:{app_data.api_port}"
     
     # Construire l'URL frontend si port fourni
+    frontend_https_port = getattr(app_data, 'frontend_https_port', None)
     if app_data.frontend_port:
-        frontend_url = f"http://{host}:{app_data.frontend_port}"
+        if frontend_https_port:
+            frontend_url = f"https://{host}:{frontend_https_port}"
+        else:
+            frontend_url = f"http://{host}:{app_data.frontend_port}"
     else:
         frontend_url = None
     callback_url = f"{frontend_url}/callback" if frontend_url else None
@@ -1370,6 +1405,7 @@ async def admin_auto_register_app(
         api_url=api_url,
         frontend_url=frontend_url,
         callback_url=callback_url,
+        frontend_https_port=frontend_https_port,
         requires_auth=True,
         is_shared_service=app_data.is_shared  # Permet l'accès M2M si True
     )

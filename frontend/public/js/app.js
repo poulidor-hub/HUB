@@ -1321,10 +1321,6 @@ async function openApp(slug, frontendUrl) {
         return;
     }
 
-    // Toujours utiliser HTTP pour la redirection frontend
-    // (les apps gèrent elles-mêmes la redirection HTTPS si nécessaire)
-    frontendUrl = frontendUrl.replace(/^https:\/\//i, 'http://');
-
     // Nettoyer les références aux fenêtres déjà fermées
     cleanupClosedWindows();
 

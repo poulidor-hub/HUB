@@ -220,17 +220,6 @@ class AppBase(BaseModel):
     callback_url: Optional[str] = None
     requires_auth: bool = True
 
-    @field_validator('frontend_url', mode='before')
-    @classmethod
-    def normalize_frontend_url_to_http(cls, v):
-        """Normalise frontend_url en HTTP.
-        
-        Les applications gèrent elles-mêmes la redirection HTTP→HTTPS,
-        le Hub ne doit donc utiliser que le port HTTP pour les redirections utilisateur.
-        """
-        if v and isinstance(v, str) and v.startswith("https://"):
-            return "http://" + v[len("https://"):]
-        return v
     is_shared_service: bool = Field(default=False, description="Si True, cette app est accessible par tous les service accounts")
 
 
@@ -243,6 +232,7 @@ class AppCreateSimplified(BaseModel):
     color: str = "#0d6efd"
     api_port: int = Field(..., ge=1, le=65535, description="Port de l'API backend")
     frontend_port: Optional[int] = Field(None, ge=1, le=65535, description="Port du frontend")
+    frontend_https_port: Optional[int] = Field(None, ge=1, le=65535, description="Port HTTPS du frontend (si HTTPS activé)")
     custom_host: Optional[str] = Field(None, description="Host personnalisé si différent du Hub")
     requires_auth: bool = True
     create_service_account: bool = Field(False, description="Créer un service account M2M pour cette application")
@@ -266,13 +256,7 @@ class AppUpdate(BaseModel):
     requires_auth: Optional[bool] = None
     is_shared_service: Optional[bool] = None
 
-    @field_validator('frontend_url', mode='before')
-    @classmethod
-    def normalize_frontend_url_to_http(cls, v):
-        """Normalise frontend_url en HTTP (les apps gèrent elles-mêmes le HTTPS)"""
-        if v and isinstance(v, str) and v.startswith("https://"):
-            return "http://" + v[len("https://"):]
-        return v
+
 
 
 class AppResponse(AppBase):
@@ -281,6 +265,7 @@ class AppResponse(AppBase):
     is_shared_service: bool
     is_remote: bool = False  # True si hébergée sur un serveur distant
     registered_from_ip: Optional[str] = None  # IP source lors de l'auto-enregistrement
+    frontend_https_port: Optional[int] = None  # Port HTTPS du frontend (si HTTPS activé)
     approval_status: ApprovalStatusEnum = ApprovalStatusEnum.approved
     created_at: datetime
     
@@ -328,6 +313,7 @@ class AppResponseWithMyRole(AppResponse):
             is_shared_service=app.is_shared_service,
             is_remote=getattr(app, 'is_remote', False) or False,
             registered_from_ip=getattr(app, 'registered_from_ip', None),
+            frontend_https_port=getattr(app, 'frontend_https_port', None),
             approval_status=approval_status,
             created_at=app.created_at,
             my_role=my_role,
@@ -379,6 +365,7 @@ class AppWithUsers(AppResponse):
             is_shared_service=app.is_shared_service,
             is_remote=getattr(app, 'is_remote', False) or False,
             registered_from_ip=getattr(app, 'registered_from_ip', None),
+            frontend_https_port=getattr(app, 'frontend_https_port', None),
             approval_status=approval_status,
             created_at=app.created_at,
             users=users
@@ -419,6 +406,7 @@ class AppWithUsersAndDocker(AppWithUsers):
             is_shared_service=app.is_shared_service,
             is_remote=getattr(app, 'is_remote', False) or False,
             registered_from_ip=getattr(app, 'registered_from_ip', None),
+            frontend_https_port=getattr(app, 'frontend_https_port', None),
             approval_status=approval_status,
             created_at=app.created_at,
             users=users
@@ -824,6 +812,7 @@ class AppRegisterRequest(BaseModel):
     description: Optional[str] = Field(None, description="Description de l'application")
     api_port: int = Field(..., ge=1, le=65535, description="Port de l'API backend")
     frontend_port: Optional[int] = Field(None, ge=1, le=65535, description="Port du frontend (optionnel)")
+    frontend_https_port: Optional[int] = Field(None, ge=1, le=65535, description="Port HTTPS du frontend (si HTTPS activé)")
     custom_host: Optional[str] = Field(None, description="Host/IP de l'application si hébergée sur un serveur distant (ex: 192.168.1.200)")
     is_shared: bool = Field(False, description="Si True, l'application sera accessible par tous les service accounts (M2M)")
     api_endpoints: Optional[Dict[str, Any]] = Field(None, description="Spécification OpenAPI (JSON) décrivant les endpoints métier de l'application")

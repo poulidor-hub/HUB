@@ -184,6 +184,7 @@ class Application(Base):
     api_url = Column(String(255), nullable=False)  # URL de l'API backend
     frontend_url = Column(String(255))  # URL du frontend
     callback_url = Column(String(255))  # URL de callback pour le token
+    frontend_https_port = Column(Integer, nullable=True)  # Port HTTPS du frontend (si HTTPS activé)
     is_active = Column(Boolean, default=True)
     requires_auth = Column(Boolean, default=True)
     is_shared_service = Column(Boolean, default=False)  # Si True, accessible par tous les service accounts
