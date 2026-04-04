@@ -17,6 +17,18 @@ class ApprovalStatus(enum.Enum):
 # Rôles par défaut disponibles
 DEFAULT_ROLES = ["admin", "manager", "user", "viewer"]
 
+# Hiérarchie des rôles (plus le nombre est élevé, plus le rôle est puissant)
+ROLE_HIERARCHY = {"admin": 4, "manager": 3, "user": 2, "viewer": 1}
+
+
+def highest_role(roles: list) -> str:
+    """Retourne le rôle le plus élevé parmi une liste de rôles.
+    Hiérarchie : admin > manager > user > viewer
+    """
+    if not roles:
+        return "viewer"
+    return max(roles, key=lambda r: ROLE_HIERARCHY.get(r, 0))
+
 
 # Table d'association ServiceAccount <-> Application (simple)
 service_account_app_access = Table(
@@ -24,6 +36,17 @@ service_account_app_access = Table(
     Base.metadata,
     Column('service_account_id', Integer, ForeignKey('service_accounts.id', ondelete='CASCADE')),
     Column('app_id', Integer, ForeignKey('applications.id', ondelete='CASCADE'))
+)
+
+# Table d'association User <-> Profile (multi-profils)
+user_profiles = Table(
+    'user_profiles',
+    Base.metadata,
+    Column('id', Integer, primary_key=True),
+    Column('user_id', Integer, ForeignKey('users.id', ondelete='CASCADE'), nullable=False),
+    Column('profile_id', Integer, ForeignKey('profiles.id', ondelete='CASCADE'), nullable=False),
+    Column('assigned_at', DateTime, default=datetime.utcnow),
+    Column('assigned_by', Integer, ForeignKey('users.id', ondelete='SET NULL'), nullable=True),
 )
 
 
@@ -57,7 +80,9 @@ class Profile(Base):
     
     # Relations
     app_roles = relationship("ProfileAppRole", back_populates="profile", cascade="all, delete-orphan", lazy="raise")
-    users = relationship("User", back_populates="profile", lazy="raise")
+    users = relationship("User", secondary=user_profiles, back_populates="profiles", lazy="raise",
+                          primaryjoin="Profile.id == user_profiles.c.profile_id",
+                          secondaryjoin="User.id == user_profiles.c.user_id")
     
     def __repr__(self):
         return f"<Profile {self.name}>"
@@ -71,7 +96,7 @@ class UserAppRole(Base):
     user_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
     app_id = Column(Integer, ForeignKey('applications.id', ondelete='CASCADE'), nullable=False)
     role = Column(String(50), default="user", nullable=False)  # admin, manager, user, viewer, etc.
-    source = Column(String(20), default="manual", nullable=False)  # "manual" ou "profile"
+    source = Column(String(50), default="manual", nullable=False)  # "manual" ou "profile:<id>"
     created_at = Column(DateTime, default=datetime.utcnow)
     
     # Relations
@@ -109,13 +134,15 @@ class User(Base):
     is_admin = Column(Boolean, default=False)  # Admin du Hub (pas des apps)
     must_change_password = Column(Boolean, default=False)  # Forcer le changement de mdp à la prochaine connexion
     can_change_password = Column(Boolean, default=True)  # Autoriser l'utilisateur à changer son mdp (False pour comptes partagés)
-    profile_id = Column(Integer, ForeignKey('profiles.id', ondelete='SET NULL'), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
     # Relations (lazy='raise' pour forcer selectinload explicite en async)
     app_roles = relationship("UserAppRole", back_populates="user", cascade="all, delete-orphan", lazy="raise")
-    profile = relationship("Profile", back_populates="users", lazy="raise")
+    profiles = relationship("Profile", secondary=user_profiles, back_populates="users", lazy="raise",
+                             primaryjoin="User.id == user_profiles.c.user_id",
+                             secondaryjoin="Profile.id == user_profiles.c.profile_id")
+    favorites = relationship("UserFavorite", back_populates="user", cascade="all, delete-orphan", lazy="raise")
     
     @property
     def applications(self):
@@ -146,6 +173,7 @@ class Application(Base):
     description = Column(Text)
     icon = Column(String(50), default="bi-app")  # Bootstrap Icons
     color = Column(String(7), default="#0d6efd")  # Couleur hex
+    category = Column(String(100), nullable=True)  # Catégorie (RH, SI, Communication, etc.)
     api_url = Column(String(255), nullable=False)  # URL de l'API backend
     frontend_url = Column(String(255))  # URL du frontend
     callback_url = Column(String(255))  # URL de callback pour le token
@@ -194,6 +222,23 @@ class Application(Base):
     
     def __repr__(self):
         return f"<Application {self.name}>"
+
+
+class UserFavorite(Base):
+    """Applications favorites épinglées par chaque utilisateur"""
+    __tablename__ = "user_favorites"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
+    app_id = Column(Integer, ForeignKey('applications.id', ondelete='CASCADE'), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    
+    # Relations
+    user = relationship("User", back_populates="favorites")
+    application = relationship("Application", lazy="raise")
+    
+    def __repr__(self):
+        return f"<UserFavorite user={self.user_id} app={self.app_id}>"
 
 
 class AuditLog(Base):

@@ -59,14 +59,14 @@ body {
 .app-card {
     border: none;
     border-radius: 12px;
-    transition: all 0.3s ease;
+    transition: all 0.25s ease;
     cursor: pointer;
     overflow: hidden;
 }
 
 .app-card:hover {
-    transform: translateY(-5px);
-    box-shadow: 0 12px 24px rgba(0, 0, 0, 0.15);
+    transform: translateY(-3px);
+    box-shadow: 0 8px 20px rgba(0, 0, 0, 0.12);
 }
 
 /* App inactive (conteneur Docker arrêté) */
@@ -98,50 +98,81 @@ body {
     font-weight: 600;
 }
 
-/* Version badge en bas à droite des cartes */
+/* Version badge */
 .app-version-badge {
-    position: absolute;
-    bottom: 8px;
-    right: 10px;
     font-size: 0.65rem;
     color: var(--text-muted);
     font-weight: 500;
     opacity: 0.7;
     letter-spacing: 0.02em;
+    white-space: nowrap;
 }
 
 .app-card .card-body {
-    padding: 1.5rem;
+    padding: 1rem;
+}
+
+/* Layout horizontal : icône à gauche, texte à droite */
+.app-card-header {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.75rem;
+}
+
+.app-card-info {
+    flex: 1;
+    min-width: 0;
 }
 
 .app-icon {
-    width: 60px;
-    height: 60px;
-    border-radius: 12px;
+    width: 42px;
+    height: 42px;
+    min-width: 42px;
+    border-radius: 10px;
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 1.75rem;
+    font-size: 1.25rem;
     color: white;
-    margin-bottom: 1rem;
 }
 
-.app-card h5 {
+.app-card h6 {
     font-weight: 600;
-    margin-bottom: 0.5rem;
+    font-size: 0.9rem;
+    margin-bottom: 0.2rem;
+    line-height: 1.3;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .app-card p {
-    font-size: 0.875rem;
+    font-size: 0.8rem;
     color: #6c757d;
     margin-bottom: 0;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    line-height: 1.4;
+}
+
+/* Ligne du bas : catégorie + version */
+.app-card-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-top: 0.5rem;
+    padding-top: 0.4rem;
+    border-top: 1px solid rgba(0, 0, 0, 0.05);
+    min-height: 1.4rem;
 }
 
 /* App Role Selector (for admins) */
 .app-role-selector {
     border-top: 1px solid rgba(0,0,0,0.1);
-    padding-top: 0.75rem;
-    margin-top: 0.75rem;
+    padding-top: 0.5rem;
+    margin-top: 0.5rem;
 }
 
 .app-role-selector .form-select {
@@ -277,13 +308,27 @@ body {
 
 @media (max-width: 768px) {
     .app-card .card-body {
-        padding: 1rem;
+        padding: 0.75rem;
     }
     
     .app-icon {
-        width: 50px;
-        height: 50px;
-        font-size: 1.5rem;
+        width: 36px;
+        height: 36px;
+        min-width: 36px;
+        font-size: 1.1rem;
+        border-radius: 8px;
+    }
+
+    .app-card h6 {
+        font-size: 0.85rem;
+    }
+
+    .app-card p {
+        font-size: 0.75rem;
+    }
+
+    .app-card-header {
+        gap: 0.5rem;
     }
 }
 
@@ -845,6 +890,35 @@ body {
     font-size: 0.82rem;
 }
 
+/* ─── M2M Setup Panel ─── */
+.discovery-m2m-panel {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    padding: 1rem;
+    overflow: hidden;
+}
+
+.discovery-m2m-content {
+    flex: 1;
+    overflow: auto;
+    border-radius: 8px;
+    border: 1px solid var(--border-color);
+}
+
+.discovery-m2m-pre {
+    padding: 1.2rem;
+    margin: 0;
+    font-size: 0.82rem;
+    font-family: 'Fira Code', 'Cascadia Code', 'JetBrains Mono', 'Consolas', monospace;
+    line-height: 1.5;
+    background: #1e1e2e;
+    color: #cdd6f4;
+    white-space: pre-wrap;
+    word-break: break-word;
+    min-height: 100%;
+}
+
 /* Responsive: collapse sidebar on small screens */
 @media (max-width: 768px) {
     .discovery-layout {
@@ -864,4 +938,50 @@ body {
     .discovery-results {
         min-height: 300px;
     }
+}
+
+/* ===== Dashboard: search, filters, favorites ===== */
+.dash-filter-btn {
+    border: 1px solid #dee2e6;
+    background: #fff;
+    color: #495057;
+    border-radius: 20px;
+    padding: 0.25rem 0.75rem;
+    font-size: 0.82rem;
+    transition: all 0.15s;
+}
+.dash-filter-btn:hover {
+    background: #e9ecef;
+}
+.dash-filter-btn.active {
+    background: var(--bs-primary);
+    color: #fff;
+    border-color: var(--bs-primary);
+}
+
+.favorite-btn {
+    position: absolute;
+    top: 0.3rem;
+    right: 0.3rem;
+    z-index: 2;
+    padding: 0.1rem 0.25rem;
+    font-size: 0.9rem;
+    line-height: 1;
+    color: #adb5bd;
+    text-decoration: none;
+}
+.favorite-btn:hover,
+.favorite-btn .text-warning {
+    color: #ffc107 !important;
+}
+
+.app-category-badge {
+    background-color: #e9ecef;
+    color: #495057;
+    font-size: 0.68rem;
+    font-weight: 500;
+    max-width: 60%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }

@@ -13,7 +13,7 @@ from app.database import get_db
 from app.routes.events import notify_event, notify_stats_update
 from app.models import (
     User, Application, UserAppRole, ServiceAccount,
-    AppRole, DEFAULT_ROLES, Profile
+    AppRole, DEFAULT_ROLES, Profile, user_profiles
 )
 from app.schemas import (
     UserCreate, UserUpdate, UserResponse, PaginatedUsersResponse,
@@ -69,7 +69,7 @@ async def m2m_bulk_user_app_roles(
         identifiers.append(identifier)
 
     response_map: Dict[str, M2MObservedUserData] = {
-        identifier: M2MObservedUserData(profile=None, apps=[])
+        identifier: M2MObservedUserData(profiles=[], apps=[])
         for identifier in identifiers
     }
 
@@ -78,17 +78,16 @@ async def m2m_bulk_user_app_roles(
 
     users_result = await db.execute(
         select(User.username, Profile.id, Profile.name, Profile.color)
-        .outerjoin(Profile, User.profile_id == Profile.id)
+        .join(user_profiles, user_profiles.c.user_id == User.id)
+        .join(Profile, user_profiles.c.profile_id == Profile.id)
         .where(User.username.in_(identifiers))
     )
     for username, profile_id, profile_name, profile_color in users_result.all():
-        if profile_id is None:
-            continue
-        response_map[username].profile = ProfileBriefResponse(
+        response_map[username].profiles.append(ProfileBriefResponse(
             id=profile_id,
             name=profile_name,
             color=profile_color or "#6c757d"
-        )
+        ))
 
     allowed_app_slugs = {
         app.slug for app in current_entity.applications
@@ -134,7 +133,7 @@ async def list_users(
     # Requête de base avec options de chargement
     load_options = [
         selectinload(User.app_roles).selectinload(UserAppRole.application),
-        selectinload(User.profile)
+        selectinload(User.profiles)
     ]
 
     # --- Mode rétro-compatible (page=0) : tout retourner ---
@@ -153,13 +152,23 @@ async def list_users(
     if is_active is not None:
         base_query = base_query.where(User.is_active == is_active)
 
-    # Filtre par profil
+    # Filtre par profil (via table de jonction)
     if profile_id is not None:
         if profile_id == -1:
             # -1 = utilisateurs sans profil
-            base_query = base_query.where(User.profile_id.is_(None))
+            base_query = base_query.where(
+                ~User.id.in_(
+                    select(user_profiles.c.user_id)
+                )
+            )
         else:
-            base_query = base_query.where(User.profile_id == profile_id)
+            base_query = base_query.where(
+                User.id.in_(
+                    select(user_profiles.c.user_id).where(
+                        user_profiles.c.profile_id == profile_id
+                    )
+                )
+            )
 
     # Filtre par app_slug et/ou rôle (nécessite un join)
     if app_slug or role:
@@ -250,7 +259,7 @@ async def create_user(
         select(User)
         .options(
             selectinload(User.app_roles).selectinload(UserAppRole.application),
-            selectinload(User.profile)
+            selectinload(User.profiles)
         )
         .where(User.id == user.id)
     )
@@ -480,7 +489,7 @@ async def get_user(
         select(User)
         .options(
             selectinload(User.app_roles).selectinload(UserAppRole.application),
-            selectinload(User.profile)
+            selectinload(User.profiles)
         )
         .where(User.id == user_id)
     )
@@ -507,7 +516,7 @@ async def update_user(
         select(User)
         .options(
             selectinload(User.app_roles).selectinload(UserAppRole.application),
-            selectinload(User.profile)
+            selectinload(User.profiles)
         )
         .where(User.id == user_id)
     )
@@ -521,6 +530,9 @@ async def update_user(
     
     update_data = user_data.model_dump(exclude_unset=True)
     
+    # Extraire profile_ids pour traitement séparé
+    profile_ids = update_data.pop("profile_ids", None)
+    
     # Détecter si l'utilisateur est en train d'être désactivé
     is_being_deactivated = "is_active" in update_data and update_data["is_active"] == False and user.is_active == True
     
@@ -529,6 +541,22 @@ async def update_user(
     
     for field, value in update_data.items():
         setattr(user, field, value)
+    
+    # Gérer les profils si fournis
+    if profile_ids is not None:
+        from app.routes.profiles import _sync_user_profile_roles
+        # Supprimer toutes les associations existantes
+        await db.execute(
+            delete(user_profiles).where(user_profiles.c.user_id == user_id)
+        )
+        # Ajouter les nouvelles associations
+        if profile_ids:
+            for pid in profile_ids:
+                await db.execute(
+                    user_profiles.insert().values(user_id=user_id, profile_id=pid)
+                )
+        # Recalculer les rôles
+        await _sync_user_profile_roles(db, user_id)
     
     await db.commit()
     
@@ -543,7 +571,7 @@ async def update_user(
         select(User)
         .options(
             selectinload(User.app_roles).selectinload(UserAppRole.application),
-            selectinload(User.profile)
+            selectinload(User.profiles)
         )
         .where(User.id == user_id)
     )
@@ -692,7 +720,7 @@ async def get_user_apps(
         select(User)
         .options(
             selectinload(User.app_roles).selectinload(UserAppRole.application),
-            selectinload(User.profile)
+            selectinload(User.profiles)
         )
         .where(User.id == user_id)
     )
@@ -842,19 +870,18 @@ async def bulk_create_users(
                     ))
                     continue
             
-            # Vérifier le profil si fourni
-            profile = None
-            if user_data.profile_id:
-                profile_result = await db.execute(
-                    select(Profile)
-                    .options(
-                        selectinload(Profile.app_roles)
+            # Vérifier les profils si fournis
+            profiles_loaded = []
+            if user_data.profile_ids:
+                for pid in user_data.profile_ids:
+                    profile_result = await db.execute(
+                        select(Profile)
+                        .options(selectinload(Profile.app_roles))
+                        .where(Profile.id == pid)
                     )
-                    .where(
-                        Profile.id == user_data.profile_id
-                    )
-                )
-                profile = profile_result.scalar_one_or_none()
+                    p = profile_result.scalar_one_or_none()
+                    if p:
+                        profiles_loaded.append(p)
 
             # Créer l'utilisateur
             user = User(
@@ -870,21 +897,28 @@ async def bulk_create_users(
                 ),
                 can_change_password=(
                     user_data.can_change_password
-                ),
-                profile_id=(
-                    profile.id if profile else None
                 )
             )
             db.add(user)
             await db.flush()  # Pour obtenir l'ID
 
-            # Construire la map des rôles finaux
-            # Profil d'abord (source='profile'), puis app_roles manuels (source='manual')
-            profile_roles = {}
+            # Associer les profils via la table de jonction
+            for profile in profiles_loaded:
+                await db.execute(
+                    user_profiles.insert().values(
+                        user_id=user.id,
+                        profile_id=profile.id
+                    )
+                )
+
+            # Construire la map des rôles finaux (highest role wins)
+            from app.models import highest_role
+            profile_roles = {}  # app_id -> best role from profiles
             manual_roles = {}
-            if profile:
+            for profile in profiles_loaded:
                 for par in profile.app_roles:
-                    profile_roles[par.app_id] = par.role
+                    existing = profile_roles.get(par.app_id)
+                    profile_roles[par.app_id] = highest_role(existing, par.role) if existing else par.role
             if user_data.app_roles:
                 for ar in user_data.app_roles:
                     if ar.app_id not in profile_roles:
@@ -904,13 +938,20 @@ async def bulk_create_users(
                     app.id
                     for app in apps_result.scalars().all()
                 }
+                # Map app_id -> profile_id that provides the best role
+                profile_source = {}
+                for profile in profiles_loaded:
+                    for par in profile.app_roles:
+                        if profile_roles.get(par.app_id) == par.role:
+                            profile_source.setdefault(par.app_id, profile.id)
+
                 for app_id, role in profile_roles.items():
                     if app_id in existing_apps:
                         db.add(UserAppRole(
                             user_id=user.id,
                             app_id=app_id,
                             role=role,
-                            source="profile"
+                            source=f"profile:{profile_source.get(app_id, 0)}"
                         ))
                 for app_id, role in manual_roles.items():
                     if app_id in existing_apps:

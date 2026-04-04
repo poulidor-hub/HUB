@@ -1,15 +1,18 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, delete
+from sqlalchemy import select, func, delete, insert
 from sqlalchemy.orm import selectinload
 from typing import List
 
 from app.database import get_db
 from app.routes.events import notify_event, notify_stats_update
-from app.models import Profile, ProfileAppRole, User, UserAppRole, Application
+from app.models import (
+    Profile, ProfileAppRole, User, UserAppRole, Application,
+    user_profiles, highest_role
+)
 from app.schemas import (
     ProfileCreate, ProfileUpdate, ProfileResponse, ProfileAppRoleResponse,
-    ProfileBriefResponse, ProfileApplyRequest
+    ProfileBriefResponse, ProfileApplyRequest, ProfileRemoveUsersRequest
 )
 from app.auth import get_current_admin
 
@@ -20,67 +23,92 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/profiles", tags=["Profiles"])
 
 
-async def _sync_user_profile_roles(db: AsyncSession, user_id: int, profile_app_roles):
+async def _sync_user_profile_roles(db: AsyncSession, user_id: int):
     """
-    Synchronise les rôles source='profile' d'un utilisateur avec les app_roles du profil.
-    Mode additif :
-    - Ajoute les rôles pour les nouvelles apps du profil
-    - Supprime les rôles 'profile' des apps retirées du profil
-    - Met à jour le rôle si changé dans le profil
+    Synchronise les rôles source='profile:*' d'un utilisateur avec TOUS ses profils.
+    Mode multi-profils : quand plusieurs profils donnent des droits sur la même app,
+    le rôle le plus élevé est retenu (admin > manager > user > viewer).
+    
+    - Collecte tous les profils de l'utilisateur
+    - Pour chaque app, calcule le rôle max entre tous les profils
+    - Ajoute/met à jour/supprime les rôles "profile:*"
     - Ne touche JAMAIS aux rôles source='manual'
-    - Ne crée pas de doublon si l'app est déjà assignée manuellement
     """
-    # Récupérer les rôles actuels de l'utilisateur
+    # 1. Récupérer tous les profils de l'utilisateur avec leurs app_roles
+    profiles_result = await db.execute(
+        select(Profile).options(
+            selectinload(Profile.app_roles)
+        ).join(user_profiles, user_profiles.c.profile_id == Profile.id)
+        .where(user_profiles.c.user_id == user_id)
+    )
+    user_profiles_list = profiles_result.scalars().all()
+
+    # 2. Calculer le rôle max par app en combinant tous les profils
+    # {app_id: {"role": best_role, "profile_id": source_profile_id}}
+    best_roles_by_app = {}
+    for profile in user_profiles_list:
+        for par in profile.app_roles:
+            existing = best_roles_by_app.get(par.app_id)
+            if existing is None:
+                best_roles_by_app[par.app_id] = {
+                    "role": par.role,
+                    "profile_id": profile.id
+                }
+            else:
+                best = highest_role([existing["role"], par.role])
+                if best != existing["role"]:
+                    best_roles_by_app[par.app_id] = {
+                        "role": best,
+                        "profile_id": profile.id
+                    }
+
+    # 3. Récupérer les rôles actuels de l'utilisateur
     result = await db.execute(
         select(UserAppRole).where(UserAppRole.user_id == user_id)
     )
     current_roles = result.scalars().all()
 
-    # Indexer par (app_id, source)
-    current_by_app = {}  # app_id -> {source: UserAppRole}
+    # Indexer : séparer manuels et profile
+    manual_app_ids = set()
+    profile_roles_by_app = {}  # app_id -> UserAppRole
     for role in current_roles:
-        if role.app_id not in current_by_app:
-            current_by_app[role.app_id] = {}
-        current_by_app[role.app_id][role.source] = role
+        if role.source == "manual":
+            manual_app_ids.add(role.app_id)
+        elif role.source.startswith("profile:"):
+            profile_roles_by_app[role.app_id] = role
 
-    # Apps cibles du profil
-    profile_app_ids = {par.app_id for par in profile_app_roles}
-    current_profile_app_ids = {
-        app_id for app_id, sources in current_by_app.items()
-        if "profile" in sources
-    }
-
-    # 1. Supprimer les rôles 'profile' pour les apps retirées du profil
-    apps_to_remove = current_profile_app_ids - profile_app_ids
+    # 4. Supprimer les rôles profile pour les apps qui ne sont plus dans aucun profil
+    apps_to_remove = set(profile_roles_by_app.keys()) - set(best_roles_by_app.keys())
     if apps_to_remove:
         await db.execute(
             delete(UserAppRole).where(
                 UserAppRole.user_id == user_id,
-                UserAppRole.source == "profile",
+                UserAppRole.source.like("profile:%"),
                 UserAppRole.app_id.in_(apps_to_remove)
             )
         )
 
-    # 2. Ajouter ou mettre à jour les rôles du profil
-    for par in profile_app_roles:
-        app_sources = current_by_app.get(par.app_id, {})
-
+    # 5. Ajouter ou mettre à jour les rôles
+    for app_id, best in best_roles_by_app.items():
         # Si l'app est déjà assignée manuellement, ne pas créer de doublon
-        if "manual" in app_sources:
+        if app_id in manual_app_ids:
             continue
 
-        if "profile" in app_sources:
-            # Mettre à jour le rôle si changé
-            existing = app_sources["profile"]
-            if existing.role != par.role:
-                existing.role = par.role
+        existing = profile_roles_by_app.get(app_id)
+        new_source = f"profile:{best['profile_id']}"
+
+        if existing:
+            # Mettre à jour si le rôle ou la source a changé
+            if existing.role != best["role"] or existing.source != new_source:
+                existing.role = best["role"]
+                existing.source = new_source
         else:
-            # Nouvelle app du profil → ajouter
+            # Nouvelle app → ajouter
             uar = UserAppRole(
                 user_id=user_id,
-                app_id=par.app_id,
-                role=par.role,
-                source="profile"
+                app_id=app_id,
+                role=best["role"],
+                source=new_source
             )
             db.add(uar)
 
@@ -125,11 +153,10 @@ async def list_profiles(
     )
     profiles = result.scalars().all()
 
-    # Compter les users par profil
+    # Compter les users par profil via la table de jonction
     count_result = await db.execute(
-        select(User.profile_id, func.count(User.id))
-        .where(User.profile_id.isnot(None))
-        .group_by(User.profile_id)
+        select(user_profiles.c.profile_id, func.count(user_profiles.c.user_id))
+        .group_by(user_profiles.c.profile_id)
     )
     user_counts = dict(count_result.all())
 
@@ -219,9 +246,9 @@ async def get_profile(
     if not profile:
         raise HTTPException(status_code=404, detail="Profil non trouvé")
 
-    # Compter les users
+    # Compter les users via la table de jonction
     count_result = await db.execute(
-        select(func.count(User.id)).where(User.profile_id == profile_id)
+        select(func.count(user_profiles.c.user_id)).where(user_profiles.c.profile_id == profile_id)
     )
     user_count = count_result.scalar() or 0
 
@@ -293,20 +320,15 @@ async def update_profile(
 
         # Auto-sync : propager les changements aux utilisateurs ayant ce profil
         await db.flush()  # S'assurer que les nouveaux ProfileAppRole ont un ID
-        result = await db.execute(
-            select(Profile).options(
-                selectinload(Profile.app_roles)
-            ).where(Profile.id == profile_id)
-        )
-        updated_profile = result.scalar_one()
 
         users_result = await db.execute(
-            select(User).where(User.profile_id == profile_id)
+            select(User).join(user_profiles, user_profiles.c.user_id == User.id)
+            .where(user_profiles.c.profile_id == profile_id)
         )
         profile_users = users_result.scalars().all()
 
         for user in profile_users:
-            await _sync_user_profile_roles(db, user.id, updated_profile.app_roles)
+            await _sync_user_profile_roles(db, user.id)
 
         if profile_users:
             for user in profile_users:
@@ -329,7 +351,7 @@ async def update_profile(
     profile = result.scalar_one()
 
     count_result = await db.execute(
-        select(func.count(User.id)).where(User.profile_id == profile_id)
+        select(func.count(user_profiles.c.user_id)).where(user_profiles.c.profile_id == profile_id)
     )
     user_count = count_result.scalar() or 0
 
@@ -345,7 +367,10 @@ async def delete_profile(
     db: AsyncSession = Depends(get_db),
     _: User = Depends(get_current_admin)
 ):
-    """Supprime un profil. Supprime les rôles source='profile' des utilisateurs concernés, préserve les manuels."""
+    """
+    Supprime un profil. Recalcule les rôles des utilisateurs concernés
+    en tenant compte de leurs autres profils restants. Préserve les rôles manuels.
+    """
     result = await db.execute(
         select(Profile).where(Profile.id == profile_id)
     )
@@ -355,20 +380,21 @@ async def delete_profile(
 
     profile_name = profile.name
 
-    # Supprimer les rôles source='profile' des utilisateurs ayant ce profil
+    # Récupérer les utilisateurs ayant ce profil via la table de jonction
     users_result = await db.execute(
-        select(User).where(User.profile_id == profile_id)
+        select(User).join(user_profiles, user_profiles.c.user_id == User.id)
+        .where(user_profiles.c.profile_id == profile_id)
     )
     users = users_result.scalars().all()
-    for user in users:
-        await db.execute(
-            delete(UserAppRole).where(
-                UserAppRole.user_id == user.id,
-                UserAppRole.source == "profile"
-            )
-        )
 
+    # Supprimer le profil (cascade supprime les profile_app_roles et user_profiles entries)
     await db.delete(profile)
+    await db.flush()
+
+    # Recalculer les rôles pour chaque utilisateur affecté (avec les profils restants)
+    for user in users:
+        await _sync_user_profile_roles(db, user.id)
+
     await db.commit()
 
     for user in users:
@@ -390,12 +416,11 @@ async def apply_profile(
     admin: User = Depends(get_current_admin)
 ):
     """
-    Applique un profil à un ou plusieurs utilisateurs.
-    - Assigne profile_id sur les users
-    - Si sync_roles=True : synchronise les user_app_roles source='profile'
-      (préserve les rôles ajoutés manuellement par l'admin)
+    Ajoute un profil à un ou plusieurs utilisateurs (additif — ne remplace pas les profils existants).
+    - Ajoute l'entrée dans user_profiles
+    - Si sync_roles=True : recalcule les user_app_roles en tenant compte de tous les profils
     """
-    # Charger le profil avec ses app_roles
+    # Charger le profil
     result = await db.execute(
         select(Profile).options(
             selectinload(Profile.app_roles)
@@ -407,21 +432,36 @@ async def apply_profile(
 
     # Charger les users
     result = await db.execute(
-        select(User).options(
-            selectinload(User.app_roles)
-        ).where(User.id.in_(request.user_ids))
+        select(User).where(User.id.in_(request.user_ids))
     )
     users = result.scalars().all()
 
     if not users:
         raise HTTPException(status_code=404, detail="Aucun utilisateur trouvé")
 
+    # Vérifier les associations existantes
+    existing_result = await db.execute(
+        select(user_profiles.c.user_id).where(
+            user_profiles.c.profile_id == profile_id,
+            user_profiles.c.user_id.in_(request.user_ids)
+        )
+    )
+    already_assigned = {row[0] for row in existing_result.all()}
+
     updated_count = 0
     for user in users:
-        user.profile_id = profile_id
+        if user.id not in already_assigned:
+            # Ajouter l'association user <-> profile
+            await db.execute(
+                insert(user_profiles).values(
+                    user_id=user.id,
+                    profile_id=profile_id,
+                    assigned_by=admin.id
+                )
+            )
 
         if request.sync_roles:
-            await _sync_user_profile_roles(db, user.id, profile.app_roles)
+            await _sync_user_profile_roles(db, user.id)
 
         updated_count += 1
 
@@ -455,22 +495,21 @@ async def sync_profile(
 ):
     """
     Re-synchronise tous les utilisateurs du profil.
-    Utile après modification des app_roles du profil.
-    Ne touche qu'aux rôles source='profile', préserve les rôles manuels.
+    Recalcule les rôles en tenant compte de tous les profils de chaque utilisateur.
+    Ne touche qu'aux rôles source='profile:*', préserve les rôles manuels.
     """
-    # Charger le profil avec ses app_roles
+    # Vérifier que le profil existe
     result = await db.execute(
-        select(Profile).options(
-            selectinload(Profile.app_roles)
-        ).where(Profile.id == profile_id)
+        select(Profile).where(Profile.id == profile_id)
     )
     profile = result.scalar_one_or_none()
     if not profile:
         raise HTTPException(status_code=404, detail="Profil non trouvé")
 
-    # Charger tous les users avec ce profil
+    # Charger tous les users avec ce profil via la table de jonction
     result = await db.execute(
-        select(User).where(User.profile_id == profile_id)
+        select(User).join(user_profiles, user_profiles.c.user_id == User.id)
+        .where(user_profiles.c.profile_id == profile_id)
     )
     users = result.scalars().all()
 
@@ -482,7 +521,7 @@ async def sync_profile(
 
     synced_count = 0
     for user in users:
-        await _sync_user_profile_roles(db, user.id, profile.app_roles)
+        await _sync_user_profile_roles(db, user.id)
         synced_count += 1
 
     await db.commit()
@@ -508,32 +547,45 @@ async def sync_profile(
 @router.post("/{profile_id}/detach")
 async def detach_profile(
     profile_id: int,
-    request: ProfileApplyRequest,
+    request: ProfileRemoveUsersRequest,
     db: AsyncSession = Depends(get_db),
     _: User = Depends(get_current_admin)
 ):
     """
-    Détache le profil des utilisateurs spécifiés (profile_id → NULL).
-    Supprime les rôles source='profile' de ces utilisateurs.
+    Retire un profil des utilisateurs spécifiés.
+    Recalcule les rôles en tenant compte des profils restants.
     Les rôles manuels sont préservés.
     """
+    # Vérifier que le profil existe
     result = await db.execute(
-        select(User).where(
-            User.id.in_(request.user_ids),
-            User.profile_id == profile_id
+        select(Profile).where(Profile.id == profile_id)
+    )
+    if not result.scalar_one_or_none():
+        raise HTTPException(status_code=404, detail="Profil non trouvé")
+
+    # Récupérer les utilisateurs concernés
+    result = await db.execute(
+        select(User).join(user_profiles, user_profiles.c.user_id == User.id)
+        .where(
+            user_profiles.c.profile_id == profile_id,
+            User.id.in_(request.user_ids)
         )
     )
     users = result.scalars().all()
 
+    # Supprimer l'association user <-> profile
     for user in users:
-        user.profile_id = None
-        # Supprimer les rôles provenant du profil
         await db.execute(
-            delete(UserAppRole).where(
-                UserAppRole.user_id == user.id,
-                UserAppRole.source == "profile"
+            delete(user_profiles).where(
+                user_profiles.c.user_id == user.id,
+                user_profiles.c.profile_id == profile_id
             )
         )
+
+    # Recalculer les rôles avec les profils restants
+    if request.sync_roles:
+        for user in users:
+            await _sync_user_profile_roles(db, user.id)
 
     await db.commit()
 

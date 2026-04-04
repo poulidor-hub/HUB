@@ -17,6 +17,15 @@ from app.auth import get_password_hash, create_access_token
 from app.config import get_settings
 
 
+@pytest.fixture(autouse=True)
+def reset_rate_limiter():
+    """Réinitialise le rate limiter entre chaque test"""
+    from app.routes.auth import _login_attempts
+    _login_attempts.clear()
+    yield
+    _login_attempts.clear()
+
+
 # Configuration de test
 TEST_DATABASE_URL = "sqlite+aiosqlite:///:memory:"
 settings = get_settings()

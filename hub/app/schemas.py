@@ -38,7 +38,7 @@ class UserUpdate(BaseModel):
     is_admin: Optional[bool] = None
     must_change_password: Optional[bool] = None
     can_change_password: Optional[bool] = None
-    profile_id: Optional[int] = None
+    profile_ids: Optional[List[int]] = None  # Liste des IDs de profils à assigner
 
 
 class PasswordChangeRequest(BaseModel):
@@ -107,9 +107,15 @@ class ProfileResponse(BaseModel):
 
 
 class ProfileApplyRequest(BaseModel):
-    """Appliquer un profil à un ou plusieurs utilisateurs"""
+    """Appliquer un profil à un ou plusieurs utilisateurs (additif)"""
     user_ids: List[int] = Field(..., min_length=1)
     sync_roles: bool = Field(default=True, description="Synchroniser les user_app_roles avec ceux du profil")
+
+
+class ProfileRemoveUsersRequest(BaseModel):
+    """Retirer un profil d'un ou plusieurs utilisateurs"""
+    user_ids: List[int] = Field(..., min_length=1)
+    sync_roles: bool = Field(default=True, description="Recalculer les rôles après retrait")
 
 
 # ===== User App Role Schema =====
@@ -143,7 +149,7 @@ class UserResponse(UserBase):
     can_change_password: bool = True
     created_at: datetime
     app_roles: List[UserAppRoleResponse] = []
-    profile: Optional[ProfileBriefResponse] = None
+    profiles: List[ProfileBriefResponse] = []
     
     class Config:
         from_attributes = True
@@ -155,17 +161,17 @@ class UserResponse(UserBase):
             UserAppRoleResponse.from_orm_model(uar) 
             for uar in user.app_roles
         ]
-        # Profil (peut être None)
-        profile_brief = None
+        # Profils (multi-profils)
+        profiles_brief = []
         try:
-            if user.profile_id and user.profile:
-                profile_brief = ProfileBriefResponse(
-                    id=user.profile.id,
-                    name=user.profile.name,
-                    color=user.profile.color or "#6c757d"
-                )
+            for profile in user.profiles:
+                profiles_brief.append(ProfileBriefResponse(
+                    id=profile.id,
+                    name=profile.name,
+                    color=profile.color or "#6c757d"
+                ))
         except Exception:
-            pass  # profile non chargé
+            pass  # profiles non chargés
         return cls(
             id=user.id,
             username=user.username,
@@ -176,7 +182,7 @@ class UserResponse(UserBase):
             can_change_password=user.can_change_password if user.can_change_password is not None else True,
             created_at=user.created_at,
             app_roles=app_roles,
-            profile=profile_brief
+            profiles=profiles_brief
         )
 
 
@@ -259,6 +265,7 @@ class AppUpdate(BaseModel):
     description: Optional[str] = None
     icon: Optional[str] = None
     color: Optional[str] = None
+    category: Optional[str] = Field(None, max_length=100)
     api_url: Optional[str] = None
     frontend_url: Optional[str] = None
     callback_url: Optional[str] = None
@@ -298,6 +305,8 @@ class AppResponseWithMyRole(AppResponse):
     """Application avec le rôle de l'utilisateur courant (pour le dashboard)"""
     my_role: Optional[str] = None  # Rôle de l'utilisateur courant sur cette app (null si pas de rôle)
     app_version: Optional[str] = None  # Version de l'app (depuis le dernier backup)
+    is_favorite: bool = False  # Si l'utilisateur a mis cette app en favori
+    category: Optional[str] = None  # Catégorie de l'application
     
     class Config:
         from_attributes = True
@@ -307,7 +316,8 @@ class AppResponseWithMyRole(AppResponse):
         cls, 
         app, 
         my_role: Optional[str] = None,
-        app_version: Optional[str] = None
+        app_version: Optional[str] = None,
+        is_favorite: bool = False
     ) -> "AppResponseWithMyRole":
         """Crée une réponse avec le rôle de l'utilisateur courant"""
         # Gérer l'enum ApprovalStatus
@@ -330,7 +340,9 @@ class AppResponseWithMyRole(AppResponse):
             approval_status=approval_status,
             created_at=app.created_at,
             my_role=my_role,
-            app_version=app_version
+            app_version=app_version,
+            is_favorite=is_favorite,
+            category=getattr(app, 'category', None)
         )
 
 
@@ -1082,7 +1094,7 @@ class BulkUserCreate(BaseModel):
     is_active: bool = True
     must_change_password: bool = False
     can_change_password: bool = True
-    profile_id: Optional[int] = None
+    profile_ids: List[int] = []
     app_roles: List[BulkUserAppRoleAssignment] = []
 
 
@@ -1242,7 +1254,7 @@ class M2MObservedAppRole(BaseModel):
 
 class M2MObservedUserData(BaseModel):
     """Données observées pour un utilisateur Hub"""
-    profile: Optional[ProfileBriefResponse] = None
+    profiles: List[ProfileBriefResponse] = []
     apps: List[M2MObservedAppRole] = []
 
 

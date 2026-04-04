@@ -17,7 +17,6 @@ class TestAppsEndpoints:
         """Admin voit toutes les apps"""
         token, _, _ = create_access_token(
             username=admin_user.username,
-            roles=["admin"],
             apps={}
         )
         
@@ -37,7 +36,6 @@ class TestAppsEndpoints:
         user, app = user_with_app_access
         token, _, _ = create_access_token(
             username=user.username,
-            roles=["user"],
             apps={app.slug: "user"}
         )
         
@@ -60,7 +58,6 @@ class TestAppsEndpoints:
         """Seul admin peut voir /all"""
         token, _, _ = create_access_token(
             username=admin_user.username,
-            roles=["admin"],
             apps={}
         )
         
@@ -76,7 +73,6 @@ class TestAppsEndpoints:
         """User ne peut pas voir /all"""
         token, _, _ = create_access_token(
             username=test_user.username,
-            roles=["user"],
             apps={}
         )
         
@@ -92,7 +88,6 @@ class TestAppsEndpoints:
         """Création d'une application par admin"""
         token, _, _ = create_access_token(
             username=admin_user.username,
-            roles=["admin"],
             apps={}
         )
         
@@ -118,7 +113,6 @@ class TestAppsEndpoints:
         """Création avec slug existant échoue"""
         token, _, _ = create_access_token(
             username=admin_user.username,
-            roles=["admin"],
             apps={}
         )
         
@@ -140,7 +134,6 @@ class TestAppsEndpoints:
         """User ne peut pas créer d'app"""
         token, _, _ = create_access_token(
             username=test_user.username,
-            roles=["user"],
             apps={}
         )
         
@@ -162,7 +155,6 @@ class TestAppsEndpoints:
         """Récupérer une app par son ID"""
         token, _, _ = create_access_token(
             username=admin_user.username,
-            roles=["admin"],
             apps={}
         )
         
@@ -180,7 +172,6 @@ class TestAppsEndpoints:
         """App inexistante retourne 404"""
         token, _, _ = create_access_token(
             username=admin_user.username,
-            roles=["admin"],
             apps={}
         )
         
@@ -196,7 +187,6 @@ class TestAppsEndpoints:
         """Mise à jour d'une app"""
         token, _, _ = create_access_token(
             username=admin_user.username,
-            roles=["admin"],
             apps={}
         )
         
@@ -228,7 +218,6 @@ class TestAppsEndpoints:
         
         token, _, _ = create_access_token(
             username=admin_user.username,
-            roles=["admin"],
             apps={}
         )
         
@@ -248,7 +237,6 @@ class TestAppUserAssignment:
         """Définir les utilisateurs d'une app"""
         token, _, _ = create_access_token(
             username=admin_user.username,
-            roles=["admin"],
             apps={}
         )
         
@@ -267,7 +255,6 @@ class TestAppUserAssignment:
         """Définir plusieurs utilisateurs pour une app"""
         token, _, _ = create_access_token(
             username=admin_user.username,
-            roles=["admin"],
             apps={}
         )
         
@@ -286,7 +273,6 @@ class TestAppUserAssignment:
         
         token, _, _ = create_access_token(
             username=admin_user.username,
-            roles=["admin"],
             apps={}
         )
         
@@ -305,7 +291,6 @@ class TestAppUserAssignment:
         
         token, _, _ = create_access_token(
             username=admin_user.username,
-            roles=["admin"],
             apps={}
         )
         
@@ -327,7 +312,6 @@ class TestIsSharedService:
         """Création d'une app avec is_shared_service=True via POST /api/apps/"""
         token, _, _ = create_access_token(
             username=admin_user.username,
-            roles=["admin"],
             apps={}
         )
         
@@ -353,7 +337,6 @@ class TestIsSharedService:
         """Création d'une app avec is_shared_service=False (défaut)"""
         token, _, _ = create_access_token(
             username=admin_user.username,
-            roles=["admin"],
             apps={}
         )
         
@@ -378,7 +361,6 @@ class TestIsSharedService:
         """Création d'une app sans spécifier is_shared_service (doit être False par défaut)"""
         token, _, _ = create_access_token(
             username=admin_user.username,
-            roles=["admin"],
             apps={}
         )
         
@@ -402,7 +384,6 @@ class TestIsSharedService:
         """Auto-enregistrement admin avec is_shared=True via POST /api/apps/auto-register"""
         token, _, _ = create_access_token(
             username=admin_user.username,
-            roles=["admin"],
             apps={}
         )
         

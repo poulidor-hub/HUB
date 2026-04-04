@@ -7,9 +7,14 @@ let allApps = [];
 let allServiceAccounts = [];
 let hubHost = null;  // IP/hostname du Hub (chargé depuis l'API)
 let beaconToken = null;  // Token HMAC éphémère pour sécuriser beacon-logout
+let dashboardFilter = 'all'; // 'all' | 'favorites' | catégorie
+let dashboardApps = []; // apps affichées sur le dashboard (après loadApps)
 
 // Tracking des fenêtres d'applications ouvertes pour fermeture automatique au logout
 const openedAppWindows = new Map();
+
+// Timestamp du dernier acquittement des erreurs (pour le badge de notifications)
+let errorsLastAcknowledgedAt = localStorage.getItem('errorsLastAcknowledgedAt') || null;
 
 // Bootstrap instances
 let appFormModal, userFormModal, serviceAccountFormModal, saCredentialsModal, toast;
@@ -291,6 +296,8 @@ function handleSSEEvent(data) {
             // Rafraîchir la liste des utilisateurs si on est sur cette page
             if (currentPage === 'users') {
                 loadUsersPageData();
+                allProfiles = [];
+                loadProfilesTab(); // Mettre à jour les compteurs de profils
             }
             break;
             
@@ -316,6 +323,17 @@ function handleSSEEvent(data) {
             if (data.data?.stats) {
                 updateStatsDisplay(data.data.stats);
             }
+            // Mettre à jour le badge d'erreurs dans la nav
+            if (currentUser?.is_admin) {
+                updateErrorNotificationBadge();
+            }
+            break;
+
+        case 'errors_acknowledged':
+            // Réinitialiser le badge de notifications d'erreurs
+            errorsLastAcknowledgedAt = data.data?.acknowledged_at || new Date().toISOString();
+            localStorage.setItem('errorsLastAcknowledgedAt', errorsLastAcknowledgedAt);
+            updateNavErrorBadge(0);
             break;
             
         case 'force_logout':
@@ -668,6 +686,8 @@ function showDashboard() {
     if (currentUser.is_admin) {
         document.getElementById('adminBtn').classList.remove('d-none');
         document.getElementById('adminNavigation').classList.remove('d-none');
+        // Mettre à jour le badge de notification d'erreurs
+        updateErrorNotificationBadge();
     }
 
     // Initialiser les mises à jour temps réel via SSE
@@ -725,7 +745,9 @@ function showPage(page) {
             }
             document.getElementById('usersSection').classList.remove('d-none');
             document.getElementById('navUsers')?.classList.add('active');
+            allProfiles = []; // Forcer le rechargement pour des compteurs à jour
             loadUsersPageData();
+            loadProfilesTab();
             break;
         case 'discovery':
             if (!currentUser?.is_admin) {
@@ -956,9 +978,12 @@ async function loadApps() {
         console.log('📱 loadApps: réponse reçue, nombre d\'apps:', Array.isArray(apps) ? apps.length : 'pas un tableau');
         // S'assurer que apps est un tableau
         if (Array.isArray(apps)) {
-            renderAppsGrid(apps);
+            dashboardApps = apps;
+            buildCategoryFilters(apps);
+            filterDashboardApps();
         } else {
             console.error('loadApps: réponse inattendue (pas un tableau):', apps);
+            dashboardApps = [];
             renderAppsGrid([]);
         }
     } catch (error) {
@@ -978,6 +1003,79 @@ async function loadApps() {
     }
 }
 
+function buildCategoryFilters(apps) {
+    const container = document.getElementById('categoryFilters');
+    if (!container) return;
+    const categories = [...new Set(apps.map(a => a.category).filter(Boolean))].sort();
+    container.innerHTML = categories.map(cat => `
+        <button class="btn btn-sm dash-filter-btn" data-filter="cat:${escapeHtml(cat)}" onclick="setDashboardFilter('cat:${escapeHtml(cat)}')">
+            ${escapeHtml(cat)}
+        </button>
+    `).join('');
+}
+
+function setDashboardFilter(filter) {
+    dashboardFilter = filter;
+    document.querySelectorAll('.dash-filter-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.getAttribute('data-filter') === filter);
+    });
+    filterDashboardApps();
+}
+
+function clearAppSearch() {
+    const input = document.getElementById('appSearchInput');
+    if (input) { input.value = ''; }
+    filterDashboardApps();
+}
+
+function filterDashboardApps() {
+    const searchInput = document.getElementById('appSearchInput');
+    const clearBtn = document.getElementById('appSearchClear');
+    const query = (searchInput ? searchInput.value : '').toLowerCase().trim();
+
+    if (clearBtn) clearBtn.classList.toggle('d-none', !query);
+
+    let filtered = dashboardApps;
+
+    // Filtre par texte
+    if (query) {
+        filtered = filtered.filter(app =>
+            app.name.toLowerCase().includes(query) ||
+            (app.description || '').toLowerCase().includes(query) ||
+            app.slug.toLowerCase().includes(query) ||
+            (app.category || '').toLowerCase().includes(query)
+        );
+    }
+
+    // Filtre actif
+    if (dashboardFilter === 'favorites') {
+        filtered = filtered.filter(app => app.is_favorite);
+    } else if (dashboardFilter.startsWith('cat:')) {
+        const cat = dashboardFilter.slice(4);
+        filtered = filtered.filter(app => app.category === cat);
+    }
+
+    renderAppsGrid(filtered);
+}
+
+async function toggleFavorite(event, appId) {
+    event.stopPropagation();
+    const app = dashboardApps.find(a => a.id === appId);
+    if (!app) return;
+    try {
+        if (app.is_favorite) {
+            await api.removeFavorite(appId);
+            app.is_favorite = false;
+        } else {
+            await api.addFavorite(appId);
+            app.is_favorite = true;
+        }
+        filterDashboardApps();
+    } catch (e) {
+        showToast('Erreur', 'Impossible de modifier le favori', 'danger');
+    }
+}
+
 function renderAppsGrid(apps) {
     const grid = document.getElementById('appsGrid');
     
@@ -994,13 +1092,12 @@ function renderAppsGrid(apps) {
     }
     
     if (apps.length === 0) {
-        grid.innerHTML = `
-            <div class="col-12 empty-state">
-                <i class="bi bi-inbox"></i>
-                <h4>Aucune application</h4>
-                <p>Contactez un administrateur pour obtenir l'accès aux applications.</p>
-            </div>
-        `;
+        const msg = dashboardFilter === 'favorites'
+            ? `<i class="bi bi-star"></i><h4>Aucun favori</h4><p>Cliquez sur l'étoile d'une application pour l'ajouter à vos favoris.</p>`
+            : dashboardFilter.startsWith('cat:')
+            ? `<i class="bi bi-funnel"></i><h4>Aucune application dans cette catégorie</h4>`
+            : `<i class="bi bi-inbox"></i><h4>Aucune application</h4><p>Contactez un administrateur pour obtenir l'accès aux applications.</p>`;
+        grid.innerHTML = `<div class="col-12 empty-state">${msg}</div>`;
         return;
     }
 
@@ -1011,21 +1108,33 @@ function renderAppsGrid(apps) {
         // Les statuts Docker/health arrivent en temps réel via SSE
         const isUnavailable = !app.is_active;
         const appVersionLabel = formatAppVersionLabel(app.app_version);
+        const favIcon = app.is_favorite ? 'bi-star-fill text-warning' : 'bi-star';
         
         return `
         <div class="col-sm-6 col-md-4 col-lg-3">
             <div class="card app-card shadow-sm h-100 ${isUnavailable ? 'app-inactive' : ''}" 
                  data-app-slug="${app.slug}"
-                 onclick="${!isUnavailable ? `openApp('${app.slug}', '${app.frontend_url || ''}')` : `showToast('Application indisponible', 'Cette application est d\u00e9sactiv\u00e9e.', 'warning')`}">
+                 onclick="${!isUnavailable ? `openApp('${app.slug}', '${app.frontend_url || ''}')` : `showToast('Application indisponible', 'Cette application est désactivée.', 'warning')`}">
                 <div class="card-body position-relative">
-                    <div class="app-icon" style="background-color: ${app.color}">
-                        <i class="${app.icon}"></i>
+                    <button class="btn btn-sm btn-link favorite-btn" onclick="toggleFavorite(event, ${app.id})" title="${app.is_favorite ? 'Retirer des favoris' : 'Ajouter aux favoris'}">
+                        <i class="bi ${favIcon}"></i>
+                    </button>
+                    <div class="app-card-header">
+                        <div class="app-icon" style="background-color: ${app.color}">
+                            <i class="${app.icon}"></i>
+                        </div>
+                        <div class="app-card-info">
+                            <h6>${escapeHtml(app.name)}</h6>
+                            <p>${escapeHtml(app.description || 'Aucune description')}</p>
+                        </div>
                     </div>
-                    <h5>${escapeHtml(app.name)}</h5>
-                    <p>${escapeHtml(app.description || 'Aucune description')}</p>
-                    ${appVersionLabel ? `<span class="app-version-badge">${escapeHtml(appVersionLabel)}</span>` : ''}
+                    ${(app.category || appVersionLabel) ? `
+                    <div class="app-card-footer">
+                        ${app.category ? `<span class="badge app-category-badge">${escapeHtml(app.category)}</span>` : '<span></span>'}
+                        ${appVersionLabel ? `<span class="app-version-badge">${escapeHtml(appVersionLabel)}</span>` : ''}
+                    </div>` : ''}
                     ${isAdmin ? `
-                        <div class="app-role-selector mt-2" onclick="event.stopPropagation()">
+                        <div class="app-role-selector" onclick="event.stopPropagation()">
                             <select class="form-select form-select-sm" 
                                     id="appRole_${app.slug}" 
                                     onchange="updateMyAppRole('${app.slug}', this.value)"
@@ -1690,7 +1799,7 @@ function renderUsersTable(users) {
                         <td>
                             ${user.app_roles?.map(ar => `
                                 <span class="badge me-1" style="background-color: ${getRoleBadgeColor(ar.role)}">
-                                    ${ar.source === 'profile' ? '<i class="bi bi-person-badge"></i> ' : ''}
+                                    ${(ar.source || '').startsWith('profile') ? '<i class="bi bi-person-badge"></i> ' : ''}
                                     ${escapeHtml(ar.app_name)} 
                                     <small>(${ar.role})</small>
                                 </span>
@@ -2538,7 +2647,7 @@ function loadUserAppsWithRoles(userAppRoles) {
         const currentRole = rolesByAppId[app.id] || '';
         const source = sourceByAppId[app.id] || 'manual';
         const isChecked = currentRole !== '';
-        const isFromProfile = source === 'profile';
+        const isFromProfile = source.startsWith('profile');
         
         return `
             <div class="d-flex align-items-center mb-2 app-role-row">
@@ -2606,13 +2715,10 @@ async function handleSaveUser(event) {
         can_change_password: document.getElementById('userCanChangePassword')?.checked ?? true
     };
     
-    // Profil
-    const profileVal = document.getElementById('userProfileSelect')?.value;
-    if (profileVal) {
-        data.profile_id = parseInt(profileVal);
-    } else {
-        data.profile_id = null;
-    }
+    // Profils (multi-select)
+    const profileSelect = document.getElementById('userProfileSelect');
+    const selectedProfileIds = Array.from(profileSelect?.selectedOptions || []).map(o => parseInt(o.value));
+    data.profile_ids = selectedProfileIds.length > 0 ? selectedProfileIds : [];
     
     // is_active n'est pas dans le schéma UserCreate, uniquement pour la mise à jour
     if (!isCreating) {
@@ -2631,7 +2737,7 @@ async function handleSaveUser(event) {
         const roleSelect = document.getElementById(`userAppRole${app.id}`);
         
         // Ignorer les apps gérées par le profil (source='profile')
-        if (checkbox?.dataset?.source === 'profile') return;
+        if ((checkbox?.dataset?.source || '').startsWith('profile')) return;
         
         if (checkbox?.checked && roleSelect?.value) {
             assignments.push({
@@ -2646,13 +2752,13 @@ async function handleSaveUser(event) {
         if (id) {
             await api.updateUser(id, data);
         } else {
-            // Ne pas envoyer profile_id dans la création (pas dans le schéma)
-            const { profile_id, ...createData } = data;
+            // Ne pas envoyer profile_ids dans la création (pas dans le schéma UserCreate)
+            const { profile_ids, ...createData } = data;
             const newUser = await api.createUser(createData);
             userId = newUser.id;
-            // Mettre à jour le profil après création si nécessaire
-            if (profile_id) {
-                await api.updateUser(userId, { profile_id });
+            // Mettre à jour les profils après création si nécessaire
+            if (profile_ids && profile_ids.length > 0) {
+                await api.updateUser(userId, { profile_ids });
             }
         }
         
@@ -2664,7 +2770,9 @@ async function handleSaveUser(event) {
         
         // Recharger la page appropriée
         if (currentPage === 'users') {
+            allProfiles = []; // Forcer le rechargement des profils (les user_count ont changé)
             await loadUsersPageData();
+            loadProfilesTab(); // Mettre à jour les compteurs de profils
         }
     } catch (error) {
         showToast('Erreur', error.message, 'danger');
@@ -4948,12 +5056,10 @@ function populateProfileFilter(profiles) {
         profileSelect.appendChild(opt);
     });
     
-    // Aussi le select dans le modal user
+    // Aussi le select dans le modal user (multi-select)
     const userProfileSelect = document.getElementById('userProfileSelect');
     if (userProfileSelect) {
-        while (userProfileSelect.options.length > 1) {
-            userProfileSelect.remove(1);
-        }
+        userProfileSelect.innerHTML = '';
         profiles.forEach(p => {
             const opt = document.createElement('option');
             opt.value = p.id;
@@ -5009,12 +5115,12 @@ function renderUsersPageTable(users) {
                                 : '<span class="badge bg-light text-dark">User</span>'}
                         </td>
                         <td>
-                            ${user.profile 
-                                ? `<span class="badge badge-profile" style="background-color: ${user.profile.color};">${escapeHtml(user.profile.name)}</span>` 
+                            ${(user.profiles && user.profiles.length > 0)
+                                ? user.profiles.map(p => `<span class="badge badge-profile me-1" style="background-color: ${p.color};">${escapeHtml(p.name)}</span>`).join('')
                                 : '<span class="text-muted small">-</span>'}
                         </td>
                         <td>
-                            <span class="badge bg-light text-dark border" title="${(user.app_roles || []).map(ar => ar.app_name + ' (' + ar.role + ')' + (ar.source === 'profile' ? ' [profil]' : '')).join(', ')}">
+                            <span class="badge bg-light text-dark border" title="${(user.app_roles || []).map(ar => ar.app_name + ' (' + ar.role + ')' + ((ar.source || '').startsWith('profile') ? ' [profil]' : '')).join(', ')}">
                                 ${(user.app_roles || []).length} app${(user.app_roles || []).length !== 1 ? 's' : ''}
                             </span>
                         </td>
@@ -5045,8 +5151,8 @@ function renderUsersPageTable(users) {
                                 ${(user.app_roles || []).length > 0 
                                     ? `<div class="d-flex flex-wrap gap-1">
                                         ${user.app_roles.map(ar => `
-                                            <span class="badge bg-white text-dark border me-1 mb-1" title="Source: ${ar.source === 'profile' ? 'Profil' : 'Manuel'}">
-                                                ${ar.source === 'profile' ? '<i class="bi bi-person-badge me-1 text-info" title="Via profil"></i>' : '<i class="bi bi-hand-index me-1 text-secondary" title="Manuel"></i>'}
+                                            <span class="badge bg-white text-dark border me-1 mb-1" title="Source: ${(ar.source || '').startsWith('profile') ? 'Profil' : 'Manuel'}">
+                                                ${(ar.source || '').startsWith('profile') ? '<i class="bi bi-person-badge me-1 text-info" title="Via profil"></i>' : '<i class="bi bi-hand-index me-1 text-secondary" title="Manuel"></i>'}
                                                 ${escapeHtml(ar.app_name)} 
                                                 <span class="badge ${getRoleBadgeColor(ar.role)} ms-1">${ar.role}</span>
                                             </span>
@@ -5376,17 +5482,19 @@ async function showApplyProfileModal(profileId) {
 
 function renderApplyProfileUsersList(users, profileId) {
     const container = document.getElementById('applyProfileUsersList');
-    container.innerHTML = users.map(user => `
+    container.innerHTML = users.map(user => {
+        const hasProfile = (user.profiles || []).some(p => p.id === profileId);
+        return `
         <div class="form-check apply-profile-user-item mb-1">
             <input class="form-check-input apply-profile-user-cb" type="checkbox" value="${user.id}" id="applyUser${user.id}"
-                ${user.profile?.id === profileId ? 'checked disabled' : ''}>
+                ${hasProfile ? 'checked disabled' : ''}>
             <label class="form-check-label small" for="applyUser${user.id}">
                 ${escapeHtml(user.username)}
-                ${user.profile ? `<span class="badge badge-profile ms-1" style="background-color: ${user.profile.color}; font-size: 0.7em;">${escapeHtml(user.profile.name)}</span>` : ''}
-                ${user.profile?.id === profileId ? '<span class="text-muted ms-1">(déjà assigné)</span>' : ''}
+                ${(user.profiles || []).map(p => `<span class="badge badge-profile ms-1" style="background-color: ${p.color}; font-size: 0.7em;">${escapeHtml(p.name)}</span>`).join('')}
+                ${hasProfile ? '<span class="text-muted ms-1">(déjà assigné)</span>' : ''}
             </label>
         </div>
-    `).join('');
+    `}).join('');
     
     // Stocker pour le filtre
     container.dataset.allUsers = JSON.stringify(users.map(u => ({ id: u.id, username: u.username })));
@@ -5427,8 +5535,8 @@ async function handleApplyProfile() {
 
 // Fonctions pour le sélecteur de profil dans le modal user
 async function onUserProfileChange() {
-    const profileId = document.getElementById('userProfileSelect').value;
-    const userId = document.getElementById('userId').value;
+    const profileSelect = document.getElementById('userProfileSelect');
+    const selectedIds = Array.from(profileSelect.selectedOptions).map(o => parseInt(o.value));
     
     // Récupérer les rôles manuels actuels de l'utilisateur (ceux cochés manuellement)
     const currentManualRoles = [];
@@ -5440,21 +5548,35 @@ async function onUserProfileChange() {
         }
     });
     
-    // Construire la liste combinée : rôles du profil + rôles manuels
+    // Construire la liste combinée : rôles de tous les profils + rôles manuels
     const combinedRoles = [...currentManualRoles];
-    if (profileId) {
-        const profile = allProfiles.find(p => p.id === parseInt(profileId));
-        if (profile) {
-            const profileAppIds = new Set(profile.app_roles.map(ar => ar.app_id));
-            // Ajouter les rôles du profil avec source='profile'
-            profile.app_roles.forEach(ar => {
-                combinedRoles.push({ app_id: ar.app_id, role: ar.role, source: 'profile' });
-            });
-            // Retirer les manuels qui sont déjà couverts par le profil
-            const filteredRoles = combinedRoles.filter(ar => !(ar.source === 'manual' && profileAppIds.has(ar.app_id)));
-            loadUserAppsWithRoles(filteredRoles);
-            return;
+    const profileAppIds = new Set();
+
+    if (selectedIds.length > 0) {
+        // Rôle le plus élevé par app parmi tous les profils sélectionnés
+        const roleHierarchy = { admin: 4, manager: 3, user: 2, viewer: 1 };
+        const bestProfileRoles = {};  // app_id -> { role, level }
+
+        for (const pid of selectedIds) {
+            const profile = allProfiles.find(p => p.id === pid);
+            if (!profile) continue;
+            for (const ar of profile.app_roles) {
+                const level = roleHierarchy[ar.role] || 0;
+                if (!bestProfileRoles[ar.app_id] || level > bestProfileRoles[ar.app_id].level) {
+                    bestProfileRoles[ar.app_id] = { role: ar.role, level };
+                }
+                profileAppIds.add(ar.app_id);
+            }
         }
+
+        for (const [appId, val] of Object.entries(bestProfileRoles)) {
+            combinedRoles.push({ app_id: parseInt(appId), role: val.role, source: 'profile' });
+        }
+
+        // Retirer les manuels déjà couverts par les profils
+        const filteredRoles = combinedRoles.filter(ar => !(ar.source === 'manual' && profileAppIds.has(ar.app_id)));
+        loadUserAppsWithRoles(filteredRoles);
+        return;
     }
     
     // Pas de profil sélectionné : tout est manuel
@@ -5474,9 +5596,11 @@ function showAddUserFormPage() {
     if (mustChangePwdEl) mustChangePwdEl.checked = false;
     const canChangePwdEl = document.getElementById('userCanChangePassword');
     if (canChangePwdEl) canChangePwdEl.checked = true;  // Par défaut, l'utilisateur peut changer son mdp
-    // Réinitialiser le profil
+    // Réinitialiser les profils (multi-select)
     const profileSelect = document.getElementById('userProfileSelect');
-    if (profileSelect) profileSelect.value = '';
+    if (profileSelect) {
+        Array.from(profileSelect.options).forEach(opt => { opt.selected = false; });
+    }
     loadUserAppsCheckboxes([]);
     userFormModal.show();
 }
@@ -5516,10 +5640,13 @@ async function editUserPage(id) {
         canChangePwdEl.checked = user.can_change_password !== false;  // Par défaut true
     }
     
-    // Sélectionner le profil
+    // Sélectionner les profils (multi-select)
     const profileSelect = document.getElementById('userProfileSelect');
     if (profileSelect) {
-        profileSelect.value = user.profile?.id || '';
+        const userProfileIds = (user.profiles || []).map(p => p.id);
+        Array.from(profileSelect.options).forEach(opt => {
+            opt.selected = userProfileIds.includes(parseInt(opt.value));
+        });
     }
     
     const userAppRoles = user.app_roles || [];
@@ -5545,7 +5672,9 @@ async function deleteUserPage(id, username) {
     try {
         await api.deleteUser(id);
         showToast('Succès', 'Utilisateur supprimé', 'success');
+        allProfiles = [];
         await loadUsersPageData();
+        loadProfilesTab();
     } catch (error) {
         showToast('Erreur', error.message, 'danger');
     }
@@ -5554,6 +5683,70 @@ async function deleteUserPage(id, username) {
 // ===== Vue Erreurs HTTP (Audit) =====
 
 let errorsPage = 1;
+
+/**
+ * Met à jour le badge de notification d'erreurs dans la navigation principale.
+ */
+function updateNavErrorBadge(count) {
+    const navBadge = document.getElementById('navAuditErrorBadge');
+    if (navBadge) {
+        if (count > 0) {
+            navBadge.textContent = count > 99 ? '99+' : count;
+            navBadge.style.display = 'inline';
+        } else {
+            navBadge.style.display = 'none';
+        }
+    }
+}
+
+/**
+ * Interroge l'API pour connaître le nombre de nouvelles erreurs
+ * depuis le dernier acquittement, puis met à jour le badge nav.
+ */
+async function updateErrorNotificationBadge() {
+    try {
+        const result = await api.getNewErrorsCount(errorsLastAcknowledgedAt);
+        updateNavErrorBadge(result.count || 0);
+    } catch (e) {
+        // Silencieux — ne pas bloquer le reste de l'UI
+    }
+}
+
+/**
+ * Purge les erreurs (avec confirmation).
+ */
+async function purgeErrors() {
+    const hours = parseInt(document.getElementById('errorsFilterHours')?.value || 24);
+    const errorCode = document.getElementById('errorsFilterCode')?.value || null;
+    
+    const desc = errorCode ? `les erreurs ${errorCode}` : 'toutes les erreurs';
+    const period = `des ${hours} dernières heures`;
+    
+    if (!confirm(`Purger ${desc} ${period} ?\n\nCette action est irréversible.`)) return;
+    
+    try {
+        const result = await api.purgeErrors(hours, errorCode ? parseInt(errorCode) : null);
+        showToast('Succès', result.message, 'success');
+        await loadAuditPageErrors();
+    } catch (error) {
+        showToast('Erreur', error.message || 'Impossible de purger les erreurs', 'danger');
+    }
+}
+
+/**
+ * Purge toutes les erreurs (sans filtre de période).
+ */
+async function purgeAllErrors() {
+    if (!confirm('Purger TOUTES les erreurs ?\n\nCette action est irréversible.')) return;
+    
+    try {
+        const result = await api.purgeErrors();
+        showToast('Succès', result.message, 'success');
+        await loadAuditPageErrors();
+    } catch (error) {
+        showToast('Erreur', error.message || 'Impossible de purger les erreurs', 'danger');
+    }
+}
 
 async function loadAuditPageErrors() {
     const hours = parseInt(document.getElementById('errorsFilterHours')?.value || 24);
@@ -5606,6 +5799,17 @@ async function loadAuditPageErrors() {
         
         // Afficher la table
         renderErrorsTable(errors);
+        
+        // Marquer les erreurs comme consultées (acquittement automatique)
+        // L'admin a vu la page, on considère les erreurs comme prises en compte
+        try {
+            const ack = await api.acknowledgeErrors();
+            errorsLastAcknowledgedAt = ack.acknowledged_at;
+            localStorage.setItem('errorsLastAcknowledgedAt', errorsLastAcknowledgedAt);
+            updateNavErrorBadge(0);
+        } catch (e) {
+            // Non bloquant
+        }
         
     } catch (error) {
         console.error('Erreur chargement erreurs:', error);
@@ -5829,6 +6033,8 @@ let discoverySelectedEndpoint = null;  // Endpoint sélectionné depuis la spec
 let discoveryRawData = null;           // Données brutes de la dernière réponse (pour filtrage)
 let discoveryVisibleColumns = null;    // Set de colonnes visibles (null = toutes)
 let discoveryHasOpenApi = false;       // L'app sélectionnée a-t-elle une spec OpenAPI ?
+let discoveryMode = 'requester';       // Mode actuel : 'requester' ou 'm2m'
+let discoveryM2MMarkdown = null;       // Markdown M2M mis en cache pour l'app sélectionnée
 
 /**
  * Charge la page Discovery — liste les apps dans la sidebar
@@ -5907,6 +6113,11 @@ async function selectDiscoveryApp(slug) {
     // Mettre à jour l'en-tête
     document.getElementById('discoveryAppTitle').textContent = app.name;
     document.getElementById('discoveryAppDesc').textContent = app.description || '';
+
+    // Afficher le toggle mode et revenir au requêteur
+    document.getElementById('discoveryModeToggle').style.display = '';
+    discoveryM2MMarkdown = null;
+    switchDiscoveryMode('requester');
 
     // Réinitialiser
     discoveryOpenApiSpec = null;
@@ -6615,6 +6826,95 @@ function clearDiscoveryResult() {
     discoveryVisibleColumns = null;
 }
 
+// ─── Discovery : M2M Setup ───────────────────────────────────────────
+
+/**
+ * Bascule entre le mode requêteur et le mode M2M Setup
+ */
+function switchDiscoveryMode(mode) {
+    discoveryMode = mode;
+    const requester = document.getElementById('discoveryRequester');
+    const results = document.getElementById('discoveryResultsArea');
+    const m2mPanel = document.getElementById('discoveryM2MPanel');
+    const btnReq = document.getElementById('discoveryModeRequester');
+    const btnM2M = document.getElementById('discoveryModeM2M');
+
+    if (mode === 'm2m') {
+        requester.classList.add('d-none');
+        results.style.display = 'none';
+        m2mPanel.classList.remove('d-none');
+        btnReq.classList.remove('active');
+        btnM2M.classList.add('active');
+        // Charger le M2M si une app est sélectionnée
+        if (discoverySelectedApp) {
+            loadM2MSetup(discoverySelectedApp.slug);
+        }
+    } else {
+        m2mPanel.classList.add('d-none');
+        requester.classList.remove('d-none');
+        btnReq.classList.add('active');
+        btnM2M.classList.remove('active');
+    }
+}
+
+/**
+ * Charge le bloc M2M Setup pour une app
+ */
+async function loadM2MSetup(slug) {
+    const content = document.getElementById('discoveryM2MContent');
+    const copyBtn = document.getElementById('discoveryM2MCopyBtn');
+
+    // Si déjà en cache pour cette app
+    if (discoveryM2MMarkdown && discoverySelectedApp?.slug === slug) {
+        return;
+    }
+
+    content.innerHTML = `
+        <div class="text-center text-muted py-5">
+            <div class="spinner-border spinner-border-sm"></div>
+            <p class="mt-2 small">Génération du bloc M2M…</p>
+        </div>`;
+    copyBtn.disabled = true;
+
+    try {
+        const result = await api.getM2MSetup(slug);
+        discoveryM2MMarkdown = result.markdown;
+
+        content.innerHTML = `<pre class="discovery-m2m-pre mb-0">${escapeHtml(result.markdown)}</pre>`;
+        copyBtn.disabled = false;
+    } catch (error) {
+        console.error('Erreur chargement M2M Setup:', error);
+        content.innerHTML = `
+            <div class="text-center text-danger py-5">
+                <i class="bi bi-exclamation-triangle fs-3 d-block mb-2"></i>
+                Erreur lors du chargement du setup M2M
+                <div class="small text-muted mt-1">${escapeHtml(error.message || String(error))}</div>
+            </div>`;
+        copyBtn.disabled = true;
+    }
+}
+
+/**
+ * Copie le Markdown M2M dans le presse-papier
+ */
+function copyM2MSetup() {
+    if (!discoveryM2MMarkdown) return;
+    navigator.clipboard.writeText(discoveryM2MMarkdown).then(() => {
+        showToast('Copié', 'Bloc M2M copié dans le presse-papier — collez-le dans votre IA coder', 'success');
+    }).catch(() => {
+        // Fallback
+        const textarea = document.createElement('textarea');
+        textarea.value = discoveryM2MMarkdown;
+        textarea.style.position = 'fixed';
+        textarea.style.opacity = '0';
+        document.body.appendChild(textarea);
+        textarea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textarea);
+        showToast('Copié', 'Bloc M2M copié dans le presse-papier', 'success');
+    });
+}
+
 // ===== Cloner / Migrer — Export & Import d'environnement =====
 
 let backupFileData = null;
@@ -7083,13 +7383,15 @@ async function loadAppBackupsOverview() {
                     <td>${app.total_size_human}</td>
                     <td class="text-end">
                         <div class="btn-group btn-group-sm">
-                            <button class="btn btn-outline-success" onclick="showTriggerBackupConfirm('${app.app_slug}', '${escapeHtml(app.app_name)}')" title="Déclencher sauvegarde" ${app.backup_mode === 'disabled' ? 'style="display: none;"' : ''}>
+                            <button class="btn btn-outline-success" onclick="showTriggerBackupConfirm('${app.app_slug}', '${escapeHtml(app.app_name).replace(/'/g, "\\'")}')"
+                             title="Déclencher sauvegarde" ${app.backup_mode === 'disabled' ? 'style="display: none;"' : ''}>
                                 <i class="bi bi-play-circle"></i>
                             </button>
                             <button class="btn btn-outline-primary" onclick="showAppBackupsList('${app.app_slug}')" title="Voir les sauvegardes">
                                 <i class="bi bi-hdd-stack"></i>
                             </button>
-                            <button class="btn btn-outline-secondary" onclick="showAppBackupConfig('${app.app_slug}', '${escapeHtml(app.app_name)}')" title="Configurer">
+                            <button class="btn btn-outline-secondary" onclick="showAppBackupConfig('${app.app_slug}', '${escapeHtml(app.app_name).replace(/'/g, "\\'")}')"
+                             title="Configurer">
                                 <i class="bi bi-gear"></i>
                             </button>
                         </div>
@@ -8292,7 +8594,7 @@ async function executeBulkCreate() {
             
             // Ajouter le profil si sélectionné
             if (profileId) {
-                userData.profile_id = profileId;
+                userData.profile_ids = [profileId];
             }
             
             users.push(userData);
@@ -8662,7 +8964,7 @@ async function executeCsvImport() {
             is_active: true,
             must_change_password: true,
             can_change_password: true,
-            profile_id: line.profile_matched ? line.profile_matched.id : null,
+            profile_ids: line.profile_matched ? [line.profile_matched.id] : [],
             app_roles: []
         };
     });

@@ -39,6 +39,7 @@
                         <li class="nav-item">
                             <a class="nav-link" href="#" onclick="showPage('audit')" id="navAudit">
                                 <i class="bi bi-graph-up me-1"></i>Audit
+                                <span class="badge bg-danger ms-1" id="navAuditErrorBadge" style="display: none; font-size: 0.65em;">0</span>
                             </a>
                         </li>
                         <li class="nav-item">
@@ -108,12 +109,29 @@
 
     <!-- Applications Dashboard -->
     <div id="dashboardSection" class="container py-5 d-none" style="margin-top: 70px;">
-        <div class="row mb-4">
+        <div class="row mb-3">
             <div class="col">
                 <h1 class="display-6">
                     <i class="bi bi-grid-3x3-gap me-2"></i>Mes Applications
                 </h1>
                 <p class="text-muted">Sélectionnez une application pour y accéder</p>
+            </div>
+        </div>
+        <!-- Barre de recherche et filtres -->
+        <div class="row mb-3">
+            <div class="col-md-6 col-lg-4">
+                <div class="input-group">
+                    <span class="input-group-text bg-white"><i class="bi bi-search"></i></span>
+                    <input type="text" class="form-control" id="appSearchInput" placeholder="Rechercher une application…" oninput="filterDashboardApps()">
+                    <button class="btn btn-outline-secondary d-none" id="appSearchClear" onclick="clearAppSearch()"><i class="bi bi-x-lg"></i></button>
+                </div>
+            </div>
+            <div class="col-md-6 col-lg-8 d-flex align-items-center gap-2 flex-wrap mt-2 mt-md-0">
+                <button class="btn btn-sm dash-filter-btn active" data-filter="all" onclick="setDashboardFilter('all')">Toutes</button>
+                <button class="btn btn-sm dash-filter-btn" data-filter="favorites" onclick="setDashboardFilter('favorites')">
+                    <i class="bi bi-star-fill text-warning me-1"></i>Favoris
+                </button>
+                <div id="categoryFilters" class="d-flex gap-1 flex-wrap"></div>
             </div>
         </div>
         <div id="appsGrid" class="row g-4">
@@ -489,6 +507,14 @@
                             <div class="d-flex align-items-center gap-2">
                                 <span class="text-muted small" id="errorsCount">0 erreurs</span>
                                 <nav id="errorsPagination"></nav>
+                                <div class="btn-group btn-group-sm">
+                                    <button class="btn btn-outline-danger" onclick="purgeErrors()" title="Purger les erreurs de la période filtrée">
+                                        <i class="bi bi-trash me-1"></i>Purger la période
+                                    </button>
+                                    <button class="btn btn-outline-danger" onclick="purgeAllErrors()" title="Purger toutes les erreurs">
+                                        <i class="bi bi-trash-fill"></i>
+                                    </button>
+                                </div>
                                 <button class="btn btn-outline-secondary btn-sm" onclick="exportErrors()">
                                     <i class="bi bi-download me-1"></i>CSV
                                 </button>
@@ -533,9 +559,19 @@
                         <h5 class="mb-0" id="discoveryAppTitle">Explorateur API</h5>
                         <small class="text-muted" id="discoveryAppDesc"></small>
                     </div>
-                    <button class="btn btn-outline-secondary btn-sm" onclick="loadDiscoveryPage()" title="Actualiser">
-                        <i class="bi bi-arrow-clockwise"></i>
-                    </button>
+                    <div class="d-flex align-items-center gap-2">
+                        <div class="btn-group btn-group-sm" id="discoveryModeToggle" style="display: none;">
+                            <button class="btn btn-outline-primary active" id="discoveryModeRequester" onclick="switchDiscoveryMode('requester')">
+                                <i class="bi bi-terminal me-1"></i>Requêteur
+                            </button>
+                            <button class="btn btn-outline-primary" id="discoveryModeM2M" onclick="switchDiscoveryMode('m2m')">
+                                <i class="bi bi-clipboard-data me-1"></i>M2M Setup
+                            </button>
+                        </div>
+                        <button class="btn btn-outline-secondary btn-sm" onclick="loadDiscoveryPage()" title="Actualiser">
+                            <i class="bi bi-arrow-clockwise"></i>
+                        </button>
+                    </div>
                 </div>
 
                 <!-- Barre requêteur -->
@@ -603,6 +639,25 @@
                         <label class="form-label small fw-semibold mb-1">Body (JSON)</label>
                         <textarea class="form-control form-control-sm font-monospace" id="discoveryBody" rows="3"
                                   placeholder='{"key": "value"}'></textarea>
+                    </div>
+                </div>
+
+                <!-- ── Panneau M2M Setup ── -->
+                <div class="discovery-m2m-panel d-none" id="discoveryM2MPanel">
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <div class="d-flex align-items-center gap-2">
+                            <i class="bi bi-clipboard-data text-primary"></i>
+                            <span class="fw-semibold">Bloc M2M — copier-coller pour votre IA coder</span>
+                        </div>
+                        <button class="btn btn-primary btn-sm" onclick="copyM2MSetup()" id="discoveryM2MCopyBtn">
+                            <i class="bi bi-clipboard me-1"></i>Copier tout
+                        </button>
+                    </div>
+                    <div class="discovery-m2m-content" id="discoveryM2MContent">
+                        <div class="text-center text-muted py-5">
+                            <i class="bi bi-arrow-left-circle fs-3 d-block mb-2"></i>
+                            Sélectionnez une application dans la sidebar
+                        </div>
                     </div>
                 </div>
 
@@ -1586,9 +1641,8 @@
                                 <label class="form-label d-flex justify-content-between align-items-center">
                                     <span>Applications autorisées</span>
                                     <span class="d-flex gap-2 align-items-center">
-                                        <label class="form-label mb-0 small text-muted me-1">Profil :</label>
-                                        <select class="form-select form-select-sm" id="userProfileSelect" style="width: 160px;" onchange="onUserProfileChange()">
-                                            <option value="">Aucun profil</option>
+                                        <label class="form-label mb-0 small text-muted me-1">Profils :</label>
+                                        <select class="form-select form-select-sm" id="userProfileSelect" style="width: 200px;" multiple size="3" onchange="onUserProfileChange()">
                                         </select>
                                     </span>
                                 </label>

@@ -458,3 +458,195 @@ class TestDiscoveryStoredSpec:
         assert response.status_code == 200
         data = response.json()
         assert data["spec"] is None  # Aucune spec trouvée ni en base ni en live
+
+
+# ================================================================
+# GET /api/discovery/apps/{slug}/m2m-setup — Bloc M2M Setup
+# ================================================================
+
+class TestM2MSetup:
+    """Tests pour l'endpoint GET /api/discovery/apps/{slug}/m2m-setup"""
+
+    @pytest.mark.asyncio
+    async def test_m2m_setup_requires_admin(self, client: AsyncClient, user_token):
+        """L'endpoint M2M Setup nécessite un admin"""
+        response = await client.get(
+            "/api/discovery/apps/test-app/m2m-setup",
+            headers=get_auth_header(user_token),
+        )
+        assert response.status_code == 403
+
+    @pytest.mark.asyncio
+    async def test_m2m_setup_unknown_app(self, client: AsyncClient, admin_user, admin_token):
+        """App inexistante retourne 404"""
+        response = await client.get(
+            "/api/discovery/apps/nonexistent-app/m2m-setup",
+            headers=get_auth_header(admin_token),
+        )
+        assert response.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_m2m_setup_with_stored_spec(self, client: AsyncClient, admin_user, admin_token, test_app, async_session):
+        """M2M Setup avec une spec OpenAPI stockée en base"""
+        from app.models import Application
+        from sqlalchemy import select, update
+
+        # Stocker une spec OpenAPI en base
+        spec = {
+            "openapi": "3.0.0",
+            "info": {"title": "Test API", "version": "1.0"},
+            "paths": {
+                "/api/items": {
+                    "get": {
+                        "summary": "Liste les items",
+                        "tags": ["Items"],
+                        "parameters": [
+                            {"name": "limit", "in": "query", "schema": {"type": "integer"}, "required": False, "description": "Nombre max de résultats"}
+                        ]
+                    },
+                    "post": {
+                        "summary": "Créer un item",
+                        "tags": ["Items"],
+                        "requestBody": {
+                            "content": {
+                                "application/json": {
+                                    "schema": {
+                                        "type": "object",
+                                        "properties": {
+                                            "name": {"type": "string", "description": "Nom de l'item"},
+                                            "quantity": {"type": "integer", "description": "Quantité"}
+                                        },
+                                        "required": ["name"]
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                "/api/items/{id}": {
+                    "get": {
+                        "summary": "Détail d'un item",
+                        "tags": ["Items"],
+                        "parameters": [
+                            {"name": "id", "in": "path", "schema": {"type": "integer"}, "required": True, "description": "ID de l'item"}
+                        ]
+                    }
+                }
+            }
+        }
+        await async_session.execute(
+            update(Application)
+            .where(Application.slug == "test-app")
+            .values(api_endpoints=spec)
+        )
+        await async_session.commit()
+
+        response = await client.get(
+            "/api/discovery/apps/test-app/m2m-setup",
+            headers=get_auth_header(admin_token),
+        )
+        assert response.status_code == 200
+
+        data = response.json()
+        assert data["app_slug"] == "test-app"
+        assert data["app_name"] == test_app.name
+        assert data["api_url"] == test_app.api_url
+        assert "token_url" in data
+        assert "/api/auth/token" in data["token_url"]
+        assert len(data["endpoints"]) == 3  # GET items, POST items, GET items/{id}
+
+        # Vérifier le Markdown
+        md = data["markdown"]
+        assert "# M2M Setup" in md
+        assert test_app.name in md
+        assert "CLIENT_ID" in md
+        assert "<votre_client_id>" in md
+        assert "<votre_client_secret>" in md
+        assert "grant_type" in md
+        assert "/api/items" in md
+        assert "Liste les items" in md
+        assert "limit" in md
+        assert "httpx" in md
+
+    @pytest.mark.asyncio
+    async def test_m2m_setup_without_spec(self, client: AsyncClient, admin_user, admin_token, test_app):
+        """M2M Setup sans spec OpenAPI fournit quand même les infos de connexion"""
+        mock_resp = _make_mock_response(status=404, text="Not Found", reason="Not Found")
+        httpx_patch, _ = _mock_httpx_client(mock_resp)
+
+        with httpx_patch, _mock_discovery_token():
+            response = await client.get(
+                "/api/discovery/apps/test-app/m2m-setup",
+                headers=get_auth_header(admin_token),
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["app_slug"] == "test-app"
+        assert data["endpoints"] == []
+
+        md = data["markdown"]
+        assert "# M2M Setup" in md
+        assert "CLIENT_ID" in md
+        assert "Aucun endpoint documenté" in md
+
+
+class TestMarkdownGeneration:
+    """Tests unitaires pour les helpers de génération Markdown"""
+
+    def test_extract_endpoints_from_empty_spec(self):
+        from app.routes.discovery import _extract_endpoints_from_spec
+        assert _extract_endpoints_from_spec(None) == []
+        assert _extract_endpoints_from_spec({}) == []
+        assert _extract_endpoints_from_spec({"paths": {}}) == []
+
+    def test_extract_endpoints_from_spec(self):
+        from app.routes.discovery import _extract_endpoints_from_spec
+
+        spec = {
+            "paths": {
+                "/api/users": {
+                    "get": {"summary": "List users", "tags": ["Users"], "parameters": []},
+                    "post": {"summary": "Create user", "tags": ["Users"],
+                             "requestBody": {"content": {"application/json": {"schema": {
+                                 "type": "object",
+                                 "properties": {"name": {"type": "string"}}
+                             }}}}}
+                }
+            }
+        }
+        endpoints = _extract_endpoints_from_spec(spec)
+        assert len(endpoints) == 2
+        assert endpoints[0].method == "GET"
+        assert endpoints[0].path == "/api/users"
+        assert endpoints[1].method == "POST"
+        assert endpoints[1].request_body_schema is not None
+
+    def test_generate_markdown_with_endpoints(self):
+        from app.routes.discovery import _generate_m2m_markdown, M2MEndpointDetail, M2MEndpointParam
+
+        endpoints = [
+            M2MEndpointDetail(
+                method="GET",
+                path="/api/items",
+                summary="Liste les items",
+                tags=["Items"],
+                parameters=[M2MEndpointParam(name="limit", location="query", type="integer", required=False, description="Max résultats")]
+            )
+        ]
+        md = _generate_m2m_markdown("test-app", "Test App", "Une app de test", "http://test:8000", "http://hub:8000", "http://hub:8000/api/auth/token", endpoints)
+
+        assert "# M2M Setup — Test App (test-app)" in md
+        assert "http://hub:8000/api/auth/token" in md
+        assert "http://test:8000" in md
+        assert "<votre_client_id>" in md
+        assert "GET /api/items" in md
+        assert "limit" in md
+        assert "Endpoints disponibles (1)" in md
+
+    def test_generate_markdown_without_endpoints(self):
+        from app.routes.discovery import _generate_m2m_markdown
+
+        md = _generate_m2m_markdown("my-app", "My App", "", "http://my:8000", "http://hub:8000", "http://hub:8000/api/auth/token", [])
+        assert "Aucun endpoint documenté" in md
+        assert "CLIENT_ID" in md

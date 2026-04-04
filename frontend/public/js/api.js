@@ -383,6 +383,14 @@ class HubAPI {
         });
     }
 
+    async addFavorite(appId) {
+        return this.request(`/apps/${appId}/favorite`, { method: 'POST' });
+    }
+
+    async removeFavorite(appId) {
+        return this.request(`/apps/${appId}/favorite`, { method: 'DELETE' });
+    }
+
     async updateMyAppRole(appSlug, role) {
         // role peut être null pour supprimer le rôle
         const url = `/apps/me/role/${encodeURIComponent(appSlug)}${role ? `?role=${encodeURIComponent(role)}` : ''}`;
@@ -707,6 +715,28 @@ class HubAPI {
         window.URL.revokeObjectURL(downloadUrl);
     }
 
+    // Purger les error logs
+    async purgeErrors(hours = null, errorCode = null) {
+        let url = '/audit/errors';
+        const params = [];
+        if (hours) params.push(`hours=${hours}`);
+        if (errorCode) params.push(`error_code=${errorCode}`);
+        if (params.length > 0) url += '?' + params.join('&');
+        return this.request(url, { method: 'DELETE' });
+    }
+
+    // Marquer les erreurs comme consultées
+    async acknowledgeErrors() {
+        return this.request('/audit/errors/acknowledge', { method: 'POST' });
+    }
+
+    // Compter les nouvelles erreurs depuis un timestamp
+    async getNewErrorsCount(since = null) {
+        let url = '/audit/errors/new-count';
+        if (since) url += `?since=${encodeURIComponent(since)}`;
+        return this.request(url);
+    }
+
     // ===== M2M / Discovery =====
     
     /**
@@ -799,6 +829,15 @@ class HubAPI {
                 body: body
             })
         });
+    }
+
+    /**
+     * Récupère le bloc M2M setup pour une app (Markdown + endpoints détaillés)
+     * @param {string} slug - Slug de l'application cible
+     * @returns {Promise<{app_slug: string, app_name: string, api_url: string, hub_url: string, token_url: string, endpoints: Array, markdown: string}>}
+     */
+    async getM2MSetup(slug) {
+        return this.request(`/discovery/apps/${encodeURIComponent(slug)}/m2m-setup`);
     }
     
     // ===== Backup/Restore API =====

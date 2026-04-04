@@ -14,7 +14,7 @@ Permet de connaître:
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, and_, or_, desc
+from sqlalchemy import select, func, and_, or_, desc, delete
 from sqlalchemy.orm import selectinload
 from datetime import datetime, timedelta, timezone
 from typing import Optional, List
@@ -1390,3 +1390,117 @@ async def export_errors_csv(
         media_type="text/csv",
         headers={"Content-Disposition": f"attachment; filename={filename}"}
     )
+
+
+# =============================================================================
+# PURGE ET ACQUITTEMENT DES ERREURS
+# =============================================================================
+
+@router.delete("/errors")
+async def purge_error_logs(
+    hours: Optional[int] = Query(None, ge=1, le=168, description="Purger les erreurs de cette période (en heures). Si omis, purge toutes les erreurs."),
+    error_code: Optional[int] = Query(None, description="Purger uniquement un code HTTP spécifique"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Purge les logs d'erreurs HTTP.
+    Requiert: admin Hub.
+    Filtres optionnels : période et/ou code HTTP.
+    """
+    from app.models import ErrorLog
+    
+    if not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="Accès admin requis")
+    
+    query = delete(ErrorLog)
+    
+    if hours:
+        since = datetime.utcnow() - timedelta(hours=hours)
+        query = query.where(ErrorLog.created_at >= since)
+    
+    if error_code:
+        query = query.where(ErrorLog.error_code == error_code)
+    
+    result = await db.execute(query)
+    deleted_count = result.rowcount
+    await db.commit()
+    
+    # Log l'action d'admin
+    await log_action(
+        db, current_user.id, "purge_errors",
+        details=f"Purgé {deleted_count} erreurs (filtres: hours={hours}, code={error_code})",
+        notify_sse=False
+    )
+    await db.commit()
+    
+    # Notifier les clients SSE
+    _notify_audit()
+    
+    return {
+        "deleted": deleted_count,
+        "message": f"{deleted_count} erreur(s) supprimée(s)"
+    }
+
+
+@router.post("/errors/acknowledge")
+async def acknowledge_errors(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Marque les erreurs comme consultées.
+    Enregistre le timestamp de consultation pour réinitialiser le compteur
+    de notifications sur la page erreurs.
+    Requiert: admin Hub.
+    """
+    if not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="Accès admin requis")
+    
+    now = datetime.utcnow()
+    
+    # Notifier les clients SSE que les erreurs ont été acquittées
+    try:
+        from app.routes.events import notify_event
+        notify_event("errors_acknowledged", {
+            "acknowledged_at": now.isoformat(),
+            "acknowledged_by": current_user.username
+        })
+    except ImportError:
+        pass
+    
+    return {
+        "acknowledged_at": now.isoformat(),
+        "message": "Erreurs marquées comme consultées"
+    }
+
+
+@router.get("/errors/new-count")
+async def get_new_errors_count(
+    since: Optional[str] = Query(None, description="ISO timestamp depuis lequel compter les nouvelles erreurs"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Compte le nombre de nouvelles erreurs depuis un timestamp donné.
+    Utilisé pour le badge de notification dans la navigation.
+    Requiert: admin Hub.
+    """
+    from app.models import ErrorLog
+    
+    if not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="Accès admin requis")
+    
+    query = select(func.count(ErrorLog.id))
+    
+    if since:
+        try:
+            since_dt = datetime.fromisoformat(since.replace('Z', '+00:00')).replace(tzinfo=None)
+        except (ValueError, TypeError):
+            raise HTTPException(status_code=400, detail="Format de date invalide (ISO 8601 attendu)")
+        query = query.where(ErrorLog.created_at > since_dt)
+    
+    result = await db.execute(query)
+    count = result.scalar() or 0
+    
+    return {"count": count}

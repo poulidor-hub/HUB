@@ -99,7 +99,7 @@ class TestAppAutoReplace:
         
         # Doit être considéré comme nouveau (remplacement)
         assert data["is_new"] == True
-        assert "remplacée" in data["message"].lower()
+        assert "enregistrée" in data["message"].lower()
         assert "client_secret" in data["credentials"]  # Nouveau secret fourni
         
         # Le nouveau client_id doit être différent de l'ancien
@@ -161,7 +161,9 @@ class TestAppAutoReplace:
         
         # Ne doit PAS être remplacé
         assert data["is_new"] == False
-        assert "déjà enregistrée" in data["message"].lower()
+        # L'app peut être mise à jour (URLs différentes) ou inchangée
+        msg = data["message"].lower()
+        assert "déjà enregistrée" in msg or "mise à jour" in msg
         # Pas de client_secret fourni (seulement client_id si SA existe)
         if data.get("credentials"):
             assert "client_secret" not in data["credentials"]
@@ -249,7 +251,6 @@ class TestAppDeleteCascade:
         # Supprimer l'app via l'API admin
         token, _, _ = create_access_token(
             username=admin_user.username,
-            roles=["admin"],
             apps={}
         )
         
@@ -307,7 +308,6 @@ class TestAppDeleteCascade:
         # Supprimer l'app
         token, _, _ = create_access_token(
             username=admin_user.username,
-            roles=["admin"],
             apps={}
         )
         
@@ -362,7 +362,6 @@ class TestAppDeleteCascade:
         # Supprimer l'app
         token, _, _ = create_access_token(
             username=admin_user.username,
-            roles=["admin"],
             apps={}
         )
         

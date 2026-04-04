@@ -6,7 +6,7 @@ import io
 from httpx import AsyncClient
 
 from app.auth import create_access_token, get_password_hash
-from app.models import User, Profile, Application, UserAppRole
+from app.models import User, Profile, Application, UserAppRole, user_profiles
 from tests.conftest import get_auth_header
 
 
@@ -18,7 +18,6 @@ class TestUsersEndpoints:
         """Admin peut lister tous les utilisateurs"""
         token, _, _ = create_access_token(
             username=admin_user.username,
-            roles=["admin"],
             apps={}
         )
         
@@ -37,7 +36,6 @@ class TestUsersEndpoints:
         """User standard ne peut pas lister les utilisateurs"""
         token, _, _ = create_access_token(
             username=test_user.username,
-            roles=["user"],
             apps={}
         )
         
@@ -53,7 +51,6 @@ class TestUsersEndpoints:
         """Admin peut créer un utilisateur"""
         token, _, _ = create_access_token(
             username=admin_user.username,
-            roles=["admin"],
             apps={}
         )
         
@@ -79,7 +76,6 @@ class TestUsersEndpoints:
         """Création avec username existant échoue"""
         token, _, _ = create_access_token(
             username=admin_user.username,
-            roles=["admin"],
             apps={}
         )
         
@@ -100,7 +96,6 @@ class TestUsersEndpoints:
         """Admin peut récupérer un utilisateur par ID"""
         token, _, _ = create_access_token(
             username=admin_user.username,
-            roles=["admin"],
             apps={}
         )
         
@@ -119,7 +114,6 @@ class TestUsersEndpoints:
         """Utilisateur inexistant retourne 404"""
         token, _, _ = create_access_token(
             username=admin_user.username,
-            roles=["admin"],
             apps={}
         )
         
@@ -135,7 +129,6 @@ class TestUsersEndpoints:
         """Admin peut modifier un utilisateur"""
         token, _, _ = create_access_token(
             username=admin_user.username,
-            roles=["admin"],
             apps={}
         )
         
@@ -156,7 +149,6 @@ class TestUsersEndpoints:
         """Admin peut modifier le mot de passe d'un utilisateur"""
         token, _, _ = create_access_token(
             username=admin_user.username,
-            roles=["admin"],
             apps={}
         )
         
@@ -187,7 +179,6 @@ class TestUsersEndpoints:
         """Admin peut désactiver un utilisateur"""
         token, _, _ = create_access_token(
             username=admin_user.username,
-            roles=["admin"],
             apps={}
         )
         
@@ -219,7 +210,6 @@ class TestUsersEndpoints:
         
         token, _, _ = create_access_token(
             username=admin_user.username,
-            roles=["admin"],
             apps={}
         )
         
@@ -235,7 +225,6 @@ class TestUsersEndpoints:
         """Admin ne peut pas se supprimer lui-même"""
         token, _, _ = create_access_token(
             username=admin_user.username,
-            roles=["admin"],
             apps={}
         )
         
@@ -252,7 +241,6 @@ class TestUsersEndpoints:
         """Un utilisateur peut changer son propre mot de passe"""
         token, _, _ = create_access_token(
             username=test_user.username,
-            roles=["user"],
             apps={}
         )
         
@@ -301,7 +289,9 @@ class TestM2MBulkUserRoles:
         await async_session.commit()
         await async_session.refresh(profile)
 
-        test_user.profile_id = profile.id
+        await async_session.execute(
+            user_profiles.insert().values(user_id=test_user.id, profile_id=profile.id)
+        )
         await async_session.commit()
 
         second_user = User(
@@ -366,18 +356,18 @@ class TestM2MBulkUserRoles:
         assert response.status_code == 200
         data = response.json()
 
-        assert data["unknown-user"] == {"profile": None, "apps": []}
+        assert data["unknown-user"] == {"profiles": [], "apps": []}
 
-        assert data[test_user.username]["profile"] == {
+        assert data[test_user.username]["profiles"] == [{
             "id": profile.id,
             "name": "Profil Hub Vision",
             "color": "#123456",
-        }
+        }]
         assert data[test_user.username]["apps"] == [
             {"app_slug": "test-app", "role": "manager"}
         ]
 
-        assert data[second_user.username]["profile"] is None
+        assert data[second_user.username]["profiles"] == []
         assert data[second_user.username]["apps"] == [
             {"app_slug": "test-app", "role": "user"}
         ]
@@ -418,7 +408,7 @@ class TestM2MBulkUserRoles:
         data = response.json()
 
         assert list(data.keys()) == [test_user.username]
-        assert data[test_user.username]["profile"] is None
+        assert data[test_user.username]["profiles"] == []
         assert isinstance(data[test_user.username]["apps"], list)
 
 

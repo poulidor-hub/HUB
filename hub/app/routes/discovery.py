@@ -100,6 +100,38 @@ class ProxyResponse(BaseModel):
     error: Optional[str] = None
 
 
+class M2MEndpointParam(BaseModel):
+    """Paramètre d'un endpoint M2M"""
+    name: str
+    location: str = "query"  # query, path, header
+    type: str = "string"
+    required: bool = False
+    description: str = ""
+
+
+class M2MEndpointDetail(BaseModel):
+    """Détail d'un endpoint pour le setup M2M"""
+    method: str
+    path: str
+    summary: str = ""
+    description: str = ""
+    tags: List[str] = []
+    parameters: List[M2MEndpointParam] = []
+    request_body_schema: Optional[dict] = None
+
+
+class M2MSetupResponse(BaseModel):
+    """Réponse complète du setup M2M pour une app"""
+    app_slug: str
+    app_name: str
+    app_description: str = ""
+    api_url: str
+    hub_url: str
+    token_url: str
+    endpoints: List[M2MEndpointDetail] = []
+    markdown: str
+
+
 # ─── Helpers internes ─────────────────────────────────────────────────
 
 async def _ensure_discovery_sa(db: AsyncSession) -> ServiceAccount:
@@ -339,6 +371,373 @@ async def get_app_openapi(
 
     # Aucune spec trouvée — pas une erreur fatale
     return {"spec": None, "source": None, "message": f"Aucune spécification OpenAPI trouvée pour '{slug}'"}
+
+
+# ─── M2M Setup ────────────────────────────────────────────────────────
+
+def _extract_endpoints_from_spec(spec: dict) -> List[M2MEndpointDetail]:
+    """Extrait les endpoints détaillés depuis une spec OpenAPI filtrée."""
+    endpoints = []
+    if not spec or "paths" not in spec:
+        return endpoints
+
+    for path, methods in spec.get("paths", {}).items():
+        for method, details in methods.items():
+            if method.lower() not in ("get", "post", "put", "patch", "delete", "head", "options"):
+                continue
+            if not isinstance(details, dict):
+                continue
+
+            params = []
+            for p in details.get("parameters", []):
+                params.append(M2MEndpointParam(
+                    name=p.get("name", ""),
+                    location=p.get("in", "query"),
+                    type=_resolve_param_type(p.get("schema", {})),
+                    required=p.get("required", False),
+                    description=p.get("description", ""),
+                ))
+
+            request_body_schema = None
+            rb = details.get("requestBody", {})
+            if rb:
+                content = rb.get("content", {})
+                json_schema = content.get("application/json", {}).get("schema")
+                if json_schema:
+                    request_body_schema = _resolve_schema(json_schema, spec)
+
+            endpoints.append(M2MEndpointDetail(
+                method=method.upper(),
+                path=path,
+                summary=details.get("summary", ""),
+                description=details.get("description", ""),
+                tags=details.get("tags", []),
+                parameters=params,
+                request_body_schema=request_body_schema,
+            ))
+
+    # Trier par path puis par méthode
+    method_order = {"GET": 0, "POST": 1, "PUT": 2, "PATCH": 3, "DELETE": 4, "HEAD": 5, "OPTIONS": 6}
+    endpoints.sort(key=lambda e: (e.path, method_order.get(e.method, 9)))
+    return endpoints
+
+
+def _resolve_param_type(schema: dict) -> str:
+    """Résout le type d'un paramètre depuis son schema OpenAPI."""
+    if not schema:
+        return "string"
+    t = schema.get("type", "")
+    fmt = schema.get("format", "")
+    if fmt:
+        return f"{t} ({fmt})"
+    return t or "string"
+
+
+def _resolve_schema(schema: dict, spec: dict, depth: int = 0) -> dict:
+    """Résout les $ref dans un schema OpenAPI (profondeur limitée)."""
+    if depth > 5 or not isinstance(schema, dict):
+        return schema
+
+    ref = schema.get("$ref")
+    if ref and isinstance(ref, str):
+        parts = ref.lstrip("#/").split("/")
+        resolved = spec
+        for part in parts:
+            if isinstance(resolved, dict):
+                resolved = resolved.get(part, {})
+            else:
+                return schema
+        return _resolve_schema(resolved, spec, depth + 1) if isinstance(resolved, dict) else schema
+
+    # Résoudre les propriétés imbriquées
+    result = {}
+    for key, value in schema.items():
+        if key == "properties" and isinstance(value, dict):
+            result[key] = {k: _resolve_schema(v, spec, depth + 1) for k, v in value.items()}
+        elif key == "items" and isinstance(value, dict):
+            result[key] = _resolve_schema(value, spec, depth + 1)
+        elif key == "allOf" and isinstance(value, list):
+            merged = {}
+            for item in value:
+                resolved_item = _resolve_schema(item, spec, depth + 1)
+                if isinstance(resolved_item, dict):
+                    for k, v in resolved_item.items():
+                        if k == "properties" and "properties" in merged:
+                            merged["properties"].update(v)
+                        else:
+                            merged[k] = v
+            result.update(merged)
+        else:
+            result[key] = value
+
+    return result
+
+
+def _generate_body_example(schema: dict) -> str:
+    """Génère un exemple JSON minimal depuis un schema résolu."""
+    if not schema:
+        return "{}"
+    props = schema.get("properties", {})
+    if not props:
+        return "{}"
+    example = {}
+    required_fields = set(schema.get("required", []))
+    for name, prop in props.items():
+        t = prop.get("type", "string")
+        desc = prop.get("description", "")
+        if t == "string":
+            example[name] = desc if desc else f"<{name}>"
+        elif t == "integer":
+            example[name] = 0
+        elif t == "number":
+            example[name] = 0.0
+        elif t == "boolean":
+            example[name] = True
+        elif t == "array":
+            example[name] = []
+        elif t == "object":
+            example[name] = {}
+        else:
+            example[name] = f"<{name}>"
+    import json
+    return json.dumps(example, indent=2, ensure_ascii=False)
+
+
+def _generate_m2m_markdown(
+    app_slug: str,
+    app_name: str,
+    app_description: str,
+    api_url: str,
+    hub_url: str,
+    token_url: str,
+    endpoints: List[M2MEndpointDetail],
+) -> str:
+    """Génère le bloc Markdown complet pour le setup M2M."""
+    lines = []
+
+    # ─── En-tête ─────────────────────────────────────────────────
+    lines.append(f"# M2M Setup — {app_name} ({app_slug})")
+    lines.append("")
+    if app_description:
+        lines.append(f"> {app_description}")
+        lines.append("")
+
+    # ─── Informations de connexion ──────────────────────────────
+    lines.append("## Informations de connexion")
+    lines.append("")
+    lines.append(f"- **HUB URL** : `{hub_url}`")
+    lines.append(f"- **Token endpoint** : `POST {token_url}`")
+    lines.append(f"- **API cible** : `{api_url}`")
+    lines.append(f"- **App slug** : `{app_slug}`")
+    lines.append("")
+
+    # ─── Authentification M2M ───────────────────────────────────
+    lines.append("## Authentification M2M")
+    lines.append("")
+    lines.append("```python")
+    lines.append("import httpx")
+    lines.append("")
+    lines.append("# Remplacez par vos credentials de service account")
+    lines.append('CLIENT_ID = "<votre_client_id>"')
+    lines.append('CLIENT_SECRET = "<votre_client_secret>"')
+    lines.append(f'HUB_URL = "{hub_url}"')
+    lines.append(f'API_URL = "{api_url}"')
+    lines.append("")
+    lines.append("# Obtenir un token M2M")
+    lines.append('token_resp = httpx.post(f"{HUB_URL}/api/auth/token", data={')
+    lines.append('    "grant_type": "client_credentials",')
+    lines.append('    "client_id": CLIENT_ID,')
+    lines.append('    "client_secret": CLIENT_SECRET,')
+    lines.append("})")
+    lines.append("token_resp.raise_for_status()")
+    lines.append('token = token_resp.json()["access_token"]')
+    lines.append('headers = {"Authorization": f"Bearer {token}"}')
+    lines.append("```")
+    lines.append("")
+
+    # ─── Endpoints disponibles ──────────────────────────────────
+    if not endpoints:
+        lines.append("## Endpoints disponibles")
+        lines.append("")
+        lines.append("_Aucun endpoint documenté pour cette application._")
+        lines.append("L'application n'a pas encore poussé sa spécification OpenAPI au Hub.")
+        lines.append("")
+        lines.append("Vous pouvez quand même appeler l'API manuellement :")
+        lines.append("")
+        lines.append("```python")
+        lines.append(f'resp = httpx.get(f"{{API_URL}}/api/...", headers=headers)')
+        lines.append("print(resp.json())")
+        lines.append("```")
+        lines.append("")
+    else:
+        lines.append(f"## Endpoints disponibles ({len(endpoints)})")
+        lines.append("")
+
+        # Grouper par tag
+        tagged: dict[str, list[M2MEndpointDetail]] = {}
+        for ep in endpoints:
+            tag = ep.tags[0] if ep.tags else "Général"
+            tagged.setdefault(tag, []).append(ep)
+
+        for tag, tag_endpoints in tagged.items():
+            lines.append(f"### {tag}")
+            lines.append("")
+
+            for ep in tag_endpoints:
+                lines.append(f"#### `{ep.method} {ep.path}`")
+                if ep.summary:
+                    lines.append(f"_{ep.summary}_")
+                if ep.description and ep.description != ep.summary:
+                    lines.append(f"\n{ep.description}")
+                lines.append("")
+
+                # Paramètres
+                params_query = [p for p in ep.parameters if p.location == "query"]
+                params_path = [p for p in ep.parameters if p.location == "path"]
+
+                if params_path:
+                    lines.append("**Paramètres de chemin :**")
+                    lines.append("")
+                    lines.append("| Nom | Type | Description |")
+                    lines.append("|-----|------|-------------|")
+                    for p in params_path:
+                        lines.append(f"| `{p.name}` | {p.type} | {p.description} |")
+                    lines.append("")
+
+                if params_query:
+                    lines.append("**Paramètres query :**")
+                    lines.append("")
+                    lines.append("| Nom | Type | Requis | Description |")
+                    lines.append("|-----|------|--------|-------------|")
+                    for p in params_query:
+                        requis = "✅" if p.required else ""
+                        lines.append(f"| `{p.name}` | {p.type} | {requis} | {p.description} |")
+                    lines.append("")
+
+                # Body
+                if ep.request_body_schema:
+                    body_example = _generate_body_example(ep.request_body_schema)
+                    lines.append("**Body (JSON) :**")
+                    lines.append("")
+                    lines.append("```json")
+                    lines.append(body_example)
+                    lines.append("```")
+                    lines.append("")
+
+                # Exemple d'appel
+                lines.append("**Exemple :**")
+                lines.append("")
+                lines.append("```python")
+                method_lower = ep.method.lower()
+                path_fmt = ep.path.replace("{", "{").replace("}", "}")
+                if ep.request_body_schema:
+                    lines.append(f'resp = httpx.{method_lower}(f"{{API_URL}}{path_fmt}", headers=headers, json={{')
+                    body_props = ep.request_body_schema.get("properties", {})
+                    for pname in list(body_props.keys())[:3]:
+                        lines.append(f'    "{pname}": ...,')
+                    lines.append("})")
+                elif params_query:
+                    qparams = ", ".join(f'"{p.name}": ...' for p in params_query[:3])
+                    lines.append(f'resp = httpx.{method_lower}(f"{{API_URL}}{path_fmt}", headers=headers, params={{{qparams}}})')
+                else:
+                    lines.append(f'resp = httpx.{method_lower}(f"{{API_URL}}{path_fmt}", headers=headers)')
+                lines.append("print(resp.json())")
+                lines.append("```")
+                lines.append("")
+
+    # ─── Notes ──────────────────────────────────────────────────
+    lines.append("---")
+    lines.append("")
+    lines.append("## Notes")
+    lines.append("")
+    lines.append("- Le token M2M expire au bout de **15 minutes** par défaut. Rafraîchissez-le avant expiration.")
+    lines.append("- Les credentials `CLIENT_ID` / `CLIENT_SECRET` sont ceux de votre **Service Account** (à demander à l'administrateur du Hub).")
+    lines.append(f"- Votre Service Account doit avoir accès à l'application `{app_slug}`.")
+    lines.append(f"- L'API cible (`{api_url}`) doit être accessible depuis votre réseau.")
+    lines.append("")
+
+    return "\n".join(lines)
+
+
+@router.get("/apps/{slug}/m2m-setup", response_model=M2MSetupResponse)
+async def get_m2m_setup(
+    slug: str,
+    current_admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Génère un bloc Markdown complet pour le setup M2M avec une app cible.
+    
+    Contient : informations de connexion, code d'authentification Python,
+    liste des endpoints avec paramètres et exemples d'appel.
+    
+    Destiné au copier-coller vers un IA coder ou un fichier de documentation.
+    Réservé aux administrateurs.
+    """
+    from app.routes.apps import filter_openapi_spec
+
+    # Trouver l'application
+    result = await db.execute(
+        select(Application).where(Application.slug == slug, Application.is_active == True)
+    )
+    app = result.scalar_one_or_none()
+    if not app:
+        raise HTTPException(status_code=404, detail=f"Application '{slug}' non trouvée")
+
+    # Construire les URLs
+    hub_host = settings.get_hub_host()
+    hub_url = f"http://{hub_host}:8000"
+    token_url = f"{hub_url}/api/auth/token"
+
+    # Charger la spec OpenAPI (même logique que /openapi)
+    spec = None
+    if app.api_endpoints and isinstance(app.api_endpoints, dict) and app.api_endpoints.get("paths"):
+        spec = app.api_endpoints
+    else:
+        # Fallback : fetch live
+        try:
+            token = await _get_discovery_token(db)
+            base_url = app.api_url.rstrip("/")
+            async with _get_httpx_client() as client:
+                for path in OPENAPI_PATHS:
+                    try:
+                        resp = await client.get(
+                            base_url + path,
+                            headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
+                        )
+                        if resp.status_code == 200:
+                            raw_spec = resp.json()
+                            spec, _, _ = filter_openapi_spec(raw_spec)
+                            break
+                    except Exception:
+                        continue
+        except Exception as e:
+            logger.debug(f"Pas de spec OpenAPI pour {slug}: {e}")
+
+    # Extraire les endpoints
+    endpoints = _extract_endpoints_from_spec(spec) if spec else []
+
+    # Générer le Markdown
+    markdown = _generate_m2m_markdown(
+        app_slug=app.slug,
+        app_name=app.name,
+        app_description=app.description or "",
+        api_url=app.api_url,
+        hub_url=hub_url,
+        token_url=token_url,
+        endpoints=endpoints,
+    )
+
+    return M2MSetupResponse(
+        app_slug=app.slug,
+        app_name=app.name,
+        app_description=app.description or "",
+        api_url=app.api_url,
+        hub_url=hub_url,
+        token_url=token_url,
+        endpoints=endpoints,
+        markdown=markdown,
+    )
 
 
 @router.post("/proxy", response_model=ProxyResponse)

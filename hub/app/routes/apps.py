@@ -15,7 +15,7 @@ from app.routes.events import notify_event, notify_stats_update
 from app.routes.app_backups import reassociate_orphan_backups
 
 from app.database import get_db
-from app.models import Application, User, ServiceAccount, UserAppRole, ApprovalStatus, service_account_app_access, DEFAULT_ROLES, AppBackup
+from app.models import Application, User, ServiceAccount, UserAppRole, ApprovalStatus, service_account_app_access, DEFAULT_ROLES, AppBackup, UserFavorite
 from app.schemas import (
     AppCreate, AppCreateSimplified, AppUpdate, AppResponse, AppWithUsers, AppWithUsersAndDocker,
     AppResponseWithMyRole,
@@ -475,6 +475,12 @@ async def list_apps(
     )
     user = user_result.scalar_one()
     user_roles_map = {ar.application.slug: ar.role for ar in user.app_roles}
+
+    # Charger les favoris de l'utilisateur courant
+    fav_result = await db.execute(
+        select(UserFavorite.app_id).where(UserFavorite.user_id == current_user.id)
+    )
+    favorite_app_ids = {row[0] for row in fav_result}
     
     # Récupérer la version de chaque app depuis le dernier backup
     # Sous-requête : pour chaque app_slug, prendre le created_at max
@@ -510,7 +516,8 @@ async def list_apps(
             AppResponseWithMyRole.from_app_with_role(
                 app, 
                 user_roles_map.get(app.slug),
-                app_version=app_versions_map.get(app.slug)
+                app_version=app_versions_map.get(app.slug),
+                is_favorite=app.id in favorite_app_ids
             )
             for app in apps
         ]
@@ -524,7 +531,8 @@ async def list_apps(
             AppResponseWithMyRole.from_app_with_role(
                 ar.application, 
                 ar.role,
-                app_version=app_versions_map.get(ar.application.slug)
+                app_version=app_versions_map.get(ar.application.slug),
+                is_favorite=ar.application.id in favorite_app_ids
             )
             for ar in sorted_roles
         ]
@@ -1038,7 +1046,13 @@ async def register_app(
                 message = f"Application '{app_data.slug}' déjà enregistrée (aucune modification nécessaire). Utilisez /api/apps/me/credentials pour récupérer vos credentials."
                 logger.info(f"✅ {message}")
             
-            # Trouver le service account associé
+            # Trouver le service account associé (rechargement explicite après refresh)
+            result_sa = await db.execute(
+                select(Application)
+                .options(selectinload(Application.service_accounts))
+                .where(Application.id == existing_app.id)
+            )
+            existing_app = result_sa.scalar_one()
             sa = next((sa for sa in existing_app.service_accounts), None)
             
             return AppRegisterResponse(
@@ -3446,3 +3460,51 @@ async def auto_sync_docker_applications(db: AsyncSession) -> dict:
         await db.commit()
     
     return {"message": "Sync auto terminée", "changes": changes}
+
+
+# ===== Favoris =====
+
+@router.post("/{app_id}/favorite", status_code=status.HTTP_204_NO_CONTENT)
+async def add_favorite(
+    app_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Ajoute une application aux favoris de l'utilisateur courant"""
+    result = await db.execute(select(Application).where(Application.id == app_id))
+    app = result.scalar_one_or_none()
+    if not app:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Application non trouvée")
+
+    existing = await db.execute(
+        select(UserFavorite).where(
+            UserFavorite.user_id == current_user.id,
+            UserFavorite.app_id == app_id
+        )
+    )
+    if existing.scalar_one_or_none():
+        return  # Déjà en favori
+
+    db.add(UserFavorite(user_id=current_user.id, app_id=app_id))
+    await db.commit()
+
+
+@router.delete("/{app_id}/favorite", status_code=status.HTTP_204_NO_CONTENT)
+async def remove_favorite(
+    app_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Retire une application des favoris de l'utilisateur courant"""
+    result = await db.execute(
+        select(UserFavorite).where(
+            UserFavorite.user_id == current_user.id,
+            UserFavorite.app_id == app_id
+        )
+    )
+    fav = result.scalar_one_or_none()
+    if not fav:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Favori non trouvé")
+
+    await db.delete(fav)
+    await db.commit()

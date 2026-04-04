@@ -146,7 +146,6 @@ class TestAuthEndpoints:
         # Créer un token
         token, _, _ = create_access_token(
             username=test_user.username,
-            roles=["user"],
             apps={}
         )
         
@@ -171,7 +170,6 @@ class TestAuthEndpoints:
         """Test de l'introspection de token"""
         token, _, _ = create_access_token(
             username=test_user.username,
-            roles=["user"],
             apps={"test-app": "user"}
         )
         
@@ -191,7 +189,6 @@ class TestAuthEndpoints:
         """Introspection d'un token expiré"""
         token, _, _ = create_access_token(
             username="testuser",
-            roles=["user"],
             apps={},
             expires_delta=timedelta(seconds=-10)
         )
