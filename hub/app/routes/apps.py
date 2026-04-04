@@ -15,7 +15,7 @@ from app.routes.events import notify_event, notify_stats_update
 from app.routes.app_backups import reassociate_orphan_backups
 
 from app.database import get_db
-from app.models import Application, User, ServiceAccount, UserAppRole, ApprovalStatus, service_account_app_access, DEFAULT_ROLES, AppBackup, UserFavorite
+from app.models import Application, User, ServiceAccount, UserAppRole, ApprovalStatus, service_account_app_access, DEFAULT_ROLES, AppBackup, UserFavorite, utcnow
 from app.schemas import (
     AppCreate, AppCreateSimplified, AppUpdate, AppResponse, AppWithUsers, AppWithUsersAndDocker,
     AppResponseWithMyRole,
@@ -394,7 +394,7 @@ async def get_apps_status(
             "status": "offline",
             "response_time_ms": None,
             "error": None,
-            "last_check": datetime.utcnow().isoformat()
+            "last_check": utcnow().isoformat()
         }
         
         if not app.api_url:
@@ -450,7 +450,7 @@ async def get_apps_status(
             "offline": offline_count,
             "error": error_count
         },
-        "timestamp": datetime.utcnow().isoformat()
+        "timestamp": utcnow().isoformat()
     }
 
 
@@ -1011,7 +1011,7 @@ async def register_app(
             if app_data.api_endpoints:
                 filtered_spec, total_ep, filtered_ep = filter_openapi_spec(app_data.api_endpoints)
                 existing_app.api_endpoints = filtered_spec
-                existing_app.api_endpoints_updated_at = datetime.utcnow()
+                existing_app.api_endpoints_updated_at = utcnow()
                 updated_fields.append(f"api_endpoints: {total_ep - filtered_ep} endpoints métier")
             
             # Commit les changements si nécessaire
@@ -1115,7 +1115,7 @@ async def register_app(
     if app_data.api_endpoints:
         filtered_spec, total_ep, filtered_ep = filter_openapi_spec(app_data.api_endpoints)
         app.api_endpoints = filtered_spec
-        app.api_endpoints_updated_at = datetime.utcnow()
+        app.api_endpoints_updated_at = utcnow()
         logger.info(f"📋 Spec OpenAPI reçue à l'enregistrement de '{app_data.slug}': {total_ep - filtered_ep} endpoints métier, {filtered_ep} techniques exclus")
     
     db.add(app)
@@ -1978,7 +1978,7 @@ async def update_app_shared(
     if is_shared and not old_shared and app.approval_status == ApprovalStatus.pending:
         from datetime import datetime, timezone
         app.approval_status = ApprovalStatus.approved
-        app.approved_at = datetime.utcnow()
+        app.approved_at = utcnow()
         app.is_active = True
         if app.description:
             app.description = app.description.replace(" (en attente d'approbation)", "")
@@ -2187,7 +2187,7 @@ async def push_openapi_spec(
     
     # Stocker la spec filtrée
     app.api_endpoints = filtered_spec
-    app.api_endpoints_updated_at = datetime.utcnow()
+    app.api_endpoints_updated_at = utcnow()
     
     await db.commit()
     
@@ -2295,7 +2295,7 @@ async def approve_or_reject_app(
         # APPROBATION
         app.approval_status = ApprovalStatus.approved
         app.approved_by_id = admin.id
-        app.approved_at = datetime.utcnow()
+        app.approved_at = utcnow()
         app.is_active = True
         app.description = app.description.replace(" (en attente d'approbation)", "") if app.description else None
         
@@ -2368,7 +2368,7 @@ async def approve_or_reject_app(
         
         app.approval_status = ApprovalStatus.rejected
         app.approved_by_id = admin.id
-        app.approved_at = datetime.utcnow()
+        app.approved_at = utcnow()
         app.rejection_reason = approval.reason
         app.is_active = False
         

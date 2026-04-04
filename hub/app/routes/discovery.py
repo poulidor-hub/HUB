@@ -18,7 +18,7 @@ from typing import Optional, List
 from datetime import timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -70,8 +70,7 @@ class DiscoveryAppItem(BaseModel):
     icon: Optional[str] = None
     color: Optional[str] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class DiscoveryAppsResponse(BaseModel):

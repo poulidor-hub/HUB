@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.health_checker import start_health_checker, stop_health_checker, is_health_checker_running
+from app.models import utcnow
 
 import logging
 logger = logging.getLogger(__name__)
@@ -47,7 +48,7 @@ async def broadcast_event(event_type: str, data: Optional[dict] = None):
     event = {
         "type": event_type,
         "data": data or {},
-        "timestamp": datetime.utcnow().isoformat()
+        "timestamp": utcnow().isoformat()
     }
     
     # Notifier tous les clients connectés
@@ -205,7 +206,7 @@ async def close_all_sse_connections():
     _shutdown_event.set()
     
     # Envoyer un message shutdown dans toutes les queues pour débloquer les wait_for
-    shutdown_msg = {"type": "shutdown", "timestamp": datetime.utcnow().isoformat()}
+    shutdown_msg = {"type": "shutdown", "timestamp": utcnow().isoformat()}
     for queue in list(_connected_clients):
         try:
             queue.put_nowait(shutdown_msg)

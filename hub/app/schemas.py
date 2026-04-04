@@ -1,4 +1,4 @@
-from pydantic import BaseModel, EmailStr, Field, field_validator
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 from enum import Enum
@@ -77,8 +77,7 @@ class ProfileAppRoleResponse(BaseModel):
     app_slug: str
     role: str
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class ProfileBriefResponse(BaseModel):
@@ -87,8 +86,7 @@ class ProfileBriefResponse(BaseModel):
     name: str
     color: str
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class ProfileResponse(BaseModel):
@@ -102,8 +100,7 @@ class ProfileResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class ProfileApplyRequest(BaseModel):
@@ -126,8 +123,7 @@ class UserAppRoleResponse(BaseModel):
     role: str
     source: str = "manual"
     
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
     
     @classmethod
     def from_orm_model(cls, uar):
@@ -151,8 +147,7 @@ class UserResponse(UserBase):
     app_roles: List[UserAppRoleResponse] = []
     profiles: List[ProfileBriefResponse] = []
     
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
     
     @classmethod
     def from_orm_model(cls, user) -> "UserResponse":
@@ -191,8 +186,7 @@ class UserBrief(BaseModel):
     username: str
     is_active: bool
     
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class PaginatedUsersResponse(BaseModel):
@@ -211,8 +205,7 @@ class UserBriefWithRole(BaseModel):
     is_active: bool
     role: str
     
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # ===== Application Schemas =====
@@ -297,8 +290,7 @@ class AppResponse(AppBase):
         """Convertit None en False pour is_remote (anciennes apps en BDD)"""
         return v if v is not None else False
     
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class AppResponseWithMyRole(AppResponse):
@@ -308,8 +300,7 @@ class AppResponseWithMyRole(AppResponse):
     is_favorite: bool = False  # Si l'utilisateur a mis cette app en favori
     category: Optional[str] = None  # Catégorie de l'application
     
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
     
     @classmethod
     def from_app_with_role(
@@ -353,8 +344,7 @@ class AppBrief(BaseModel):
     icon: str
     color: str
     
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class AppWithUsers(AppResponse):
@@ -497,8 +487,7 @@ class AppDiscoveryItem(BaseModel):
     api_url: str = Field(..., description="URL de l'API de l'application")
     is_shared_service: bool = Field(..., description="Si True, API partagée accessible à tous les SA")
     
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class DiscoverResponse(BaseModel):
@@ -586,8 +575,7 @@ class ServiceAccountResponse(ServiceAccountBase):
     last_used_at: Optional[datetime] = None
     applications: List["AppBrief"] = []
     
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class ServiceAccountCreated(ServiceAccountResponse):
@@ -953,8 +941,7 @@ class AppBackupResponse(BaseModel):
     created_at: datetime
     description: Optional[str] = None
     
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
     
     @classmethod
     def from_orm_model(cls, backup) -> "AppBackupResponse":
@@ -997,8 +984,7 @@ class AppBackupBrief(BaseModel):
     created_at: datetime
     is_encrypted: bool = False
     
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class AppBackupListResponse(BaseModel):

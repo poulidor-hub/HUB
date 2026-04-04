@@ -17,7 +17,7 @@ from app.auth import (
     is_token_revoked,
     cleanup_expired_tokens
 )
-from app.models import User, RefreshToken, RevokedToken
+from app.models import User, RefreshToken, RevokedToken, utcnow
 from app.config import get_settings
 
 settings = get_settings()
@@ -98,7 +98,7 @@ class TestJWTCreation:
             apps={}
         )
         
-        expected_expire = datetime.utcnow() + timedelta(
+        expected_expire = utcnow() + timedelta(
             minutes=settings.access_token_expire_minutes
         )
         # Tolérance de 5 secondes
@@ -113,7 +113,7 @@ class TestJWTCreation:
             expires_delta=custom_delta
         )
         
-        expected_expire = datetime.utcnow() + custom_delta
+        expected_expire = utcnow() + custom_delta
         assert abs((expire - expected_expire).total_seconds()) < 5
     
     def test_create_service_account_token(self):
@@ -255,7 +255,7 @@ class TestTokenRevocation:
         from app.auth import revoke_token
         
         jti = "test_jti_to_revoke"
-        expires_at = datetime.utcnow() + timedelta(hours=1)
+        expires_at = utcnow() + timedelta(hours=1)
         
         await revoke_token(async_session, jti, expires_at, "test")
         
@@ -273,14 +273,14 @@ class TestTokenCleanup:
         expired_token = RefreshToken(
             token_hash="expired_hash_123",
             user_id=test_user.id,
-            expires_at=datetime.utcnow() - timedelta(days=1)  # Expiré hier
+            expires_at=utcnow() - timedelta(days=1)  # Expiré hier
         )
         async_session.add(expired_token)
         
         # Créer un token révoqué expiré
         revoked = RevokedToken(
             jti="expired_jti",
-            expires_at=datetime.utcnow() - timedelta(days=1),
+            expires_at=utcnow() - timedelta(days=1),
             reason="test"
         )
         async_session.add(revoked)

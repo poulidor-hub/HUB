@@ -22,7 +22,7 @@ from pathlib import Path
 import logging
 
 from app.database import get_db
-from app.models import User, Application, UserAppRole, ServiceAccount, AppRole, ApprovalStatus, AppBackup, service_account_app_access
+from app.models import User, Application, UserAppRole, ServiceAccount, AppRole, ApprovalStatus, AppBackup, service_account_app_access, utcnow
 from app.auth import get_current_admin, get_password_hash
 from app.schemas import (
     BackupExport, BackupImport, ImportResult, ImportMode,
@@ -240,7 +240,7 @@ async def _do_export(
     
     return BackupExport(
         version="1.0",
-        exported_at=datetime.utcnow(),
+        exported_at=utcnow(),
         exported_by=current_user.username,
         users=users_export,
         applications=apps_export,
@@ -637,7 +637,7 @@ async def _do_import(
                         storage_path=storage_path,
                         created_by=ab_data.created_by or "import",
                         created_by_type=ab_data.created_by_type or "import",
-                        created_at=ab_data.created_at or datetime.utcnow(),
+                        created_at=ab_data.created_at or utcnow(),
                         description=ab_data.description
                     )
                     db.add(new_backup)
@@ -694,7 +694,7 @@ async def download_export(
         db, current_user, include_jwt_keys, include_sa_secrets, include_app_backups
     )
     
-    timestamp = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
+    timestamp = utcnow().strftime('%Y%m%d_%H%M%S')
     
     if include_app_backups and export_data.app_backups:
         # Générer une archive ZIP
@@ -953,7 +953,7 @@ def _write_sa_secret(client_id: str, client_secret: str, app_slugs: list):
         content = f"""CLIENT_ID={client_id}
 CLIENT_SECRET={client_secret}
 # Applications autorisées: {', '.join(app_slugs)}
-# Généré lors de l'import le {datetime.utcnow().isoformat()}
+# Généré lors de l'import le {utcnow().isoformat()}
 """
         filepath.write_text(content)
     except Exception as e:

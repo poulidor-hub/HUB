@@ -23,6 +23,11 @@ from datetime import datetime, timezone
 
 import httpx
 
+
+def utcnow() -> datetime:
+    """Retourne l'heure UTC actuelle sans timezone (compatible Python 3.12+)."""
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
 logger = logging.getLogger(__name__)
 
 # Cache des statuts de santé des applications: slug -> status
@@ -104,7 +109,7 @@ async def check_app_health(app_slug: str, api_url: str) -> dict:
         "status": "unhealthy",
         "response_time_ms": None,
         "error": None,
-        "last_check": datetime.utcnow().isoformat()
+        "last_check": utcnow().isoformat()
     }
     
     if not api_url:
@@ -179,7 +184,7 @@ async def run_health_checks():
                         "slug": app.slug,
                         "status": "unhealthy",
                         "error": str(health_result)[:100],
-                        "last_check": datetime.utcnow().isoformat()
+                        "last_check": utcnow().isoformat()
                     }
                 
                 # Récupérer l'ancien statut

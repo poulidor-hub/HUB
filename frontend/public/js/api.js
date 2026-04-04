@@ -219,6 +219,12 @@ class HubAPI {
             }
         };
 
+        // Timeout via AbortController (30s par défaut, configurable via options.timeout)
+        const timeoutMs = options.timeout || 30000;
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+        config.signal = config.signal || controller.signal;
+
         try {
             let response = await fetch(url, config);
             
@@ -269,8 +275,13 @@ class HubAPI {
 
             return await response.json();
         } catch (error) {
+            if (error.name === 'AbortError') {
+                throw new Error('Requête expirée (timeout)');
+            }
             console.error('API Error:', error);
             throw error;
+        } finally {
+            clearTimeout(timeoutId);
         }
     }
 

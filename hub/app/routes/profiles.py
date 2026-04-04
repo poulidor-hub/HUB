@@ -62,9 +62,10 @@ async def _sync_user_profile_roles(db: AsyncSession, user_id: int):
                         "profile_id": profile.id
                     }
 
-    # 3. Récupérer les rôles actuels de l'utilisateur
+    # 3. Récupérer les rôles actuels de l'utilisateur (avec verrou pour éviter les races)
     result = await db.execute(
         select(UserAppRole).where(UserAppRole.user_id == user_id)
+        .with_for_update()
     )
     current_roles = result.scalars().all()
 

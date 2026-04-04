@@ -14,6 +14,8 @@ services:
       - 5432
     networks:
       - hub-network
+    mem_limit: 1g
+    memswap_limit: 1g
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-hubadmin} -d ${POSTGRES_DB:-hub_auth}"]
       interval: 10s
@@ -37,8 +39,8 @@ services:
       - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-hubadmin}:${POSTGRES_PASSWORD:-hub_secure_password_2025}@db:5432/${POSTGRES_DB:-hub_auth}
       - JWT_ALGORITHM=RS256
       - ACCESS_TOKEN_EXPIRE_MINUTES=${ACCESS_TOKEN_EXPIRE_MINUTES:-480}
-      - ADMIN_USERNAME=${ADMIN_USERNAME:-admin}
-      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-admin123}
+      - ADMIN_USERNAME=${ADMIN_USERNAME:?Définir ADMIN_USERNAME dans .env}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:?Définir ADMIN_PASSWORD dans .env}
       - ADMIN_EMAIL=${ADMIN_EMAIL:-admin@local.lan}
       - HUB_HOST=${HUB_HOST:-}
       - AUTO_GENERATE_KEYS=${AUTO_GENERATE_KEYS:-false}
@@ -50,7 +52,7 @@ services:
       - DOCKER_SYNC_INTERVAL=${DOCKER_SYNC_INTERVAL:-300}
       # Clé de chiffrement des secrets des service accounts
       # Générer avec: python -c "import secrets; print(secrets.token_hex(32))"
-      - SECRETS_ENCRYPTION_KEY=${SECRETS_ENCRYPTION_KEY:-}
+      - SECRETS_ENCRYPTION_KEY=${SECRETS_ENCRYPTION_KEY:?Définir SECRETS_ENCRYPTION_KEY dans .env (python -c "import secrets; print(secrets.token_hex(32))")}
     volumes:
       # Secrets et clés JWT
       - ./secrets:/code/secrets:rw
@@ -79,6 +81,10 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --timeout-graceful-shutdown 5
+    mem_limit: 2g
+    memswap_limit: 2g
+    security_opt:
+      - no-new-privileges:true
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\""]
       interval: 10s
@@ -100,6 +106,10 @@ services:
         condition: service_healthy
     networks:
       - hub-network
+    mem_limit: 256m
+    memswap_limit: 256m
+    security_opt:
+      - no-new-privileges:true
 
 # ===== VOLUMES =====
 volumes:

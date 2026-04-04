@@ -23,7 +23,7 @@ import io
 import time
 
 from app.database import get_db
-from app.models import User, UserSession, AuditLog, Application
+from app.models import User, UserSession, AuditLog, Application, utcnow
 from app.auth import get_current_user, get_settings
 
 router = APIRouter(prefix="/api/audit", tags=["Audit"])
@@ -165,14 +165,14 @@ async def purge_old_logs(
     errors_deleted = 0
     
     if audit_retention_days > 0:
-        cutoff = datetime.utcnow() - timedelta(days=audit_retention_days)
+        cutoff = utcnow() - timedelta(days=audit_retention_days)
         result = await db.execute(
             delete(AuditLog).where(AuditLog.created_at < cutoff)
         )
         audit_deleted = result.rowcount
     
     if error_retention_days > 0:
-        cutoff = datetime.utcnow() - timedelta(days=error_retention_days)
+        cutoff = utcnow() - timedelta(days=error_retention_days)
         result = await db.execute(
             delete(ErrorLog).where(ErrorLog.created_at < cutoff)
         )
@@ -200,7 +200,7 @@ async def start_session(
     Démarre une nouvelle session pour un utilisateur.
     Ferme automatiquement les sessions orphelines (sans logout).
     """
-    now = datetime.utcnow()
+    now = utcnow()
     
     # Fermer les éventuelles sessions orphelines de cet utilisateur
     timeout = now - timedelta(minutes=settings.session_timeout_minutes)
@@ -286,7 +286,7 @@ async def end_session(
     session = result.scalar_one_or_none()
     
     if session:
-        session.logout_at = datetime.utcnow()
+        session.logout_at = utcnow()
         session.logout_reason = reason
         session.current_app_slug = None  # Plus d'app active
         # Notifier les clients SSE
@@ -321,7 +321,7 @@ async def update_session_activity(
     session = result.scalar_one_or_none()
     
     if session:
-        session.last_activity_at = datetime.utcnow()
+        session.last_activity_at = utcnow()
         if app_slug is not None:
             session.current_app_slug = app_slug
     
@@ -334,7 +334,7 @@ async def cleanup_stale_sessions(db: AsyncSession) -> int:
     Appelé périodiquement par le système SSE.
     Retourne le nombre de sessions fermées.
     """
-    timeout = datetime.utcnow() - timedelta(minutes=settings.session_timeout_minutes)
+    timeout = utcnow() - timedelta(minutes=settings.session_timeout_minutes)
     
     # Sélectionner les sessions dont la dernière activité dépasse le timeout
     result = await db.execute(
@@ -404,7 +404,7 @@ async def get_active_sessions(
         for app in apps_result.scalars():
             app_names[app.slug] = app.name
     
-    now = datetime.utcnow()
+    now = utcnow()
     return {
         "stale_sessions_cleaned": cleaned,
         "active_count": len(active_sessions),
@@ -444,7 +444,7 @@ async def get_session_history(
     if not current_user.is_admin:
         user_id = current_user.id
     
-    since = datetime.utcnow() - timedelta(days=days)
+    since = utcnow() - timedelta(days=days)
     
     query = select(UserSession).options(selectinload(UserSession.user)).where(
         UserSession.login_at >= since
@@ -468,7 +468,7 @@ async def get_session_history(
         for app in apps_result.scalars():
             app_names[app.slug] = app.name
     
-    now = datetime.utcnow()
+    now = utcnow()
     return {
         "period_days": days,
         "total_sessions": len(sessions),
@@ -506,7 +506,7 @@ async def get_connection_stats(
     if not current_user.is_admin:
         raise HTTPException(status_code=403, detail="Accès admin requis")
     
-    since = datetime.utcnow() - timedelta(days=days)
+    since = utcnow() - timedelta(days=days)
     
     # Nombre total de sessions
     result = await db.execute(
@@ -611,7 +611,7 @@ async def get_user_stats(
     if not current_user.is_admin and user_id != current_user.id:
         raise HTTPException(status_code=403, detail="Accès non autorisé")
     
-    since = datetime.utcnow() - timedelta(days=days)
+    since = utcnow() - timedelta(days=days)
     
     # Récupérer l'utilisateur
     result = await db.execute(select(User).where(User.id == user_id))
@@ -663,7 +663,7 @@ async def get_user_stats(
         "avg_session_display": format_duration(int(stats.avg_time)) if stats.avg_time else "N/A",
         "last_login": last_session.login_at.isoformat() if last_session else None,
         "current_session_duration": format_duration(
-            int((datetime.utcnow() - last_session.login_at).total_seconds())
+            int((utcnow() - last_session.login_at).total_seconds())
         ) if is_online else None
     }
 
@@ -716,7 +716,7 @@ async def get_audit_logs(
     if not current_user.is_admin:
         user_id = current_user.id
     
-    since = datetime.utcnow() - timedelta(days=days)
+    since = utcnow() - timedelta(days=days)
     
     # Construction de la requête
     query = select(AuditLog).where(AuditLog.created_at >= since)
@@ -788,7 +788,7 @@ async def get_app_audit_summary(
     if not current_user.is_admin:
         raise HTTPException(status_code=403, detail="Accès admin requis")
     
-    since = datetime.utcnow() - timedelta(days=days)
+    since = utcnow() - timedelta(days=days)
     
     # Accès par application
     result = await db.execute(
@@ -852,7 +852,7 @@ async def get_app_audit_detail(
     if not app:
         raise HTTPException(status_code=404, detail="Application non trouvée")
     
-    since = datetime.utcnow() - timedelta(days=days)
+    since = utcnow() - timedelta(days=days)
     
     # Logs pour cette app
     query = select(AuditLog).where(and_(
@@ -1006,7 +1006,7 @@ async def export_audit_logs_csv(
     if not current_user.is_admin:
         raise HTTPException(status_code=403, detail="Accès admin requis")
     
-    since = datetime.utcnow() - timedelta(days=days)
+    since = utcnow() - timedelta(days=days)
     
     query = select(AuditLog).where(AuditLog.created_at >= since)
     
@@ -1048,7 +1048,7 @@ async def export_audit_logs_csv(
     
     output.seek(0)
     
-    filename = f"audit_logs_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.csv"
+    filename = f"audit_logs_{utcnow().strftime('%Y%m%d_%H%M%S')}.csv"
     
     return StreamingResponse(
         iter([output.getvalue()]),
@@ -1070,7 +1070,7 @@ async def export_sessions_csv(
     if not current_user.is_admin:
         raise HTTPException(status_code=403, detail="Accès admin requis")
     
-    since = datetime.utcnow() - timedelta(days=days)
+    since = utcnow() - timedelta(days=days)
     
     query = select(UserSession).options(selectinload(UserSession.user)).where(
         UserSession.login_at >= since
@@ -1100,7 +1100,7 @@ async def export_sessions_csv(
     
     output.seek(0)
     
-    filename = f"sessions_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.csv"
+    filename = f"sessions_{utcnow().strftime('%Y%m%d_%H%M%S')}.csv"
     
     return StreamingResponse(
         iter([output.getvalue()]),
@@ -1134,7 +1134,7 @@ async def get_error_logs(
     if not current_user.is_admin:
         raise HTTPException(status_code=403, detail="Accès admin requis")
     
-    since = datetime.utcnow() - timedelta(hours=hours)
+    since = utcnow() - timedelta(hours=hours)
     
     # Construire la requête
     query = select(ErrorLog).where(ErrorLog.created_at >= since)
@@ -1208,7 +1208,7 @@ async def get_error_stats(
     if not current_user.is_admin:
         raise HTTPException(status_code=403, detail="Accès admin requis")
     
-    since = datetime.utcnow() - timedelta(hours=hours)
+    since = utcnow() - timedelta(hours=hours)
     
     # Total des erreurs
     result = await db.execute(
@@ -1278,6 +1278,37 @@ async def get_error_stats(
     }
 
 
+@router.get("/errors/new-count")
+async def get_new_errors_count(
+    since: Optional[str] = Query(None, description="ISO timestamp depuis lequel compter les nouvelles erreurs"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Compte le nombre de nouvelles erreurs depuis un timestamp donné.
+    Utilisé pour le badge de notification dans la navigation.
+    Requiert: admin Hub.
+    """
+    from app.models import ErrorLog
+    
+    if not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="Accès admin requis")
+    
+    query = select(func.count(ErrorLog.id))
+    
+    if since:
+        try:
+            since_dt = datetime.fromisoformat(since.replace('Z', '+00:00')).replace(tzinfo=None)
+        except (ValueError, TypeError):
+            raise HTTPException(status_code=400, detail="Format de date invalide (ISO 8601 attendu)")
+        query = query.where(ErrorLog.created_at > since_dt)
+    
+    result = await db.execute(query)
+    count = result.scalar() or 0
+    
+    return {"count": count}
+
+
 @router.get("/errors/{error_id}")
 async def get_error_detail(
     error_id: int,
@@ -1344,7 +1375,7 @@ async def export_errors_csv(
     if not current_user.is_admin:
         raise HTTPException(status_code=403, detail="Accès admin requis")
     
-    since = datetime.utcnow() - timedelta(hours=hours)
+    since = utcnow() - timedelta(hours=hours)
     
     query = select(ErrorLog).where(ErrorLog.created_at >= since)
     
@@ -1383,7 +1414,7 @@ async def export_errors_csv(
     
     output.seek(0)
     
-    filename = f"error_logs_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.csv"
+    filename = f"error_logs_{utcnow().strftime('%Y%m%d_%H%M%S')}.csv"
     
     return StreamingResponse(
         iter([output.getvalue()]),
@@ -1416,7 +1447,7 @@ async def purge_error_logs(
     query = delete(ErrorLog)
     
     if hours:
-        since = datetime.utcnow() - timedelta(hours=hours)
+        since = utcnow() - timedelta(hours=hours)
         query = query.where(ErrorLog.created_at >= since)
     
     if error_code:
@@ -1457,7 +1488,7 @@ async def acknowledge_errors(
     if not current_user.is_admin:
         raise HTTPException(status_code=403, detail="Accès admin requis")
     
-    now = datetime.utcnow()
+    now = utcnow()
     
     # Notifier les clients SSE que les erreurs ont été acquittées
     try:
@@ -1473,34 +1504,3 @@ async def acknowledge_errors(
         "acknowledged_at": now.isoformat(),
         "message": "Erreurs marquées comme consultées"
     }
-
-
-@router.get("/errors/new-count")
-async def get_new_errors_count(
-    since: Optional[str] = Query(None, description="ISO timestamp depuis lequel compter les nouvelles erreurs"),
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
-):
-    """
-    Compte le nombre de nouvelles erreurs depuis un timestamp donné.
-    Utilisé pour le badge de notification dans la navigation.
-    Requiert: admin Hub.
-    """
-    from app.models import ErrorLog
-    
-    if not current_user.is_admin:
-        raise HTTPException(status_code=403, detail="Accès admin requis")
-    
-    query = select(func.count(ErrorLog.id))
-    
-    if since:
-        try:
-            since_dt = datetime.fromisoformat(since.replace('Z', '+00:00')).replace(tzinfo=None)
-        except (ValueError, TypeError):
-            raise HTTPException(status_code=400, detail="Format de date invalide (ISO 8601 attendu)")
-        query = query.where(ErrorLog.created_at > since_dt)
-    
-    result = await db.execute(query)
-    count = result.scalar() or 0
-    
-    return {"count": count}

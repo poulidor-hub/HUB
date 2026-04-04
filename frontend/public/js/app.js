@@ -29,6 +29,7 @@ let _activeTooltips = [];
 // ===== Server-Sent Events (SSE) pour mises à jour temps réel =====
 let eventSource = null;
 let sseWasConnected = false; // Indique si on a déjà été connecté (pour détecter les reconnexions)
+let _sseInitializing = false; // Guard contre les initialisations SSE concurrentes
 
 /**
  * Initialise la connexion SSE pour recevoir les mises à jour en temps réel
@@ -36,6 +37,9 @@ let sseWasConnected = false; // Indique si on a déjà été connecté (pour dé
  * @param {boolean} isReconnect - true si c'est une reconnexion après une déconnexion
  */
 function initEventSource(isReconnect = false) {
+    // Guard contre les initialisations concurrentes
+    if (_sseInitializing) return;
+    
     // Fermer toute connexion existante
     if (eventSource) {
         eventSource.close();
@@ -47,6 +51,7 @@ function initEventSource(isReconnect = false) {
         return;
     }
     
+    _sseInitializing = true;
     try {
         // Passer l'user_id et beacon_token pour le tracking de session sécurisé
         const userId = currentUser?.id || '';
@@ -107,6 +112,8 @@ function initEventSource(isReconnect = false) {
         };
     } catch (e) {
         console.warn('SSE: impossible de créer la connexion', e);
+    } finally {
+        _sseInitializing = false;
     }
 }
 
@@ -406,9 +413,48 @@ function getPendingCallback() {
     return sessionStorage.getItem('sso_pending_callback');
 }
 
+/**
+ * Valide qu'une URL de callback est sûre (même origine ou app connue).
+ * Bloque les redirections vers des domaines externes.
+ */
+function isValidCallbackUrl(url) {
+    try {
+        const parsed = new URL(url, window.location.origin);
+        // Autoriser les callbacks same-origin
+        if (parsed.origin === window.location.origin) {
+            return true;
+        }
+        // Autoriser les callbacks vers des IP privées (réseau local)
+        const hostname = parsed.hostname;
+        if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1') {
+            return true;
+        }
+        // Réseaux privés (10.x, 172.16-31.x, 192.168.x)
+        const parts = hostname.split('.');
+        if (parts.length === 4 && parts.every(p => !isNaN(p))) {
+            const first = parseInt(parts[0]);
+            const second = parseInt(parts[1]);
+            if (first === 10) return true;
+            if (first === 172 && second >= 16 && second <= 31) return true;
+            if (first === 192 && second === 168) return true;
+        }
+        // Autoriser les hostnames sans point (noms Docker/internes, ex: "mon-app")
+        if (!hostname.includes('.') || hostname.endsWith('.local') || hostname.endsWith('.lan')) {
+            return true;
+        }
+        console.warn('SSO callback bloqué — origine non autorisée:', parsed.origin);
+        return false;
+    } catch (e) {
+        console.warn('SSO callback invalide:', url, e);
+        return false;
+    }
+}
+
 function setPendingCallback(url) {
-    if (url) {
+    if (url && isValidCallbackUrl(url)) {
         sessionStorage.setItem('sso_pending_callback', url);
+    } else if (url) {
+        console.warn('SSO: callback URL rejetée (non fiable):', url);
     }
 }
 
@@ -1128,11 +1174,10 @@ function renderAppsGrid(apps) {
                             <p>${escapeHtml(app.description || 'Aucune description')}</p>
                         </div>
                     </div>
-                    ${(app.category || appVersionLabel) ? `
                     <div class="app-card-footer">
                         ${app.category ? `<span class="badge app-category-badge">${escapeHtml(app.category)}</span>` : '<span></span>'}
-                        ${appVersionLabel ? `<span class="app-version-badge">${escapeHtml(appVersionLabel)}</span>` : ''}
-                    </div>` : ''}
+                        ${appVersionLabel ? `<span class="app-version-badge">${escapeHtml(appVersionLabel)}</span>` : '<span></span>'}
+                    </div>
                     ${isAdmin ? `
                         <div class="app-role-selector" onclick="event.stopPropagation()">
                             <select class="form-select form-select-sm" 

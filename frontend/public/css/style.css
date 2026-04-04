@@ -110,6 +110,9 @@ body {
 
 .app-card .card-body {
     padding: 1rem;
+    display: flex;
+    flex-direction: column;
+    height: 100%;
 }
 
 /* Layout horizontal : icône à gauche, texte à droite */
@@ -155,6 +158,8 @@ body {
     -webkit-box-orient: vertical;
     overflow: hidden;
     line-height: 1.4;
+    /* Hauteur fixe : toujours réserver l'espace pour 2 lignes */
+    min-height: calc(2 * 1.4 * 0.8rem);
 }
 
 /* Ligne du bas : catégorie + version */
@@ -172,7 +177,7 @@ body {
 .app-role-selector {
     border-top: 1px solid rgba(0,0,0,0.1);
     padding-top: 0.5rem;
-    margin-top: 0.5rem;
+    margin-top: auto;
 }
 
 .app-role-selector .form-select {
