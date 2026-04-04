@@ -1275,3 +1275,104 @@ ProfileResponse.model_rebuild()
 ServiceAccountResponse.model_rebuild()
 ServiceAccountCreated.model_rebuild()
 DockerInfoResponse.model_rebuild()
+
+
+# ===== Message Schemas =====
+
+class MessagePriority(str, Enum):
+    """Niveaux de priorité des messages"""
+    info = "info"
+    warning = "warning"
+    urgent = "urgent"
+
+
+class MessageTargetType(str, Enum):
+    """Type de ciblage des messages"""
+    user = "user"
+    broadcast = "broadcast"
+
+
+class MessageSenderType(str, Enum):
+    """Type d'expéditeur des messages"""
+    admin = "admin"
+    system = "system"
+    app = "app"
+
+
+class MessageCreate(BaseModel):
+    """Création d'un message par un admin"""
+    title: str = Field(..., min_length=1, max_length=200)
+    body: Optional[str] = None
+    priority: MessagePriority = MessagePriority.info
+    target_type: MessageTargetType = MessageTargetType.broadcast
+    target_user_ids: Optional[List[int]] = None  # Requis si target_type == "user"
+    action_url: Optional[str] = Field(None, max_length=500)
+    action_label: Optional[str] = Field(None, max_length=100)
+    expires_at: Optional[datetime] = None
+
+
+class MessageM2MCreate(BaseModel):
+    """Création d'un message par une application (M2M)"""
+    title: str = Field(..., min_length=1, max_length=200)
+    body: Optional[str] = None
+    priority: MessagePriority = MessagePriority.info
+    target_usernames: List[str] = Field(..., min_length=1)
+    action_url: Optional[str] = Field(None, max_length=500)
+    action_label: Optional[str] = Field(None, max_length=100)
+    expires_at: Optional[datetime] = None
+
+
+class MessageBrief(BaseModel):
+    """Message résumé pour l'overlay SSE et la vue utilisateur"""
+    id: int
+    title: str
+    body: Optional[str] = None
+    priority: str
+    sender_type: str
+    sender_app_slug: Optional[str] = None
+    action_url: Optional[str] = None
+    action_label: Optional[str] = None
+    created_at: datetime
+    expires_at: Optional[datetime] = None
+    is_read: bool = False
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class MessageReadReceiptResponse(BaseModel):
+    """Accusé de lecture"""
+    user_id: int
+    username: str
+    read_at: datetime
+
+
+class MessageResponse(BaseModel):
+    """Réponse complète d'un message (vue admin)"""
+    id: int
+    sender_type: str
+    sender_id: Optional[int] = None
+    sender_app_slug: Optional[str] = None
+    sender_username: Optional[str] = None
+    target_type: str
+    target_user_id: Optional[int] = None
+    target_username: Optional[str] = None
+    priority: str
+    title: str
+    body: Optional[str] = None
+    action_url: Optional[str] = None
+    action_label: Optional[str] = None
+    expires_at: Optional[datetime] = None
+    created_at: datetime
+    read_count: int = 0
+    total_targets: int = 0
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class PaginatedMessagesResponse(BaseModel):
+    """Réponse paginée pour la liste des messages"""
+    messages: List[MessageResponse]
+    total: int
+    page: int
+    per_page: int
+    pages: int

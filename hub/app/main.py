@@ -14,7 +14,7 @@ from app.database import init_db, async_session_maker, apply_migrations
 from app.models import User, ErrorLog, utcnow
 from app.auth import get_password_hash, cleanup_expired_tokens
 from app.config import get_settings
-from app.routes import auth, users, apps, service_accounts, backup, audit, docs, events, app_backups, profiles, discovery
+from app.routes import auth, users, apps, service_accounts, backup, audit, docs, events, app_backups, profiles, discovery, messages
 
 import logging
 
@@ -107,18 +107,20 @@ async def periodic_docker_sync():
 
 
 async def periodic_log_purge():
-    """Tâche périodique pour purger les anciens logs d'audit et d'erreurs"""
+    """Tâche périodique pour purger les anciens logs d'audit, d'erreurs et de messages"""
     from app.routes.audit import purge_old_logs
+    from app.routes.messages import purge_old_messages
     
     interval_hours = settings.log_purge_interval_hours
     audit_days = settings.audit_retention_days
     error_days = settings.error_retention_days
+    message_days = settings.message_retention_days
     
-    if audit_days <= 0 and error_days <= 0:
+    if audit_days <= 0 and error_days <= 0 and message_days <= 0:
         logger.info("🗑️ Purge des logs désactivée (rétention = 0)")
         return
     
-    logger.info(f"🗑️ Purge des logs activée (audit: {audit_days}j, errors: {error_days}j, intervalle: {interval_hours}h)")
+    logger.info(f"🗑️ Purge des logs activée (audit: {audit_days}j, errors: {error_days}j, messages: {message_days}j, intervalle: {interval_hours}h)")
     
     # Attendre un peu avant la première purge
     await asyncio.sleep(60)
@@ -129,6 +131,11 @@ async def periodic_log_purge():
                 result = await purge_old_logs(db, audit_days, error_days)
                 if result["audit_deleted"] > 0 or result["errors_deleted"] > 0:
                     logger.info(f"🗑️ Purge logs: {result['audit_deleted']} audit, {result['errors_deleted']} erreurs supprimés")
+                
+                # Purge des messages
+                msg_deleted = await purge_old_messages(db, message_days)
+                if msg_deleted > 0:
+                    logger.info(f"🗑️ Purge messages: {msg_deleted} message(s) supprimé(s)")
             
             await asyncio.sleep(interval_hours * 3600)
         except asyncio.CancelledError:
@@ -540,6 +547,7 @@ app.include_router(events.router)
 app.include_router(app_backups.router)
 app.include_router(profiles.router)
 app.include_router(discovery.router)
+app.include_router(messages.router)
 
 
 @app.get("/health")

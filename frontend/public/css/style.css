@@ -990,3 +990,91 @@ body {
     text-overflow: ellipsis;
     white-space: nowrap;
 }
+
+/* =============================================================================
+   MESSAGES — Panel utilisateur + badges priorité
+   ============================================================================= */
+
+/* Panneau de messages utilisateur (dropdown depuis la cloche) */
+.message-panel {
+    position: fixed;
+    top: 56px;
+    right: 16px;
+    width: 380px;
+    max-height: 500px;
+    background: #fff;
+    border: 1px solid #dee2e6;
+    border-radius: 8px;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+    z-index: 1060;
+    display: flex;
+    flex-direction: column;
+}
+
+.message-panel-header {
+    padding: 10px 14px;
+    border-bottom: 1px solid #dee2e6;
+    background: #f8f9fa;
+    border-radius: 8px 8px 0 0;
+}
+
+.message-panel-body {
+    overflow-y: auto;
+    max-height: 420px;
+    padding: 0;
+}
+
+/* Éléments de message individuels */
+.message-item {
+    padding: 10px 14px;
+    border-bottom: 1px solid #f0f0f0;
+    cursor: default;
+    transition: background-color 0.2s;
+}
+
+.message-item:hover {
+    background-color: #f8f9fa;
+}
+
+.message-item:last-child {
+    border-bottom: none;
+}
+
+.message-item-unread {
+    background-color: #f0f7ff;
+    border-left: 3px solid #0d6efd;
+}
+
+.message-item-read {
+    opacity: 0.7;
+}
+
+.message-priority-urgent {
+    border-left: 3px solid #dc3545 !important;
+    background-color: #fff5f5 !important;
+}
+
+.message-priority-warning {
+    border-left: 3px solid #ffc107 !important;
+}
+
+/* Badge priorité urgente pulsant */
+.msg-priority-urgent {
+    animation: msg-pulse 1.5s infinite;
+}
+
+@keyframes msg-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.6; }
+}
+
+/* Section messages (admin) */
+#messagesSection {
+    background-color: #f8f9fa;
+    min-height: calc(100vh - 70px);
+}
+
+#messagesSection .card {
+    border: 1px solid var(--border-color);
+    box-shadow: none;
+}

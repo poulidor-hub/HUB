@@ -479,3 +479,59 @@ class AppBackup(Base):
     
     def __repr__(self):
         return f"<AppBackup {self.backup_id} for {self.app_slug}>"
+
+
+class UserMessage(Base):
+    """
+    Messages envoyés aux utilisateurs (par les admins, le système ou les apps via M2M).
+    Supporte les messages ciblés (un ou plusieurs users) et les broadcasts (tous les users).
+    """
+    __tablename__ = "user_messages"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    
+    # Expéditeur
+    sender_type = Column(String(20), nullable=False)  # "admin", "system", "app"
+    sender_id = Column(Integer, nullable=True)  # user_id admin OU service_account_id
+    sender_app_slug = Column(String(50), index=True, nullable=True)  # Slug de l'app source (M2M)
+    
+    # Destinataire
+    target_type = Column(String(20), nullable=False)  # "user", "broadcast"
+    target_user_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), nullable=True, index=True)
+    
+    # Contenu
+    priority = Column(String(20), nullable=False, default="info", index=True)  # "info", "warning", "urgent"
+    title = Column(String(200), nullable=False)
+    body = Column(Text, nullable=True)
+    action_url = Column(String(500), nullable=True)  # Lien cliquable (ex: ouvrir un ticket)
+    action_label = Column(String(100), nullable=True)  # Texte du bouton d'action
+    
+    # Expiration
+    expires_at = Column(DateTime, nullable=True)  # NULL = pas d'expiration
+    
+    # Horodatage
+    created_at = Column(DateTime, default=utcnow, index=True)
+    
+    # Relations
+    target_user = relationship("User", foreign_keys=[target_user_id], lazy="raise")
+    read_receipts = relationship("MessageReadReceipt", back_populates="message", cascade="all, delete-orphan", lazy="raise")
+    
+    def __repr__(self):
+        return f"<UserMessage {self.id} [{self.priority}] '{self.title[:30]}'>"
+
+
+class MessageReadReceipt(Base):
+    """Accusé de lecture d'un message par un utilisateur"""
+    __tablename__ = "message_read_receipts"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    message_id = Column(Integer, ForeignKey('user_messages.id', ondelete='CASCADE'), nullable=False)
+    user_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
+    read_at = Column(DateTime, default=utcnow)
+    
+    # Relations
+    message = relationship("UserMessage", back_populates="read_receipts")
+    user = relationship("User", lazy="raise")
+    
+    def __repr__(self):
+        return f"<MessageReadReceipt msg={self.message_id} user={self.user_id}>"

@@ -1118,6 +1118,83 @@ class HubAPI {
         }
         return response.json();
     }
+
+    // =========================================================================
+    // MESSAGES
+    // =========================================================================
+
+    async sendMessage(data) {
+        return this.request('/messages/send', { method: 'POST', body: JSON.stringify(data) });
+    }
+
+    async getMessages(params = {}) {
+        const { page = 1, perPage = 50, priority, senderType, senderApp, targetUserId, search, hours } = params;
+        let url = `/messages/?page=${page}&per_page=${perPage}`;
+        if (priority) url += `&priority=${encodeURIComponent(priority)}`;
+        if (senderType) url += `&sender_type=${encodeURIComponent(senderType)}`;
+        if (senderApp) url += `&sender_app=${encodeURIComponent(senderApp)}`;
+        if (targetUserId) url += `&target_user_id=${targetUserId}`;
+        if (search) url += `&search=${encodeURIComponent(search)}`;
+        if (hours) url += `&hours=${hours}`;
+        return this.request(url);
+    }
+
+    async getMessageStats(hours = null) {
+        let url = '/messages/stats';
+        if (hours) url += `?hours=${hours}`;
+        return this.request(url);
+    }
+
+    async getMessageDetail(id) {
+        return this.request(`/messages/${id}`);
+    }
+
+    async getMyMessages() {
+        return this.request('/messages/me');
+    }
+
+    async getUnreadCount() {
+        return this.request('/messages/me/unread-count');
+    }
+
+    async markMessageRead(id) {
+        return this.request(`/messages/${id}/read`, { method: 'POST' });
+    }
+
+    async markAllMessagesRead() {
+        return this.request('/messages/read-all', { method: 'POST' });
+    }
+
+    async purgeMessages(params = {}) {
+        const { hours, priority, senderApp } = params;
+        let url = '/messages/';
+        const p = [];
+        if (hours) p.push(`hours=${hours}`);
+        if (priority) p.push(`priority=${encodeURIComponent(priority)}`);
+        if (senderApp) p.push(`sender_app=${encodeURIComponent(senderApp)}`);
+        if (p.length > 0) url += '?' + p.join('&');
+        return this.request(url, { method: 'DELETE' });
+    }
+
+    async exportMessages(params = {}) {
+        const { hours, priority, senderApp } = params;
+        let url = `${API_BASE}/messages/export`;
+        const p = [];
+        if (hours) p.push(`hours=${hours}`);
+        if (priority) p.push(`priority=${encodeURIComponent(priority)}`);
+        if (senderApp) p.push(`sender_app=${encodeURIComponent(senderApp)}`);
+        if (p.length > 0) url += '?' + p.join('&');
+        const response = await fetch(url, { headers: this.getHeaders() });
+        if (!response.ok) throw new Error('Export échoué');
+        const blob = await response.blob();
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = 'messages_export.csv';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(a.href);
+    }
 }
 
 const api = new HubAPI();

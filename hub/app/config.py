@@ -187,6 +187,9 @@ class Settings(BaseSettings):
     # Rétention des logs d'erreurs (en jours) - 0 = pas de purge automatique
     error_retention_days: int = 30
     
+    # Rétention des messages utilisateur (en jours) - 0 = pas de purge automatique
+    message_retention_days: int = 90
+    
     # Intervalle de purge des logs (en heures)
     log_purge_interval_hours: int = 24
     
