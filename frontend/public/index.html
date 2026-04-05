@@ -5,8 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Hub - Portail d'Applications</title>
     <link rel="icon" type="image/svg+xml" href="favicon.svg">
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.2/font/bootstrap-icons.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-T3c6CoIi6uLrA9TneNEoa7RxnatzjcDSCmG1MXxSR1GAsXEV/Dwwykc2MPK8M2HN" crossorigin="anonymous">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.2/font/bootstrap-icons.css" rel="stylesheet" integrity="sha384-DeN988K4Vg0cDrUgVHjrVM0+ogMrXsv0AZYIH40/9VGpjC7zi8TFGdnPwL1EkU/T" crossorigin="anonymous">
     <link href="css/style.css" rel="stylesheet">
 </head>
 <body>
@@ -52,6 +52,12 @@
                                 <i class="bi bi-diagram-3 me-1"></i>Discovery
                             </a>
                         </li>
+                        <li class="nav-item">
+                            <a class="nav-link" href="#" onclick="showPage('messages')" id="navMessages">
+                                <i class="bi bi-chat-dots me-1"></i>Messages
+                                <span class="badge bg-info ms-1" id="navMessagesBadge" style="display: none; font-size: 0.65em;">0</span>
+                            </a>
+                        </li>
                     </ul>
                 </div>
                 
@@ -60,6 +66,13 @@
                         <i class="bi bi-person-circle me-1"></i>
                         <span id="username"></span>
                     </span>
+                    <!-- Cloche de notifications messages -->
+                    <div id="messageBellContainer" class="d-none position-relative me-2">
+                        <button class="btn btn-outline-light btn-sm" onclick="toggleMessagePanel()" title="Messages">
+                            <i class="bi bi-bell"></i>
+                            <span class="badge bg-danger position-absolute top-0 start-100 translate-middle rounded-pill" id="messageBellBadge" style="display: none; font-size: 0.6em;">0</span>
+                        </button>
+                    </div>
                     <button id="changePasswordBtn" class="btn btn-outline-light btn-sm me-2 d-none" onclick="showChangePasswordModal(false)" title="Changer le mot de passe">
                         <i class="bi bi-key"></i>
                     </button>
@@ -1093,6 +1106,220 @@
                     </div>
                 </div>
             </div>
+        </div>
+    </div>
+
+    <!-- ================================================================= -->
+    <!-- Section Messages (Admin) -->
+    <!-- ================================================================= -->
+    <div id="messagesSection" class="container-fluid py-4 d-none" style="margin-top: 70px;">
+        <div class="container">
+            <div class="d-flex justify-content-between align-items-center mb-4">
+                <h4 class="mb-0"><i class="bi bi-chat-dots me-2"></i>Messages</h4>
+                <div>
+                    <button class="btn btn-primary btn-sm me-2" onclick="showSendMessageModal()">
+                        <i class="bi bi-send me-1"></i>Nouveau message
+                    </button>
+                    <button class="btn btn-outline-secondary btn-sm me-2" onclick="exportMessages()">
+                        <i class="bi bi-download me-1"></i>Export CSV
+                    </button>
+                    <button class="btn btn-outline-secondary btn-sm" onclick="loadMessagesPage()">
+                        <i class="bi bi-arrow-clockwise"></i>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Stats cards -->
+            <div class="row mb-4">
+                <div class="col-md-3">
+                    <div class="card border-primary">
+                        <div class="card-body text-center py-2">
+                            <div class="text-muted small">Total envoyés</div>
+                            <div class="h4 mb-0" id="msgStatTotal">0</div>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="card border-info">
+                        <div class="card-body text-center py-2">
+                            <div class="text-muted small">Info</div>
+                            <div class="h4 mb-0 text-info" id="msgStatInfo">0</div>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="card border-warning">
+                        <div class="card-body text-center py-2">
+                            <div class="text-muted small">Warning</div>
+                            <div class="h4 mb-0 text-warning" id="msgStatWarning">0</div>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="card border-danger">
+                        <div class="card-body text-center py-2">
+                            <div class="text-muted small">Urgent</div>
+                            <div class="h4 mb-0 text-danger" id="msgStatUrgent">0</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Filtres -->
+            <div class="card mb-3">
+                <div class="card-body py-2">
+                    <div class="row g-2 align-items-end">
+                        <div class="col-md-2">
+                            <label class="form-label small mb-0">Priorité</label>
+                            <select class="form-select form-select-sm" id="msgFilterPriority" onchange="loadMessagesPage()">
+                                <option value="">Toutes</option>
+                                <option value="info">Info</option>
+                                <option value="warning">Warning</option>
+                                <option value="urgent">Urgent</option>
+                            </select>
+                        </div>
+                        <div class="col-md-2">
+                            <label class="form-label small mb-0">Expéditeur</label>
+                            <select class="form-select form-select-sm" id="msgFilterSender" onchange="loadMessagesPage()">
+                                <option value="">Tous</option>
+                                <option value="admin">Admin</option>
+                                <option value="app">Application</option>
+                                <option value="system">Système</option>
+                            </select>
+                        </div>
+                        <div class="col-md-2">
+                            <label class="form-label small mb-0">App source</label>
+                            <input type="text" class="form-control form-control-sm" id="msgFilterApp" placeholder="slug..." onchange="loadMessagesPage()">
+                        </div>
+                        <div class="col-md-2">
+                            <label class="form-label small mb-0">Recherche</label>
+                            <input type="text" class="form-control form-control-sm" id="msgFilterSearch" placeholder="titre/corps..." onchange="loadMessagesPage()">
+                        </div>
+                        <div class="col-md-2">
+                            <label class="form-label small mb-0">Période</label>
+                            <select class="form-select form-select-sm" id="msgFilterHours" onchange="loadMessagesPage()">
+                                <option value="">Tout</option>
+                                <option value="24" selected>24h</option>
+                                <option value="48">48h</option>
+                                <option value="168">7 jours</option>
+                                <option value="720">30 jours</option>
+                            </select>
+                        </div>
+                        <div class="col-md-2 d-flex gap-1">
+                            <button class="btn btn-outline-warning btn-sm" onclick="purgeMessagesFiltered()" title="Purger (filtrés)">
+                                <i class="bi bi-trash"></i>
+                            </button>
+                            <button class="btn btn-outline-danger btn-sm" onclick="purgeAllMessages()" title="Purger tout">
+                                <i class="bi bi-trash-fill"></i> Tout
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Tableau des messages -->
+            <div class="table-responsive">
+                <table class="table table-sm table-hover">
+                    <thead>
+                        <tr>
+                            <th>Date</th>
+                            <th>Priorité</th>
+                            <th>Expéditeur</th>
+                            <th>Titre</th>
+                            <th>Cible</th>
+                            <th>Lu</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="messagesTableBody">
+                        <tr><td colspan="7" class="text-center text-muted">Chargement...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+            <nav id="messagesPagination"></nav>
+        </div>
+    </div>
+
+    <!-- Modal Nouveau Message -->
+    <div class="modal fade" id="sendMessageModal" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header bg-primary text-white">
+                    <h5 class="modal-title"><i class="bi bi-send me-2"></i>Nouveau message</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label">Titre *</label>
+                        <input type="text" class="form-control" id="msgTitle" maxlength="200" required>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Corps du message</label>
+                        <textarea class="form-control" id="msgBody" rows="4"></textarea>
+                    </div>
+                    <div class="row">
+                        <div class="col-md-4 mb-3">
+                            <label class="form-label">Priorité</label>
+                            <select class="form-select" id="msgPriority">
+                                <option value="info" selected>Info</option>
+                                <option value="warning">Warning</option>
+                                <option value="urgent">Urgent</option>
+                            </select>
+                        </div>
+                        <div class="col-md-4 mb-3">
+                            <label class="form-label">Cible</label>
+                            <select class="form-select" id="msgTargetType" onchange="toggleMsgTargetUsers()">
+                                <option value="broadcast">Tous les utilisateurs</option>
+                                <option value="user">Utilisateurs spécifiques</option>
+                            </select>
+                        </div>
+                        <div class="col-md-4 mb-3">
+                            <label class="form-label">Expiration</label>
+                            <input type="datetime-local" class="form-control" id="msgExpiresAt">
+                        </div>
+                    </div>
+                    <div class="mb-3 d-none" id="msgTargetUsersGroup">
+                        <label class="form-label">Utilisateurs destinataires</label>
+                        <select class="form-select" id="msgTargetUsers" multiple size="5">
+                        </select>
+                        <small class="text-muted">Maintenez Ctrl pour sélectionner plusieurs utilisateurs</small>
+                    </div>
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label">URL d'action (optionnel)</label>
+                            <input type="url" class="form-control" id="msgActionUrl" placeholder="https://...">
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label">Libellé du bouton (optionnel)</label>
+                            <input type="text" class="form-control" id="msgActionLabel" placeholder="Voir le détail" maxlength="100">
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuler</button>
+                    <button type="button" class="btn btn-primary" onclick="confirmSendMessage()">
+                        <i class="bi bi-send me-1"></i>Envoyer
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Panneau messages utilisateur (dropdown depuis la cloche) -->
+    <div id="messagePanel" class="message-panel d-none">
+        <div class="message-panel-header d-flex justify-content-between align-items-center">
+            <strong><i class="bi bi-bell me-1"></i>Mes messages</strong>
+            <div>
+                <button class="btn btn-link btn-sm p-0 text-muted" onclick="markAllUserMessagesRead()" title="Tout marquer comme lu">
+                    <i class="bi bi-check2-all"></i>
+                </button>
+                <button class="btn btn-link btn-sm p-0 text-muted ms-2" onclick="toggleMessagePanel()" title="Fermer">
+                    <i class="bi bi-x-lg"></i>
+                </button>
+            </div>
+        </div>
+        <div id="messagePanelBody" class="message-panel-body">
+            <p class="text-muted text-center small mt-3">Aucun message</p>
         </div>
     </div>
 
@@ -2517,7 +2744,10 @@
         </div>
     </div>
 
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+    <!-- Notification Banner (floating cards top-right, same look as HUBapp_TEMPLATE) -->
+    <div id="notificationBanner" class="notification-banner"></div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js" integrity="sha384-C6RzsynM9kWDrMNeT87bh95OGNyZPhcTNXj1NW7RuBCsyN/o0jlpcV8Qyq46cDfL" crossorigin="anonymous"></script>
     <script src="js/api.js?v=20260114a"></script>
     <script src="js/app.js?v=20260114a"></script>
 </body>

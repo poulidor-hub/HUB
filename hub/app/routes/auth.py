@@ -11,7 +11,7 @@ import secrets
 import logging
 
 from app.database import get_db
-from app.models import User, AuditLog, ServiceAccount, UserAppRole, UserSession
+from app.models import User, AuditLog, ServiceAccount, UserAppRole, UserSession, utcnow
 from app.schemas import Token, LoginRequest, TokenIntrospection, RefreshTokenRequest, LogoutRequest, PasswordChangeRequest
 from app.routes.events import notify_stats_update, notify_event
 from app.auth import (
@@ -176,7 +176,7 @@ async def login_for_token(
             )
         
         # Mettre à jour last_used_at
-        service_account.last_used_at = datetime.utcnow()
+        service_account.last_used_at = utcnow()
         
         # Service accounts ont accès "service" aux apps (accès M2M)
         apps = {app.slug: "service" for app in service_account.applications}
@@ -494,7 +494,7 @@ async def logout(
         try:
             refresh_token_obj = await verify_refresh_token(db, logout_data.refresh_token)
             if refresh_token_obj and refresh_token_obj.user_id == current_user.id:
-                refresh_token_obj.revoked_at = datetime.utcnow()
+                refresh_token_obj.revoked_at = utcnow()
                 await db.commit()
         except:
             pass  # Token déjà invalide ou n'appartient pas à l'utilisateur

@@ -1,10 +1,17 @@
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, ForeignKey, Text, Table, Enum as SQLEnum, JSON
+from sqlalchemy import Column, Integer, BigInteger, String, Boolean, DateTime, ForeignKey, Text, Table, Enum as SQLEnum, JSON
 from sqlalchemy.orm import relationship
 from datetime import datetime, timezone
 from typing import Optional
 import secrets
 import enum
 from app.database import Base
+
+
+def utcnow() -> datetime:
+    """Retourne l'heure UTC actuelle sans timezone (compatible DB et Python 3.12+).
+    Remplace utcnow() qui est déprécié depuis Python 3.12.
+    """
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 class ApprovalStatus(enum.Enum):
@@ -45,7 +52,7 @@ user_profiles = Table(
     Column('id', Integer, primary_key=True),
     Column('user_id', Integer, ForeignKey('users.id', ondelete='CASCADE'), nullable=False),
     Column('profile_id', Integer, ForeignKey('profiles.id', ondelete='CASCADE'), nullable=False),
-    Column('assigned_at', DateTime, default=datetime.utcnow),
+    Column('assigned_at', DateTime, default=utcnow),
     Column('assigned_by', Integer, ForeignKey('users.id', ondelete='SET NULL'), nullable=True),
 )
 
@@ -75,8 +82,8 @@ class Profile(Base):
     name = Column(String(100), unique=True, nullable=False)
     description = Column(Text)
     color = Column(String(7), default="#6c757d")
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=utcnow)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
     
     # Relations
     app_roles = relationship("ProfileAppRole", back_populates="profile", cascade="all, delete-orphan", lazy="raise")
@@ -97,7 +104,7 @@ class UserAppRole(Base):
     app_id = Column(Integer, ForeignKey('applications.id', ondelete='CASCADE'), nullable=False)
     role = Column(String(50), default="user", nullable=False)  # admin, manager, user, viewer, etc.
     source = Column(String(50), default="manual", nullable=False)  # "manual" ou "profile:<id>"
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=utcnow)
     
     # Relations
     user = relationship("User", back_populates="app_roles")
@@ -134,8 +141,8 @@ class User(Base):
     is_admin = Column(Boolean, default=False)  # Admin du Hub (pas des apps)
     must_change_password = Column(Boolean, default=False)  # Forcer le changement de mdp à la prochaine connexion
     can_change_password = Column(Boolean, default=True)  # Autoriser l'utilisateur à changer son mdp (False pour comptes partagés)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=utcnow)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
     
     # Relations (lazy='raise' pour forcer selectinload explicite en async)
     app_roles = relationship("UserAppRole", back_populates="user", cascade="all, delete-orphan", lazy="raise")
@@ -177,6 +184,7 @@ class Application(Base):
     api_url = Column(String(255), nullable=False)  # URL de l'API backend
     frontend_url = Column(String(255))  # URL du frontend
     callback_url = Column(String(255))  # URL de callback pour le token
+    frontend_https_port = Column(Integer, nullable=True)  # Port HTTPS du frontend (si HTTPS activé)
     is_active = Column(Boolean, default=True)
     requires_auth = Column(Boolean, default=True)
     is_shared_service = Column(Boolean, default=False)  # Si True, accessible par tous les service accounts
@@ -204,8 +212,8 @@ class Application(Base):
     api_endpoints = Column(JSON, nullable=True)  # Spec OpenAPI complète ou filtrée
     api_endpoints_updated_at = Column(DateTime, nullable=True)  # Date de dernière mise à jour de la spec
     
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=utcnow)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
     
     # Relations (lazy='raise' pour forcer selectinload explicite en async)
     user_roles = relationship("UserAppRole", back_populates="application", cascade="all, delete-orphan", lazy="raise")
@@ -231,7 +239,7 @@ class UserFavorite(Base):
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
     app_id = Column(Integer, ForeignKey('applications.id', ondelete='CASCADE'), nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=utcnow)
     
     # Relations
     user = relationship("User", back_populates="favorites")
@@ -262,7 +270,7 @@ class AuditLog(Base):
     ip_address = Column(String(45))
     user_agent = Column(String(255))
     details = Column(Text)
-    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+    created_at = Column(DateTime, default=utcnow, index=True)
     
     # Relations
     service_account = relationship("ServiceAccount", backref="audit_logs")
@@ -294,7 +302,7 @@ class ErrorLog(Base):
     ip_address = Column(String(45))
     user_agent = Column(String(255))
     stack_trace = Column(Text)  # Traceback pour erreurs 5xx
-    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+    created_at = Column(DateTime, default=utcnow, index=True)
     
     def __repr__(self):
         return f"<ErrorLog {self.error_code} on {self.request_path}>"
@@ -310,8 +318,8 @@ class ServiceAccount(Base):
     client_secret_hash = Column(String(255), nullable=False)
     description = Column(Text)
     is_active = Column(Boolean, default=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=utcnow)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
     last_used_at = Column(DateTime, nullable=True)
     
     # Relations
@@ -340,7 +348,7 @@ class RefreshToken(Base):
     user_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), nullable=True)
     service_account_id = Column(Integer, ForeignKey('service_accounts.id', ondelete='CASCADE'), nullable=True)
     expires_at = Column(DateTime, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=utcnow)
     revoked_at = Column(DateTime, nullable=True)
     ip_address = Column(String(45))
     user_agent = Column(String(255))
@@ -351,7 +359,7 @@ class RefreshToken(Base):
     
     @property
     def is_valid(self) -> bool:
-        return self.revoked_at is None and self.expires_at > datetime.utcnow()
+        return self.revoked_at is None and self.expires_at > utcnow()
     
     def __repr__(self):
         return f"<RefreshToken for user_id={self.user_id}>"
@@ -364,7 +372,7 @@ class RevokedToken(Base):
     id = Column(Integer, primary_key=True, index=True)
     jti = Column(String(64), unique=True, index=True, nullable=False)  # JWT ID
     expires_at = Column(DateTime, nullable=False)  # Pour nettoyage automatique
-    revoked_at = Column(DateTime, default=datetime.utcnow)
+    revoked_at = Column(DateTime, default=utcnow)
     reason = Column(String(100))  # logout, password_change, admin_revoke, etc.
     
     def __repr__(self):
@@ -381,14 +389,14 @@ class UserSession(Base):
     
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), nullable=False, index=True)
-    login_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    login_at = Column(DateTime, nullable=False, default=utcnow)
     logout_at = Column(DateTime, nullable=True)  # NULL = session active
     logout_reason = Column(String(50))  # explicit, timeout, token_revoked, browser_closed, sse_disconnect
     ip_address = Column(String(45))
     user_agent = Column(String(255))
     
     # Tracking de l'activité en temps réel
-    last_activity_at = Column(DateTime, nullable=False, default=datetime.utcnow)  # Dernière activité (SSE ping, refresh, accès app)
+    last_activity_at = Column(DateTime, nullable=False, default=utcnow)  # Dernière activité (SSE ping, refresh, accès app)
     current_app_slug = Column(String(50), nullable=True)  # Application actuellement active (dernière accédée)
     
     # Relations
@@ -409,7 +417,7 @@ class UserSession(Base):
     @property
     def idle_seconds(self) -> int:
         """Temps d'inactivité en secondes depuis la dernière activité"""
-        return int((datetime.utcnow() - self.last_activity_at).total_seconds())
+        return int((utcnow() - self.last_activity_at).total_seconds())
     
     def __repr__(self):
         status = "active" if self.is_active else f"closed ({self.duration_seconds}s)"
@@ -453,7 +461,7 @@ class AppBackup(Base):
     total_items = Column(Integer, default=0)
     total_preferences = Column(Integer, default=0)
     total_files = Column(Integer, default=0)
-    total_size_bytes = Column(Integer, default=0)
+    total_size_bytes = Column(BigInteger, default=0)
     checksum = Column(String(64))  # SHA-256 du fichier ZIP original
     
     # Stockage
@@ -464,7 +472,7 @@ class AppBackup(Base):
     # Traçabilité
     created_by = Column(String(100))  # Username ou service_account
     created_by_type = Column(String(20), default="app")  # 'app', 'user', 'scheduler'
-    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+    created_at = Column(DateTime, default=utcnow, index=True)
     description = Column(Text)
     
     # Relation
@@ -472,3 +480,59 @@ class AppBackup(Base):
     
     def __repr__(self):
         return f"<AppBackup {self.backup_id} for {self.app_slug}>"
+
+
+class UserMessage(Base):
+    """
+    Messages envoyés aux utilisateurs (par les admins, le système ou les apps via M2M).
+    Supporte les messages ciblés (un ou plusieurs users) et les broadcasts (tous les users).
+    """
+    __tablename__ = "user_messages"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    
+    # Expéditeur
+    sender_type = Column(String(20), nullable=False)  # "admin", "system", "app"
+    sender_id = Column(Integer, nullable=True)  # user_id admin OU service_account_id
+    sender_app_slug = Column(String(50), index=True, nullable=True)  # Slug de l'app source (M2M)
+    
+    # Destinataire
+    target_type = Column(String(20), nullable=False)  # "user", "broadcast"
+    target_user_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), nullable=True, index=True)
+    
+    # Contenu
+    priority = Column(String(20), nullable=False, default="info", index=True)  # "info", "warning", "urgent"
+    title = Column(String(200), nullable=False)
+    body = Column(Text, nullable=True)
+    action_url = Column(String(500), nullable=True)  # Lien cliquable (ex: ouvrir un ticket)
+    action_label = Column(String(100), nullable=True)  # Texte du bouton d'action
+    
+    # Expiration
+    expires_at = Column(DateTime, nullable=True)  # NULL = pas d'expiration
+    
+    # Horodatage
+    created_at = Column(DateTime, default=utcnow, index=True)
+    
+    # Relations
+    target_user = relationship("User", foreign_keys=[target_user_id], lazy="raise")
+    read_receipts = relationship("MessageReadReceipt", back_populates="message", cascade="all, delete-orphan", lazy="raise")
+    
+    def __repr__(self):
+        return f"<UserMessage {self.id} [{self.priority}] '{self.title[:30]}'>"
+
+
+class MessageReadReceipt(Base):
+    """Accusé de lecture d'un message par un utilisateur"""
+    __tablename__ = "message_read_receipts"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    message_id = Column(Integer, ForeignKey('user_messages.id', ondelete='CASCADE'), nullable=False)
+    user_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
+    read_at = Column(DateTime, default=utcnow)
+    
+    # Relations
+    message = relationship("UserMessage", back_populates="read_receipts")
+    user = relationship("User", lazy="raise")
+    
+    def __repr__(self):
+        return f"<MessageReadReceipt msg={self.message_id} user={self.user_id}>"

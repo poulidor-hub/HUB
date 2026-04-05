@@ -43,7 +43,7 @@ from cryptography.hazmat.primitives.asymmetric import padding
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 from app.database import get_db
-from app.models import Application, AppBackup, ServiceAccount, User
+from app.models import Application, AppBackup, ServiceAccount, User, utcnow
 from app.auth import get_current_admin, get_current_entity
 from app.config import get_settings
 from app.schemas import (
@@ -281,7 +281,7 @@ def create_encrypted_package(backup_data: bytes, backup_id: str, app_slug: str) 
         "algorithm": "RSA-OAEP-256+AES-256-GCM",
         "backup_id": backup_id,
         "app_slug": app_slug,
-        "encrypted_at": datetime.utcnow().isoformat(),
+        "encrypted_at": utcnow().isoformat(),
         "encrypted_key_b64": base64.b64encode(encrypted_key).decode(),
         "nonce_b64": base64.b64encode(nonce).decode(),
         "original_checksum": compute_checksum(backup_data)
@@ -543,7 +543,7 @@ async def receive_backup(
     db.add(backup)
     
     # Mettre à jour l'application
-    app.last_backup_at = datetime.utcnow()
+    app.last_backup_at = utcnow()
     app.last_backup_id = backup_id
     app.last_backup_status = "success"
     
@@ -852,7 +852,7 @@ async def update_backup_config(
             
             # Calculer le prochain backup si mode scheduled
             if app.backup_mode == "scheduled":
-                cron = croniter(config.backup_cron, datetime.utcnow())
+                cron = croniter(config.backup_cron, utcnow())
                 app.next_backup_at = cron.get_next(datetime)
         else:
             app.backup_cron = None
@@ -1032,7 +1032,7 @@ async def trigger_backup(
         db.add(backup)
         
         # Mettre à jour l'application
-        app.last_backup_at = datetime.utcnow()
+        app.last_backup_at = utcnow()
         app.last_backup_id = backup_id
         app.last_backup_status = "success"
         

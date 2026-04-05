@@ -29,6 +29,7 @@ let _activeTooltips = [];
 // ===== Server-Sent Events (SSE) pour mises à jour temps réel =====
 let eventSource = null;
 let sseWasConnected = false; // Indique si on a déjà été connecté (pour détecter les reconnexions)
+let _sseInitializing = false; // Guard contre les initialisations SSE concurrentes
 
 /**
  * Initialise la connexion SSE pour recevoir les mises à jour en temps réel
@@ -36,6 +37,9 @@ let sseWasConnected = false; // Indique si on a déjà été connecté (pour dé
  * @param {boolean} isReconnect - true si c'est une reconnexion après une déconnexion
  */
 function initEventSource(isReconnect = false) {
+    // Guard contre les initialisations concurrentes
+    if (_sseInitializing) return;
+    
     // Fermer toute connexion existante
     if (eventSource) {
         eventSource.close();
@@ -47,6 +51,7 @@ function initEventSource(isReconnect = false) {
         return;
     }
     
+    _sseInitializing = true;
     try {
         // Passer l'user_id et beacon_token pour le tracking de session sécurisé
         const userId = currentUser?.id || '';
@@ -107,6 +112,8 @@ function initEventSource(isReconnect = false) {
         };
     } catch (e) {
         console.warn('SSE: impossible de créer la connexion', e);
+    } finally {
+        _sseInitializing = false;
     }
 }
 
@@ -342,6 +349,17 @@ function handleSSEEvent(data) {
                 handleForceLogout(data.data.reason);
             }
             break;
+
+        case 'user_message':
+            handleIncomingMessage(data.data);
+            break;
+
+        case 'messages_updated':
+            // Rafraîchir la page messages admin si elle est ouverte
+            if (currentPage === 'messages' && currentUser?.is_admin) {
+                loadMessagesPage();
+            }
+            break;
     }
 }
 
@@ -406,9 +424,48 @@ function getPendingCallback() {
     return sessionStorage.getItem('sso_pending_callback');
 }
 
+/**
+ * Valide qu'une URL de callback est sûre (même origine ou app connue).
+ * Bloque les redirections vers des domaines externes.
+ */
+function isValidCallbackUrl(url) {
+    try {
+        const parsed = new URL(url, window.location.origin);
+        // Autoriser les callbacks same-origin
+        if (parsed.origin === window.location.origin) {
+            return true;
+        }
+        // Autoriser les callbacks vers des IP privées (réseau local)
+        const hostname = parsed.hostname;
+        if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1') {
+            return true;
+        }
+        // Réseaux privés (10.x, 172.16-31.x, 192.168.x)
+        const parts = hostname.split('.');
+        if (parts.length === 4 && parts.every(p => !isNaN(p))) {
+            const first = parseInt(parts[0]);
+            const second = parseInt(parts[1]);
+            if (first === 10) return true;
+            if (first === 172 && second >= 16 && second <= 31) return true;
+            if (first === 192 && second === 168) return true;
+        }
+        // Autoriser les hostnames sans point (noms Docker/internes, ex: "mon-app")
+        if (!hostname.includes('.') || hostname.endsWith('.local') || hostname.endsWith('.lan')) {
+            return true;
+        }
+        console.warn('SSO callback bloqué — origine non autorisée:', parsed.origin);
+        return false;
+    } catch (e) {
+        console.warn('SSO callback invalide:', url, e);
+        return false;
+    }
+}
+
 function setPendingCallback(url) {
-    if (url) {
+    if (url && isValidCallbackUrl(url)) {
         sessionStorage.setItem('sso_pending_callback', url);
+    } else if (url) {
+        console.warn('SSO: callback URL rejetée (non fiable):', url);
     }
 }
 
@@ -690,6 +747,10 @@ function showDashboard() {
         updateErrorNotificationBadge();
     }
 
+    // Afficher la cloche de messages et charger le compteur non-lus
+    document.getElementById('messageBellContainer').classList.remove('d-none');
+    loadUnreadMessageCount();
+
     // Initialiser les mises à jour temps réel via SSE
     initEventSource();
 
@@ -714,6 +775,7 @@ function showPage(page) {
     document.getElementById('discoverySection').classList.add('d-none');
     document.getElementById('adminSection').classList.add('d-none');
     document.getElementById('cloneMigrateSection').classList.add('d-none');
+    document.getElementById('messagesSection').classList.add('d-none');
     
     // Arrêter les timers admin si on quitte la page admin
     stopConnectivityRefresh();
@@ -778,6 +840,15 @@ function showPage(page) {
             document.getElementById('cloneMigrateSection').classList.remove('d-none');
             currentPage = 'clone-migrate';
             loadBackupInfo();
+            break;
+        case 'messages':
+            if (!currentUser?.is_admin) {
+                showToast('Accès refusé', 'Vous devez être administrateur', 'danger');
+                return;
+            }
+            document.getElementById('messagesSection').classList.remove('d-none');
+            document.getElementById('navMessages')?.classList.add('active');
+            loadMessagesPage();
             break;
     }
 }
@@ -1128,11 +1199,10 @@ function renderAppsGrid(apps) {
                             <p>${escapeHtml(app.description || 'Aucune description')}</p>
                         </div>
                     </div>
-                    ${(app.category || appVersionLabel) ? `
                     <div class="app-card-footer">
                         ${app.category ? `<span class="badge app-category-badge">${escapeHtml(app.category)}</span>` : '<span></span>'}
-                        ${appVersionLabel ? `<span class="app-version-badge">${escapeHtml(appVersionLabel)}</span>` : ''}
-                    </div>` : ''}
+                        ${appVersionLabel ? `<span class="app-version-badge">${escapeHtml(appVersionLabel)}</span>` : '<span></span>'}
+                    </div>
                     ${isAdmin ? `
                         <div class="app-role-selector" onclick="event.stopPropagation()">
                             <select class="form-select form-select-sm" 
@@ -1250,10 +1320,6 @@ async function openApp(slug, frontendUrl) {
         showToast('Information', 'Cette application n\'a pas de frontend configuré', 'warning');
         return;
     }
-
-    // Toujours utiliser HTTP pour la redirection frontend
-    // (les apps gèrent elles-mêmes la redirection HTTPS si nécessaire)
-    frontendUrl = frontendUrl.replace(/^https:\/\//i, 'http://');
 
     // Nettoyer les références aux fenêtres déjà fermées
     cleanupClosedWindows();
@@ -8984,6 +9050,551 @@ async function confirmCsvImport() {
         await loadUsersPageData();
     } catch (error) {
         showToast('Erreur', error.message, 'danger');
+    }
+}
+
+// =============================================================================
+// MESSAGES — Admin + User overlay
+// =============================================================================
+
+let messagesPage = 1;
+let sendMessageModal = null;
+
+// ===== Admin : Page Messages =====
+
+async function loadMessagesPage() {
+    const priority = document.getElementById('msgFilterPriority')?.value || '';
+    const senderType = document.getElementById('msgFilterSender')?.value || '';
+    const senderApp = document.getElementById('msgFilterApp')?.value || '';
+    const search = document.getElementById('msgFilterSearch')?.value || '';
+    const hours = document.getElementById('msgFilterHours')?.value || '';
+
+    try {
+        const [stats, data] = await Promise.all([
+            api.getMessageStats(hours || null),
+            api.getMessages({
+                page: messagesPage,
+                perPage: 50,
+                priority: priority || undefined,
+                senderType: senderType || undefined,
+                senderApp: senderApp || undefined,
+                search: search || undefined,
+                hours: hours || undefined,
+            })
+        ]);
+
+        // Stats cards
+        document.getElementById('msgStatTotal').textContent = stats.total || 0;
+        document.getElementById('msgStatInfo').textContent = stats.by_priority?.info || 0;
+        document.getElementById('msgStatWarning').textContent = stats.by_priority?.warning || 0;
+        document.getElementById('msgStatUrgent').textContent = stats.by_priority?.urgent || 0;
+
+        // Nav badge
+        const navBadge = document.getElementById('navMessagesBadge');
+        if (stats.total > 0) {
+            navBadge.textContent = stats.total > 99 ? '99+' : stats.total;
+            navBadge.style.display = 'inline';
+        } else {
+            navBadge.style.display = 'none';
+        }
+
+        renderMessagesTable(data);
+    } catch (error) {
+        showToast('Erreur', 'Impossible de charger les messages: ' + error.message, 'danger');
+    }
+}
+
+function renderMessagesTable(data) {
+    const tbody = document.getElementById('messagesTableBody');
+    if (!data.messages || data.messages.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted">Aucun message</td></tr>';
+        document.getElementById('messagesPagination').innerHTML = '';
+        return;
+    }
+
+    tbody.innerHTML = data.messages.map(m => {
+        const date = new Date(m.created_at).toLocaleString('fr-FR', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' });
+        const priorityBadge = getMessagePriorityBadge(m.priority);
+        const sender = m.sender_app_slug
+            ? `<i class="bi bi-robot me-1"></i>${escapeHtml(m.sender_app_slug)}`
+            : (escapeHtml(m.sender_username || m.sender_type));
+        const target = m.target_type === 'broadcast'
+            ? '<span class="badge bg-secondary">Tous</span>'
+            : escapeHtml(m.target_username || `User #${m.target_user_id}`);
+        const readInfo = `${m.read_count}/${m.total_targets}`;
+        const rowClass = m.priority === 'urgent' ? 'table-danger' : (m.priority === 'warning' ? 'table-warning' : '');
+
+        return `<tr class="${rowClass}">
+            <td class="small">${date}</td>
+            <td>${priorityBadge}</td>
+            <td class="small">${sender}</td>
+            <td>${escapeHtml(m.title)}</td>
+            <td class="small">${target}</td>
+            <td class="small">${readInfo}</td>
+            <td>
+                <button class="btn btn-outline-primary btn-sm py-0 px-1" onclick="showMessageDetail(${m.id})" title="Détail">
+                    <i class="bi bi-eye"></i>
+                </button>
+            </td>
+        </tr>`;
+    }).join('');
+
+    // Pagination
+    renderMessagesPagination(data.page, data.pages, data.total);
+}
+
+function getMessagePriorityBadge(priority) {
+    switch (priority) {
+        case 'urgent': return '<span class="badge bg-danger msg-priority-urgent">Urgent</span>';
+        case 'warning': return '<span class="badge bg-warning text-dark">Warning</span>';
+        default: return '<span class="badge bg-info">Info</span>';
+    }
+}
+
+function renderMessagesPagination(currentPageNum, totalPages, total) {
+    const container = document.getElementById('messagesPagination');
+    if (totalPages <= 1) { container.innerHTML = ''; return; }
+
+    let html = `<ul class="pagination pagination-sm justify-content-center">`;
+    html += `<li class="page-item ${currentPageNum <= 1 ? 'disabled' : ''}"><a class="page-link" href="#" onclick="messagesGoToPage(${currentPageNum - 1})">«</a></li>`;
+    for (let i = 1; i <= totalPages; i++) {
+        if (i === 1 || i === totalPages || (i >= currentPageNum - 2 && i <= currentPageNum + 2)) {
+            html += `<li class="page-item ${i === currentPageNum ? 'active' : ''}"><a class="page-link" href="#" onclick="messagesGoToPage(${i})">${i}</a></li>`;
+        } else if (i === currentPageNum - 3 || i === currentPageNum + 3) {
+            html += `<li class="page-item disabled"><span class="page-link">...</span></li>`;
+        }
+    }
+    html += `<li class="page-item ${currentPageNum >= totalPages ? 'disabled' : ''}"><a class="page-link" href="#" onclick="messagesGoToPage(${currentPageNum + 1})">»</a></li>`;
+    html += `</ul><div class="text-center text-muted small">${total} message(s)</div>`;
+    container.innerHTML = html;
+}
+
+function messagesGoToPage(page) {
+    messagesPage = page;
+    loadMessagesPage();
+}
+
+async function showMessageDetail(messageId) {
+    try {
+        const data = await api.getMessageDetail(messageId);
+        const m = data.message;
+        const receipts = data.read_receipts || [];
+
+        const receiptsHtml = receipts.length > 0
+            ? receipts.map(r => `<tr><td>${escapeHtml(r.username)}</td><td>${new Date(r.read_at).toLocaleString('fr-FR')}</td></tr>`).join('')
+            : '<tr><td colspan="2" class="text-muted text-center">Aucun accusé de lecture</td></tr>';
+
+        const modal = `
+        <div class="modal fade" id="messageDetailModal" tabindex="-1">
+            <div class="modal-dialog modal-lg">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title">${getMessagePriorityBadge(m.priority)} ${escapeHtml(m.title)}</h5>
+                        <button class="btn-close" data-bs-dismiss="modal"></button>
+                    </div>
+                    <div class="modal-body">
+                        <div class="row mb-3">
+                            <div class="col-md-6">
+                                <small class="text-muted">Expéditeur</small><br>
+                                <strong>${escapeHtml(m.sender_username || m.sender_app_slug || m.sender_type)}</strong>
+                            </div>
+                            <div class="col-md-6">
+                                <small class="text-muted">Destinataire</small><br>
+                                <strong>${m.target_type === 'broadcast' ? 'Tous (broadcast)' : escapeHtml(m.target_username || 'User #' + m.target_user_id)}</strong>
+                            </div>
+                        </div>
+                        <div class="row mb-3">
+                            <div class="col-md-6">
+                                <small class="text-muted">Date</small><br>${new Date(m.created_at).toLocaleString('fr-FR')}
+                            </div>
+                            <div class="col-md-6">
+                                <small class="text-muted">Expiration</small><br>${m.expires_at ? new Date(m.expires_at).toLocaleString('fr-FR') : 'Aucune'}
+                            </div>
+                        </div>
+                        ${m.body ? `<div class="alert alert-light mb-3">${escapeHtml(m.body)}</div>` : ''}
+                        ${m.action_url ? `<div class="mb-3"><a href="${escapeHtml(m.action_url)}" target="_blank" class="btn btn-outline-primary btn-sm"><i class="bi bi-box-arrow-up-right me-1"></i>${escapeHtml(m.action_label || 'Ouvrir')}</a></div>` : ''}
+                        <hr>
+                        <h6>Accusés de lecture (${receipts.length}/${m.total_targets})</h6>
+                        <table class="table table-sm"><thead><tr><th>Utilisateur</th><th>Lu le</th></tr></thead><tbody>${receiptsHtml}</tbody></table>
+                    </div>
+                </div>
+            </div>
+        </div>`;
+
+        // Injecter et afficher
+        const existing = document.getElementById('messageDetailModal');
+        if (existing) existing.remove();
+        document.body.insertAdjacentHTML('beforeend', modal);
+        new bootstrap.Modal(document.getElementById('messageDetailModal')).show();
+    } catch (error) {
+        showToast('Erreur', error.message, 'danger');
+    }
+}
+
+async function showSendMessageModal() {
+    // Charger la liste des utilisateurs pour le select
+    try {
+        const usersData = await api.request('/users/');
+        const select = document.getElementById('msgTargetUsers');
+        select.innerHTML = usersData.map(u =>
+            `<option value="${u.id}">${escapeHtml(u.username)}</option>`
+        ).join('');
+    } catch (e) {
+        // Pas critique, on continue
+    }
+
+    // Réinitialiser le formulaire
+    document.getElementById('msgTitle').value = '';
+    document.getElementById('msgBody').value = '';
+    document.getElementById('msgPriority').value = 'info';
+    document.getElementById('msgTargetType').value = 'broadcast';
+    document.getElementById('msgExpiresAt').value = '';
+    document.getElementById('msgActionUrl').value = '';
+    document.getElementById('msgActionLabel').value = '';
+    document.getElementById('msgTargetUsersGroup').classList.add('d-none');
+
+    if (!sendMessageModal) {
+        sendMessageModal = new bootstrap.Modal(document.getElementById('sendMessageModal'));
+    }
+    sendMessageModal.show();
+}
+
+function toggleMsgTargetUsers() {
+    const type = document.getElementById('msgTargetType').value;
+    document.getElementById('msgTargetUsersGroup').classList.toggle('d-none', type !== 'user');
+}
+
+async function confirmSendMessage() {
+    const title = document.getElementById('msgTitle').value.trim();
+    if (!title) {
+        showToast('Erreur', 'Le titre est obligatoire', 'warning');
+        return;
+    }
+
+    const targetType = document.getElementById('msgTargetType').value;
+    let targetUserIds = null;
+    if (targetType === 'user') {
+        const select = document.getElementById('msgTargetUsers');
+        targetUserIds = Array.from(select.selectedOptions).map(o => parseInt(o.value));
+        if (targetUserIds.length === 0) {
+            showToast('Erreur', 'Sélectionnez au moins un destinataire', 'warning');
+            return;
+        }
+    }
+
+    const expiresAt = document.getElementById('msgExpiresAt').value;
+    const data = {
+        title,
+        body: document.getElementById('msgBody').value || null,
+        priority: document.getElementById('msgPriority').value,
+        target_type: targetType,
+        target_user_ids: targetUserIds,
+        action_url: document.getElementById('msgActionUrl').value || null,
+        action_label: document.getElementById('msgActionLabel').value || null,
+        expires_at: expiresAt ? new Date(expiresAt).toISOString() : null,
+    };
+
+    try {
+        const result = await api.sendMessage(data);
+        showToast('Succès', `${result.sent} message(s) envoyé(s)`, 'success');
+        if (sendMessageModal) sendMessageModal.hide();
+        await loadMessagesPage();
+    } catch (error) {
+        showToast('Erreur', error.message, 'danger');
+    }
+}
+
+async function purgeMessagesFiltered() {
+    const hours = parseInt(document.getElementById('msgFilterHours')?.value) || null;
+    const priority = document.getElementById('msgFilterPriority')?.value || null;
+    const senderApp = document.getElementById('msgFilterApp')?.value || null;
+    if (!confirm('Purger les messages correspondant aux filtres ?')) return;
+    try {
+        const result = await api.purgeMessages({ hours, priority, senderApp });
+        showToast('Succès', result.message, 'success');
+        await loadMessagesPage();
+    } catch (error) {
+        showToast('Erreur', error.message, 'danger');
+    }
+}
+
+async function purgeAllMessages() {
+    if (!confirm('Purger TOUS les messages ? Cette action est irréversible.')) return;
+    try {
+        const result = await api.purgeMessages({});
+        showToast('Succès', result.message, 'success');
+        await loadMessagesPage();
+    } catch (error) {
+        showToast('Erreur', error.message, 'danger');
+    }
+}
+
+async function exportMessages() {
+    const hours = parseInt(document.getElementById('msgFilterHours')?.value) || null;
+    const priority = document.getElementById('msgFilterPriority')?.value || null;
+    const senderApp = document.getElementById('msgFilterApp')?.value || null;
+    try {
+        await api.exportMessages({ hours, priority, senderApp });
+        showToast('Succès', 'Export téléchargé', 'success');
+    } catch (error) {
+        showToast('Erreur', error.message, 'danger');
+    }
+}
+
+// ===== User : Notification bell + overlay =====
+
+async function loadUnreadMessageCount() {
+    try {
+        const result = await api.getUnreadCount();
+        updateMessageBellBadge(result.count || 0);
+    } catch (e) {
+        // Silencieux
+    }
+}
+
+function updateMessageBellBadge(count) {
+    const badge = document.getElementById('messageBellBadge');
+    if (!badge) return;
+    if (count > 0) {
+        badge.textContent = count > 99 ? '99+' : count;
+        badge.style.display = 'inline';
+    } else {
+        badge.style.display = 'none';
+    }
+}
+
+function toggleMessagePanel() {
+    const panel = document.getElementById('messagePanel');
+    if (panel.classList.contains('d-none')) {
+        panel.classList.remove('d-none');
+        loadUserMessages();
+    } else {
+        panel.classList.add('d-none');
+    }
+}
+
+async function loadUserMessages() {
+    try {
+        const messages = await api.getMyMessages();
+        const body = document.getElementById('messagePanelBody');
+        if (!messages || messages.length === 0) {
+            body.innerHTML = '<p class="text-muted text-center small mt-3">Aucun message</p>';
+            return;
+        }
+
+        const priorityIcons = {
+            urgent: '<svg class="notif-card-icon-svg notif-icon-urgent" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>',
+            warning: '<svg class="notif-card-icon-svg notif-icon-warning" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>',
+            normal: '<svg class="notif-card-icon-svg notif-icon-normal" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>'
+        };
+
+        body.innerHTML = messages.map(m => {
+            const time = new Date(m.created_at).toLocaleString('fr-FR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+            const readClass = m.is_read ? 'message-item-read' : 'message-item-unread';
+            const priority = m.priority || 'normal';
+            const priorityClass = `message-item-${priority}`;
+            const icon = priorityIcons[priority] || priorityIcons.normal;
+
+            return `<div class="message-item ${readClass} ${priorityClass}" data-msg-id="${m.id}">
+                <div class="message-item-icon">${icon}</div>
+                <div class="message-item-content">
+                    <div class="message-item-header">
+                        <strong class="message-item-title">${escapeHtml(m.title)}</strong>
+                        ${!m.is_read ? `<button class="message-item-mark-read" onclick="markSingleMessageRead(${m.id})" title="Marquer comme lu">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                        </button>` : ''}
+                    </div>
+                    ${m.body ? `<p class="message-item-body">${escapeHtml(m.body)}</p>` : ''}
+                    ${m.action_url ? `
+                        <div class="message-item-action-wrapper">
+                            <a href="${escapeHtml(m.action_url)}" target="_blank" rel="noopener noreferrer" class="message-item-action">
+                                ${escapeHtml(m.action_label || 'Consulter')}
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+                            </a>
+                        </div>
+                    ` : ''}
+                    <div class="message-item-meta">
+                        ${(m.sender_app_slug || m.sender_type) ? `
+                            <span class="message-item-sender">
+                                <span class="message-item-sender-dot"></span>
+                                ${escapeHtml(m.sender_app_slug || m.sender_type)}
+                            </span>
+                        ` : ''}
+                        <span class="message-item-time">
+                            <svg class="message-item-time-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                            ${time}
+                        </span>
+                    </div>
+                </div>
+            </div>`;
+        }).join('');
+    } catch (error) {
+        document.getElementById('messagePanelBody').innerHTML = '<p class="text-danger text-center small mt-3">Erreur chargement</p>';
+    }
+}
+
+async function markSingleMessageRead(messageId) {
+    try {
+        await api.markMessageRead(messageId);
+        // Mettre à jour visuellement
+        const item = document.querySelector(`.message-item[data-msg-id="${messageId}"]`);
+        if (item) {
+            item.classList.remove('message-item-unread');
+            item.classList.add('message-item-read');
+            const btn = item.querySelector('.btn-outline-success');
+            if (btn) btn.remove();
+        }
+        loadUnreadMessageCount();
+    } catch (error) {
+        showToast('Erreur', error.message, 'danger');
+    }
+}
+
+async function markAllUserMessagesRead() {
+    try {
+        await api.markAllMessagesRead();
+        updateMessageBellBadge(0);
+        loadUserMessages();
+    } catch (error) {
+        showToast('Erreur', error.message, 'danger');
+    }
+}
+
+function handleIncomingMessage(msgData) {
+    // Incrémenter le badge
+    const badge = document.getElementById('messageBellBadge');
+    if (badge) {
+        const current = parseInt(badge.textContent) || 0;
+        updateMessageBellBadge(current + 1);
+    }
+
+    // Afficher une carte de notification flottante (style HUBapp_TEMPLATE)
+    showNotificationCard(msgData);
+
+    // Si le panneau de messages est ouvert, le rafraîchir
+    const panel = document.getElementById('messagePanel');
+    if (panel && !panel.classList.contains('d-none')) {
+        loadUserMessages();
+    }
+}
+
+// === Notification Cards (floating, top-right, HUBapp_TEMPLATE style) ===
+
+const _activeNotificationCards = [];
+
+function showNotificationCard(msgData) {
+    const container = document.getElementById('notificationBanner');
+    if (!container) return;
+
+    const id = msgData.id || Date.now();
+    const priority = msgData.priority || 'normal';
+
+    // Icon SVG selon la priorité (style lucide)
+    const icons = {
+        urgent: '<svg class="notif-card-icon-svg notif-icon-urgent" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>',
+        warning: '<svg class="notif-card-icon-svg notif-icon-warning" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>',
+        normal: '<svg class="notif-card-icon-svg notif-icon-normal" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>'
+    };
+
+    const time = msgData.created_at
+        ? new Date(msgData.created_at).toLocaleString('fr-FR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
+        : new Date().toLocaleString('fr-FR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+
+    const card = document.createElement('div');
+    card.className = `notif-card notif-card-${priority}`;
+    card.dataset.notifId = id;
+
+    card.innerHTML = `
+        <div class="notif-card-icon">${icons[priority] || icons.normal}</div>
+        <div class="notif-card-content">
+            <div class="notif-card-header">
+                <strong class="notif-card-title">${escapeHtml(msgData.title || 'Notification')}</strong>
+                <button class="notif-card-close" onclick="dismissNotificationCard(${id})" title="Fermer">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                </button>
+            </div>
+            ${msgData.body ? `<p class="notif-card-body">${escapeHtml(msgData.body)}</p>` : ''}
+            ${msgData.action_url ? `
+                <div class="notif-card-action-wrapper">
+                    <a href="${escapeHtml(msgData.action_url)}" target="_blank" rel="noopener noreferrer" class="notif-card-action">
+                        ${escapeHtml(msgData.action_label || 'Consulter')}
+                        <svg class="notif-card-action-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+                    </a>
+                </div>
+            ` : ''}
+            <div class="notif-card-meta">
+                ${(msgData.sender_app_slug || msgData.sender_type) ? `
+                    <span class="notif-card-sender">
+                        <span class="notif-card-sender-dot"></span>
+                        ${escapeHtml(msgData.sender_app_slug || msgData.sender_type)}
+                    </span>
+                ` : ''}
+                <span class="notif-card-time">
+                    <svg class="notif-card-time-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                    ${time}
+                </span>
+            </div>
+        </div>
+    `;
+
+    _activeNotificationCards.push(id);
+    container.appendChild(card);
+    updateNotificationBannerControls();
+
+    // Auto-dismiss après 15s (sauf urgent)
+    if (priority !== 'urgent') {
+        setTimeout(() => dismissNotificationCard(id), 15000);
+    }
+}
+
+function dismissNotificationCard(id) {
+    const container = document.getElementById('notificationBanner');
+    const card = container?.querySelector(`[data-notif-id="${id}"]`);
+    if (card) {
+        card.style.animation = 'notifCardSlideOut 0.25s ease-in forwards';
+        setTimeout(() => {
+            card.remove();
+            const idx = _activeNotificationCards.indexOf(id);
+            if (idx !== -1) _activeNotificationCards.splice(idx, 1);
+            updateNotificationBannerControls();
+        }, 250);
+    }
+}
+
+function dismissAllNotificationCards() {
+    const container = document.getElementById('notificationBanner');
+    if (!container) return;
+    container.querySelectorAll('.notif-card').forEach(card => {
+        card.style.animation = 'notifCardSlideOut 0.2s ease-in forwards';
+    });
+    setTimeout(() => {
+        container.querySelectorAll('.notif-card').forEach(c => c.remove());
+        _activeNotificationCards.length = 0;
+        updateNotificationBannerControls();
+    }, 250);
+}
+
+function updateNotificationBannerControls() {
+    const container = document.getElementById('notificationBanner');
+    if (!container) return;
+    let controls = container.querySelector('.notif-banner-controls');
+
+    const cards = container.querySelectorAll('.notif-card');
+    if (cards.length > 1) {
+        if (!controls) {
+            controls = document.createElement('div');
+            controls.className = 'notif-banner-controls';
+            container.prepend(controls);
+        }
+        controls.innerHTML = `
+            <span class="notif-banner-count">${cards.length} notifications</span>
+            <button class="notif-banner-dismiss-all" onclick="dismissAllNotificationCards()">
+                Tout fermer
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+            </button>
+        `;
+    } else if (controls) {
+        controls.remove();
     }
 }
 

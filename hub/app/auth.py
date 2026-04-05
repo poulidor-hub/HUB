@@ -12,7 +12,7 @@ from sqlalchemy.orm import selectinload
 
 from app.config import get_settings
 from app.database import get_db
-from app.models import User, ServiceAccount, RefreshToken, RevokedToken, UserAppRole
+from app.models import User, ServiceAccount, RefreshToken, RevokedToken, UserAppRole, utcnow
 
 settings = get_settings()
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -54,9 +54,9 @@ def create_access_token(
         tuple: (token, expiration_datetime, jti)
     """
     if expires_delta:
-        expire = datetime.utcnow() + expires_delta
+        expire = utcnow() + expires_delta
     else:
-        expire = datetime.utcnow() + timedelta(minutes=settings.access_token_expire_minutes)
+        expire = utcnow() + timedelta(minutes=settings.access_token_expire_minutes)
     
     jti = generate_jti()
     
@@ -64,7 +64,7 @@ def create_access_token(
         "sub": username,
         "apps": apps,            # Dict {app_slug: role_in_app}
         "exp": expire,
-        "iat": datetime.utcnow(),
+        "iat": utcnow(),
         "jti": jti,
         "type": "service_account" if is_service_account else "user"
     }
@@ -95,7 +95,7 @@ async def create_refresh_token(
     token = secrets.token_urlsafe(64)
     token_hash = hash_token(token)
     
-    expires_at = datetime.utcnow() + timedelta(days=settings.refresh_token_expire_days)
+    expires_at = utcnow() + timedelta(days=settings.refresh_token_expire_days)
     
     refresh_token = RefreshToken(
         token_hash=token_hash,
@@ -147,7 +147,7 @@ async def rotate_refresh_token(
         return None
     
     # Révoquer l'ancien token
-    old_refresh.revoked_at = datetime.utcnow()
+    old_refresh.revoked_at = utcnow()
     
     # Créer un nouveau token
     new_token = await create_refresh_token(
@@ -191,7 +191,7 @@ async def is_token_revoked(db: AsyncSession, jti: str) -> bool:
 
 async def cleanup_expired_tokens(db: AsyncSession) -> int:
     """Nettoie les tokens expirés (à appeler périodiquement)"""
-    now = datetime.utcnow()
+    now = utcnow()
     
     # Supprimer les refresh tokens expirés
     result1 = await db.execute(
@@ -214,7 +214,7 @@ async def revoke_all_user_tokens(db: AsyncSession, user_id: int) -> None:
         .where(RefreshToken.user_id == user_id, RefreshToken.revoked_at.is_(None))
     )
     for token in result.scalars():
-        token.revoked_at = datetime.utcnow()
+        token.revoked_at = utcnow()
     await db.commit()
 
 

@@ -13,7 +13,7 @@ import base64
 
 from app.database import get_db
 from app.routes.events import notify_event, notify_stats_update
-from app.models import ServiceAccount, Application
+from app.models import ServiceAccount, Application, utcnow
 from app.schemas import (
     ServiceAccountCreate,
     ServiceAccountUpdate,
@@ -245,7 +245,7 @@ async def get_service_accounts_status(
             "last_used_at": sa.last_used_at.isoformat() if sa.last_used_at else None,
             "credentials_file": None,
             "credentials_status": "unknown",
-            "last_check": datetime.utcnow().isoformat()
+            "last_check": utcnow().isoformat()
         }
         
         # Vérifier si le fichier credentials existe
@@ -277,7 +277,7 @@ async def get_service_accounts_status(
             "with_credentials": file_exists_count,
             "missing_credentials": len(status_results) - file_exists_count
         },
-        "timestamp": datetime.utcnow().isoformat()
+        "timestamp": utcnow().isoformat()
     }
 
 

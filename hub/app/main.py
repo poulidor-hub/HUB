@@ -11,10 +11,10 @@ from sqlalchemy import select
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.database import init_db, async_session_maker, apply_migrations
-from app.models import User, ErrorLog
+from app.models import User, ErrorLog, utcnow
 from app.auth import get_password_hash, cleanup_expired_tokens
 from app.config import get_settings
-from app.routes import auth, users, apps, service_accounts, backup, audit, docs, events, app_backups, profiles, discovery
+from app.routes import auth, users, apps, service_accounts, backup, audit, docs, events, app_backups, profiles, discovery, messages
 
 import logging
 
@@ -31,6 +31,10 @@ _backup_scheduler_task = None
 
 async def create_default_admin():
     """Crée l'admin par défaut si inexistant et force le changement de mot de passe par défaut"""
+    if not settings.admin_password:
+        logger.warning("⚠️  ADMIN_PASSWORD non défini ! L'admin par défaut ne sera pas créé.")
+        return
+    
     async with async_session_maker() as db:
         result = await db.execute(select(User).where(User.username == settings.admin_username))
         existing_admin = result.scalar_one_or_none()
@@ -103,18 +107,20 @@ async def periodic_docker_sync():
 
 
 async def periodic_log_purge():
-    """Tâche périodique pour purger les anciens logs d'audit et d'erreurs"""
+    """Tâche périodique pour purger les anciens logs d'audit, d'erreurs et de messages"""
     from app.routes.audit import purge_old_logs
+    from app.routes.messages import purge_old_messages
     
     interval_hours = settings.log_purge_interval_hours
     audit_days = settings.audit_retention_days
     error_days = settings.error_retention_days
+    message_days = settings.message_retention_days
     
-    if audit_days <= 0 and error_days <= 0:
+    if audit_days <= 0 and error_days <= 0 and message_days <= 0:
         logger.info("🗑️ Purge des logs désactivée (rétention = 0)")
         return
     
-    logger.info(f"🗑️ Purge des logs activée (audit: {audit_days}j, errors: {error_days}j, intervalle: {interval_hours}h)")
+    logger.info(f"🗑️ Purge des logs activée (audit: {audit_days}j, errors: {error_days}j, messages: {message_days}j, intervalle: {interval_hours}h)")
     
     # Attendre un peu avant la première purge
     await asyncio.sleep(60)
@@ -125,6 +131,11 @@ async def periodic_log_purge():
                 result = await purge_old_logs(db, audit_days, error_days)
                 if result["audit_deleted"] > 0 or result["errors_deleted"] > 0:
                     logger.info(f"🗑️ Purge logs: {result['audit_deleted']} audit, {result['errors_deleted']} erreurs supprimés")
+                
+                # Purge des messages
+                msg_deleted = await purge_old_messages(db, message_days)
+                if msg_deleted > 0:
+                    logger.info(f"🗑️ Purge messages: {msg_deleted} message(s) supprimé(s)")
             
             await asyncio.sleep(interval_hours * 3600)
         except asyncio.CancelledError:
@@ -162,7 +173,7 @@ async def periodic_backup_scheduler():
                 )
                 apps = result.scalars().all()
                 
-                now = datetime.utcnow()
+                now = utcnow()
                 
                 for app in apps:
                     try:
@@ -298,20 +309,30 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# CORS - autoriser tous les origines (réseau local)
+# CORS - origines autorisées (réseau local)
+# Configurer ALLOWED_ORIGINS avec les origines autorisées séparées par des virgules
+# Ex: "http://192.168.1.10,http://hub.local,http://localhost"
+# Si non défini, autorise toutes les origines (mode développement)
+import os
+_allowed_origins_env = os.getenv("ALLOWED_ORIGINS", "")
+_allowed_origins = [o.strip() for o in _allowed_origins_env.split(",") if o.strip()] if _allowed_origins_env else ["*"]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=False,  # False avec origins=* pour éviter les erreurs
-    allow_methods=["*"],
-    allow_headers=["*"],
-    expose_headers=["*"],
+    allow_origins=_allowed_origins,
+    allow_credentials=_allowed_origins != ["*"],  # True seulement si origines explicites
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-Slug", "X-Request-ID"],
+    expose_headers=["X-Request-ID"],
 )
 
 
 # =============================================================================
 # MIDDLEWARE DE CONTEXTE DE REQUÊTE
 # =============================================================================
+
+# Limite de taille du body (10 MB) pour éviter les attaques DoS
+MAX_BODY_SIZE = 10 * 1024 * 1024  # 10 MB
 
 @app.middleware("http")
 async def request_context_middleware(request: Request, call_next):
@@ -320,7 +341,16 @@ async def request_context_middleware(request: Request, call_next):
     - request_id: UUID unique pour tracer la requête
     - source_app_slug: Application source (header X-Slug)
     - start_time: Horodatage de début pour calculer la durée
+    Vérifie aussi la taille du body (protection DoS).
     """
+    # Vérifier la taille du body
+    content_length = request.headers.get("content-length")
+    if content_length and int(content_length) > MAX_BODY_SIZE:
+        return JSONResponse(
+            status_code=413,
+            content={"detail": "Corps de requête trop volumineux (max 10 MB)"}
+        )
+    
     # Générer un request_id unique
     request.state.request_id = str(uuid.uuid4())
     
@@ -432,6 +462,7 @@ def _sanitize_error_for_json(obj):
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
     """
     Intercepte les erreurs de validation Pydantic (422) et les log.
+    Retourne un message simplifié (champ + erreur) sans exposer le schéma interne.
     """
     request_id = getattr(request.state, "request_id", str(uuid.uuid4()))
     error_code = 422
@@ -440,23 +471,22 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
     # Formater le message d'erreur
     errors = exc.errors()
     error_messages = []
+    simplified_errors = []
     for err in errors:
-        loc = ".".join(str(x) for x in err.get("loc", []))
+        loc = ".".join(str(x) for x in err.get("loc", []) if x != "body")
         msg = err.get("msg", "")
         error_messages.append(f"{loc}: {msg}")
+        simplified_errors.append({"field": loc, "message": msg})
     error_message = "; ".join(error_messages)
     
-    # Logger l'erreur
+    # Logger l'erreur complète côté serveur
     await _log_error_to_db(request, error_code, error_type, error_message)
     
-    # Sanitize les erreurs pour éviter les problèmes de sérialisation JSON
-    # (bytes, etc. venant du body brut)
-    sanitized_errors = _sanitize_error_for_json(errors)
-    
+    # Retourner uniquement les champs et messages (sans type, ctx, url internes)
     return JSONResponse(
         status_code=error_code,
         content={
-            "detail": sanitized_errors,
+            "detail": simplified_errors,
             "request_id": request_id
         }
     )
@@ -517,6 +547,7 @@ app.include_router(events.router)
 app.include_router(app_backups.router)
 app.include_router(profiles.router)
 app.include_router(discovery.router)
+app.include_router(messages.router)
 
 
 @app.get("/health")

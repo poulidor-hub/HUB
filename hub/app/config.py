@@ -1,4 +1,5 @@
 from pydantic_settings import BaseSettings
+from pydantic import ConfigDict
 from functools import lru_cache
 from pathlib import Path
 import socket
@@ -53,6 +54,24 @@ def generate_rsa_keys() -> tuple[str, str]:
     return private_pem, public_pem
 
 
+def _validate_pem_keys(private_key: str, public_key: str):
+    """Valide que les clés PEM sont au format RSA correct. Lève ValueError si invalide."""
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.backends import default_backend
+    try:
+        serialization.load_pem_private_key(
+            private_key.encode(), password=None, backend=default_backend()
+        )
+    except Exception as e:
+        raise ValueError(f"Clé privée JWT invalide (format PEM incorrect) : {e}")
+    try:
+        serialization.load_pem_public_key(
+            public_key.encode(), backend=default_backend()
+        )
+    except Exception as e:
+        raise ValueError(f"Clé publique JWT invalide (format PEM incorrect) : {e}")
+
+
 def ensure_keys_exist(auto_generate: bool = False) -> tuple[str, str]:
     """
     Vérifie que les clés JWT existent, les génère si autorisé.
@@ -97,6 +116,7 @@ def ensure_keys_exist(auto_generate: bool = False) -> tuple[str, str]:
     
     # Si les deux clés existent, les retourner
     if private_key and public_key:
+        _validate_pem_keys(private_key, public_key)
         return private_key, public_key
     
     # Clés manquantes - générer si autorisé
@@ -138,7 +158,7 @@ class Settings(BaseSettings):
     refresh_token_expire_days: int = 7  # 7 jours pour le refresh token
     session_timeout_minutes: int = 20  # Seuil pour considérer une session comme terminée (sans logout explicite)
     admin_username: str = "admin"
-    admin_password: str = "admin123"
+    admin_password: str = ""  # Doit être défini via ADMIN_PASSWORD
     admin_email: str = "admin@local.lan"
     
     # Mode développement - Génération automatique des clés JWT
@@ -166,6 +186,9 @@ class Settings(BaseSettings):
     
     # Rétention des logs d'erreurs (en jours) - 0 = pas de purge automatique
     error_retention_days: int = 30
+    
+    # Rétention des messages utilisateur (en jours) - 0 = pas de purge automatique
+    message_retention_days: int = 90
     
     # Intervalle de purge des logs (en heures)
     log_purge_interval_hours: int = 24
@@ -213,9 +236,7 @@ class Settings(BaseSettings):
         _, public_key = self._load_jwt_keys()
         return public_key
 
-    class Config:
-        env_file = ".env"
-        extra = "ignore"  # Ignorer les variables d'environnement non définies
+    model_config = ConfigDict(env_file=".env", extra="ignore")
 
 
 @lru_cache()

@@ -1,4 +1,4 @@
-from pydantic import BaseModel, EmailStr, Field, field_validator
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 from enum import Enum
@@ -77,8 +77,7 @@ class ProfileAppRoleResponse(BaseModel):
     app_slug: str
     role: str
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class ProfileBriefResponse(BaseModel):
@@ -87,8 +86,7 @@ class ProfileBriefResponse(BaseModel):
     name: str
     color: str
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class ProfileResponse(BaseModel):
@@ -102,8 +100,7 @@ class ProfileResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class ProfileApplyRequest(BaseModel):
@@ -126,8 +123,7 @@ class UserAppRoleResponse(BaseModel):
     role: str
     source: str = "manual"
     
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
     
     @classmethod
     def from_orm_model(cls, uar):
@@ -151,8 +147,7 @@ class UserResponse(UserBase):
     app_roles: List[UserAppRoleResponse] = []
     profiles: List[ProfileBriefResponse] = []
     
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
     
     @classmethod
     def from_orm_model(cls, user) -> "UserResponse":
@@ -191,8 +186,7 @@ class UserBrief(BaseModel):
     username: str
     is_active: bool
     
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class PaginatedUsersResponse(BaseModel):
@@ -211,8 +205,7 @@ class UserBriefWithRole(BaseModel):
     is_active: bool
     role: str
     
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # ===== Application Schemas =====
@@ -227,17 +220,6 @@ class AppBase(BaseModel):
     callback_url: Optional[str] = None
     requires_auth: bool = True
 
-    @field_validator('frontend_url', mode='before')
-    @classmethod
-    def normalize_frontend_url_to_http(cls, v):
-        """Normalise frontend_url en HTTP.
-        
-        Les applications gèrent elles-mêmes la redirection HTTP→HTTPS,
-        le Hub ne doit donc utiliser que le port HTTP pour les redirections utilisateur.
-        """
-        if v and isinstance(v, str) and v.startswith("https://"):
-            return "http://" + v[len("https://"):]
-        return v
     is_shared_service: bool = Field(default=False, description="Si True, cette app est accessible par tous les service accounts")
 
 
@@ -250,6 +232,7 @@ class AppCreateSimplified(BaseModel):
     color: str = "#0d6efd"
     api_port: int = Field(..., ge=1, le=65535, description="Port de l'API backend")
     frontend_port: Optional[int] = Field(None, ge=1, le=65535, description="Port du frontend")
+    frontend_https_port: Optional[int] = Field(None, ge=1, le=65535, description="Port HTTPS du frontend (si HTTPS activé)")
     custom_host: Optional[str] = Field(None, description="Host personnalisé si différent du Hub")
     requires_auth: bool = True
     create_service_account: bool = Field(False, description="Créer un service account M2M pour cette application")
@@ -273,13 +256,7 @@ class AppUpdate(BaseModel):
     requires_auth: Optional[bool] = None
     is_shared_service: Optional[bool] = None
 
-    @field_validator('frontend_url', mode='before')
-    @classmethod
-    def normalize_frontend_url_to_http(cls, v):
-        """Normalise frontend_url en HTTP (les apps gèrent elles-mêmes le HTTPS)"""
-        if v and isinstance(v, str) and v.startswith("https://"):
-            return "http://" + v[len("https://"):]
-        return v
+
 
 
 class AppResponse(AppBase):
@@ -288,6 +265,7 @@ class AppResponse(AppBase):
     is_shared_service: bool
     is_remote: bool = False  # True si hébergée sur un serveur distant
     registered_from_ip: Optional[str] = None  # IP source lors de l'auto-enregistrement
+    frontend_https_port: Optional[int] = None  # Port HTTPS du frontend (si HTTPS activé)
     approval_status: ApprovalStatusEnum = ApprovalStatusEnum.approved
     created_at: datetime
     
@@ -297,8 +275,7 @@ class AppResponse(AppBase):
         """Convertit None en False pour is_remote (anciennes apps en BDD)"""
         return v if v is not None else False
     
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class AppResponseWithMyRole(AppResponse):
@@ -308,8 +285,7 @@ class AppResponseWithMyRole(AppResponse):
     is_favorite: bool = False  # Si l'utilisateur a mis cette app en favori
     category: Optional[str] = None  # Catégorie de l'application
     
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
     
     @classmethod
     def from_app_with_role(
@@ -337,6 +313,7 @@ class AppResponseWithMyRole(AppResponse):
             is_shared_service=app.is_shared_service,
             is_remote=getattr(app, 'is_remote', False) or False,
             registered_from_ip=getattr(app, 'registered_from_ip', None),
+            frontend_https_port=getattr(app, 'frontend_https_port', None),
             approval_status=approval_status,
             created_at=app.created_at,
             my_role=my_role,
@@ -353,8 +330,7 @@ class AppBrief(BaseModel):
     icon: str
     color: str
     
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class AppWithUsers(AppResponse):
@@ -389,6 +365,7 @@ class AppWithUsers(AppResponse):
             is_shared_service=app.is_shared_service,
             is_remote=getattr(app, 'is_remote', False) or False,
             registered_from_ip=getattr(app, 'registered_from_ip', None),
+            frontend_https_port=getattr(app, 'frontend_https_port', None),
             approval_status=approval_status,
             created_at=app.created_at,
             users=users
@@ -429,6 +406,7 @@ class AppWithUsersAndDocker(AppWithUsers):
             is_shared_service=app.is_shared_service,
             is_remote=getattr(app, 'is_remote', False) or False,
             registered_from_ip=getattr(app, 'registered_from_ip', None),
+            frontend_https_port=getattr(app, 'frontend_https_port', None),
             approval_status=approval_status,
             created_at=app.created_at,
             users=users
@@ -497,8 +475,7 @@ class AppDiscoveryItem(BaseModel):
     api_url: str = Field(..., description="URL de l'API de l'application")
     is_shared_service: bool = Field(..., description="Si True, API partagée accessible à tous les SA")
     
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class DiscoverResponse(BaseModel):
@@ -586,8 +563,7 @@ class ServiceAccountResponse(ServiceAccountBase):
     last_used_at: Optional[datetime] = None
     applications: List["AppBrief"] = []
     
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class ServiceAccountCreated(ServiceAccountResponse):
@@ -836,6 +812,7 @@ class AppRegisterRequest(BaseModel):
     description: Optional[str] = Field(None, description="Description de l'application")
     api_port: int = Field(..., ge=1, le=65535, description="Port de l'API backend")
     frontend_port: Optional[int] = Field(None, ge=1, le=65535, description="Port du frontend (optionnel)")
+    frontend_https_port: Optional[int] = Field(None, ge=1, le=65535, description="Port HTTPS du frontend (si HTTPS activé)")
     custom_host: Optional[str] = Field(None, description="Host/IP de l'application si hébergée sur un serveur distant (ex: 192.168.1.200)")
     is_shared: bool = Field(False, description="Si True, l'application sera accessible par tous les service accounts (M2M)")
     api_endpoints: Optional[Dict[str, Any]] = Field(None, description="Spécification OpenAPI (JSON) décrivant les endpoints métier de l'application")
@@ -953,8 +930,7 @@ class AppBackupResponse(BaseModel):
     created_at: datetime
     description: Optional[str] = None
     
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
     
     @classmethod
     def from_orm_model(cls, backup) -> "AppBackupResponse":
@@ -997,8 +973,7 @@ class AppBackupBrief(BaseModel):
     created_at: datetime
     is_encrypted: bool = False
     
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class AppBackupListResponse(BaseModel):
@@ -1289,3 +1264,104 @@ ProfileResponse.model_rebuild()
 ServiceAccountResponse.model_rebuild()
 ServiceAccountCreated.model_rebuild()
 DockerInfoResponse.model_rebuild()
+
+
+# ===== Message Schemas =====
+
+class MessagePriority(str, Enum):
+    """Niveaux de priorité des messages"""
+    info = "info"
+    warning = "warning"
+    urgent = "urgent"
+
+
+class MessageTargetType(str, Enum):
+    """Type de ciblage des messages"""
+    user = "user"
+    broadcast = "broadcast"
+
+
+class MessageSenderType(str, Enum):
+    """Type d'expéditeur des messages"""
+    admin = "admin"
+    system = "system"
+    app = "app"
+
+
+class MessageCreate(BaseModel):
+    """Création d'un message par un admin"""
+    title: str = Field(..., min_length=1, max_length=200)
+    body: Optional[str] = None
+    priority: MessagePriority = MessagePriority.info
+    target_type: MessageTargetType = MessageTargetType.broadcast
+    target_user_ids: Optional[List[int]] = None  # Requis si target_type == "user"
+    action_url: Optional[str] = Field(None, max_length=500)
+    action_label: Optional[str] = Field(None, max_length=100)
+    expires_at: Optional[datetime] = None
+
+
+class MessageM2MCreate(BaseModel):
+    """Création d'un message par une application (M2M)"""
+    title: str = Field(..., min_length=1, max_length=200)
+    body: Optional[str] = None
+    priority: MessagePriority = MessagePriority.info
+    target_usernames: List[str] = Field(..., min_length=1)
+    action_url: Optional[str] = Field(None, max_length=500)
+    action_label: Optional[str] = Field(None, max_length=100)
+    expires_at: Optional[datetime] = None
+
+
+class MessageBrief(BaseModel):
+    """Message résumé pour l'overlay SSE et la vue utilisateur"""
+    id: int
+    title: str
+    body: Optional[str] = None
+    priority: str
+    sender_type: str
+    sender_app_slug: Optional[str] = None
+    action_url: Optional[str] = None
+    action_label: Optional[str] = None
+    created_at: datetime
+    expires_at: Optional[datetime] = None
+    is_read: bool = False
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class MessageReadReceiptResponse(BaseModel):
+    """Accusé de lecture"""
+    user_id: int
+    username: str
+    read_at: datetime
+
+
+class MessageResponse(BaseModel):
+    """Réponse complète d'un message (vue admin)"""
+    id: int
+    sender_type: str
+    sender_id: Optional[int] = None
+    sender_app_slug: Optional[str] = None
+    sender_username: Optional[str] = None
+    target_type: str
+    target_user_id: Optional[int] = None
+    target_username: Optional[str] = None
+    priority: str
+    title: str
+    body: Optional[str] = None
+    action_url: Optional[str] = None
+    action_label: Optional[str] = None
+    expires_at: Optional[datetime] = None
+    created_at: datetime
+    read_count: int = 0
+    total_targets: int = 0
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class PaginatedMessagesResponse(BaseModel):
+    """Réponse paginée pour la liste des messages"""
+    messages: List[MessageResponse]
+    total: int
+    page: int
+    per_page: int
+    pages: int

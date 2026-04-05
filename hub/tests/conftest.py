@@ -1,6 +1,10 @@
 """
 Configuration pytest et fixtures pour les tests du Hub
 """
+import warnings
+# Supprimer le DeprecationWarning de passlib/crypt (lib tierce, pas de fix disponible)
+warnings.filterwarnings("ignore", message="'crypt' is deprecated", category=DeprecationWarning)
+
 import pytest
 import asyncio
 from typing import AsyncGenerator, Generator

@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.health_checker import start_health_checker, stop_health_checker, is_health_checker_running
+from app.models import utcnow
 
 import logging
 logger = logging.getLogger(__name__)
@@ -26,8 +27,8 @@ router = APIRouter(prefix="/api/events", tags=["Events"])
 # Ensemble des clients connectés (asyncio.Queue pour chaque client)
 _connected_clients: Set[asyncio.Queue] = set()
 
-# Mapping user_id -> queue pour le tracking par utilisateur
-_user_connections: Dict[int, asyncio.Queue] = {}
+# Mapping user_id -> set de queues pour le tracking par utilisateur (multi-onglets)
+_user_connections: Dict[int, Set[asyncio.Queue]] = {}
 
 # Task de cleanup périodique
 _cleanup_task: Optional[asyncio.Task] = None
@@ -47,7 +48,7 @@ async def broadcast_event(event_type: str, data: Optional[dict] = None):
     event = {
         "type": event_type,
         "data": data or {},
-        "timestamp": datetime.utcnow().isoformat()
+        "timestamp": utcnow().isoformat()
     }
     
     # Notifier tous les clients connectés
@@ -70,6 +71,27 @@ def notify_event(event_type: str, data: Optional[dict] = None):
     except RuntimeError:
         # Pas de loop actif
         pass
+
+
+async def send_to_user(user_id: int, event_type: str, data: Optional[dict] = None):
+    """
+    Envoie un événement SSE à un utilisateur spécifique (toutes ses connexions).
+    Utilisé pour les messages ciblés.
+    """
+    if user_id not in _user_connections:
+        return
+
+    event = {
+        "type": event_type,
+        "data": data or {},
+        "timestamp": utcnow().isoformat()
+    }
+
+    for queue in list(_user_connections[user_id]):
+        try:
+            await queue.put(event)
+        except Exception:
+            pass
 
 
 async def broadcast_stats_update():
@@ -205,7 +227,7 @@ async def close_all_sse_connections():
     _shutdown_event.set()
     
     # Envoyer un message shutdown dans toutes les queues pour débloquer les wait_for
-    shutdown_msg = {"type": "shutdown", "timestamp": datetime.utcnow().isoformat()}
+    shutdown_msg = {"type": "shutdown", "timestamp": utcnow().isoformat()}
     for queue in list(_connected_clients):
         try:
             queue.put_nowait(shutdown_msg)
@@ -226,13 +248,18 @@ def reset_shutdown_event():
 # =============================================================================
 
 def register_user_connection(user_id: int, queue: asyncio.Queue):
-    """Enregistre une connexion SSE pour un utilisateur."""
-    _user_connections[user_id] = queue
+    """Enregistre une connexion SSE pour un utilisateur (supporte multi-onglets)."""
+    if user_id not in _user_connections:
+        _user_connections[user_id] = set()
+    _user_connections[user_id].add(queue)
 
 
-def unregister_user_connection(user_id: int):
-    """Désenregistre la connexion SSE d'un utilisateur."""
-    _user_connections.pop(user_id, None)
+def unregister_user_connection(user_id: int, queue: asyncio.Queue):
+    """Désenregistre une connexion SSE spécifique d'un utilisateur."""
+    if user_id in _user_connections:
+        _user_connections[user_id].discard(queue)
+        if not _user_connections[user_id]:
+            del _user_connections[user_id]
 
 
 async def handle_user_disconnect(user_id: int):
@@ -246,9 +273,9 @@ async def handle_user_disconnect(user_id: int):
     # Attendre un court délai pour permettre une reconnexion rapide
     await asyncio.sleep(5)
     
-    # Vérifier si l'utilisateur s'est reconnecté entre temps
-    if user_id in _user_connections:
-        return  # Reconnecté, on ne ferme pas la session
+    # Vérifier si l'utilisateur a encore des connexions actives
+    if user_id in _user_connections and _user_connections[user_id]:
+        return  # Encore connecté via un autre onglet
     
     try:
         async with async_session_maker() as db:
@@ -306,7 +333,7 @@ async def event_generator(request: Request, queue: asyncio.Queue, user_id: Optio
         
         # Gérer la déconnexion utilisateur
         if user_id:
-            unregister_user_connection(user_id)
+            unregister_user_connection(user_id, queue)
             # Lancer la fermeture de session en arrière-plan (avec délai)
             try:
                 loop = asyncio.get_running_loop()
