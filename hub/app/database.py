@@ -87,27 +87,6 @@ async def apply_migrations():
             )
         """))
 
-        # Vérifier si c'est une migration depuis l'ancien système manuel
-        result = await conn.execute(text("SELECT COUNT(*) FROM schema_migrations"))
-        count = result.scalar()
-
-        if count == 0:
-            # Vérifier si la base a déjà des tables (upgrade depuis le système manuel)
-            result = await conn.execute(text("""
-                SELECT table_name FROM information_schema.tables
-                WHERE table_schema = 'public' AND table_name = 'users'
-            """))
-            if result.fetchone():
-                # BD existante → marquer toutes les migrations actuelles comme appliquées
-                logger.info("📦 Détection d'une BD existante, indexation des migrations déjà appliquées...")
-                for mf in migration_files:
-                    version = mf.name.split('_')[0]
-                    await conn.execute(text(
-                        "INSERT INTO schema_migrations (version, filename) VALUES (:v, :f) ON CONFLICT DO NOTHING"
-                    ), {"v": version, "f": mf.name})
-                logger.info(f"✅ {len(migration_files)} migrations indexées")
-                return
-
         # Récupérer les migrations déjà appliquées
         result = await conn.execute(text("SELECT version FROM schema_migrations"))
         applied = {row[0] for row in result.fetchall()}
@@ -124,8 +103,11 @@ async def apply_migrations():
                 statement = _strip_sql_comments(statement)
                 if statement:
                     try:
+                        await conn.execute(text("SAVEPOINT migration_stmt"))
                         await conn.execute(text(statement))
+                        await conn.execute(text("RELEASE SAVEPOINT migration_stmt"))
                     except Exception as e:
+                        await conn.execute(text("ROLLBACK TO SAVEPOINT migration_stmt"))
                         logger.warning(f"Migration {mf.name} statement ignoré: {e}")
 
             await conn.execute(text(
