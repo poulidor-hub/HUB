@@ -9382,22 +9382,48 @@ async function loadUserMessages() {
             return;
         }
 
+        const priorityIcons = {
+            urgent: '<svg class="notif-card-icon-svg notif-icon-urgent" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>',
+            warning: '<svg class="notif-card-icon-svg notif-icon-warning" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>',
+            normal: '<svg class="notif-card-icon-svg notif-icon-normal" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>'
+        };
+
         body.innerHTML = messages.map(m => {
             const time = new Date(m.created_at).toLocaleString('fr-FR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
             const readClass = m.is_read ? 'message-item-read' : 'message-item-unread';
-            const priorityClass = m.priority === 'urgent' ? 'message-priority-urgent' : (m.priority === 'warning' ? 'message-priority-warning' : '');
+            const priority = m.priority || 'normal';
+            const priorityClass = `message-item-${priority}`;
+            const icon = priorityIcons[priority] || priorityIcons.normal;
 
             return `<div class="message-item ${readClass} ${priorityClass}" data-msg-id="${m.id}">
-                <div class="d-flex justify-content-between align-items-start">
-                    <strong class="small">${escapeHtml(m.title)}</strong>
-                    <span class="text-muted" style="font-size: 0.7em;">${time}</span>
-                </div>
-                ${m.body ? `<div class="small text-muted mt-1" style="max-height: 40px; overflow: hidden;">${escapeHtml(m.body)}</div>` : ''}
-                <div class="d-flex justify-content-between align-items-center mt-1">
-                    <span class="text-muted" style="font-size: 0.65em;">${escapeHtml(m.sender_app_slug || m.sender_type)}</span>
-                    <div>
-                        ${m.action_url ? `<a href="${escapeHtml(m.action_url)}" target="_blank" class="btn btn-outline-primary btn-sm py-0 px-1" style="font-size: 0.7em;">${escapeHtml(m.action_label || 'Ouvrir')}</a>` : ''}
-                        ${!m.is_read ? `<button class="btn btn-outline-success btn-sm py-0 px-1 ms-1" style="font-size: 0.7em;" onclick="markSingleMessageRead(${m.id})"><i class="bi bi-check"></i></button>` : ''}
+                <div class="message-item-icon">${icon}</div>
+                <div class="message-item-content">
+                    <div class="message-item-header">
+                        <strong class="message-item-title">${escapeHtml(m.title)}</strong>
+                        ${!m.is_read ? `<button class="message-item-mark-read" onclick="markSingleMessageRead(${m.id})" title="Marquer comme lu">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                        </button>` : ''}
+                    </div>
+                    ${m.body ? `<p class="message-item-body">${escapeHtml(m.body)}</p>` : ''}
+                    ${m.action_url ? `
+                        <div class="message-item-action-wrapper">
+                            <a href="${escapeHtml(m.action_url)}" target="_blank" rel="noopener noreferrer" class="message-item-action">
+                                ${escapeHtml(m.action_label || 'Consulter')}
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+                            </a>
+                        </div>
+                    ` : ''}
+                    <div class="message-item-meta">
+                        ${(m.sender_app_slug || m.sender_type) ? `
+                            <span class="message-item-sender">
+                                <span class="message-item-sender-dot"></span>
+                                ${escapeHtml(m.sender_app_slug || m.sender_type)}
+                            </span>
+                        ` : ''}
+                        <span class="message-item-time">
+                            <svg class="message-item-time-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                            ${time}
+                        </span>
                     </div>
                 </div>
             </div>`;
@@ -9442,18 +9468,133 @@ function handleIncomingMessage(msgData) {
         updateMessageBellBadge(current + 1);
     }
 
-    // Afficher un toast pour les messages importants
-    const type = msgData.priority === 'urgent' ? 'danger' : (msgData.priority === 'warning' ? 'warning' : 'info');
-    showToast(
-        msgData.title || 'Nouveau message',
-        msgData.body || '',
-        type
-    );
+    // Afficher une carte de notification flottante (style HUBapp_TEMPLATE)
+    showNotificationCard(msgData);
 
     // Si le panneau de messages est ouvert, le rafraîchir
     const panel = document.getElementById('messagePanel');
     if (panel && !panel.classList.contains('d-none')) {
         loadUserMessages();
+    }
+}
+
+// === Notification Cards (floating, top-right, HUBapp_TEMPLATE style) ===
+
+const _activeNotificationCards = [];
+
+function showNotificationCard(msgData) {
+    const container = document.getElementById('notificationBanner');
+    if (!container) return;
+
+    const id = msgData.id || Date.now();
+    const priority = msgData.priority || 'normal';
+
+    // Icon SVG selon la priorité (style lucide)
+    const icons = {
+        urgent: '<svg class="notif-card-icon-svg notif-icon-urgent" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>',
+        warning: '<svg class="notif-card-icon-svg notif-icon-warning" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>',
+        normal: '<svg class="notif-card-icon-svg notif-icon-normal" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>'
+    };
+
+    const time = msgData.created_at
+        ? new Date(msgData.created_at).toLocaleString('fr-FR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
+        : new Date().toLocaleString('fr-FR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+
+    const card = document.createElement('div');
+    card.className = `notif-card notif-card-${priority}`;
+    card.dataset.notifId = id;
+
+    card.innerHTML = `
+        <div class="notif-card-icon">${icons[priority] || icons.normal}</div>
+        <div class="notif-card-content">
+            <div class="notif-card-header">
+                <strong class="notif-card-title">${escapeHtml(msgData.title || 'Notification')}</strong>
+                <button class="notif-card-close" onclick="dismissNotificationCard(${id})" title="Fermer">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                </button>
+            </div>
+            ${msgData.body ? `<p class="notif-card-body">${escapeHtml(msgData.body)}</p>` : ''}
+            ${msgData.action_url ? `
+                <div class="notif-card-action-wrapper">
+                    <a href="${escapeHtml(msgData.action_url)}" target="_blank" rel="noopener noreferrer" class="notif-card-action">
+                        ${escapeHtml(msgData.action_label || 'Consulter')}
+                        <svg class="notif-card-action-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+                    </a>
+                </div>
+            ` : ''}
+            <div class="notif-card-meta">
+                ${(msgData.sender_app_slug || msgData.sender_type) ? `
+                    <span class="notif-card-sender">
+                        <span class="notif-card-sender-dot"></span>
+                        ${escapeHtml(msgData.sender_app_slug || msgData.sender_type)}
+                    </span>
+                ` : ''}
+                <span class="notif-card-time">
+                    <svg class="notif-card-time-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                    ${time}
+                </span>
+            </div>
+        </div>
+    `;
+
+    _activeNotificationCards.push(id);
+    container.appendChild(card);
+    updateNotificationBannerControls();
+
+    // Auto-dismiss après 15s (sauf urgent)
+    if (priority !== 'urgent') {
+        setTimeout(() => dismissNotificationCard(id), 15000);
+    }
+}
+
+function dismissNotificationCard(id) {
+    const container = document.getElementById('notificationBanner');
+    const card = container?.querySelector(`[data-notif-id="${id}"]`);
+    if (card) {
+        card.style.animation = 'notifCardSlideOut 0.25s ease-in forwards';
+        setTimeout(() => {
+            card.remove();
+            const idx = _activeNotificationCards.indexOf(id);
+            if (idx !== -1) _activeNotificationCards.splice(idx, 1);
+            updateNotificationBannerControls();
+        }, 250);
+    }
+}
+
+function dismissAllNotificationCards() {
+    const container = document.getElementById('notificationBanner');
+    if (!container) return;
+    container.querySelectorAll('.notif-card').forEach(card => {
+        card.style.animation = 'notifCardSlideOut 0.2s ease-in forwards';
+    });
+    setTimeout(() => {
+        container.querySelectorAll('.notif-card').forEach(c => c.remove());
+        _activeNotificationCards.length = 0;
+        updateNotificationBannerControls();
+    }, 250);
+}
+
+function updateNotificationBannerControls() {
+    const container = document.getElementById('notificationBanner');
+    if (!container) return;
+    let controls = container.querySelector('.notif-banner-controls');
+
+    const cards = container.querySelectorAll('.notif-card');
+    if (cards.length > 1) {
+        if (!controls) {
+            controls = document.createElement('div');
+            controls.className = 'notif-banner-controls';
+            container.prepend(controls);
+        }
+        controls.innerHTML = `
+            <span class="notif-banner-count">${cards.length} notifications</span>
+            <button class="notif-banner-dismiss-all" onclick="dismissAllNotificationCards()">
+                Tout fermer
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+            </button>
+        `;
+    } else if (controls) {
+        controls.remove();
     }
 }
 
