@@ -1869,8 +1869,14 @@
                                     <span>Applications autorisées</span>
                                     <span class="d-flex gap-2 align-items-center">
                                         <label class="form-label mb-0 small text-muted me-1">Profils :</label>
-                                        <select class="form-select form-select-sm" id="userProfileSelect" style="width: 200px;" multiple size="3" onchange="onUserProfileChange()">
-                                        </select>
+                                        <div class="dropdown" id="userProfileDropdown">
+                                            <button class="btn btn-outline-secondary btn-sm dropdown-toggle" type="button" data-bs-toggle="dropdown" data-bs-auto-close="outside" style="min-width: 200px; text-align: left;">
+                                                <span id="userProfileDropdownLabel">Aucun profil</span>
+                                            </button>
+                                            <div class="dropdown-menu p-2" style="min-width: 220px; max-height: 250px; overflow-y: auto;" id="userProfileCheckboxes">
+                                                <!-- Checkboxes loaded dynamically -->
+                                            </div>
+                                        </div>
                                     </span>
                                 </label>
                                 <div id="userAppsCheckboxes" class="border rounded p-2" style="max-height: 200px; overflow-y: auto;">
@@ -1957,7 +1963,7 @@
                 </div>
                 <div class="modal-body">
                     <input type="hidden" id="applyProfileId">
-                    <p class="text-muted small">Sélectionnez les utilisateurs auxquels appliquer ce profil. Leurs accès seront synchronisés avec les apps/rôles du profil.</p>
+                    <p class="text-muted small">Cochez pour attribuer le profil, décochez pour le retirer. Les rôles seront synchronisés automatiquement.</p>
                     <div class="mb-3">
                         <div class="input-group input-group-sm">
                             <span class="input-group-text"><i class="bi bi-search"></i></span>

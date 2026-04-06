@@ -2781,9 +2781,8 @@ async function handleSaveUser(event) {
         can_change_password: document.getElementById('userCanChangePassword')?.checked ?? true
     };
     
-    // Profils (multi-select)
-    const profileSelect = document.getElementById('userProfileSelect');
-    const selectedProfileIds = Array.from(profileSelect?.selectedOptions || []).map(o => parseInt(o.value));
+    // Profils (checkboxes)
+    const selectedProfileIds = Array.from(document.querySelectorAll('.user-profile-cb:checked')).map(cb => parseInt(cb.value));
     data.profile_ids = selectedProfileIds.length > 0 ? selectedProfileIds : [];
     
     // is_active n'est pas dans le schéma UserCreate, uniquement pour la mise à jour
@@ -5122,16 +5121,18 @@ function populateProfileFilter(profiles) {
         profileSelect.appendChild(opt);
     });
     
-    // Aussi le select dans le modal user (multi-select)
-    const userProfileSelect = document.getElementById('userProfileSelect');
-    if (userProfileSelect) {
-        userProfileSelect.innerHTML = '';
-        profiles.forEach(p => {
-            const opt = document.createElement('option');
-            opt.value = p.id;
-            opt.textContent = p.name;
-            userProfileSelect.appendChild(opt);
-        });
+    // Aussi les checkboxes dans le dropdown du modal user
+    const userProfileCheckboxes = document.getElementById('userProfileCheckboxes');
+    if (userProfileCheckboxes) {
+        userProfileCheckboxes.innerHTML = profiles.map(p => `
+            <div class="form-check mb-1">
+                <input class="form-check-input user-profile-cb" type="checkbox" value="${p.id}" id="userProfileCb${p.id}" onchange="onUserProfileChange()">
+                <label class="form-check-label small" for="userProfileCb${p.id}">
+                    <span class="badge badge-profile me-1" style="background-color: ${p.color};">&nbsp;</span>
+                    ${escapeHtml(p.name)}
+                </label>
+            </div>
+        `).join('');
     }
 }
 
@@ -5553,11 +5554,12 @@ function renderApplyProfileUsersList(users, profileId) {
         return `
         <div class="form-check apply-profile-user-item mb-1">
             <input class="form-check-input apply-profile-user-cb" type="checkbox" value="${user.id}" id="applyUser${user.id}"
-                ${hasProfile ? 'checked disabled' : ''}>
+                data-had-profile="${hasProfile}"
+                ${hasProfile ? 'checked' : ''}>
             <label class="form-check-label small" for="applyUser${user.id}">
                 ${escapeHtml(user.username)}
                 ${(user.profiles || []).map(p => `<span class="badge badge-profile ms-1" style="background-color: ${p.color}; font-size: 0.7em;">${escapeHtml(p.name)}</span>`).join('')}
-                ${hasProfile ? '<span class="text-muted ms-1">(déjà assigné)</span>' : ''}
+                ${hasProfile ? '<span class="text-muted ms-1">(assigné)</span>' : ''}
             </label>
         </div>
     `}).join('');
@@ -5578,19 +5580,42 @@ async function handleApplyProfile() {
     const profileId = parseInt(document.getElementById('applyProfileId').value);
     const syncRoles = document.getElementById('applyProfileSyncRoles').checked;
     
-    const selectedIds = [];
-    document.querySelectorAll('.apply-profile-user-cb:checked:not(:disabled)').forEach(cb => {
-        selectedIds.push(parseInt(cb.value));
+    // Utilisateurs à ajouter : cochés maintenant mais qui n'avaient pas le profil
+    const toAdd = [];
+    // Utilisateurs à retirer : décochés maintenant mais qui avaient le profil
+    const toRemove = [];
+    
+    document.querySelectorAll('.apply-profile-user-cb').forEach(cb => {
+        const userId = parseInt(cb.value);
+        const hadProfile = cb.dataset.hadProfile === 'true';
+        const isChecked = cb.checked;
+        
+        if (isChecked && !hadProfile) {
+            toAdd.push(userId);
+        } else if (!isChecked && hadProfile) {
+            toRemove.push(userId);
+        }
     });
     
-    if (selectedIds.length === 0) {
-        showToast('Info', 'Aucun utilisateur sélectionné', 'warning');
+    if (toAdd.length === 0 && toRemove.length === 0) {
+        showToast('Info', 'Aucune modification', 'warning');
         return;
     }
     
     try {
-        const result = await api.applyProfile(profileId, selectedIds, syncRoles);
-        showToast('Succès', result.message, 'success');
+        const messages = [];
+        
+        if (toAdd.length > 0) {
+            const result = await api.applyProfile(profileId, toAdd, syncRoles);
+            messages.push(result.message);
+        }
+        
+        if (toRemove.length > 0) {
+            const result = await api.detachProfile(profileId, toRemove);
+            messages.push(result.message);
+        }
+        
+        showToast('Succès', messages.join(' — '), 'success');
         applyProfileModal.hide();
         allProfiles = [];
         await Promise.all([loadProfilesTab(), loadUsersPageData()]);
@@ -5601,8 +5626,10 @@ async function handleApplyProfile() {
 
 // Fonctions pour le sélecteur de profil dans le modal user
 async function onUserProfileChange() {
-    const profileSelect = document.getElementById('userProfileSelect');
-    const selectedIds = Array.from(profileSelect.selectedOptions).map(o => parseInt(o.value));
+    const selectedIds = Array.from(document.querySelectorAll('.user-profile-cb:checked')).map(cb => parseInt(cb.value));
+    
+    // Mettre à jour le label du dropdown
+    updateUserProfileDropdownLabel(selectedIds);
     
     // Récupérer les rôles manuels actuels de l'utilisateur (ceux cochés manuellement)
     const currentManualRoles = [];
@@ -5649,6 +5676,19 @@ async function onUserProfileChange() {
     loadUserAppsWithRoles(currentManualRoles);
 }
 
+function updateUserProfileDropdownLabel(selectedIds) {
+    const label = document.getElementById('userProfileDropdownLabel');
+    if (!label) return;
+    if (selectedIds.length === 0) {
+        label.textContent = 'Aucun profil';
+    } else if (selectedIds.length === 1) {
+        const profile = allProfiles.find(p => p.id === selectedIds[0]);
+        label.textContent = profile ? profile.name : '1 profil';
+    } else {
+        label.textContent = `${selectedIds.length} profils`;
+    }
+}
+
 function showAddUserFormPage() {
     document.getElementById('userFormTitle').textContent = 'Nouvel Utilisateur';
     document.getElementById('userForm').reset();
@@ -5662,11 +5702,9 @@ function showAddUserFormPage() {
     if (mustChangePwdEl) mustChangePwdEl.checked = false;
     const canChangePwdEl = document.getElementById('userCanChangePassword');
     if (canChangePwdEl) canChangePwdEl.checked = true;  // Par défaut, l'utilisateur peut changer son mdp
-    // Réinitialiser les profils (multi-select)
-    const profileSelect = document.getElementById('userProfileSelect');
-    if (profileSelect) {
-        Array.from(profileSelect.options).forEach(opt => { opt.selected = false; });
-    }
+    // Réinitialiser les profils (checkboxes)
+    document.querySelectorAll('.user-profile-cb').forEach(cb => { cb.checked = false; });
+    updateUserProfileDropdownLabel([]);
     loadUserAppsCheckboxes([]);
     userFormModal.show();
 }
@@ -5706,14 +5744,12 @@ async function editUserPage(id) {
         canChangePwdEl.checked = user.can_change_password !== false;  // Par défaut true
     }
     
-    // Sélectionner les profils (multi-select)
-    const profileSelect = document.getElementById('userProfileSelect');
-    if (profileSelect) {
-        const userProfileIds = (user.profiles || []).map(p => p.id);
-        Array.from(profileSelect.options).forEach(opt => {
-            opt.selected = userProfileIds.includes(parseInt(opt.value));
-        });
-    }
+    // Sélectionner les profils (checkboxes)
+    const userProfileIds = (user.profiles || []).map(p => p.id);
+    document.querySelectorAll('.user-profile-cb').forEach(cb => {
+        cb.checked = userProfileIds.includes(parseInt(cb.value));
+    });
+    updateUserProfileDropdownLabel(userProfileIds);
     
     const userAppRoles = user.app_roles || [];
     loadUserAppsWithRoles(userAppRoles);
@@ -9441,10 +9477,13 @@ async function markSingleMessageRead(messageId) {
         if (item) {
             item.classList.remove('message-item-unread');
             item.classList.add('message-item-read');
-            const btn = item.querySelector('.btn-outline-success');
+            const btn = item.querySelector('.message-item-mark-read');
             if (btn) btn.remove();
         }
-        loadUnreadMessageCount();
+        // Décrémenter le badge immédiatement (optimiste)
+        const badge = document.getElementById('messageBellBadge');
+        const current = parseInt(badge?.textContent) || 0;
+        updateMessageBellBadge(Math.max(0, current - 1));
     } catch (error) {
         showToast('Erreur', error.message, 'danger');
     }
@@ -9509,14 +9548,14 @@ function showNotificationCard(msgData) {
         <div class="notif-card-content">
             <div class="notif-card-header">
                 <strong class="notif-card-title">${escapeHtml(msgData.title || 'Notification')}</strong>
-                <button class="notif-card-close" onclick="dismissNotificationCard(${id})" title="Fermer">
+                <button class="notif-card-close" onclick="dismissNotificationCard(${id}, true)" title="Fermer">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
                 </button>
             </div>
             ${msgData.body ? `<p class="notif-card-body">${escapeHtml(msgData.body)}</p>` : ''}
             ${msgData.action_url ? `
                 <div class="notif-card-action-wrapper">
-                    <a href="${escapeHtml(msgData.action_url)}" target="_blank" rel="noopener noreferrer" class="notif-card-action">
+                    <a href="${escapeHtml(msgData.action_url)}" target="_blank" rel="noopener noreferrer" class="notif-card-action" onclick="dismissNotificationCard(${id}, true)">
                         ${escapeHtml(msgData.action_label || 'Consulter')}
                         <svg class="notif-card-action-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
                     </a>
@@ -9541,13 +9580,13 @@ function showNotificationCard(msgData) {
     container.appendChild(card);
     updateNotificationBannerControls();
 
-    // Auto-dismiss après 15s (sauf urgent)
+    // Auto-dismiss après 15s (sauf urgent) — sans marquer comme lu
     if (priority !== 'urgent') {
-        setTimeout(() => dismissNotificationCard(id), 15000);
+        setTimeout(() => dismissNotificationCard(id, false), 15000);
     }
 }
 
-function dismissNotificationCard(id) {
+function dismissNotificationCard(id, markAsRead = false) {
     const container = document.getElementById('notificationBanner');
     const card = container?.querySelector(`[data-notif-id="${id}"]`);
     if (card) {
@@ -9558,12 +9597,30 @@ function dismissNotificationCard(id) {
             if (idx !== -1) _activeNotificationCards.splice(idx, 1);
             updateNotificationBannerControls();
         }, 250);
+
+        // Marquer le message comme lu et décrémenter le badge immédiatement
+        if (markAsRead && id) {
+            api.markMessageRead(id).then(() => {
+                const badge = document.getElementById('messageBellBadge');
+                const current = parseInt(badge?.textContent) || 0;
+                updateMessageBellBadge(Math.max(0, current - 1));
+                // Rafraîchir le panneau de messages s'il est ouvert
+                const panel = document.getElementById('messagePanel');
+                if (panel && !panel.classList.contains('d-none')) {
+                    loadUserMessages();
+                }
+            }).catch(() => {});
+        }
     }
 }
 
 function dismissAllNotificationCards() {
     const container = document.getElementById('notificationBanner');
     if (!container) return;
+    // Marquer tous les messages des cartes visibles comme lus
+    const cardIds = Array.from(container.querySelectorAll('.notif-card'))
+        .map(c => parseInt(c.dataset.notifId))
+        .filter(id => !isNaN(id));
     container.querySelectorAll('.notif-card').forEach(card => {
         card.style.animation = 'notifCardSlideOut 0.2s ease-in forwards';
     });
@@ -9572,6 +9629,11 @@ function dismissAllNotificationCards() {
         _activeNotificationCards.length = 0;
         updateNotificationBannerControls();
     }, 250);
+    // Marquer comme lus et rafraîchir le badge
+    if (cardIds.length > 0) {
+        Promise.all(cardIds.map(id => api.markMessageRead(id).catch(() => {})))
+            .then(() => loadUnreadMessageCount());
+    }
 }
 
 function updateNotificationBannerControls() {

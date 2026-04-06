@@ -1072,7 +1072,7 @@ class HubAPI {
     async detachProfile(profileId, userIds) {
         return this.request(`/profiles/${profileId}/detach`, {
             method: 'POST',
-            body: JSON.stringify({ user_ids: userIds, sync_roles: false })
+            body: JSON.stringify({ user_ids: userIds, sync_roles: true })
         });
     }
     
