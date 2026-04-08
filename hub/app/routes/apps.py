@@ -2388,6 +2388,21 @@ async def approve_or_reject_app(
         notify_event("apps_updated", {"action": "approved", "app_slug": slug, "approved_by": admin.username})
         notify_stats_update()
         
+        # Notifier les utilisateurs ayant déjà des rôles sur cette app
+        # (rôles assignés avant l'approbation → ils doivent voir l'app apparaître)
+        affected_users = await db.execute(
+            select(UserAppRole.user_id, User.username)
+            .join(User, User.id == UserAppRole.user_id)
+            .where(UserAppRole.app_id == app.id)
+        )
+        for uid, uname in affected_users.all():
+            notify_event("user_permissions_changed", {
+                "user_id": uid,
+                "username": uname,
+                "app_slug": slug,
+                "action": "app_approved"
+            })
+        
         message = f"✅ Application '{slug}' approuvée et activée."
         if app.is_shared_service and shared_added_count > 0:
             message += f" Service partagé ajouté à {shared_added_count} SA existant(s)."

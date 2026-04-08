@@ -109,17 +109,19 @@ class HubAPI {
     async ensureFreshToken() {
         if (!this.token) throw new Error('Non authentifié');
 
-        const expiry = this._parseTokenExpiry(this.token);
-        if (!expiry) return; // Impossible de parser, tenter quand même
-
-        // Si le token expire dans moins de 30 secondes, forcer un refresh
-        const margin = 30 * 1000;
-        if (expiry.getTime() - Date.now() < margin) {
-            console.log('🔄 Token proche de l\'expiration, refresh avant ouverture app...');
-            const refreshed = await this.tryRefreshToken();
-            if (!refreshed) {
+        // Toujours rafraîchir le token avant d'ouvrir une app externe.
+        // Le refresh recharge les droits (apps dict) depuis la base de données,
+        // garantissant que l'app cible reçoit un JWT avec les permissions à jour
+        // même si des rôles ont été modifiés depuis la dernière émission du token.
+        console.log('🔄 Refresh token avant ouverture app (sync droits)...');
+        const refreshed = await this.tryRefreshToken();
+        if (!refreshed) {
+            // Fallback : vérifier au moins que le token n'est pas expiré
+            const expiry = this._parseTokenExpiry(this.token);
+            if (expiry && expiry.getTime() - Date.now() < 30 * 1000) {
                 throw new Error('Impossible de rafraîchir le token');
             }
+            console.warn('⚠️ Refresh échoué, utilisation du token existant');
         }
     }
 

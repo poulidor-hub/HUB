@@ -23,6 +23,9 @@ let appFormModal, userFormModal, serviceAccountFormModal, saCredentialsModal, to
 let _sseAppsUpdateTimer = null;
 const SSE_DEBOUNCE_DELAY = 800; // ms
 
+// Debounce pour les événements SSE user_permissions_changed (modifications en lot)
+let _ssePermissionsUpdateTimer = null;
+
 // Tracking des tooltips Bootstrap pour éviter les fuites mémoire
 let _activeTooltips = [];
 
@@ -246,7 +249,7 @@ function handleSSEEvent(data) {
             _sseAppsUpdateTimer = setTimeout(() => {
                 _sseAppsUpdateTimer = null;
                 
-                const needsTokenRefresh = (data.data?.action === 'created' || data.data?.action === 'updated');
+                const needsTokenRefresh = ['created', 'updated', 'approved', 'toggled', 'batch_import'].includes(data.data?.action);
                 
                 const refreshUI = () => {
                     if (currentPage === 'apps-admin') {
@@ -335,6 +338,29 @@ function handleSSEEvent(data) {
                 updateErrorNotificationBadge();
             }
             break;
+
+        case 'user_permissions_changed': {
+            // Droits modifiés pour un utilisateur — rafraîchir token + apps si c'est nous
+            if (currentUser && data.data?.user_id === currentUser.id) {
+                console.log('🔑 Permissions modifiées pour l\'utilisateur courant, synchronisation...');
+                // Debounce : les modifications en lot génèrent plusieurs événements
+                if (_ssePermissionsUpdateTimer) clearTimeout(_ssePermissionsUpdateTimer);
+                _ssePermissionsUpdateTimer = setTimeout(async () => {
+                    _ssePermissionsUpdateTimer = null;
+                    try {
+                        await refreshTokenAfterAppChange('modification de droits', false);
+                        await loadApps();
+                    } catch (e) {
+                        console.error('Erreur lors de la synchronisation des permissions:', e);
+                    }
+                }, SSE_DEBOUNCE_DELAY);
+            }
+            // Rafraîchir la liste utilisateurs si l'admin est sur cette page
+            if (currentPage === 'users') {
+                loadUsersPageData();
+            }
+            break;
+        }
 
         case 'errors_acknowledged':
             // Réinitialiser le badge de notifications d'erreurs
