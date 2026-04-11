@@ -305,7 +305,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Hub d'Authentification",
     description="Portail centralisé d'authentification avec gestion des applications",
-    version="1.0.0",
+    version=docs.get_hub_version(),
     lifespan=lifespan
 )
 

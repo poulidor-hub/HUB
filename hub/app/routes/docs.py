@@ -15,10 +15,12 @@ import logging
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/docs", tags=["documentation"])
 
-# Chemin vers les fichiers (depuis le conteneur Docker)
-DOCS_PATH = Path("/code/INTEGRATION.md")
-CHANGELOG_PATH = Path("/code/CHANGELOG.md")
-VERSION_PATH = Path("/code/VERSION")
+# Chemins vers les fichiers. En conteneur, le dépôt est monté sous /code.
+# Hors conteneur, on retombe sur la racine du dépôt à partir de ce fichier.
+REPO_ROOT = Path("/code") if Path("/code").exists() else Path(__file__).resolve().parents[3]
+DOCS_PATH = REPO_ROOT / "INTEGRATION.md"
+CHANGELOG_PATH = REPO_ROOT / "CHANGELOG.md"
+VERSION_PATH = REPO_ROOT / "VERSION"
 
 
 def get_hub_version() -> str:

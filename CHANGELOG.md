@@ -5,6 +5,52 @@
 
 ---
 
+## [3.7.0] - 11 avril 2026
+
+### 🚀 Rattrapage des évolutions 3.x
+
+> Cette entrée consolide les changements introduits depuis la dernière version documentée dans ce fichier (`2.5.4`), jusqu'à l'état actuel du dépôt.
+
+### 👥 Gestion des utilisateurs, profils et permissions
+
+| Fonctionnalité | Description |
+|----------------|-------------|
+| **Multi-profils** | Passage à une relation N:N `user_profiles` avec conservation automatique du rôle le plus élevé entre plusieurs profils |
+| **Synchronisation des rôles** | Le modal utilisateur passe aux checkboxes et resynchronise les rôles issus des profils |
+| **Approbation d'apps synchronisée** | L'approbation d'une application met à jour les permissions utilisateur et force un rafraîchissement de token si nécessaire |
+| **Import CSV utilisateurs** | Ajout d'un template, d'un aperçu/validation et d'une fermeture de modale fiable après import |
+| **Rôles bulk en M2M** | Nouvel endpoint `/api/users/m2m/app-roles/bulk` pour exposer profils et rôles applicatifs observables |
+
+### 🔔 Messagerie et temps réel
+
+| Fonctionnalité | Description |
+|----------------|-------------|
+| **Messagerie in-app** | Nouveau module `/api/messages` pour envoi admin ciblé ou broadcast, consultation utilisateur, compteurs non lus, accusés de lecture, export CSV et purge |
+| **Envoi applicatif M2M** | Les applications peuvent pousser des messages via `/api/messages/m2m/send` avec un service account |
+| **Synchronisation NotifCenter** | Ajout des endpoints `/api/messages/m2m/sync`, `/api/messages/m2m/receipts`, `/api/messages/m2m/stats` et du détail de message pour une synchro incrémentale |
+| **Traçabilité des renvois** | Ajout de `target_username`, `is_resend` et `original_message_id` pour le filtrage et l'historique |
+| **Panneau de notifications** | Nouveau panneau flottant côté frontend avec cartes de messages utilisateur |
+
+### 🧩 Applications, découverte et intégration
+
+| Fonctionnalité | Description |
+|----------------|-------------|
+| **Health checker et SSE** | Suivi d'état des applications avec notifications temps réel et ordre stable dans l'interface |
+| **Sauvegardes d'applications** | Renforcement des backups/restores, import sélectif et contrôle des permissions de restauration |
+| **Discovery enrichie** | Ajout d'une API Discovery pour explorer les endpoints publiés par les applications |
+| **Spécifications OpenAPI** | Stockage, exposition et filtrage des endpoints applicatifs via `api_endpoints` |
+| **Catégories d'applications** | Nouveau champ `category` pour filtrer et regrouper visuellement les apps |
+| **Ouverture directe en HTTPS** | Support de `frontend_https_port` pour éviter la redirection HTTP → HTTPS et exposer le JWT en clair |
+| **Ergonomie frontend** | Badge de version des apps, menu mobile responsive et tableaux de bord plus réactifs |
+
+### 🔧 Technique
+
+- Simplification de l'application des migrations avec points de sauvegarde et nettoyage du code obsolète
+- Harmonisation des dates sur `utcnow()` pour une meilleure compatibilité Python 3.12+
+- Ajout du document `exemple-app.md` pour cadrer l'intégration d'un centre de notifications externe
+
+---
+
 ## [2.5.4] - 4 janvier 2026
 
 ### 🔄 Resync automatique des APIs partagées lors du `regenerate_secret`
