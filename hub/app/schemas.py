@@ -1309,6 +1309,9 @@ class MessageM2MCreate(BaseModel):
     action_url: Optional[str] = Field(None, max_length=500)
     action_label: Optional[str] = Field(None, max_length=100)
     expires_at: Optional[datetime] = None
+    # Champs de renvoi (optionnels, rétro-compatible)
+    is_resend: Optional[bool] = False
+    original_hub_message_id: Optional[int] = None
 
 
 class MessageBrief(BaseModel):
@@ -1354,6 +1357,8 @@ class MessageResponse(BaseModel):
     created_at: datetime
     read_count: int = 0
     total_targets: int = 0
+    is_resend: bool = False
+    original_message_id: Optional[int] = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -1365,3 +1370,63 @@ class PaginatedMessagesResponse(BaseModel):
     page: int
     per_page: int
     pages: int
+
+
+# ===== Sync M2M Schemas (pour exemple-app) =====
+
+class MessageSyncItem(BaseModel):
+    """Message dans la réponse de synchronisation M2M."""
+    id: int
+    sender_type: str
+    sender_id: Optional[int] = None
+    sender_app_slug: Optional[str] = None
+    sender_username: Optional[str] = None
+    target_type: str
+    target_user_id: Optional[int] = None
+    target_username: Optional[str] = None
+    priority: str
+    title: str
+    body: Optional[str] = None
+    action_url: Optional[str] = None
+    action_label: Optional[str] = None
+    expires_at: Optional[datetime] = None
+    created_at: datetime
+    is_resend: bool = False
+    original_message_id: Optional[int] = None
+    read_count: int = 0
+    total_targets: int = 0
+    read_receipts: List[MessageReadReceiptResponse] = []
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class MessageSyncResponse(BaseModel):
+    """Réponse de synchronisation M2M."""
+    messages: List[MessageSyncItem]
+    total: int
+    page: int
+    pages: int
+    sync_timestamp: str
+
+
+class ReceiptSyncItem(BaseModel):
+    """Accusé de lecture dans la réponse de synchronisation."""
+    message_id: int
+    user_id: int
+    username: Optional[str] = None
+    read_at: datetime
+
+
+class ReceiptSyncResponse(BaseModel):
+    """Réponse de synchronisation des accusés de lecture."""
+    receipts: List[ReceiptSyncItem]
+    total: int
+    page: int
+    pages: int
+    sync_timestamp: str
+
+
+class MessageDetailSyncResponse(BaseModel):
+    """Détail complet d'un message pour la synchronisation M2M."""
+    message: MessageSyncItem
+    read_receipts: List[ReceiptSyncItem] = []

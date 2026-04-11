@@ -930,6 +930,8 @@ function showLoginScreen() {
     document.getElementById('changePasswordBtn').classList.add('d-none');
     document.getElementById('adminBtn').classList.add('d-none');
     document.getElementById('adminNavigation').classList.add('d-none');
+    document.getElementById('messageBellContainer').classList.add('d-none');
+    document.getElementById('messagePanel').classList.add('d-none');
     document.getElementById('loginForm').reset();
 }
 
@@ -9168,8 +9170,13 @@ async function loadMessagesPage() {
 
 function renderMessagesTable(data) {
     const tbody = document.getElementById('messagesTableBody');
+    // Reset select all checkbox
+    const selectAll = document.getElementById('msgSelectAll');
+    if (selectAll) selectAll.checked = false;
+    updateDeleteSelectedButton();
+
     if (!data.messages || data.messages.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted">Aucun message</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted">Aucun message</td></tr>';
         document.getElementById('messagesPagination').innerHTML = '';
         return;
     }
@@ -9187,6 +9194,7 @@ function renderMessagesTable(data) {
         const rowClass = m.priority === 'urgent' ? 'table-danger' : (m.priority === 'warning' ? 'table-warning' : '');
 
         return `<tr class="${rowClass}">
+            <td><input type="checkbox" class="msg-select-checkbox" value="${m.id}" onchange="updateDeleteSelectedButton()"></td>
             <td class="small">${date}</td>
             <td>${priorityBadge}</td>
             <td class="small">${sender}</td>
@@ -9384,6 +9392,40 @@ async function purgeAllMessages() {
     if (!confirm('Purger TOUS les messages ? Cette action est irréversible.')) return;
     try {
         const result = await api.purgeMessages({});
+        showToast('Succès', result.message, 'success');
+        await loadMessagesPage();
+    } catch (error) {
+        showToast('Erreur', error.message, 'danger');
+    }
+}
+
+function toggleSelectAllMessages(checkbox) {
+    document.querySelectorAll('.msg-select-checkbox').forEach(cb => {
+        cb.checked = checkbox.checked;
+    });
+    updateDeleteSelectedButton();
+}
+
+function updateDeleteSelectedButton() {
+    const selected = document.querySelectorAll('.msg-select-checkbox:checked');
+    const btn = document.getElementById('btnDeleteSelected');
+    const count = document.getElementById('deleteSelectedCount');
+    if (btn) {
+        if (selected.length > 0) {
+            btn.style.display = 'inline-flex';
+            count.textContent = selected.length;
+        } else {
+            btn.style.display = 'none';
+        }
+    }
+}
+
+async function deleteSelectedMessages() {
+    const selected = Array.from(document.querySelectorAll('.msg-select-checkbox:checked')).map(cb => parseInt(cb.value));
+    if (selected.length === 0) return;
+    if (!confirm(`Supprimer ${selected.length} message(s) sélectionné(s) ?`)) return;
+    try {
+        const result = await api.deleteMessagesByIds(selected);
         showToast('Succès', result.message, 'success');
         await loadMessagesPage();
     } catch (error) {

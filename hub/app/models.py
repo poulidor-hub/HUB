@@ -499,6 +499,7 @@ class UserMessage(Base):
     # Destinataire
     target_type = Column(String(20), nullable=False)  # "user", "broadcast"
     target_user_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), nullable=True, index=True)
+    target_username = Column(String(150), nullable=True, index=True)  # Username résolu (pour sync NotifCenter)
     
     # Contenu
     priority = Column(String(20), nullable=False, default="info", index=True)  # "info", "warning", "urgent"
@@ -512,6 +513,10 @@ class UserMessage(Base):
     
     # Horodatage
     created_at = Column(DateTime, default=utcnow, index=True)
+    
+    # Renvoi (resend)
+    is_resend = Column(Boolean, default=False)
+    original_message_id = Column(Integer, ForeignKey('user_messages.id', ondelete='SET NULL'), nullable=True)
     
     # Relations
     target_user = relationship("User", foreign_keys=[target_user_id], lazy="raise")

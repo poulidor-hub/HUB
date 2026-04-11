@@ -25,6 +25,9 @@ from app.auth import get_current_user, get_current_entity, get_current_admin, ge
 from app.schemas import (
     MessageCreate, MessageM2MCreate, MessageResponse, MessageBrief,
     PaginatedMessagesResponse,
+    MessageSyncItem, MessageSyncResponse,
+    ReceiptSyncItem, ReceiptSyncResponse,
+    MessageDetailSyncResponse, MessageReadReceiptResponse,
 )
 
 logger = logging.getLogger(__name__)
@@ -157,12 +160,15 @@ async def send_message(
         await broadcast_event("user_message", _message_to_brief(msg))
 
     else:
+        # Résoudre les usernames pour target_username
+        users_map = await _build_users_map(db, set(payload.target_user_ids))
         for uid in payload.target_user_ids:
             msg = UserMessage(
                 sender_type="admin",
                 sender_id=current_user.id,
                 target_type="user",
                 target_user_id=uid,
+                target_username=users_map.get(uid),
                 priority=payload.priority.value,
                 title=payload.title,
                 body=payload.body,
@@ -663,7 +669,7 @@ async def purge_messages(
     filters = []
     if hours:
         since = utcnow() - timedelta(hours=hours)
-        filters.append(UserMessage.created_at < since)
+        filters.append(UserMessage.created_at >= since)
     if priority:
         filters.append(UserMessage.priority == priority)
     if sender_app:
@@ -684,6 +690,45 @@ async def purge_messages(
     await db.commit()
 
     _notify_message("messages_updated", {"action": "purged", "count": deleted})
+
+    return {"deleted": deleted, "message": f"{deleted} message(s) supprimé(s)"}
+
+
+@router.delete("/batch")
+async def delete_messages_batch(
+    payload: dict,
+    current_user: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """Supprime une liste de messages par leurs IDs (admin)."""
+    from app.routes.audit import log_action
+
+    ids = payload.get("ids", [])
+    if not ids or not isinstance(ids, list):
+        raise HTTPException(status_code=400, detail="Liste d'IDs requise")
+    if len(ids) > 500:
+        raise HTTPException(status_code=400, detail="Maximum 500 messages par requête")
+
+    # Valider que ce sont bien des entiers
+    try:
+        ids = [int(i) for i in ids]
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=400, detail="IDs invalides")
+
+    result = await db.execute(
+        delete(UserMessage).where(UserMessage.id.in_(ids))
+    )
+    deleted = result.rowcount
+    await db.commit()
+
+    await log_action(
+        db, current_user.id, "delete_messages_batch",
+        details=f"deleted={deleted}, ids={ids[:10]}{'...' if len(ids) > 10 else ''}",
+        notify_sse=False
+    )
+    await db.commit()
+
+    _notify_message("messages_updated", {"action": "deleted", "count": deleted})
 
     return {"deleted": deleted, "message": f"{deleted} message(s) supprimé(s)"}
 
@@ -713,18 +758,26 @@ async def m2m_send_message(
 
     messages_created = []
     for username, uid in username_map.items():
+        # Gérer le renvoi : préfixer le titre si is_resend
+        title = payload.title
+        if getattr(payload, 'is_resend', False) and not title.startswith("[Renvoi] "):
+            title = f"[Renvoi] {title}"
+
         msg = UserMessage(
             sender_type="app",
             sender_id=entity.id,
             sender_app_slug=entity.app_slug,
             target_type="user",
             target_user_id=uid,
+            target_username=username,
             priority=payload.priority.value,
-            title=payload.title,
+            title=title,
             body=payload.body,
             action_url=payload.action_url,
             action_label=payload.action_label,
             expires_at=payload.expires_at,
+            is_resend=getattr(payload, 'is_resend', False) or False,
+            original_message_id=getattr(payload, 'original_hub_message_id', None),
         )
         db.add(msg)
         await db.flush()
@@ -741,3 +794,305 @@ async def m2m_send_message(
         "message_ids": [m.id for m in messages_created],
         "sender_app": entity.app_slug,
     }
+
+
+# =============================================================================
+# ENDPOINTS M2M — Synchronisation (pour exemple-app)
+# =============================================================================
+
+@router.get("/m2m/sync", response_model=MessageSyncResponse)
+async def m2m_sync_messages(
+    since: str = Query(..., description="ISO datetime — messages créés après cette date"),
+    page: int = Query(1, ge=1),
+    per_page: int = Query(100, ge=10, le=500),
+    include_receipts: bool = Query(False),
+    entity: Union[User, ServiceAccount] = Depends(get_current_entity),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Synchronisation incrémentale des messages pour les service accounts.
+    Retourne les messages créés après `since`, paginés.
+    """
+    if not isinstance(entity, ServiceAccount):
+        raise HTTPException(status_code=403, detail="Cet endpoint est réservé aux service accounts (M2M)")
+
+    # Parser la date since
+    try:
+        since_dt = datetime.fromisoformat(since.replace("Z", "+00:00"))
+        # Supprimer le tzinfo pour rester compatible avec les colonnes TIMESTAMP WITHOUT TIME ZONE
+        since_dt = since_dt.replace(tzinfo=None)
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=400, detail="Format de date invalide (ISO 8601 attendu)")
+
+    # Comptage total
+    count_query = select(func.count(UserMessage.id)).where(UserMessage.created_at > since_dt)
+    total = await db.scalar(count_query) or 0
+    pages = max(1, (total + per_page - 1) // per_page)
+
+    # Messages paginés
+    offset = (page - 1) * per_page
+    result = await db.execute(
+        select(UserMessage)
+        .where(UserMessage.created_at > since_dt)
+        .order_by(UserMessage.created_at.asc())
+        .offset(offset).limit(per_page)
+    )
+    messages = result.scalars().all()
+
+    # Résoudre les usernames manquants (fallback pour messages pré-migration)
+    user_ids = set()
+    for m in messages:
+        if m.sender_id:
+            user_ids.add(m.sender_id)
+        if m.target_user_id and not m.target_username:
+            user_ids.add(m.target_user_id)
+    users_map = await _build_users_map(db, user_ids)
+
+    # Charger les read_receipts si demandé
+    receipts_by_msg = {}
+    if include_receipts and messages:
+        msg_ids = [m.id for m in messages]
+        rc_result = await db.execute(
+            select(MessageReadReceipt)
+            .where(MessageReadReceipt.message_id.in_(msg_ids))
+        )
+        all_receipts = rc_result.scalars().all()
+        # Résoudre les usernames des receipts
+        receipt_user_ids = {r.user_id for r in all_receipts}
+        receipt_users_map = await _build_users_map(db, receipt_user_ids)
+        for r in all_receipts:
+            receipts_by_msg.setdefault(r.message_id, []).append(
+                MessageReadReceiptResponse(
+                    user_id=r.user_id,
+                    username=receipt_users_map.get(r.user_id, "?"),
+                    read_at=r.read_at,
+                )
+            )
+
+    # Comptage des lectures par message
+    read_counts = {}
+    if messages:
+        msg_ids = [m.id for m in messages]
+        rc_count_result = await db.execute(
+            select(
+                MessageReadReceipt.message_id,
+                func.count(MessageReadReceipt.id)
+            ).where(MessageReadReceipt.message_id.in_(msg_ids))
+            .group_by(MessageReadReceipt.message_id)
+        )
+        read_counts = {row[0]: row[1] for row in rc_count_result.all()}
+
+    total_users = await db.scalar(select(func.count(User.id))) or 0
+
+    items = []
+    for m in messages:
+        items.append(MessageSyncItem(
+            id=m.id,
+            sender_type=m.sender_type,
+            sender_id=m.sender_id,
+            sender_app_slug=m.sender_app_slug,
+            sender_username=users_map.get(m.sender_id),
+            target_type=m.target_type,
+            target_user_id=m.target_user_id,
+            target_username=m.target_username or users_map.get(m.target_user_id),
+            priority=m.priority,
+            title=m.title,
+            body=m.body,
+            action_url=m.action_url,
+            action_label=m.action_label,
+            expires_at=m.expires_at,
+            created_at=m.created_at,
+            is_resend=m.is_resend or False,
+            original_message_id=m.original_message_id,
+            read_count=read_counts.get(m.id, 0),
+            total_targets=total_users if m.target_type == "broadcast" else 1,
+            read_receipts=receipts_by_msg.get(m.id, []),
+        ))
+
+    return MessageSyncResponse(
+        messages=items,
+        total=total,
+        page=page,
+        pages=pages,
+        sync_timestamp=utcnow().isoformat(),
+    )
+
+
+@router.get("/m2m/receipts", response_model=ReceiptSyncResponse)
+async def m2m_sync_receipts(
+    since: str = Query(..., description="ISO datetime — accusés créés après cette date"),
+    page: int = Query(1, ge=1),
+    per_page: int = Query(500, ge=10, le=500),
+    entity: Union[User, ServiceAccount] = Depends(get_current_entity),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Synchronisation incrémentale des accusés de lecture pour les service accounts.
+    """
+    if not isinstance(entity, ServiceAccount):
+        raise HTTPException(status_code=403, detail="Cet endpoint est réservé aux service accounts (M2M)")
+
+    try:
+        since_dt = datetime.fromisoformat(since.replace("Z", "+00:00"))
+        # Supprimer le tzinfo pour rester compatible avec les colonnes TIMESTAMP WITHOUT TIME ZONE
+        since_dt = since_dt.replace(tzinfo=None)
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=400, detail="Format de date invalide (ISO 8601 attendu)")
+
+    count_query = select(func.count(MessageReadReceipt.id)).where(
+        MessageReadReceipt.read_at > since_dt
+    )
+    total = await db.scalar(count_query) or 0
+    pages = max(1, (total + per_page - 1) // per_page)
+
+    offset = (page - 1) * per_page
+    result = await db.execute(
+        select(MessageReadReceipt)
+        .where(MessageReadReceipt.read_at > since_dt)
+        .order_by(MessageReadReceipt.read_at.asc())
+        .offset(offset).limit(per_page)
+    )
+    receipts = result.scalars().all()
+
+    # Résoudre les usernames
+    receipt_user_ids = {r.user_id for r in receipts}
+    users_map = await _build_users_map(db, receipt_user_ids)
+
+    items = [
+        ReceiptSyncItem(
+            message_id=r.message_id,
+            user_id=r.user_id,
+            username=users_map.get(r.user_id),
+            read_at=r.read_at,
+        )
+        for r in receipts
+    ]
+
+    return ReceiptSyncResponse(
+        receipts=items,
+        total=total,
+        page=page,
+        pages=pages,
+        sync_timestamp=utcnow().isoformat(),
+    )
+
+
+@router.get("/m2m/stats")
+async def m2m_message_stats(
+    hours: int = Query(24, ge=1, le=8760),
+    entity: Union[User, ServiceAccount] = Depends(get_current_entity),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Statistiques agrégées des messages pour les service accounts.
+    """
+    if not isinstance(entity, ServiceAccount):
+        raise HTTPException(status_code=403, detail="Cet endpoint est réservé aux service accounts (M2M)")
+
+    since = utcnow() - timedelta(hours=hours)
+    where_clause = UserMessage.created_at >= since
+
+    total = await db.scalar(select(func.count(UserMessage.id)).where(where_clause)) or 0
+
+    prio_result = await db.execute(
+        select(UserMessage.priority, func.count(UserMessage.id))
+        .where(where_clause)
+        .group_by(UserMessage.priority)
+    )
+    by_priority = {row[0]: row[1] for row in prio_result.all()}
+
+    st_result = await db.execute(
+        select(UserMessage.sender_type, func.count(UserMessage.id))
+        .where(where_clause)
+        .group_by(UserMessage.sender_type)
+    )
+    by_sender_type = {row[0]: row[1] for row in st_result.all()}
+
+    app_result = await db.execute(
+        select(UserMessage.sender_app_slug, func.count(UserMessage.id))
+        .where(and_(where_clause, UserMessage.sender_app_slug.isnot(None)))
+        .group_by(UserMessage.sender_app_slug)
+    )
+    by_app = {row[0]: row[1] for row in app_result.all()}
+
+    return {
+        "period_hours": hours,
+        "total": total,
+        "by_priority": by_priority,
+        "by_sender_type": by_sender_type,
+        "by_app": by_app,
+    }
+
+
+@router.get("/m2m/{message_id}", response_model=MessageDetailSyncResponse)
+async def m2m_get_message_detail(
+    message_id: int,
+    entity: Union[User, ServiceAccount] = Depends(get_current_entity),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Détail complet d'un message + accusés de lecture pour les service accounts.
+    """
+    if not isinstance(entity, ServiceAccount):
+        raise HTTPException(status_code=403, detail="Cet endpoint est réservé aux service accounts (M2M)")
+
+    msg = await db.get(UserMessage, message_id)
+    if not msg:
+        raise HTTPException(status_code=404, detail="Message introuvable")
+
+    # Accusés de lecture
+    receipts_result = await db.execute(
+        select(MessageReadReceipt)
+        .where(MessageReadReceipt.message_id == message_id)
+        .order_by(MessageReadReceipt.read_at.desc())
+    )
+    receipts = receipts_result.scalars().all()
+
+    # Résoudre usernames
+    user_ids = set()
+    if msg.sender_id:
+        user_ids.add(msg.sender_id)
+    if msg.target_user_id and not msg.target_username:
+        user_ids.add(msg.target_user_id)
+    for r in receipts:
+        user_ids.add(r.user_id)
+    users_map = await _build_users_map(db, user_ids)
+
+    total_users = await db.scalar(select(func.count(User.id))) or 0
+
+    message_item = MessageSyncItem(
+        id=msg.id,
+        sender_type=msg.sender_type,
+        sender_id=msg.sender_id,
+        sender_app_slug=msg.sender_app_slug,
+        sender_username=users_map.get(msg.sender_id),
+        target_type=msg.target_type,
+        target_user_id=msg.target_user_id,
+        target_username=msg.target_username or users_map.get(msg.target_user_id),
+        priority=msg.priority,
+        title=msg.title,
+        body=msg.body,
+        action_url=msg.action_url,
+        action_label=msg.action_label,
+        expires_at=msg.expires_at,
+        created_at=msg.created_at,
+        is_resend=msg.is_resend or False,
+        original_message_id=msg.original_message_id,
+        read_count=len(receipts),
+        total_targets=total_users if msg.target_type == "broadcast" else 1,
+    )
+
+    receipt_items = [
+        ReceiptSyncItem(
+            message_id=r.message_id,
+            user_id=r.user_id,
+            username=users_map.get(r.user_id),
+            read_at=r.read_at,
+        )
+        for r in receipts
+    ]
+
+    return MessageDetailSyncResponse(
+        message=message_item,
+        read_receipts=receipt_items,
+    )

@@ -1178,6 +1178,13 @@ class HubAPI {
         return this.request(url, { method: 'DELETE' });
     }
 
+    async deleteMessagesByIds(ids) {
+        return this.request('/messages/batch', {
+            method: 'DELETE',
+            body: JSON.stringify({ ids }),
+        });
+    }
+
     async exportMessages(params = {}) {
         const { hours, priority, senderApp } = params;
         let url = `${API_BASE}/messages/export`;

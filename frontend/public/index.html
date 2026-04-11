@@ -1206,6 +1206,9 @@
                             </select>
                         </div>
                         <div class="col-md-2 d-flex gap-1">
+                            <button class="btn btn-outline-danger btn-sm" id="btnDeleteSelected" onclick="deleteSelectedMessages()" title="Supprimer la sélection" style="display: none;">
+                                <i class="bi bi-trash me-1"></i><span id="deleteSelectedCount">0</span>
+                            </button>
                             <button class="btn btn-outline-warning btn-sm" onclick="purgeMessagesFiltered()" title="Purger (filtrés)">
                                 <i class="bi bi-trash"></i>
                             </button>
@@ -1222,6 +1225,7 @@
                 <table class="table table-sm table-hover">
                     <thead>
                         <tr>
+                            <th style="width: 30px;"><input type="checkbox" id="msgSelectAll" onchange="toggleSelectAllMessages(this)" title="Tout sélectionner"></th>
                             <th>Date</th>
                             <th>Priorité</th>
                             <th>Expéditeur</th>
@@ -1232,7 +1236,7 @@
                         </tr>
                     </thead>
                     <tbody id="messagesTableBody">
-                        <tr><td colspan="7" class="text-center text-muted">Chargement...</td></tr>
+                        <tr><td colspan="8" class="text-center text-muted">Chargement...</td></tr>
                     </tbody>
                 </table>
             </div>
