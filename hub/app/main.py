@@ -550,6 +550,7 @@ app.include_router(discovery.router)
 app.include_router(messages.router)
 
 
+@app.get("/api/health", include_in_schema=False)
 @app.get("/health")
 async def health_check():
     return {"status": "healthy", "service": "hub-auth"}

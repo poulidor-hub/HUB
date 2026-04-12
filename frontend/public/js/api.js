@@ -23,16 +23,66 @@ class HubAPI {
     }
 
     /**
-     * Parse le payload JWT pour extraire l'expiration
+     * Parse le payload JWT.
      */
-    _parseTokenExpiry(token) {
+    _parseTokenPayload(token) {
+        if (!token) {
+            return null;
+        }
+
         try {
-            const payload = JSON.parse(atob(token.split('.')[1]));
-            return payload.exp ? new Date(payload.exp * 1000) : null;
+            return JSON.parse(atob(token.split('.')[1]));
         } catch (e) {
             console.warn('Impossible de parser le token JWT:', e);
             return null;
         }
+    }
+
+    /**
+     * Parse le payload JWT pour extraire l'expiration
+     */
+    _parseTokenExpiry(token) {
+        const payload = this._parseTokenPayload(token);
+        return payload?.exp ? new Date(payload.exp * 1000) : null;
+    }
+
+    /**
+     * Vérifie si le token courant contient déjà l'accès à l'application demandée.
+     */
+    _tokenHasAppAccess(token, appSlug) {
+        if (!appSlug) {
+            return true;
+        }
+
+        const payload = this._parseTokenPayload(token);
+        return Boolean(payload?.apps?.[appSlug]);
+    }
+
+    /**
+     * Retourne la durée de validité restante du token en millisecondes.
+     */
+    _getTokenRemainingMs(token) {
+        const expiry = this._parseTokenExpiry(token);
+        if (!expiry) {
+            return Number.POSITIVE_INFINITY;
+        }
+
+        return expiry.getTime() - Date.now();
+    }
+
+    /**
+     * Vérifie si le token d'accès courant est encore exploitable.
+     */
+    _hasUsableAccessToken(appSlug = null, minimumValidityMs = 0) {
+        if (!this.token) {
+            return false;
+        }
+
+        if (!this._tokenHasAppAccess(this.token, appSlug)) {
+            return false;
+        }
+
+        return this._getTokenRemainingMs(this.token) >= minimumValidityMs;
     }
 
     /**
@@ -103,22 +153,31 @@ class HubAPI {
      * Vérifie que le token est valide et le rafraîchit si nécessaire.
      * À appeler avant toute opération nécessitant un token garanti valide
      * (ex: ouverture d'une application dans un nouvel onglet).
+     * @param {string|null} appSlug slug de l'application à ouvrir pour forcer une resync des droits si nécessaire
      * @returns {Promise<void>}
      * @throws {Error} si le token ne peut pas être obtenu/rafraîchi
      */
-    async ensureFreshToken() {
+    async ensureFreshToken(appSlug = null) {
         if (!this.token) throw new Error('Non authentifié');
 
-        // Toujours rafraîchir le token avant d'ouvrir une app externe.
-        // Le refresh recharge les droits (apps dict) depuis la base de données,
-        // garantissant que l'app cible reçoit un JWT avec les permissions à jour
-        // même si des rôles ont été modifiés depuis la dernière émission du token.
+        if (!this.refreshToken) {
+            if (!this._hasUsableAccessToken(appSlug, 30 * 1000)) {
+                throw new Error('Impossible de rafraîchir le token');
+            }
+            return;
+        }
+
+        // Toujours tenter un refresh avant d'ouvrir une app externe.
+        // Cela resynchronise les droits embarqués dans le JWT.
         console.log('🔄 Refresh token avant ouverture app (sync droits)...');
-        const refreshed = await this.tryRefreshToken();
+        let refreshed = await this.tryRefreshToken();
         if (!refreshed) {
-            // Fallback : vérifier au moins que le token n'est pas expiré
-            const expiry = this._parseTokenExpiry(this.token);
-            if (expiry && expiry.getTime() - Date.now() < 30 * 1000) {
+            console.warn('⚠️ Premier refresh échoué, nouvelle tentative immédiate...');
+            refreshed = await this.tryRefreshToken();
+        }
+
+        if (!refreshed) {
+            if (!this._hasUsableAccessToken(appSlug, 30 * 1000)) {
                 throw new Error('Impossible de rafraîchir le token');
             }
             console.warn('⚠️ Refresh échoué, utilisation du token existant');

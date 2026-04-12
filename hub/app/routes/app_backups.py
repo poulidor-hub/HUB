@@ -558,6 +558,11 @@ async def receive_backup(
     return AppBackupResponse.from_orm_model(backup)
 
 
+@router.get(
+    "/api/apps/{slug}/backup/list",
+    response_model=AppBackupListResponse,
+    include_in_schema=False,
+)
 @router.get("/api/apps/{slug}/backup", response_model=AppBackupListResponse)
 async def list_app_backups(
     slug: str,
@@ -566,6 +571,8 @@ async def list_app_backups(
 ):
     """
     Liste tous les backups d'une application.
+
+    L'alias /backup/list est conservé pour compatibilite avec les anciens clients.
     """
     app = await get_app_or_404(db, slug)
     

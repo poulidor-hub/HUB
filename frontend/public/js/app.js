@@ -1384,7 +1384,7 @@ async function openApp(slug, frontendUrl) {
 
     try {
         // 2. S'assurer que le token est valide AVANT de naviguer
-        await api.ensureFreshToken();
+        await api.ensureFreshToken(slug);
 
         // 3. Logger l'accès à l'application (non bloquant)
         api.logAppAccess(slug).catch(e => console.warn('Échec log accès app:', e));
@@ -1394,11 +1394,33 @@ async function openApp(slug, frontendUrl) {
         appWindow.location.href = `${frontendUrl}${separator}access_token=${api.token}`;
         console.log(`Application ${slug} ouverte dans l'onglet ${windowName}`);
     } catch (e) {
-        // En cas d'échec du refresh, fermer la fenêtre vierge
+        // En cas d'échec du refresh, garder une page explicite au lieu de fermer brutalement l'onglet
         console.error(`Échec ouverture app ${slug}:`, e);
-        try { appWindow.close(); } catch (_) {}
         openedAppWindows.delete(windowName);
-        showToast('Erreur', 'Session expirée — veuillez vous reconnecter', 'danger');
+
+        try {
+            const loginUrl = `${window.location.origin}/`;
+            appWindow.document.open();
+            appWindow.document.write(`
+                <!DOCTYPE html>
+                <html><head><title>Connexion requise</title></head>
+                <body style="display:flex;align-items:center;justify-content:center;height:100vh;margin:0;font-family:system-ui,sans-serif;background:#f8f9fa;color:#212529;">
+                    <div style="max-width:460px;padding:2rem;border:1px solid #dee2e6;border-radius:12px;background:white;box-shadow:0 10px 30px rgba(0,0,0,0.08);text-align:center;">
+                        <h2 style="margin-top:0;margin-bottom:1rem;">Connexion au Hub requise</h2>
+                        <p style="margin-bottom:1.5rem;color:#6c757d;">L'application n'a pas pu être ouverte car le jeton Hub n'a pas pu être synchronisé. Reconnectez-vous puis relancez l'application.</p>
+                        <div style="display:flex;gap:0.75rem;justify-content:center;flex-wrap:wrap;">
+                            <button onclick="window.location.href='${loginUrl}'" style="padding:0.75rem 1rem;border:none;border-radius:8px;background:#0d6efd;color:white;cursor:pointer;">Ouvrir le Hub</button>
+                            <button onclick="window.close()" style="padding:0.75rem 1rem;border:1px solid #ced4da;border-radius:8px;background:white;color:#212529;cursor:pointer;">Fermer</button>
+                        </div>
+                    </div>
+                </body></html>
+            `);
+            appWindow.document.close();
+        } catch (_) {
+            try { appWindow.close(); } catch (__ ) {}
+        }
+
+        showToast('Erreur', 'Impossible d\'ouvrir l\'application. Reconnectez-vous au Hub puis réessayez.', 'danger');
     }
 }
 
