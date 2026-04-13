@@ -139,6 +139,27 @@ async def remove_shared_service_from_all_service_accounts(db: AsyncSession, app:
     return updated_count
 
 
+def _is_owner_service_account(app: Application, sa: ServiceAccount) -> bool:
+    """Détermine si un service account est le SA propriétaire d'une application."""
+    sa_name_lower = sa.name.lower()
+    return (
+        app.slug in sa_name_lower
+        or app.name.lower() in sa_name_lower
+        or sa.name == f"SA - {app.name}"
+    )
+
+
+def _get_owner_service_account_for_app(app: Application) -> Optional[ServiceAccount]:
+    """Retourne le SA propriétaire de l'application, si identifiable."""
+    owner_sa = next(
+        (sa for sa in app.service_accounts if _is_owner_service_account(app, sa)),
+        None,
+    )
+    if owner_sa:
+        return owner_sa
+    return next(iter(app.service_accounts), None)
+
+
 # ===== IP Whitelist pour auto-enregistrement =====
 # Réseaux Docker autorisés par défaut pour l'auto-enregistrement (sans authentification)
 # SÉCURITÉ : Restreint aux réseaux Docker internes uniquement
@@ -1788,30 +1809,23 @@ async def get_app_credentials(
             .where(ServiceAccount.client_id == client_id)
         )
         sa = result.scalar_one_or_none()
+        app = sa.applications[0] if sa and sa.applications else None
     else:
-        # Recherche par slug de l'application via la table d'association
-        from app.models import service_account_app_access
-        
         result = await db.execute(
-            select(ServiceAccount)
-            .options(selectinload(ServiceAccount.applications))
-            .join(service_account_app_access, ServiceAccount.id == service_account_app_access.c.service_account_id)
-            .join(Application, Application.id == service_account_app_access.c.app_id)
+            select(Application)
+            .options(
+                selectinload(Application.service_accounts)
+                .selectinload(ServiceAccount.applications)
+            )
             .where(Application.slug == app_slug)
         )
-        # Utiliser scalars().first() car la jointure peut créer des doublons
-        sa = result.scalars().first()
-        
-        if not sa:
-            # Vérifier si l'app existe mais n'a pas de service account
-            app_result = await db.execute(
-                select(Application).where(Application.slug == app_slug)
+        app = result.scalar_one_or_none()
+        if not app:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Application '{app_slug}' non trouvée"
             )
-            if not app_result.scalar_one_or_none():
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail=f"Application '{app_slug}' non trouvée"
-                )
+        sa = _get_owner_service_account_for_app(app)
     
     if not sa:
         raise HTTPException(
@@ -1819,13 +1833,18 @@ async def get_app_credentials(
             detail="Service account non trouvé"
         )
     
-    if not sa.applications:
+    if not app:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Aucune application associée à ce service account"
         )
-    
-    app = sa.applications[0]
+
+    if client_id and not sa.applications:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Aucune application associée à ce service account"
+        )
+
     host = settings.get_hub_host()
     
     return AppCredentialsResponse(
@@ -1881,30 +1900,23 @@ async def regenerate_app_secret(
             .where(ServiceAccount.client_id == client_id)
         )
         sa = result.scalar_one_or_none()
+        app = sa.applications[0] if sa and sa.applications else None
     else:
-        # Recherche par slug de l'application via la table d'association
-        from app.models import service_account_app_access
-        
         result = await db.execute(
-            select(ServiceAccount)
-            .options(selectinload(ServiceAccount.applications))
-            .join(service_account_app_access, ServiceAccount.id == service_account_app_access.c.service_account_id)
-            .join(Application, Application.id == service_account_app_access.c.app_id)
+            select(Application)
+            .options(
+                selectinload(Application.service_accounts)
+                .selectinload(ServiceAccount.applications)
+            )
             .where(Application.slug == app_slug)
         )
-        # Utiliser scalars().first() car la jointure peut créer des doublons
-        sa = result.scalars().first()
-        
-        if not sa:
-            # Vérifier si l'app existe mais n'a pas de service account
-            app_result = await db.execute(
-                select(Application).where(Application.slug == app_slug)
+        app = result.scalar_one_or_none()
+        if not app:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Application '{app_slug}' non trouvée"
             )
-            if not app_result.scalar_one_or_none():
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail=f"Application '{app_slug}' non trouvée"
-                )
+        sa = _get_owner_service_account_for_app(app)
     
     if not sa:
         raise HTTPException(
@@ -1912,13 +1924,17 @@ async def regenerate_app_secret(
             detail="Service account non trouvé"
         )
     
-    if not sa.applications:
+    if not app:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Aucune application associée à ce service account"
         )
-    
-    app = sa.applications[0]
+
+    if client_id and not sa.applications:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Aucune application associée à ce service account"
+        )
     
     # Générer un nouveau secret
     new_secret = ServiceAccount.generate_client_secret()
