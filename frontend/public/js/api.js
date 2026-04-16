@@ -1295,7 +1295,7 @@ class HubAPI {
 
     // Settings
     async getSetting(key) {
-        const resp = await fetch(`${this.baseUrl}/settings/${encodeURIComponent(key)}`);
+        const resp = await fetch(`${API_BASE}/settings/${encodeURIComponent(key)}`);
         if (!resp.ok) throw new Error(`Setting ${key}: ${resp.status}`);
         return resp.json();
     }
