@@ -1430,3 +1430,46 @@ class MessageDetailSyncResponse(BaseModel):
     """Détail complet d'un message pour la synchronisation M2M."""
     message: MessageSyncItem
     read_receipts: List[ReceiptSyncItem] = []
+
+
+# ===== Account Request Schemas =====
+
+class AccountRequestCreate(BaseModel):
+    """Demande de création de compte par un utilisateur non inscrit"""
+    first_name: str = Field(..., min_length=1, max_length=100)
+    last_name: str = Field(..., min_length=1, max_length=100)
+    username: str = Field(..., min_length=3, max_length=50)
+    password: str = Field(..., min_length=8)
+
+    @field_validator('username')
+    @classmethod
+    def normalize_username(cls, v: str) -> str:
+        return v.strip().lower()
+
+
+class AccountRequestResponse(BaseModel):
+    """Réponse d'une demande de compte (vue admin)"""
+    id: int
+    first_name: str
+    last_name: str
+    username: str
+    status: str
+    rejection_reason: Optional[str] = None
+    reviewed_by: Optional[str] = None
+    reviewed_at: Optional[datetime] = None
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class AccountRequestStatusResponse(BaseModel):
+    """Réponse du polling de statut (vue demandeur, sans auth)"""
+    status: str
+    rejection_reason: Optional[str] = None
+    auto_login_token: Optional[str] = None
+
+
+class AccountRequestReview(BaseModel):
+    """Validation ou rejet d'une demande par un admin"""
+    rejection_reason: Optional[str] = Field(None, max_length=500)
+    profile_ids: Optional[List[int]] = None

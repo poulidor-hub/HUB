@@ -115,6 +115,95 @@
                     <button type="submit" class="btn btn-primary w-100 py-2">
                         <i class="bi bi-box-arrow-in-right me-2"></i>Se connecter
                     </button>
+                    <hr class="my-3">
+                    <div id="accountRequestButton" class="text-center d-none">
+                        <button type="button" class="btn btn-outline-secondary btn-sm" onclick="showAccountRequestModal()">
+                            <i class="bi bi-person-plus me-1"></i>Faire une demande de compte
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- Account Request Waiting Screen -->
+    <div id="accountRequestWaiting" class="container d-flex align-items-center justify-content-center min-vh-100 d-none">
+        <div class="card shadow-lg login-card">
+            <div class="card-body p-5 text-center">
+                <div id="accountRequestWaitingPending">
+                    <div class="spinner-border text-primary mb-3" role="status" style="width: 3rem; height: 3rem;">
+                        <span class="visually-hidden">Chargement...</span>
+                    </div>
+                    <h4 class="mb-3">Demande en cours de traitement</h4>
+                    <p class="text-muted">Votre demande de compte a été envoyée aux administrateurs.<br>
+                    Veuillez patienter quelques minutes, vous serez connecté automatiquement une fois votre compte validé.</p>
+                    <small class="text-muted"><i class="bi bi-clock me-1"></i>Vérification automatique en cours...</small>
+                </div>
+                <div id="accountRequestWaitingRejected" class="d-none">
+                    <i class="bi bi-x-circle display-1 text-danger"></i>
+                    <h4 class="mt-3 mb-3">Demande refusée</h4>
+                    <div class="alert alert-danger" id="accountRequestRejectionReason"></div>
+                    <button class="btn btn-primary" onclick="backToLoginFromRequest()">
+                        <i class="bi bi-arrow-left me-1"></i>Retour à la connexion
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Account Request Modal -->
+    <div class="modal fade" id="accountRequestModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="bi bi-person-plus me-2"></i>Demande de compte</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <form id="accountRequestForm" onsubmit="handleAccountRequest(event)">
+                    <div class="modal-body">
+                        <div class="alert alert-info py-2">
+                            <i class="bi bi-info-circle me-1"></i>
+                            <strong>Important :</strong> Utilisez le même identifiant que votre session Windows/réseau, sinon votre demande ne sera pas acceptée.
+                        </div>
+                        <div class="row g-3">
+                            <div class="col-md-6">
+                                <label for="accountRequestLastName" class="form-label">Nom *</label>
+                                <input type="text" class="form-control" id="accountRequestLastName" required maxlength="100">
+                            </div>
+                            <div class="col-md-6">
+                                <label for="accountRequestFirstName" class="form-label">Prénom *</label>
+                                <input type="text" class="form-control" id="accountRequestFirstName" required maxlength="100">
+                            </div>
+                        </div>
+                        <div class="mb-3 mt-3">
+                            <label for="accountRequestUsername" class="form-label">Identifiant *</label>
+                            <div class="input-group">
+                                <span class="input-group-text"><i class="bi bi-person"></i></span>
+                                <input type="text" class="form-control" id="accountRequestUsername" required minlength="3" maxlength="50" placeholder="prenom.nom">
+                            </div>
+                        </div>
+                        <div class="mb-3">
+                            <label for="accountRequestPassword" class="form-label">Mot de passe * <small class="text-muted">(min. 8 caractères)</small></label>
+                            <div class="input-group">
+                                <span class="input-group-text"><i class="bi bi-lock"></i></span>
+                                <input type="password" class="form-control" id="accountRequestPassword" required minlength="8">
+                            </div>
+                        </div>
+                        <div class="mb-3">
+                            <label for="accountRequestPasswordConfirm" class="form-label">Confirmer le mot de passe *</label>
+                            <div class="input-group">
+                                <span class="input-group-text"><i class="bi bi-lock-fill"></i></span>
+                                <input type="password" class="form-control" id="accountRequestPasswordConfirm" required minlength="8">
+                            </div>
+                        </div>
+                        <div id="accountRequestError" class="alert alert-danger d-none"></div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuler</button>
+                        <button type="submit" class="btn btn-primary">
+                            <i class="bi bi-send me-1"></i>Soumettre la demande
+                        </button>
+                    </div>
                 </form>
             </div>
         </div>
@@ -768,6 +857,12 @@
                         <span id="profilesTabCount" class="badge bg-secondary ms-1">0</span>
                     </button>
                 </li>
+                <li class="nav-item">
+                    <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tabAccountRequests" onclick="loadAccountRequestsTab()">
+                        <i class="bi bi-person-plus me-1"></i>Demandes
+                        <span id="accountRequestsTabCount" class="badge bg-warning text-dark ms-1 d-none">0</span>
+                    </button>
+                </li>
             </ul>
 
             <div class="tab-content">
@@ -947,6 +1042,66 @@
                     <!-- Liste des profils -->
                     <div id="profilesList" class="row g-3">
                         <!-- Chargé dynamiquement -->
+                    </div>
+                </div>
+
+                <!-- Onglet Demandes de compte -->
+                <div class="tab-pane fade" id="tabAccountRequests">
+                    <div class="d-flex justify-content-between align-items-center mb-3">
+                        <div>
+                            <h5 class="mb-0"><i class="bi bi-person-plus me-1"></i>Demandes de compte</h5>
+                            <small class="text-muted">Demandes d'inscription en attente de validation</small>
+                        </div>
+                        <div class="d-flex gap-2 align-items-center">
+                            <div class="form-check form-switch me-2" title="Activer/désactiver les demandes de compte">
+                                <input class="form-check-input" type="checkbox" id="toggleAccountRequests" onchange="handleToggleAccountRequests(this.checked)">
+                                <label class="form-check-label small" for="toggleAccountRequests">Inscriptions</label>
+                            </div>
+                            <select class="form-select form-select-sm" id="accountRequestsFilterStatus" onchange="loadAccountRequestsTab()" style="width: auto;">
+                                <option value="">Tous les statuts</option>
+                                <option value="pending" selected>En attente</option>
+                                <option value="approved">Approuvées</option>
+                                <option value="rejected">Refusées</option>
+                            </select>
+                            <button class="btn btn-outline-secondary btn-sm" onclick="loadAccountRequestsTab()">
+                                <i class="bi bi-arrow-clockwise me-1"></i>Actualiser
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Stats demandes -->
+                    <div class="row g-3 mb-3">
+                        <div class="col-md-4">
+                            <div class="card border">
+                                <div class="card-body text-center py-2">
+                                    <h4 id="reqStatPending" class="text-warning mb-0">-</h4>
+                                    <small class="text-muted">En attente</small>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="card border">
+                                <div class="card-body text-center py-2">
+                                    <h4 id="reqStatApproved" class="text-success mb-0">-</h4>
+                                    <small class="text-muted">Approuvées</small>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="card border">
+                                <div class="card-body text-center py-2">
+                                    <h4 id="reqStatRejected" class="text-danger mb-0">-</h4>
+                                    <small class="text-muted">Refusées</small>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Table des demandes -->
+                    <div class="card">
+                        <div class="card-body p-0">
+                            <div id="accountRequestsTable" class="table-responsive"></div>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -1668,6 +1823,71 @@
     </div>
 
     <!-- Add/Edit App Modal -->
+
+    <!-- Approve Account Request Modal -->
+    <div class="modal fade" id="approveRequestModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header bg-success text-white">
+                    <h5 class="modal-title"><i class="bi bi-check-circle me-2"></i>Approuver la demande</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <form id="approveRequestForm" onsubmit="handleApproveRequest(event)">
+                    <div class="modal-body">
+                        <input type="hidden" id="approveRequestId">
+                        <p>Vous allez créer un compte pour :</p>
+                        <div class="card bg-light mb-3">
+                            <div class="card-body py-2">
+                                <strong id="approveRequestName"></strong><br>
+                                <small class="text-muted">Identifiant : <code id="approveRequestUsername"></code></small>
+                            </div>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">Profils à assigner <small class="text-muted">(optionnel)</small></label>
+                            <div id="approveRequestProfiles" class="border rounded p-2" style="max-height: 200px; overflow-y: auto;">
+                                <small class="text-muted">Chargement...</small>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuler</button>
+                        <button type="submit" class="btn btn-success">
+                            <i class="bi bi-check-circle me-1"></i>Approuver
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- Reject Account Request Modal -->
+    <div class="modal fade" id="rejectRequestModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header bg-danger text-white">
+                    <h5 class="modal-title"><i class="bi bi-x-circle me-2"></i>Refuser la demande</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <form id="rejectRequestForm" onsubmit="handleRejectRequest(event)">
+                    <div class="modal-body">
+                        <input type="hidden" id="rejectRequestId">
+                        <p>Vous allez refuser la demande de <strong id="rejectRequestName"></strong>.</p>
+                        <div class="mb-3">
+                            <label class="form-label">Raison du refus *</label>
+                            <textarea class="form-control" id="rejectRequestReason" rows="3" required placeholder="Ex: Identifiant non conforme, utilisateur inconnu, etc."></textarea>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuler</button>
+                        <button type="submit" class="btn btn-danger">
+                            <i class="bi bi-x-circle me-1"></i>Refuser
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
     <div class="modal fade" id="appFormModal" tabindex="-1">
         <div class="modal-dialog modal-lg">
             <div class="modal-content">

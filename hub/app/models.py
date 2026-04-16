@@ -541,3 +541,42 @@ class MessageReadReceipt(Base):
     
     def __repr__(self):
         return f"<MessageReadReceipt msg={self.message_id} user={self.user_id}>"
+
+
+class AppSetting(Base):
+    """Paramètre applicatif clé-valeur, modifiable à chaud par les admins"""
+    __tablename__ = "app_settings"
+
+    key = Column(String(100), primary_key=True)
+    value = Column(Text, nullable=False)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
+    updated_by_id = Column(Integer, ForeignKey('users.id', ondelete='SET NULL'), nullable=True)
+
+    updated_by = relationship("User", foreign_keys=[updated_by_id], lazy="raise")
+
+    def __repr__(self):
+        return f"<AppSetting {self.key}={self.value}>"
+
+
+class AccountRequest(Base):
+    """Demande de création de compte par un utilisateur non inscrit"""
+    __tablename__ = "account_requests"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    first_name = Column(String(100), nullable=False)
+    last_name = Column(String(100), nullable=False)
+    username = Column(String(50), nullable=False, index=True)
+    hashed_password = Column(String(255), nullable=False)
+    status = Column(String(20), nullable=False, default="pending", index=True)  # pending, approved, rejected
+    rejection_reason = Column(String(500), nullable=True)
+    reviewed_by_id = Column(Integer, ForeignKey('users.id', ondelete='SET NULL'), nullable=True)
+    reviewed_at = Column(DateTime, nullable=True)
+    polling_token = Column(String(64), nullable=False, index=True)
+    auto_login_token = Column(String(64), nullable=True, index=True)
+    created_at = Column(DateTime, default=utcnow)
+    
+    # Relations
+    reviewed_by = relationship("User", foreign_keys=[reviewed_by_id], lazy="raise")
+    
+    def __repr__(self):
+        return f"<AccountRequest {self.username} [{self.status}]>"

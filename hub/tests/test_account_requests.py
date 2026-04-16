@@ -1,0 +1,690 @@
+"""
+Tests du système de demande de compte (account requests).
+
+Couvre :
+- Soumission d'une demande (validations, normalisation username)
+- Unicité username vs comptes existants et demandes pending
+- Re-demande après refus
+- Polling de statut
+- Approbation et auto-login token
+- Rejet avec raison obligatoire
+- Endpoint auto-login à usage unique
+- Endpoints admin (listing, count)
+"""
+
+import pytest
+from httpx import AsyncClient
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
+
+from app.models import User, AccountRequest, AppSetting
+from app.auth import get_password_hash, create_access_token
+from tests.conftest import get_auth_header
+
+
+# =============================================================================
+# Helpers
+# =============================================================================
+
+@pytest.fixture(autouse=True)
+async def _ensure_account_requests_enabled(async_session: AsyncSession):
+    """Injecte le setting account_requests_enabled=true pour tous les tests."""
+    async_session.add(AppSetting(key="account_requests_enabled", value="true"))
+    await async_session.commit()
+
+
+async def submit_request(
+    client: AsyncClient,
+    first_name: str = "Jean",
+    last_name: str = "Dupont",
+    username: str = "jean.dupont",
+    password: str = "securepass123",
+):
+    """Helper pour soumettre une demande de compte."""
+    return await client.post(
+        "/api/account-requests/",
+        json={
+            "first_name": first_name,
+            "last_name": last_name,
+            "username": username,
+            "password": password,
+        },
+    )
+
+
+# =============================================================================
+# Soumission de demande
+# =============================================================================
+
+class TestSubmitAccountRequest:
+    """Tests de l'endpoint POST /api/account-requests/"""
+
+    async def test_submit_success(self, client: AsyncClient):
+        """Soumettre une demande valide retourne 201 avec request_id et polling_token."""
+        resp = await submit_request(client)
+        assert resp.status_code == 201
+        data = resp.json()
+        assert "request_id" in data
+        assert "polling_token" in data
+        assert isinstance(data["request_id"], int)
+        assert len(data["polling_token"]) == 64  # hex(32)
+
+    async def test_submit_normalizes_username(
+        self, client: AsyncClient, async_session: AsyncSession
+    ):
+        """Le username est normalisé (strip + lower) avant stockage."""
+        resp = await submit_request(client, username="  Jean.DUPONT  ")
+        assert resp.status_code == 201
+        rid = resp.json()["request_id"]
+
+        result = await async_session.execute(
+            select(AccountRequest).where(AccountRequest.id == rid)
+        )
+        req = result.scalar_one()
+        assert req.username == "jean.dupont"
+
+    async def test_submit_duplicate_existing_user(
+        self, client: AsyncClient, test_user: User
+    ):
+        """Refusé si le username existe déjà dans la table users."""
+        resp = await submit_request(client, username=test_user.username)
+        assert resp.status_code == 400
+        assert "déjà utilisé" in resp.json()["detail"]
+
+    async def test_submit_duplicate_existing_user_case_insensitive(
+        self, client: AsyncClient, async_session: AsyncSession
+    ):
+        """Refusé même si la casse diffère (normalisation)."""
+        user = User(
+            username="bob.martin",
+            hashed_password=get_password_hash("pass12345678"),
+            is_active=True,
+        )
+        async_session.add(user)
+        await async_session.commit()
+
+        resp = await submit_request(client, username="Bob.MARTIN")
+        assert resp.status_code == 400
+        assert "déjà utilisé" in resp.json()["detail"]
+
+    async def test_submit_duplicate_pending_request(self, client: AsyncClient):
+        """Refusé si une demande pending existe déjà pour ce username."""
+        resp1 = await submit_request(client)
+        assert resp1.status_code == 201
+
+        resp2 = await submit_request(client)
+        assert resp2.status_code == 400
+        assert "déjà en cours" in resp2.json()["detail"]
+
+    async def test_submit_duplicate_pending_with_spaces(self, client: AsyncClient):
+        """Même avec des espaces parasites, la collision est détectée."""
+        resp1 = await submit_request(client, username="jean.dupont")
+        assert resp1.status_code == 201
+
+        resp2 = await submit_request(client, username="  jean.dupont  ")
+        assert resp2.status_code == 400
+        assert "déjà en cours" in resp2.json()["detail"]
+
+    async def test_submit_after_rejection_allowed(
+        self, client: AsyncClient, async_session: AsyncSession
+    ):
+        """Après un refus, une nouvelle demande avec le même username est acceptée."""
+        resp1 = await submit_request(client)
+        assert resp1.status_code == 201
+        rid = resp1.json()["request_id"]
+
+        # Passer la demande en rejetée directement en base
+        result = await async_session.execute(
+            select(AccountRequest).where(AccountRequest.id == rid)
+        )
+        req = result.scalar_one()
+        req.status = "rejected"
+        req.rejection_reason = "Identifiant inconnu"
+        await async_session.commit()
+
+        # Nouvelle demande = acceptée
+        resp2 = await submit_request(client)
+        assert resp2.status_code == 201
+        assert resp2.json()["request_id"] != rid
+
+    async def test_submit_password_too_short(self, client: AsyncClient):
+        """Mot de passe < 8 caractères est rejeté par la validation Pydantic."""
+        resp = await submit_request(client, password="short")
+        assert resp.status_code == 422
+
+    async def test_submit_username_too_short(self, client: AsyncClient):
+        """Username < 3 caractères rejeté."""
+        resp = await submit_request(client, username="ab")
+        assert resp.status_code == 422
+
+
+# =============================================================================
+# Polling de statut
+# =============================================================================
+
+class TestPollStatus:
+    """Tests de l'endpoint GET /api/account-requests/{id}/status"""
+
+    async def test_poll_pending(self, client: AsyncClient):
+        """Polling d'une demande pending retourne status=pending."""
+        resp = await submit_request(client)
+        data = resp.json()
+
+        poll = await client.get(
+            f"/api/account-requests/{data['request_id']}/status",
+            params={"token": data["polling_token"]},
+        )
+        assert poll.status_code == 200
+        assert poll.json()["status"] == "pending"
+        assert poll.json().get("auto_login_token") is None
+
+    async def test_poll_wrong_token(self, client: AsyncClient):
+        """Polling avec un mauvais token retourne 404."""
+        resp = await submit_request(client)
+        data = resp.json()
+
+        poll = await client.get(
+            f"/api/account-requests/{data['request_id']}/status",
+            params={"token": "wrong_token"},
+        )
+        assert poll.status_code == 404
+
+    async def test_poll_approved_returns_auto_login_token(
+        self, client: AsyncClient, async_session: AsyncSession
+    ):
+        """Après approbation, le polling retourne auto_login_token."""
+        resp = await submit_request(client)
+        data = resp.json()
+        rid = data["request_id"]
+
+        # Simuler approbation en BDD
+        result = await async_session.execute(
+            select(AccountRequest).where(AccountRequest.id == rid)
+        )
+        req = result.scalar_one()
+        req.status = "approved"
+        req.auto_login_token = "test_token_abc123"
+        await async_session.commit()
+
+        poll = await client.get(
+            f"/api/account-requests/{rid}/status",
+            params={"token": data["polling_token"]},
+        )
+        assert poll.status_code == 200
+        assert poll.json()["status"] == "approved"
+        assert poll.json()["auto_login_token"] == "test_token_abc123"
+
+    async def test_poll_rejected_shows_reason(
+        self, client: AsyncClient, async_session: AsyncSession
+    ):
+        """Après rejet, le polling retourne la raison du refus."""
+        resp = await submit_request(client)
+        data = resp.json()
+        rid = data["request_id"]
+
+        result = await async_session.execute(
+            select(AccountRequest).where(AccountRequest.id == rid)
+        )
+        req = result.scalar_one()
+        req.status = "rejected"
+        req.rejection_reason = "Identifiant inconnu"
+        await async_session.commit()
+
+        poll = await client.get(
+            f"/api/account-requests/{rid}/status",
+            params={"token": data["polling_token"]},
+        )
+        assert poll.status_code == 200
+        assert poll.json()["status"] == "rejected"
+        assert poll.json()["rejection_reason"] == "Identifiant inconnu"
+        assert poll.json().get("auto_login_token") is None
+
+
+# =============================================================================
+# Approbation par admin
+# =============================================================================
+
+class TestApproveRequest:
+    """Tests de l'endpoint POST /api/account-requests/{id}/approve"""
+
+    async def test_approve_creates_user(
+        self,
+        client: AsyncClient,
+        admin_user: User,
+        admin_token: str,
+        async_session: AsyncSession,
+    ):
+        """L'approbation crée un User en base et génère un auto_login_token."""
+        resp = await submit_request(client, username="nouveau.user")
+        rid = resp.json()["request_id"]
+
+        approve = await client.post(
+            f"/api/account-requests/{rid}/approve",
+            json={},
+            headers=get_auth_header(admin_token),
+        )
+        assert approve.status_code == 200
+        data = approve.json()
+        assert data["username"] == "nouveau.user"
+        assert "user_id" in data
+
+        # Vérifier que le User existe en base
+        result = await async_session.execute(
+            select(User).where(User.username == "nouveau.user")
+        )
+        user = result.scalar_one()
+        assert user.is_active is True
+        assert user.is_admin is False
+
+        # Vérifier que l'auto_login_token a été généré
+        result = await async_session.execute(
+            select(AccountRequest).where(AccountRequest.id == rid)
+        )
+        req = result.scalar_one()
+        assert req.status == "approved"
+        assert req.auto_login_token is not None
+        assert len(req.auto_login_token) == 64
+
+    async def test_approve_already_treated(
+        self,
+        client: AsyncClient,
+        admin_user: User,
+        admin_token: str,
+        async_session: AsyncSession,
+    ):
+        """Approuver une demande déjà traitée retourne 400."""
+        resp = await submit_request(client, username="already.done")
+        rid = resp.json()["request_id"]
+
+        # Première approbation OK
+        r1 = await client.post(
+            f"/api/account-requests/{rid}/approve",
+            json={},
+            headers=get_auth_header(admin_token),
+        )
+        assert r1.status_code == 200
+
+        # Deuxième = erreur
+        r2 = await client.post(
+            f"/api/account-requests/{rid}/approve",
+            json={},
+            headers=get_auth_header(admin_token),
+        )
+        assert r2.status_code == 400
+        assert "déjà été traitée" in r2.json()["detail"]
+
+    async def test_approve_requires_admin(
+        self,
+        client: AsyncClient,
+        test_user: User,
+        user_token: str,
+    ):
+        """Un utilisateur non-admin ne peut pas approuver."""
+        resp = await submit_request(client, username="some.user")
+        rid = resp.json()["request_id"]
+
+        r = await client.post(
+            f"/api/account-requests/{rid}/approve",
+            json={},
+            headers=get_auth_header(user_token),
+        )
+        assert r.status_code == 403
+
+    async def test_approve_username_taken_meanwhile(
+        self,
+        client: AsyncClient,
+        admin_user: User,
+        admin_token: str,
+        async_session: AsyncSession,
+    ):
+        """Si le username est pris entre demande et approbation, erreur 400."""
+        resp = await submit_request(client, username="race.condition")
+        rid = resp.json()["request_id"]
+
+        # Créer le user entre-temps
+        u = User(
+            username="race.condition",
+            hashed_password=get_password_hash("password123"),
+            is_active=True,
+        )
+        async_session.add(u)
+        await async_session.commit()
+
+        r = await client.post(
+            f"/api/account-requests/{rid}/approve",
+            json={},
+            headers=get_auth_header(admin_token),
+        )
+        assert r.status_code == 400
+        assert "existe déjà" in r.json()["detail"]
+
+
+# =============================================================================
+# Rejet par admin
+# =============================================================================
+
+class TestRejectRequest:
+    """Tests de l'endpoint POST /api/account-requests/{id}/reject"""
+
+    async def test_reject_success(
+        self,
+        client: AsyncClient,
+        admin_user: User,
+        admin_token: str,
+        async_session: AsyncSession,
+    ):
+        """Le rejet nécessite une raison et met à jour la demande."""
+        resp = await submit_request(client, username="to.reject")
+        rid = resp.json()["request_id"]
+
+        r = await client.post(
+            f"/api/account-requests/{rid}/reject",
+            json={"rejection_reason": "Identifiant inconnu du SI"},
+            headers=get_auth_header(admin_token),
+        )
+        assert r.status_code == 200
+
+        result = await async_session.execute(
+            select(AccountRequest).where(AccountRequest.id == rid)
+        )
+        req = result.scalar_one()
+        assert req.status == "rejected"
+        assert req.rejection_reason == "Identifiant inconnu du SI"
+        assert req.reviewed_by_id == admin_user.id
+
+    async def test_reject_without_reason_fails(
+        self,
+        client: AsyncClient,
+        admin_user: User,
+        admin_token: str,
+    ):
+        """Le rejet sans raison est refusé."""
+        resp = await submit_request(client, username="no.reason")
+        rid = resp.json()["request_id"]
+
+        r = await client.post(
+            f"/api/account-requests/{rid}/reject",
+            json={},
+            headers=get_auth_header(admin_token),
+        )
+        assert r.status_code == 400
+        assert "raison" in r.json()["detail"].lower()
+
+    async def test_reject_blank_reason_fails(
+        self,
+        client: AsyncClient,
+        admin_user: User,
+        admin_token: str,
+    ):
+        """Le rejet avec raison vide est refusé."""
+        resp = await submit_request(client, username="blank.reason")
+        rid = resp.json()["request_id"]
+
+        r = await client.post(
+            f"/api/account-requests/{rid}/reject",
+            json={"rejection_reason": "   "},
+            headers=get_auth_header(admin_token),
+        )
+        assert r.status_code == 400
+
+
+# =============================================================================
+# Auto-login token (usage unique)
+# =============================================================================
+
+class TestAutoLogin:
+    """Tests de l'endpoint POST /api/account-requests/auto-login"""
+
+    async def test_auto_login_success(
+        self,
+        client: AsyncClient,
+        admin_user: User,
+        admin_token: str,
+    ):
+        """L'échange d'un auto_login_token valide retourne JWT + refresh."""
+        resp = await submit_request(client, username="autologin.user")
+        rid = resp.json()["request_id"]
+        polling_token = resp.json()["polling_token"]
+
+        # Approuver
+        await client.post(
+            f"/api/account-requests/{rid}/approve",
+            json={},
+            headers=get_auth_header(admin_token),
+        )
+
+        # Récupérer l'auto_login_token via polling
+        poll = await client.get(
+            f"/api/account-requests/{rid}/status",
+            params={"token": polling_token},
+        )
+        alt = poll.json()["auto_login_token"]
+        assert alt is not None
+
+        # Échanger contre un JWT
+        login_resp = await client.post(
+            "/api/account-requests/auto-login",
+            json={"auto_login_token": alt},
+        )
+        assert login_resp.status_code == 200
+        login_data = login_resp.json()
+        assert "access_token" in login_data
+        assert "refresh_token" in login_data
+        assert login_data["token_type"] == "bearer"
+
+    async def test_auto_login_single_use(
+        self,
+        client: AsyncClient,
+        admin_user: User,
+        admin_token: str,
+    ):
+        """Un auto_login_token ne peut être utilisé qu'une seule fois."""
+        resp = await submit_request(client, username="oneshot.user")
+        rid = resp.json()["request_id"]
+        polling_token = resp.json()["polling_token"]
+
+        await client.post(
+            f"/api/account-requests/{rid}/approve",
+            json={},
+            headers=get_auth_header(admin_token),
+        )
+
+        poll = await client.get(
+            f"/api/account-requests/{rid}/status",
+            params={"token": polling_token},
+        )
+        alt = poll.json()["auto_login_token"]
+
+        # Premier usage = OK
+        r1 = await client.post(
+            "/api/account-requests/auto-login",
+            json={"auto_login_token": alt},
+        )
+        assert r1.status_code == 200
+
+        # Deuxième usage = 401
+        r2 = await client.post(
+            "/api/account-requests/auto-login",
+            json={"auto_login_token": alt},
+        )
+        assert r2.status_code == 401
+
+    async def test_auto_login_invalid_token(self, client: AsyncClient):
+        """Un token inventé retourne 401."""
+        r = await client.post(
+            "/api/account-requests/auto-login",
+            json={"auto_login_token": "invalid_xxx"},
+        )
+        assert r.status_code == 401
+
+    async def test_auto_login_empty_token(self, client: AsyncClient):
+        """Un token vide retourne 400."""
+        r = await client.post(
+            "/api/account-requests/auto-login",
+            json={"auto_login_token": ""},
+        )
+        assert r.status_code == 400
+
+
+# =============================================================================
+# Endpoints admin : listing et count
+# =============================================================================
+
+class TestAdminEndpoints:
+    """Tests des endpoints admin (listing, count)."""
+
+    async def test_pending_count(
+        self,
+        client: AsyncClient,
+        admin_user: User,
+        admin_token: str,
+    ):
+        """GET /count retourne le nombre de demandes pending."""
+        # D'abord 0
+        r0 = await client.get(
+            "/api/account-requests/count",
+            headers=get_auth_header(admin_token),
+        )
+        assert r0.status_code == 200
+        assert r0.json()["count"] == 0
+
+        # Soumettre 2 demandes
+        await submit_request(client, username="count.one")
+        await submit_request(client, username="count.two")
+
+        r2 = await client.get(
+            "/api/account-requests/count",
+            headers=get_auth_header(admin_token),
+        )
+        assert r2.json()["count"] == 2
+
+    async def test_list_requests(
+        self,
+        client: AsyncClient,
+        admin_user: User,
+        admin_token: str,
+    ):
+        """GET / retourne la liste paginée des demandes."""
+        await submit_request(client, username="list.user1")
+        await submit_request(client, username="list.user2")
+
+        r = await client.get(
+            "/api/account-requests/",
+            headers=get_auth_header(admin_token),
+        )
+        assert r.status_code == 200
+        data = r.json()
+        assert data["total"] >= 2
+        assert "requests" in data
+        assert any(req["username"] == "list.user1" for req in data["requests"])
+
+    async def test_list_filter_by_status(
+        self,
+        client: AsyncClient,
+        admin_user: User,
+        admin_token: str,
+        async_session: AsyncSession,
+    ):
+        """Le filtre par statut fonctionne."""
+        resp = await submit_request(client, username="filter.test")
+        rid = resp.json()["request_id"]
+
+        # Approuver
+        await client.post(
+            f"/api/account-requests/{rid}/approve",
+            json={},
+            headers=get_auth_header(admin_token),
+        )
+
+        # Lister uniquement les approved
+        r = await client.get(
+            "/api/account-requests/",
+            params={"status": "approved"},
+            headers=get_auth_header(admin_token),
+        )
+        assert r.status_code == 200
+        for req in r.json()["requests"]:
+            assert req["status"] == "approved"
+
+    async def test_list_requires_admin(
+        self,
+        client: AsyncClient,
+        test_user: User,
+        user_token: str,
+    ):
+        """Un utilisateur non-admin ne peut pas lister les demandes."""
+        r = await client.get(
+            "/api/account-requests/",
+            headers=get_auth_header(user_token),
+        )
+        assert r.status_code == 403
+
+    async def test_count_requires_admin(
+        self,
+        client: AsyncClient,
+        test_user: User,
+        user_token: str,
+    ):
+        """Un utilisateur non-admin ne peut pas voir le count."""
+        r = await client.get(
+            "/api/account-requests/count",
+            headers=get_auth_header(user_token),
+        )
+        assert r.status_code == 403
+
+
+# =============================================================================
+# Soumission avec setting désactivé
+# =============================================================================
+
+class TestSubmitWithSettingDisabled:
+    """Vérifie que la soumission est bloquée quand account_requests_enabled = false."""
+
+    async def _set_account_requests_enabled(self, db: AsyncSession, value: str):
+        result = await db.execute(
+            select(AppSetting).where(AppSetting.key == "account_requests_enabled")
+        )
+        existing = result.scalar_one_or_none()
+        if existing:
+            existing.value = value
+        else:
+            db.add(AppSetting(key="account_requests_enabled", value=value))
+        await db.commit()
+
+    async def test_submit_disabled_returns_403(
+        self, client: AsyncClient, async_session: AsyncSession
+    ):
+        """Soumission refusée quand les demandes sont désactivées."""
+        await self._set_account_requests_enabled(async_session, "false")
+
+        resp = await submit_request(client, username="blocked.user")
+        assert resp.status_code == 403
+        assert "désactivées" in resp.json()["detail"]
+
+    async def test_submit_no_setting_row_returns_403(
+        self, client: AsyncClient, async_session: AsyncSession
+    ):
+        """Soumission refusée quand le setting n'existe pas en BDD (sécurité fail-closed)."""
+        # Supprimer le row injecté par la fixture autouse
+        result = await async_session.execute(
+            select(AppSetting).where(AppSetting.key == "account_requests_enabled")
+        )
+        existing = result.scalar_one_or_none()
+        if existing:
+            await async_session.delete(existing)
+            await async_session.commit()
+
+        resp = await submit_request(client, username="no.setting.user")
+        assert resp.status_code == 403
+
+    async def test_submit_reenabled_works(
+        self, client: AsyncClient, async_session: AsyncSession
+    ):
+        """Après réactivation, la soumission fonctionne à nouveau."""
+        await self._set_account_requests_enabled(async_session, "false")
+        resp1 = await submit_request(client, username="toggle.user")
+        assert resp1.status_code == 403
+
+        await self._set_account_requests_enabled(async_session, "true")
+        resp2 = await submit_request(client, username="toggle.user")
+        assert resp2.status_code == 201

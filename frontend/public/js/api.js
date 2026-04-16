@@ -1263,6 +1263,49 @@ class HubAPI {
         document.body.removeChild(a);
         URL.revokeObjectURL(a.href);
     }
+
+    // Account Requests (admin)
+    async getAccountRequests(params = {}) {
+        let url = '/account-requests/?';
+        const p = [];
+        if (params.status) p.push(`status=${encodeURIComponent(params.status)}`);
+        if (params.page) p.push(`page=${params.page}`);
+        if (params.perPage) p.push(`per_page=${params.perPage}`);
+        url += p.join('&');
+        return this.request(url);
+    }
+
+    async getAccountRequestsCount() {
+        return this.request('/account-requests/count');
+    }
+
+    async approveAccountRequest(id, data = {}) {
+        return this.request(`/account-requests/${id}/approve`, {
+            method: 'POST',
+            body: JSON.stringify(data)
+        });
+    }
+
+    async rejectAccountRequest(id, data = {}) {
+        return this.request(`/account-requests/${id}/reject`, {
+            method: 'POST',
+            body: JSON.stringify(data)
+        });
+    }
+
+    // Settings
+    async getSetting(key) {
+        const resp = await fetch(`${this.baseUrl}/settings/${encodeURIComponent(key)}`);
+        if (!resp.ok) throw new Error(`Setting ${key}: ${resp.status}`);
+        return resp.json();
+    }
+
+    async updateSetting(key, value) {
+        return this.request(`/settings/${encodeURIComponent(key)}`, {
+            method: 'PUT',
+            body: JSON.stringify({ value: String(value) })
+        });
+    }
 }
 
 const api = new HubAPI();
