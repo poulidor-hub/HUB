@@ -483,7 +483,7 @@ async def logout(
             if jti and exp:
                 await revoke_token(
                     db, jti,
-                    expires_at=datetime.fromtimestamp(exp),
+                    expires_at=datetime.fromtimestamp(exp, tz=timezone.utc).replace(tzinfo=None),
                     reason="logout"
                 )
         except:
