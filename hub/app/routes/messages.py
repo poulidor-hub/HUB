@@ -209,6 +209,7 @@ async def list_messages(
     sender_type: Optional[str] = Query(None),
     sender_app: Optional[str] = Query(None),
     target_user_id: Optional[int] = Query(None),
+    target_type: Optional[str] = Query(None),
     search: Optional[str] = Query(None),
     hours: Optional[int] = Query(None, ge=1, le=8760),
     current_user: User = Depends(get_current_admin),
@@ -227,6 +228,8 @@ async def list_messages(
         filters.append(UserMessage.sender_app_slug == sender_app)
     if target_user_id:
         filters.append(UserMessage.target_user_id == target_user_id)
+    if target_type:
+        filters.append(UserMessage.target_type == target_type)
     if search:
         search_pattern = f"%{search}%"
         filters.append(or_(
@@ -310,6 +313,7 @@ async def list_messages(
 @router.get("/stats")
 async def get_message_stats(
     hours: Optional[int] = Query(None, ge=1, le=8760),
+    target_type: Optional[str] = Query(None),
     current_user: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db)
 ):
@@ -318,6 +322,8 @@ async def get_message_stats(
     if hours:
         since = utcnow() - timedelta(hours=hours)
         base_filter.append(UserMessage.created_at >= since)
+    if target_type:
+        base_filter.append(UserMessage.target_type == target_type)
 
     where_clause = and_(*base_filter) if base_filter else True
 
@@ -361,6 +367,7 @@ async def export_messages_csv(
     hours: Optional[int] = Query(None, ge=1, le=8760),
     priority: Optional[str] = Query(None),
     sender_app: Optional[str] = Query(None),
+    target_type: Optional[str] = Query(None),
     current_user: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db)
 ):
@@ -374,6 +381,8 @@ async def export_messages_csv(
         filters.append(UserMessage.priority == priority)
     if sender_app:
         filters.append(UserMessage.sender_app_slug == sender_app)
+    if target_type:
+        filters.append(UserMessage.target_type == target_type)
 
     if filters:
         query = query.where(and_(*filters))
@@ -659,6 +668,7 @@ async def purge_messages(
     hours: Optional[int] = Query(None, ge=1, le=8760),
     priority: Optional[str] = Query(None),
     sender_app: Optional[str] = Query(None),
+    target_type: Optional[str] = Query(None),
     current_user: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db)
 ):
@@ -674,6 +684,8 @@ async def purge_messages(
         filters.append(UserMessage.priority == priority)
     if sender_app:
         filters.append(UserMessage.sender_app_slug == sender_app)
+    if target_type:
+        filters.append(UserMessage.target_type == target_type)
 
     if filters:
         stmt = stmt.where(and_(*filters))

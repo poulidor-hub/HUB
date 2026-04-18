@@ -9190,6 +9190,21 @@ async function confirmCsvImport() {
 
 let messagesPage = 1;
 let sendMessageModal = null;
+let currentMessageTab = 'all'; // 'all' | 'broadcast' | 'user'
+
+function switchMessageTab(tab) {
+    currentMessageTab = tab;
+    messagesPage = 1;
+    // Update active tab styling
+    document.querySelectorAll('#messagesTabNav .nav-link').forEach(el => el.classList.remove('active'));
+    const tabId = tab === 'all' ? 'msgTabAll' : (tab === 'broadcast' ? 'msgTabBroadcast' : 'msgTabUser');
+    document.getElementById(tabId)?.classList.add('active');
+    loadMessagesPage();
+}
+
+function _getActiveTargetType() {
+    return currentMessageTab === 'all' ? undefined : currentMessageTab;
+}
 
 // ===== Admin : Page Messages =====
 
@@ -9201,29 +9216,39 @@ async function loadMessagesPage() {
     const hours = document.getElementById('msgFilterHours')?.value || '';
 
     try {
-        const [stats, data] = await Promise.all([
-            api.getMessageStats(hours || null),
+        const targetType = _getActiveTargetType();
+        const [stats, data, statsAll, statsBroadcast, statsUser] = await Promise.all([
+            api.getMessageStats(hours || null, targetType),
             api.getMessages({
                 page: messagesPage,
                 perPage: 50,
                 priority: priority || undefined,
                 senderType: senderType || undefined,
                 senderApp: senderApp || undefined,
+                targetType: targetType,
                 search: search || undefined,
                 hours: hours || undefined,
-            })
+            }),
+            api.getMessageStats(hours || null, undefined),
+            api.getMessageStats(hours || null, 'broadcast'),
+            api.getMessageStats(hours || null, 'user'),
         ]);
 
-        // Stats cards
+        // Stats cards (contextuelles selon l'onglet actif)
         document.getElementById('msgStatTotal').textContent = stats.total || 0;
         document.getElementById('msgStatInfo').textContent = stats.by_priority?.info || 0;
         document.getElementById('msgStatWarning').textContent = stats.by_priority?.warning || 0;
         document.getElementById('msgStatUrgent').textContent = stats.by_priority?.urgent || 0;
 
+        // Tab badges
+        document.getElementById('msgTabAllBadge').textContent = statsAll.total || 0;
+        document.getElementById('msgTabBroadcastBadge').textContent = statsBroadcast.total || 0;
+        document.getElementById('msgTabUserBadge').textContent = statsUser.total || 0;
+
         // Nav badge
         const navBadge = document.getElementById('navMessagesBadge');
-        if (stats.total > 0) {
-            navBadge.textContent = stats.total > 99 ? '99+' : stats.total;
+        if (statsAll.total > 0) {
+            navBadge.textContent = statsAll.total > 99 ? '99+' : statsAll.total;
             navBadge.style.display = 'inline';
         } else {
             navBadge.style.display = 'none';
@@ -9445,9 +9470,10 @@ async function purgeMessagesFiltered() {
     const hours = parseInt(document.getElementById('msgFilterHours')?.value) || null;
     const priority = document.getElementById('msgFilterPriority')?.value || null;
     const senderApp = document.getElementById('msgFilterApp')?.value || null;
+    const targetType = _getActiveTargetType();
     if (!confirm('Purger les messages correspondant aux filtres ?')) return;
     try {
-        const result = await api.purgeMessages({ hours, priority, senderApp });
+        const result = await api.purgeMessages({ hours, priority, senderApp, targetType });
         showToast('Succès', result.message, 'success');
         await loadMessagesPage();
     } catch (error) {
@@ -9456,9 +9482,11 @@ async function purgeMessagesFiltered() {
 }
 
 async function purgeAllMessages() {
-    if (!confirm('Purger TOUS les messages ? Cette action est irréversible.')) return;
+    const targetType = _getActiveTargetType();
+    const label = targetType === 'broadcast' ? 'TOUS les messages globaux' : (targetType === 'user' ? 'TOUS les messages individuels' : 'TOUS les messages');
+    if (!confirm(`Purger ${label} ? Cette action est irréversible.`)) return;
     try {
-        const result = await api.purgeMessages({});
+        const result = await api.purgeMessages({ targetType });
         showToast('Succès', result.message, 'success');
         await loadMessagesPage();
     } catch (error) {
@@ -9504,8 +9532,9 @@ async function exportMessages() {
     const hours = parseInt(document.getElementById('msgFilterHours')?.value) || null;
     const priority = document.getElementById('msgFilterPriority')?.value || null;
     const senderApp = document.getElementById('msgFilterApp')?.value || null;
+    const targetType = _getActiveTargetType();
     try {
-        await api.exportMessages({ hours, priority, senderApp });
+        await api.exportMessages({ hours, priority, senderApp, targetType });
         showToast('Succès', 'Export téléchargé', 'success');
     } catch (error) {
         showToast('Erreur', error.message, 'danger');
