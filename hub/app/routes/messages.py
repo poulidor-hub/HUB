@@ -7,7 +7,7 @@ Système complet qui permet :
 - M2M : envoi depuis une application via service account
 """
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, and_, or_, delete, desc, case
@@ -739,16 +739,23 @@ async def delete_messages_batch(
 
 @router.post("/m2m/send")
 async def m2m_send_message(
+    request: Request,
     payload: MessageM2MCreate,
     entity: Union[User, ServiceAccount] = Depends(get_current_entity),
     db: AsyncSession = Depends(get_db)
 ):
     """
     Endpoint M2M : une application envoie un message via son service account.
-    Auth: service account token. Le sender_app_slug est extrait du SA.
+    Auth: service account token. Le sender_app_slug est résolu depuis le header
+    X-Slug ou la première application associée au service account.
     """
     if not isinstance(entity, ServiceAccount):
         raise HTTPException(status_code=403, detail="Cet endpoint est réservé aux service accounts (M2M)")
+
+    # Résoudre le app_slug : header X-Slug > première application associée > nom du SA
+    sender_app_slug = request.headers.get("x-slug") or (
+        entity.applications[0].slug if entity.applications else None
+    ) or entity.name
 
     # Résoudre les usernames
     username_map = await _resolve_usernames(db, payload.target_usernames)
@@ -766,7 +773,7 @@ async def m2m_send_message(
         msg = UserMessage(
             sender_type="app",
             sender_id=entity.id,
-            sender_app_slug=entity.app_slug,
+            sender_app_slug=sender_app_slug,
             target_type="user",
             target_user_id=uid,
             target_username=username,
@@ -787,12 +794,12 @@ async def m2m_send_message(
 
     await db.commit()
 
-    _notify_message("messages_updated", {"action": "m2m_sent", "app": entity.app_slug, "count": len(messages_created)})
+    _notify_message("messages_updated", {"action": "m2m_sent", "app": sender_app_slug, "count": len(messages_created)})
 
     return {
         "sent": len(messages_created),
         "message_ids": [m.id for m in messages_created],
-        "sender_app": entity.app_slug,
+        "sender_app": sender_app_slug,
     }
 
 
