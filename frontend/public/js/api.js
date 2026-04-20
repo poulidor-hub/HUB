@@ -1189,20 +1189,24 @@ class HubAPI {
     }
 
     async getMessages(params = {}) {
-        const { page = 1, perPage = 50, priority, senderType, senderApp, targetUserId, search, hours } = params;
+        const { page = 1, perPage = 50, priority, senderType, senderApp, targetUserId, targetType, search, hours } = params;
         let url = `/messages/?page=${page}&per_page=${perPage}`;
         if (priority) url += `&priority=${encodeURIComponent(priority)}`;
         if (senderType) url += `&sender_type=${encodeURIComponent(senderType)}`;
         if (senderApp) url += `&sender_app=${encodeURIComponent(senderApp)}`;
         if (targetUserId) url += `&target_user_id=${targetUserId}`;
+        if (targetType) url += `&target_type=${encodeURIComponent(targetType)}`;
         if (search) url += `&search=${encodeURIComponent(search)}`;
         if (hours) url += `&hours=${hours}`;
         return this.request(url);
     }
 
-    async getMessageStats(hours = null) {
+    async getMessageStats(hours = null, targetType = null) {
         let url = '/messages/stats';
-        if (hours) url += `?hours=${hours}`;
+        const p = [];
+        if (hours) p.push(`hours=${hours}`);
+        if (targetType) p.push(`target_type=${encodeURIComponent(targetType)}`);
+        if (p.length > 0) url += '?' + p.join('&');
         return this.request(url);
     }
 
@@ -1227,12 +1231,13 @@ class HubAPI {
     }
 
     async purgeMessages(params = {}) {
-        const { hours, priority, senderApp } = params;
+        const { hours, priority, senderApp, targetType } = params;
         let url = '/messages/';
         const p = [];
         if (hours) p.push(`hours=${hours}`);
         if (priority) p.push(`priority=${encodeURIComponent(priority)}`);
         if (senderApp) p.push(`sender_app=${encodeURIComponent(senderApp)}`);
+        if (targetType) p.push(`target_type=${encodeURIComponent(targetType)}`);
         if (p.length > 0) url += '?' + p.join('&');
         return this.request(url, { method: 'DELETE' });
     }
@@ -1245,12 +1250,13 @@ class HubAPI {
     }
 
     async exportMessages(params = {}) {
-        const { hours, priority, senderApp } = params;
+        const { hours, priority, senderApp, targetType } = params;
         let url = `${API_BASE}/messages/export`;
         const p = [];
         if (hours) p.push(`hours=${hours}`);
         if (priority) p.push(`priority=${encodeURIComponent(priority)}`);
         if (senderApp) p.push(`sender_app=${encodeURIComponent(senderApp)}`);
+        if (targetType) p.push(`target_type=${encodeURIComponent(targetType)}`);
         if (p.length > 0) url += '?' + p.join('&');
         const response = await fetch(url, { headers: this.getHeaders() });
         if (!response.ok) throw new Error('Export échoué');

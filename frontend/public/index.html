@@ -1284,6 +1284,25 @@
                 </div>
             </div>
 
+            <!-- Onglets Global / Individuel -->
+            <ul class="nav nav-tabs mb-4" id="messagesTabNav" role="tablist">
+                <li class="nav-item" role="presentation">
+                    <button class="nav-link active" id="msgTabAll" type="button" role="tab" onclick="switchMessageTab('all')">
+                        <i class="bi bi-chat-dots me-1"></i>Tous <span class="badge bg-secondary ms-1" id="msgTabAllBadge">0</span>
+                    </button>
+                </li>
+                <li class="nav-item" role="presentation">
+                    <button class="nav-link" id="msgTabBroadcast" type="button" role="tab" onclick="switchMessageTab('broadcast')">
+                        <i class="bi bi-megaphone me-1"></i>Globaux <span class="badge bg-secondary ms-1" id="msgTabBroadcastBadge">0</span>
+                    </button>
+                </li>
+                <li class="nav-item" role="presentation">
+                    <button class="nav-link" id="msgTabUser" type="button" role="tab" onclick="switchMessageTab('user')">
+                        <i class="bi bi-person me-1"></i>Individuels <span class="badge bg-secondary ms-1" id="msgTabUserBadge">0</span>
+                    </button>
+                </li>
+            </ul>
+
             <!-- Stats cards -->
             <div class="row mb-4">
                 <div class="col-md-3">

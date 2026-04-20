@@ -29,6 +29,19 @@ let _ssePermissionsUpdateTimer = null;
 // Tracking des tooltips Bootstrap pour éviter les fuites mémoire
 let _activeTooltips = [];
 
+/**
+ * Parse une date ISO renvoyée par l'API (stockée en UTC sans suffixe Z).
+ * Si la chaîne n'a pas d'indicateur de timezone, on ajoute 'Z' pour que
+ * le navigateur l'interprète correctement comme UTC avant conversion en heure locale.
+ */
+function parseUTCDate(isoString) {
+    if (!isoString) return null;
+    if (typeof isoString === 'string' && !isoString.endsWith('Z') && !isoString.includes('+') && !/[-]\d{2}:\d{2}$/.test(isoString)) {
+        return new Date(isoString + 'Z');
+    }
+    return new Date(isoString);
+}
+
 // ===== Server-Sent Events (SSE) pour mises à jour temps réel =====
 let eventSource = null;
 let sseWasConnected = false; // Indique si on a déjà été connecté (pour détecter les reconnexions)
@@ -2332,7 +2345,7 @@ async function showDockerDetails(slug) {
 function formatDateTime(isoString) {
     if (!isoString) return 'N/A';
     try {
-        const date = new Date(isoString);
+        const date = parseUTCDate(isoString);
         return date.toLocaleString('fr-FR', {
             day: '2-digit',
             month: '2-digit',
@@ -3156,7 +3169,7 @@ async function deletePendingApp(slug) {
  */
 function formatDate(isoDate) {
     if (!isoDate) return '-';
-    const date = new Date(isoDate);
+    const date = parseUTCDate(isoDate);
     return date.toLocaleDateString('fr-FR', { 
         day: '2-digit', 
         month: '2-digit', 
@@ -3214,7 +3227,7 @@ function renderServiceAccountsTable(serviceAccounts) {
                         </td>
                         <td>
                             ${sa.last_used_at 
-                                ? `<small class="text-success"><i class="bi bi-check2 me-1"></i>${new Date(sa.last_used_at).toLocaleString('fr-FR')}</small>`
+                                ? `<small class="text-success"><i class="bi bi-check2 me-1"></i>${parseUTCDate(sa.last_used_at).toLocaleString('fr-FR')}</small>`
                                 : '<small class="text-muted"><i class="bi bi-hourglass me-1"></i>Jamais</small>'}
                         </td>
                         <td>
@@ -3671,7 +3684,7 @@ function renderTopUsers(topUsers) {
 
 function formatDateTime(isoString) {
     if (!isoString) return '-';
-    const date = new Date(isoString);
+    const date = parseUTCDate(isoString);
     return date.toLocaleString('fr-FR', {
         day: '2-digit',
         month: '2-digit',
@@ -7241,7 +7254,7 @@ async function previewBackupFile() {
             document.getElementById('importCountBackups').textContent = preview.app_backups_count;
             
             if (preview.exported_at) {
-                const date = new Date(preview.exported_at);
+                const date = parseUTCDate(preview.exported_at);
                 document.getElementById('previewDate').textContent = date.toLocaleString('fr-FR');
             } else {
                 document.getElementById('previewDate').textContent = '–';
@@ -7283,7 +7296,7 @@ async function previewBackupFile() {
                 document.getElementById('importCountBackups').textContent = (backupFileData.app_backups || []).length;
                 
                 if (backupFileData.exported_at) {
-                    const date = new Date(backupFileData.exported_at);
+                    const date = parseUTCDate(backupFileData.exported_at);
                     document.getElementById('previewDate').textContent = date.toLocaleString('fr-FR');
                 } else {
                     document.getElementById('previewDate').textContent = '–';
@@ -7537,7 +7550,7 @@ async function loadAppBackupsOverview() {
             // Dernier backup
             let lastBackupInfo = '-';
             if (app.last_backup_at) {
-                const lastDate = new Date(app.last_backup_at);
+                const lastDate = parseUTCDate(app.last_backup_at);
                 const statusIcon = app.last_backup_status === 'success' ? '✅' : 
                                    app.last_backup_status === 'failed' ? '❌' : '⏳';
                 lastBackupInfo = `${statusIcon} ${lastDate.toLocaleDateString('fr-FR')} ${lastDate.toLocaleTimeString('fr-FR', {hour: '2-digit', minute: '2-digit'})}`;
@@ -7546,7 +7559,7 @@ async function loadAppBackupsOverview() {
             // Prochain backup
             let nextBackupInfo = '-';
             if (app.backup_mode === 'scheduled' && app.next_backup_at) {
-                const nextDate = new Date(app.next_backup_at);
+                const nextDate = parseUTCDate(app.next_backup_at);
                 nextBackupInfo = `${nextDate.toLocaleDateString('fr-FR')} ${nextDate.toLocaleTimeString('fr-FR', {hour: '2-digit', minute: '2-digit'})}`;
             } else if (app.backup_mode === 'scheduled' && app.backup_cron) {
                 nextBackupInfo = `<code class="small">${app.backup_cron}</code>`;
@@ -7702,7 +7715,7 @@ async function showAppBackupsList(slug) {
             `;
         } else {
             tbody.innerHTML = data.backups.map(backup => {
-                const date = new Date(backup.created_at);
+                const date = parseUTCDate(backup.created_at);
                 const dateStr = `${date.toLocaleDateString('fr-FR')} ${date.toLocaleTimeString('fr-FR', {hour: '2-digit', minute: '2-digit'})}`;
                 const escapedAppName = escapeHtml(data.app_name).replace(/'/g, "\\'");
                 
@@ -9177,6 +9190,21 @@ async function confirmCsvImport() {
 
 let messagesPage = 1;
 let sendMessageModal = null;
+let currentMessageTab = 'all'; // 'all' | 'broadcast' | 'user'
+
+function switchMessageTab(tab) {
+    currentMessageTab = tab;
+    messagesPage = 1;
+    // Update active tab styling
+    document.querySelectorAll('#messagesTabNav .nav-link').forEach(el => el.classList.remove('active'));
+    const tabId = tab === 'all' ? 'msgTabAll' : (tab === 'broadcast' ? 'msgTabBroadcast' : 'msgTabUser');
+    document.getElementById(tabId)?.classList.add('active');
+    loadMessagesPage();
+}
+
+function _getActiveTargetType() {
+    return currentMessageTab === 'all' ? undefined : currentMessageTab;
+}
 
 // ===== Admin : Page Messages =====
 
@@ -9188,29 +9216,39 @@ async function loadMessagesPage() {
     const hours = document.getElementById('msgFilterHours')?.value || '';
 
     try {
-        const [stats, data] = await Promise.all([
-            api.getMessageStats(hours || null),
+        const targetType = _getActiveTargetType();
+        const [stats, data, statsAll, statsBroadcast, statsUser] = await Promise.all([
+            api.getMessageStats(hours || null, targetType),
             api.getMessages({
                 page: messagesPage,
                 perPage: 50,
                 priority: priority || undefined,
                 senderType: senderType || undefined,
                 senderApp: senderApp || undefined,
+                targetType: targetType,
                 search: search || undefined,
                 hours: hours || undefined,
-            })
+            }),
+            api.getMessageStats(hours || null, undefined),
+            api.getMessageStats(hours || null, 'broadcast'),
+            api.getMessageStats(hours || null, 'user'),
         ]);
 
-        // Stats cards
+        // Stats cards (contextuelles selon l'onglet actif)
         document.getElementById('msgStatTotal').textContent = stats.total || 0;
         document.getElementById('msgStatInfo').textContent = stats.by_priority?.info || 0;
         document.getElementById('msgStatWarning').textContent = stats.by_priority?.warning || 0;
         document.getElementById('msgStatUrgent').textContent = stats.by_priority?.urgent || 0;
 
+        // Tab badges
+        document.getElementById('msgTabAllBadge').textContent = statsAll.total || 0;
+        document.getElementById('msgTabBroadcastBadge').textContent = statsBroadcast.total || 0;
+        document.getElementById('msgTabUserBadge').textContent = statsUser.total || 0;
+
         // Nav badge
         const navBadge = document.getElementById('navMessagesBadge');
-        if (stats.total > 0) {
-            navBadge.textContent = stats.total > 99 ? '99+' : stats.total;
+        if (statsAll.total > 0) {
+            navBadge.textContent = statsAll.total > 99 ? '99+' : statsAll.total;
             navBadge.style.display = 'inline';
         } else {
             navBadge.style.display = 'none';
@@ -9236,7 +9274,7 @@ function renderMessagesTable(data) {
     }
 
     tbody.innerHTML = data.messages.map(m => {
-        const date = new Date(m.created_at).toLocaleString('fr-FR', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' });
+        const date = parseUTCDate(m.created_at).toLocaleString('fr-FR', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' });
         const priorityBadge = getMessagePriorityBadge(m.priority);
         const sender = m.sender_app_slug
             ? `<i class="bi bi-robot me-1"></i>${escapeHtml(m.sender_app_slug)}`
@@ -9305,7 +9343,7 @@ async function showMessageDetail(messageId) {
         const receipts = data.read_receipts || [];
 
         const receiptsHtml = receipts.length > 0
-            ? receipts.map(r => `<tr><td>${escapeHtml(r.username)}</td><td>${new Date(r.read_at).toLocaleString('fr-FR')}</td></tr>`).join('')
+            ? receipts.map(r => `<tr><td>${escapeHtml(r.username)}</td><td>${parseUTCDate(r.read_at).toLocaleString('fr-FR')}</td></tr>`).join('')
             : '<tr><td colspan="2" class="text-muted text-center">Aucun accusé de lecture</td></tr>';
 
         const modal = `
@@ -9329,10 +9367,10 @@ async function showMessageDetail(messageId) {
                         </div>
                         <div class="row mb-3">
                             <div class="col-md-6">
-                                <small class="text-muted">Date</small><br>${new Date(m.created_at).toLocaleString('fr-FR')}
+                                <small class="text-muted">Date</small><br>${parseUTCDate(m.created_at).toLocaleString('fr-FR')}
                             </div>
                             <div class="col-md-6">
-                                <small class="text-muted">Expiration</small><br>${m.expires_at ? new Date(m.expires_at).toLocaleString('fr-FR') : 'Aucune'}
+                                <small class="text-muted">Expiration</small><br>${m.expires_at ? parseUTCDate(m.expires_at).toLocaleString('fr-FR') : 'Aucune'}
                             </div>
                         </div>
                         ${m.body ? `<div class="alert alert-light mb-3">${escapeHtml(m.body)}</div>` : ''}
@@ -9432,9 +9470,10 @@ async function purgeMessagesFiltered() {
     const hours = parseInt(document.getElementById('msgFilterHours')?.value) || null;
     const priority = document.getElementById('msgFilterPriority')?.value || null;
     const senderApp = document.getElementById('msgFilterApp')?.value || null;
+    const targetType = _getActiveTargetType();
     if (!confirm('Purger les messages correspondant aux filtres ?')) return;
     try {
-        const result = await api.purgeMessages({ hours, priority, senderApp });
+        const result = await api.purgeMessages({ hours, priority, senderApp, targetType });
         showToast('Succès', result.message, 'success');
         await loadMessagesPage();
     } catch (error) {
@@ -9443,9 +9482,11 @@ async function purgeMessagesFiltered() {
 }
 
 async function purgeAllMessages() {
-    if (!confirm('Purger TOUS les messages ? Cette action est irréversible.')) return;
+    const targetType = _getActiveTargetType();
+    const label = targetType === 'broadcast' ? 'TOUS les messages globaux' : (targetType === 'user' ? 'TOUS les messages individuels' : 'TOUS les messages');
+    if (!confirm(`Purger ${label} ? Cette action est irréversible.`)) return;
     try {
-        const result = await api.purgeMessages({});
+        const result = await api.purgeMessages({ targetType });
         showToast('Succès', result.message, 'success');
         await loadMessagesPage();
     } catch (error) {
@@ -9491,8 +9532,9 @@ async function exportMessages() {
     const hours = parseInt(document.getElementById('msgFilterHours')?.value) || null;
     const priority = document.getElementById('msgFilterPriority')?.value || null;
     const senderApp = document.getElementById('msgFilterApp')?.value || null;
+    const targetType = _getActiveTargetType();
     try {
-        await api.exportMessages({ hours, priority, senderApp });
+        await api.exportMessages({ hours, priority, senderApp, targetType });
         showToast('Succès', 'Export téléchargé', 'success');
     } catch (error) {
         showToast('Erreur', error.message, 'danger');
@@ -9547,7 +9589,7 @@ async function loadUserMessages() {
         };
 
         body.innerHTML = messages.map(m => {
-            const time = new Date(m.created_at).toLocaleString('fr-FR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+            const time = parseUTCDate(m.created_at).toLocaleString('fr-FR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
             const readClass = m.is_read ? 'message-item-read' : 'message-item-unread';
             const priority = m.priority || 'normal';
             const priorityClass = `message-item-${priority}`;
@@ -9658,7 +9700,7 @@ function showNotificationCard(msgData) {
     };
 
     const time = msgData.created_at
-        ? new Date(msgData.created_at).toLocaleString('fr-FR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
+        ? parseUTCDate(msgData.created_at).toLocaleString('fr-FR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
         : new Date().toLocaleString('fr-FR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
 
     const card = document.createElement('div');
@@ -10043,7 +10085,7 @@ async function loadAccountRequestsTab() {
             <tbody>`;
 
         for (const req of requests) {
-            const date = new Date(req.created_at).toLocaleDateString('fr-FR', {
+            const date = parseUTCDate(req.created_at).toLocaleDateString('fr-FR', {
                 day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit'
             });
             const safeFN = escapeHtml(req.first_name).replace(/'/g, "\\'");
