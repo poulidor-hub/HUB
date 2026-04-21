@@ -836,6 +836,9 @@ function showPage(page) {
     document.getElementById('adminSection').classList.add('d-none');
     document.getElementById('cloneMigrateSection').classList.add('d-none');
     document.getElementById('messagesSection').classList.add('d-none');
+    document.getElementById('userInboxSection')?.classList.add('d-none');
+    _clearInboxMarkReadTimer();
+    _resetInboxDetailView();
     
     // Arrêter les timers admin si on quitte la page admin
     stopConnectivityRefresh();
@@ -911,6 +914,10 @@ function showPage(page) {
             document.getElementById('navMessages')?.classList.add('active');
             loadMessagesPage();
             break;
+        case 'inbox':
+            document.getElementById('userInboxSection').classList.remove('d-none');
+            loadInboxPage();
+            break;
     }
 }
 
@@ -965,9 +972,12 @@ function showLoginScreen() {
     document.getElementById('changePasswordBtn').classList.add('d-none');
     document.getElementById('adminBtn').classList.add('d-none');
     document.getElementById('adminNavigation').classList.add('d-none');
-    document.getElementById('messageBellContainer').classList.add('d-none');
-    document.getElementById('messagePanel').classList.add('d-none');
+    document.getElementById('messagesSection').classList.add('d-none');
+    document.getElementById('userInboxSection')?.classList.add('d-none');
+    document.getElementById('messageBellContainer')?.classList.add('d-none');
     document.getElementById('loginForm').reset();
+    _clearInboxMarkReadTimer();
+    _resetInboxDetailView();
 
     // Fail-closed : masquer le bouton avant le fetch, ne l'afficher que si le setting le confirme
     const accountBtn = document.getElementById('accountRequestButton');
@@ -9214,6 +9224,7 @@ async function loadMessagesPage() {
     const senderApp = document.getElementById('msgFilterApp')?.value || '';
     const search = document.getElementById('msgFilterSearch')?.value || '';
     const hours = document.getElementById('msgFilterHours')?.value || '';
+    const status = document.querySelector('input[name="msgStatus"]:checked')?.value || 'all';
 
     try {
         const targetType = _getActiveTargetType();
@@ -9228,13 +9239,17 @@ async function loadMessagesPage() {
                 targetType: targetType,
                 search: search || undefined,
                 hours: hours || undefined,
+                status: status === 'all' ? undefined : status,
             }),
             api.getMessageStats(hours || null, undefined),
             api.getMessageStats(hours || null, 'broadcast'),
             api.getMessageStats(hours || null, 'user'),
         ]);
 
-        // Stats cards (contextuelles selon l'onglet actif)
+        // KPI cards (basés sur statsAll pour vision globale)
+        renderKpiCards(statsAll);
+
+        // Compteurs secondaires par priorité (contextuels selon onglet target)
         document.getElementById('msgStatTotal').textContent = stats.total || 0;
         document.getElementById('msgStatInfo').textContent = stats.by_priority?.info || 0;
         document.getElementById('msgStatWarning').textContent = stats.by_priority?.warning || 0;
@@ -9260,49 +9275,139 @@ async function loadMessagesPage() {
     }
 }
 
+function renderKpiCards(stats) {
+    document.getElementById('kpiActiveCount').textContent = stats.total_active ?? 0;
+    const rate = stats.avg_read_rate;
+    document.getElementById('kpiReadRate').textContent =
+        (rate !== undefined && rate !== null) ? `${Math.round(rate * 100)}%` : '—';
+    document.getElementById('kpiAppsCount').textContent = stats.apps_count ?? 0;
+    document.getElementById('kpiExpiredCount').textContent = stats.total_expired ?? 0;
+}
+
+function _statusBadge(m) {
+    if (m.status === 'archived') {
+        return '<span class="notif-status-badge archived"><i class="bi bi-archive-fill me-1"></i>Archivée</span>';
+    }
+    if (m.expires_at && parseUTCDate(m.expires_at) < new Date()) {
+        return '<span class="notif-status-badge expired"><i class="bi bi-hourglass-bottom me-1"></i>Expirée</span>';
+    }
+    return '<span class="notif-status-badge active"><i class="bi bi-check-circle-fill me-1"></i>Active</span>';
+}
+
+function _sourceBadge(m) {
+    if (m.sender_app_slug) {
+        return `<span class="notif-source-badge app"><i class="bi bi-app-indicator me-1"></i>${escapeHtml(m.sender_app_slug)}</span>`;
+    }
+    if (m.sender_type === 'system') {
+        return '<span class="notif-source-badge system"><i class="bi bi-gear-fill me-1"></i>Système</span>';
+    }
+    return `<span class="notif-source-badge admin"><i class="bi bi-person-fill me-1"></i>${escapeHtml(m.sender_username || 'Admin')}</span>`;
+}
+
+function _engagementBar(m) {
+    const total = m.total_targets || 0;
+    const read = m.read_count || 0;
+    const pct = total > 0 ? Math.round((read / total) * 100) : 0;
+    const barClass = pct >= 75 ? 'bg-success' : (pct >= 40 ? 'bg-info' : (pct > 0 ? 'bg-warning' : 'bg-secondary'));
+    return `<div class="notif-engagement">
+        <div class="notif-engagement-meta"><span>${read}/${total}</span><span class="text-muted">${pct}%</span></div>
+        <div class="notif-engagement-bar"><div class="notif-engagement-bar-fill ${barClass}" style="width:${pct}%"></div></div>
+    </div>`;
+}
+
+function _priorityIcon(p) {
+    if (p === 'urgent') return '<i class="bi bi-exclamation-octagon-fill text-danger me-1" title="Urgent"></i>';
+    if (p === 'warning') return '<i class="bi bi-exclamation-triangle-fill text-warning me-1" title="Warning"></i>';
+    return '<i class="bi bi-info-circle-fill text-info me-1" title="Info"></i>';
+}
+
 function renderMessagesTable(data) {
     const tbody = document.getElementById('messagesTableBody');
-    // Reset select all checkbox
     const selectAll = document.getElementById('msgSelectAll');
     if (selectAll) selectAll.checked = false;
     updateDeleteSelectedButton();
 
     if (!data.messages || data.messages.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted">Aucun message</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted">Aucun message</td></tr>';
         document.getElementById('messagesPagination').innerHTML = '';
         return;
     }
 
     tbody.innerHTML = data.messages.map(m => {
-        const date = parseUTCDate(m.created_at).toLocaleString('fr-FR', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' });
-        const priorityBadge = getMessagePriorityBadge(m.priority);
-        const sender = m.sender_app_slug
-            ? `<i class="bi bi-robot me-1"></i>${escapeHtml(m.sender_app_slug)}`
-            : (escapeHtml(m.sender_username || m.sender_type));
-        const target = m.target_type === 'broadcast'
-            ? '<span class="badge bg-secondary">Tous</span>'
-            : escapeHtml(m.target_username || `User #${m.target_user_id}`);
-        const readInfo = `${m.read_count}/${m.total_targets}`;
-        const rowClass = m.priority === 'urgent' ? 'table-danger' : (m.priority === 'warning' ? 'table-warning' : '');
+        const created = parseUTCDate(m.created_at).toLocaleString('fr-FR', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' });
+        const expiresInfo = m.expires_at
+            ? `<div class="small text-muted"><i class="bi bi-hourglass-split me-1"></i>Expire le ${parseUTCDate(m.expires_at).toLocaleDateString('fr-FR')}</div>`
+            : '<div class="small text-muted"><i class="bi bi-infinity me-1"></i>Sans expiration</div>';
+        const archivedInfo = m.archived_at
+            ? `<div class="small text-muted"><i class="bi bi-archive me-1"></i>Archivée ${parseUTCDate(m.archived_at).toLocaleDateString('fr-FR')}</div>`
+            : '';
+        const bodyExtract = m.body ? `<div class="small text-muted text-truncate" style="max-width: 320px;">${escapeHtml(m.body)}</div>` : '';
+        const targetLabel = m.target_type === 'broadcast'
+            ? '<span class="badge bg-light text-dark border">Tous</span>'
+            : `<span class="badge bg-light text-dark border" title="${escapeHtml(m.target_username || '')}">@${escapeHtml(m.target_username || ('User #' + m.target_user_id))}</span>`;
 
-        return `<tr class="${rowClass}">
+        const isArchived = m.status === 'archived';
+        const archiveBtn = isArchived
+            ? `<button class="btn btn-outline-success btn-sm py-0 px-1" onclick="restoreMessageAction(${m.id})" title="Restaurer"><i class="bi bi-arrow-counterclockwise"></i></button>`
+            : `<button class="btn btn-outline-secondary btn-sm py-0 px-1" onclick="archiveMessageAction(${m.id})" title="Archiver"><i class="bi bi-archive"></i></button>`;
+
+        return `<tr>
             <td><input type="checkbox" class="msg-select-checkbox" value="${m.id}" onchange="updateDeleteSelectedButton()"></td>
-            <td class="small">${date}</td>
-            <td>${priorityBadge}</td>
-            <td class="small">${sender}</td>
-            <td>${escapeHtml(m.title)}</td>
-            <td class="small">${target}</td>
-            <td class="small">${readInfo}</td>
             <td>
-                <button class="btn btn-outline-primary btn-sm py-0 px-1" onclick="showMessageDetail(${m.id})" title="Détail">
-                    <i class="bi bi-eye"></i>
-                </button>
+                <div class="d-flex align-items-start">
+                    <div class="me-2 mt-1">${_priorityIcon(m.priority)}</div>
+                    <div>
+                        <div><strong>${escapeHtml(m.title)}</strong></div>
+                        ${bodyExtract}
+                        <div class="small text-muted mt-1">${targetLabel} <span class="ms-2"><i class="bi bi-clock me-1"></i>${created}</span></div>
+                    </div>
+                </div>
+            </td>
+            <td>${_statusBadge(m)}${expiresInfo}${archivedInfo}</td>
+            <td>${_sourceBadge(m)}</td>
+            <td>${_engagementBar(m)}</td>
+            <td class="text-end">
+                <div class="btn-group btn-group-sm" role="group">
+                    <button class="btn btn-outline-primary btn-sm py-0 px-1" onclick="showMessageDetail(${m.id})" title="Détail"><i class="bi bi-eye"></i></button>
+                    ${archiveBtn}
+                    <button class="btn btn-outline-danger btn-sm py-0 px-1" onclick="hardDeleteMessageAction(${m.id})" title="Supprimer définitivement"><i class="bi bi-trash"></i></button>
+                </div>
             </td>
         </tr>`;
     }).join('');
 
-    // Pagination
     renderMessagesPagination(data.page, data.pages, data.total);
+}
+
+async function archiveMessageAction(id) {
+    try {
+        await api.archiveMessage(id);
+        showToast('Archivée', 'La notification a été archivée', 'success');
+        await loadMessagesPage();
+    } catch (e) {
+        showToast('Erreur', e.message, 'danger');
+    }
+}
+
+async function restoreMessageAction(id) {
+    try {
+        await api.restoreMessage(id);
+        showToast('Restaurée', 'La notification a été restaurée', 'success');
+        await loadMessagesPage();
+    } catch (e) {
+        showToast('Erreur', e.message, 'danger');
+    }
+}
+
+async function hardDeleteMessageAction(id) {
+    if (!confirm('Supprimer définitivement cette notification ? Cette action est irréversible.')) return;
+    try {
+        await api.hardDeleteMessage(id);
+        showToast('Supprimée', 'La notification a été supprimée définitivement', 'success');
+        await loadMessagesPage();
+    } catch (e) {
+        showToast('Erreur', e.message, 'danger');
+    }
 }
 
 function getMessagePriorityBadge(priority) {
@@ -9471,7 +9576,7 @@ async function purgeMessagesFiltered() {
     const priority = document.getElementById('msgFilterPriority')?.value || null;
     const senderApp = document.getElementById('msgFilterApp')?.value || null;
     const targetType = _getActiveTargetType();
-    if (!confirm('Purger les messages correspondant aux filtres ?')) return;
+    if (!confirm('Archiver les notifications correspondant aux filtres ? Elles resteront consultables dans l’onglet « Archivées ».')) return;
     try {
         const result = await api.purgeMessages({ hours, priority, senderApp, targetType });
         showToast('Succès', result.message, 'success');
@@ -9483,10 +9588,10 @@ async function purgeMessagesFiltered() {
 
 async function purgeAllMessages() {
     const targetType = _getActiveTargetType();
-    const label = targetType === 'broadcast' ? 'TOUS les messages globaux' : (targetType === 'user' ? 'TOUS les messages individuels' : 'TOUS les messages');
-    if (!confirm(`Purger ${label} ? Cette action est irréversible.`)) return;
+    const label = targetType === 'broadcast' ? 'TOUTES les notifications globales' : (targetType === 'user' ? 'TOUTES les notifications individuelles' : 'TOUTES les notifications du filtre');
+    if (!confirm(`Suppression DÉFINITIVE de ${label} ? Cette action est irréversible et supprime aussi les accusés de lecture.`)) return;
     try {
-        const result = await api.purgeMessages({ targetType });
+        const result = await api.purgeMessages({ targetType, hard: true });
         showToast('Succès', result.message, 'success');
         await loadMessagesPage();
     } catch (error) {
@@ -9503,29 +9608,34 @@ function toggleSelectAllMessages(checkbox) {
 
 function updateDeleteSelectedButton() {
     const selected = document.querySelectorAll('.msg-select-checkbox:checked');
-    const btn = document.getElementById('btnDeleteSelected');
-    const count = document.getElementById('deleteSelectedCount');
+    const btn = document.getElementById('btnArchiveSelected');
+    const count = document.getElementById('archiveSelectedCount');
     if (btn) {
         if (selected.length > 0) {
             btn.style.display = 'inline-flex';
-            count.textContent = selected.length;
+            if (count) count.textContent = selected.length;
         } else {
             btn.style.display = 'none';
         }
     }
 }
 
-async function deleteSelectedMessages() {
+async function archiveSelectedMessages() {
     const selected = Array.from(document.querySelectorAll('.msg-select-checkbox:checked')).map(cb => parseInt(cb.value));
     if (selected.length === 0) return;
-    if (!confirm(`Supprimer ${selected.length} message(s) sélectionné(s) ?`)) return;
+    if (!confirm(`Archiver ${selected.length} notification(s) sélectionnée(s) ?`)) return;
     try {
-        const result = await api.deleteMessagesByIds(selected);
+        const result = await api.deleteMessagesByIds(selected, false);
         showToast('Succès', result.message, 'success');
         await loadMessagesPage();
     } catch (error) {
         showToast('Erreur', error.message, 'danger');
     }
+}
+
+// Conservé pour compatibilité (ancien bouton non utilisé)
+async function deleteSelectedMessages() {
+    return archiveSelectedMessages();
 }
 
 async function exportMessages() {
@@ -9563,91 +9673,325 @@ function updateMessageBellBadge(count) {
     }
 }
 
-function toggleMessagePanel() {
-    const panel = document.getElementById('messagePanel');
-    if (panel.classList.contains('d-none')) {
-        panel.classList.remove('d-none');
-        loadUserMessages();
-    } else {
-        panel.classList.add('d-none');
+// ===== User Inbox (3 volets : sidebar / liste / détail) =====
+
+let _inboxMessages = [];
+let _inboxFilter = { tab: 'inbox', appSlug: null };
+let _inboxSelectedId = null;
+let _inboxMarkReadTimer = null;
+const INBOX_HIDDEN_KEY = 'hub_inbox_hidden_ids';
+
+function _getInboxHiddenIds() {
+    try {
+        const raw = JSON.parse(localStorage.getItem(INBOX_HIDDEN_KEY) || '[]');
+        return new Set(Array.isArray(raw) ? raw : []);
+    } catch {
+        return new Set();
     }
 }
 
-async function loadUserMessages() {
+function _setInboxHidden(id) {
     try {
-        const messages = await api.getMyMessages();
-        const body = document.getElementById('messagePanelBody');
-        if (!messages || messages.length === 0) {
-            body.innerHTML = '<p class="text-muted text-center small mt-3">Aucun message</p>';
-            return;
-        }
+        const s = _getInboxHiddenIds();
+        s.add(id);
+        localStorage.setItem(INBOX_HIDDEN_KEY, JSON.stringify([...s]));
+        return true;
+    } catch {
+        showToast('Limite atteinte', 'Impossible de mémoriser plus de notifications masquées sur ce navigateur.', 'warning');
+        return false;
+    }
+}
 
-        const priorityIcons = {
-            urgent: '<svg class="notif-card-icon-svg notif-icon-urgent" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>',
-            warning: '<svg class="notif-card-icon-svg notif-icon-warning" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>',
-            normal: '<svg class="notif-card-icon-svg notif-icon-normal" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>'
-        };
+function _getInboxLayout() {
+    return document.querySelector('#userInboxSection .inbox-layout');
+}
 
-        body.innerHTML = messages.map(m => {
-            const time = parseUTCDate(m.created_at).toLocaleString('fr-FR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
-            const readClass = m.is_read ? 'message-item-read' : 'message-item-unread';
-            const priority = m.priority || 'normal';
-            const priorityClass = `message-item-${priority}`;
-            const icon = priorityIcons[priority] || priorityIcons.normal;
+function _resetInboxDetailView() {
+    _getInboxLayout()?.classList.remove('show-detail');
+}
 
-            return `<div class="message-item ${readClass} ${priorityClass}" data-msg-id="${m.id}">
-                <div class="message-item-icon">${icon}</div>
-                <div class="message-item-content">
-                    <div class="message-item-header">
-                        <strong class="message-item-title">${escapeHtml(m.title)}</strong>
-                        ${!m.is_read ? `<button class="message-item-mark-read" onclick="markSingleMessageRead(${m.id})" title="Marquer comme lu">
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
-                        </button>` : ''}
-                    </div>
-                    ${m.body ? `<p class="message-item-body">${escapeHtml(m.body)}</p>` : ''}
-                    ${m.action_url ? `
-                        <div class="message-item-action-wrapper">
-                            <a href="${escapeHtml(m.action_url)}" target="_blank" rel="noopener noreferrer" class="message-item-action">
-                                ${escapeHtml(m.action_label || 'Consulter')}
-                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
-                            </a>
-                        </div>
-                    ` : ''}
-                    <div class="message-item-meta">
-                        ${(m.sender_app_slug || m.sender_type) ? `
-                            <span class="message-item-sender">
-                                <span class="message-item-sender-dot"></span>
-                                ${escapeHtml(m.sender_app_slug || m.sender_type)}
-                            </span>
-                        ` : ''}
-                        <span class="message-item-time">
-                            <svg class="message-item-time-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-                            ${time}
-                        </span>
+function _showInboxDetailView() {
+    if (window.matchMedia('(max-width: 991.98px)').matches) {
+        _getInboxLayout()?.classList.add('show-detail');
+    }
+}
+
+function _clearInboxMarkReadTimer() {
+    if (_inboxMarkReadTimer) {
+        clearTimeout(_inboxMarkReadTimer);
+        _inboxMarkReadTimer = null;
+    }
+}
+
+async function loadInboxPage() {
+    try {
+        _inboxMessages = await api.getMyMessages() || [];
+    } catch (e) {
+        document.getElementById('inboxListBody').innerHTML =
+            '<div class="text-center text-danger small py-4">Erreur de chargement</div>';
+        return;
+    }
+    _renderInboxSidebar();
+    _renderInboxList();
+
+    const visibleMessages = _filterInboxMessages();
+    const selectedMessage = visibleMessages.find(message => message.id === _inboxSelectedId);
+    if (selectedMessage) {
+        _renderInboxDetail(selectedMessage);
+    } else {
+        _inboxSelectedId = null;
+        _renderInboxDetailEmpty();
+        _resetInboxDetailView();
+    }
+}
+
+function _renderInboxSidebar() {
+    const unread = _inboxMessages.filter(m => !m.is_read && !_isExpired(m)).length;
+    const badge = document.getElementById('inboxUnreadBadge');
+    if (badge) {
+        badge.textContent = unread > 99 ? '99+' : unread;
+        badge.style.display = unread > 0 ? 'inline-block' : 'none';
+    }
+
+    const hidden = _getInboxHiddenIds();
+    const apps = new Map();
+    _inboxMessages.forEach(m => {
+        if (hidden.has(m.id)) return;
+        const slug = m.sender_app_slug || (m.sender_type === 'system' ? '__system' : '__admin');
+        const label = m.sender_app_slug || (m.sender_type === 'system' ? 'Système' : 'Administration');
+        const entry = apps.get(slug) || { label, count: 0, unread: 0 };
+        entry.count += 1;
+        if (!m.is_read) entry.unread += 1;
+        apps.set(slug, entry);
+    });
+    const appList = document.getElementById('inboxAppList');
+    if (apps.size === 0) {
+        appList.innerHTML = '<div class="text-muted small px-3 py-2">Aucune source</div>';
+    } else {
+        appList.innerHTML = [...apps.entries()].map(([slug, info]) => {
+            const active = _inboxFilter.appSlug === slug ? 'inbox-tab-active' : '';
+            const badge = info.unread > 0 ? `<span class="badge bg-primary ms-auto">${info.unread}</span>` : `<span class="text-muted small ms-auto">${info.count}</span>`;
+            return `<button class="inbox-tab ${active}" onclick="selectInboxApp('${slug}')">
+                <i class="bi bi-app me-2"></i>${escapeHtml(info.label)} ${badge}
+            </button>`;
+        }).join('');
+    }
+}
+
+function _isExpired(m) {
+    return m.expires_at && parseUTCDate(m.expires_at) < new Date();
+}
+
+function _filterInboxMessages() {
+    const hidden = _getInboxHiddenIds();
+    let list = _inboxMessages.filter(m => !hidden.has(m.id));
+    if (_inboxFilter.appSlug) {
+        list = list.filter(m => {
+            const slug = m.sender_app_slug || (m.sender_type === 'system' ? '__system' : '__admin');
+            return slug === _inboxFilter.appSlug;
+        });
+    } else if (_inboxFilter.tab === 'inbox') {
+        list = list.filter(m => !_isExpired(m));
+    }
+    // history: tout (sauf hidden)
+    return list.sort((a, b) => parseUTCDate(b.created_at) - parseUTCDate(a.created_at));
+}
+
+function _renderInboxList() {
+    const body = document.getElementById('inboxListBody');
+    const title = document.getElementById('inboxListTitle');
+    if (_inboxFilter.appSlug) {
+        title.textContent = 'Filtre application';
+    } else {
+        title.textContent = _inboxFilter.tab === 'history' ? 'Historique' : 'Boîte de réception';
+    }
+    const list = _filterInboxMessages();
+    if (list.length === 0) {
+        body.innerHTML = '<div class="text-center text-muted small py-5"><i class="bi bi-inbox" style="font-size:2rem;"></i><div class="mt-2">Aucune notification</div></div>';
+        return;
+    }
+    body.innerHTML = list.map(m => {
+        const time = parseUTCDate(m.created_at).toLocaleString('fr-FR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+        const readCls = m.is_read ? 'read' : 'unread';
+        const selectedCls = _inboxSelectedId === m.id ? 'selected' : '';
+        const prio = m.priority || 'info';
+        const prioCls = prio === 'urgent' ? 'inbox-msg-item-priority-urgent'
+                      : prio === 'warning' ? 'inbox-msg-item-priority-warning'
+                      : 'inbox-msg-item-priority-info';
+        const source = m.sender_app_slug || (m.sender_type === 'system' ? 'Système' : (m.sender_username || 'Admin'));
+        return `<div class="inbox-msg-item ${readCls} ${selectedCls} ${prioCls}" onclick="selectInboxMessage(${m.id})">
+            <div class="inbox-msg-item-top">
+                <strong class="inbox-msg-item-title">${escapeHtml(m.title)}</strong>
+                <span class="inbox-msg-item-time">${time}</span>
+            </div>
+            <div class="inbox-msg-item-source"><i class="bi bi-app-indicator me-1"></i>${escapeHtml(source)}</div>
+            ${m.body ? `<div class="inbox-msg-item-extract">${escapeHtml(m.body)}</div>` : ''}
+        </div>`;
+    }).join('');
+}
+
+function selectInboxTab(tab) {
+    _clearInboxMarkReadTimer();
+    _inboxFilter.tab = tab;
+    _inboxFilter.appSlug = null;
+    _inboxSelectedId = null;
+    document.getElementById('inboxTabInbox').classList.toggle('inbox-tab-active', tab === 'inbox');
+    document.getElementById('inboxTabHistory').classList.toggle('inbox-tab-active', tab === 'history');
+    _renderInboxSidebar();
+    _renderInboxList();
+    _renderInboxDetailEmpty();
+    _resetInboxDetailView();
+}
+
+function selectInboxApp(slug) {
+    _clearInboxMarkReadTimer();
+    _inboxFilter.appSlug = slug;
+    _inboxSelectedId = null;
+    document.getElementById('inboxTabInbox').classList.remove('inbox-tab-active');
+    document.getElementById('inboxTabHistory').classList.remove('inbox-tab-active');
+    _renderInboxSidebar();
+    _renderInboxList();
+    _renderInboxDetailEmpty();
+    _resetInboxDetailView();
+}
+
+function _renderInboxDetailEmpty() {
+    document.getElementById('inboxDetail').innerHTML =
+        `<div class="inbox-detail-empty">
+            <i class="bi bi-envelope-open" style="font-size: 3rem; opacity: 0.3;"></i>
+            <p class="mt-3">Sélectionnez un message pour le lire</p>
+        </div>`;
+}
+
+function selectInboxMessage(id) {
+    _clearInboxMarkReadTimer();
+    _inboxSelectedId = id;
+    const m = _inboxMessages.find(x => x.id === id);
+    if (!m) return;
+    _renderInboxList();
+    _renderInboxDetail(m);
+    _showInboxDetailView();
+
+    if (!m.is_read) {
+        _inboxMarkReadTimer = setTimeout(() => {
+            if (_inboxSelectedId !== id || currentPage !== 'inbox') {
+                _inboxMarkReadTimer = null;
+                return;
+            }
+
+            api.markMessageRead(id).then(() => {
+                m.is_read = true;
+                m.read_at = new Date().toISOString();
+                const badge = document.getElementById('messageBellBadge');
+                const cur = parseInt(badge?.textContent) || 0;
+                updateMessageBellBadge(Math.max(0, cur - 1));
+                _renderInboxSidebar();
+                _renderInboxList();
+            }).catch(() => {}).finally(() => {
+                _inboxMarkReadTimer = null;
+            });
+        }, 1000);
+    }
+}
+
+function _renderInboxDetail(m) {
+    const created = parseUTCDate(m.created_at).toLocaleString('fr-FR');
+    const expires = m.expires_at ? parseUTCDate(m.expires_at).toLocaleString('fr-FR') : null;
+    const source = m.sender_app_slug || (m.sender_type === 'system' ? 'Système' : (m.sender_username || 'Admin'));
+    const prio = m.priority || 'info';
+    const prioBadge = prio === 'urgent' ? '<span class="badge bg-danger"><i class="bi bi-exclamation-octagon-fill me-1"></i>Urgent</span>'
+                    : prio === 'warning' ? '<span class="badge bg-warning text-dark"><i class="bi bi-exclamation-triangle-fill me-1"></i>Warning</span>'
+                    : '<span class="badge bg-info"><i class="bi bi-info-circle-fill me-1"></i>Info</span>';
+    const action = m.action_url
+        ? `<button type="button" class="btn btn-primary" data-action-url="${escapeHtml(m.action_url)}" onclick="inboxClickActionFromButton(this, ${m.id})">
+              <i class="bi bi-box-arrow-up-right me-2"></i>${escapeHtml(m.action_label || 'Consulter')}
+           </button>` : '';
+
+    document.getElementById('inboxDetail').innerHTML = `
+        <div class="inbox-detail-header">
+            <div class="d-flex align-items-start gap-2">
+                <button type="button" class="btn btn-sm btn-outline-secondary d-lg-none" onclick="returnToInboxList()" title="Retour à la liste">
+                    <i class="bi bi-arrow-left"></i>
+                </button>
+                <div class="flex-grow-1">
+                    <h4 class="mb-1">${escapeHtml(m.title)}</h4>
+                    <div class="text-muted small">
+                        ${prioBadge}
+                        <span class="ms-2"><i class="bi bi-app-indicator me-1"></i>${escapeHtml(source)}</span>
+                        <span class="ms-2"><i class="bi bi-clock me-1"></i>${created}</span>
+                        ${expires ? `<span class="ms-2"><i class="bi bi-hourglass-split me-1"></i>Expire le ${expires}</span>` : ''}
                     </div>
                 </div>
-            </div>`;
-        }).join('');
-    } catch (error) {
-        document.getElementById('messagePanelBody').innerHTML = '<p class="text-danger text-center small mt-3">Erreur chargement</p>';
+                <button class="btn btn-sm btn-outline-danger" onclick="userDeleteFromInbox(${m.id})" title="Retirer de ma liste">
+                    <i class="bi bi-trash"></i>
+                </button>
+            </div>
+        </div>
+        <div class="inbox-detail-body">
+            ${m.body ? `<div class="inbox-detail-text">${escapeHtml(m.body).replace(/\n/g, '<br>')}</div>` : '<div class="text-muted">(Aucun contenu)</div>'}
+            ${action ? `<div class="mt-4">${action}</div>` : ''}
+        </div>
+    `;
+}
+
+function inboxClickActionFromButton(button, id) {
+    const url = button?.dataset?.actionUrl;
+    if (!url) {
+        showToast('Lien indisponible', 'Aucune URL d’action n’est disponible pour cette notification.', 'warning');
+        return;
     }
+    inboxClickAction(id, url);
+}
+
+async function inboxClickAction(id, url) {
+    try {
+        await api.markMessageClicked(id);
+    } catch {
+        showToast('Information', 'Le suivi du clic a échoué, mais le lien va être ouvert.', 'warning');
+    }
+    window.open(url, '_blank', 'noopener');
+}
+
+function returnToInboxList() {
+    _clearInboxMarkReadTimer();
+    _inboxSelectedId = null;
+    _renderInboxList();
+    _renderInboxDetailEmpty();
+    _resetInboxDetailView();
+}
+
+function userDeleteFromInbox(id) {
+    if (!confirm('Retirer cette notification de votre boîte ? (Elle reste visible pour les administrateurs.)')) return;
+    _clearInboxMarkReadTimer();
+    if (!_setInboxHidden(id)) return;
+    _inboxSelectedId = null;
+    _renderInboxSidebar();
+    _renderInboxList();
+    _renderInboxDetailEmpty();
+    _resetInboxDetailView();
+}
+
+// Compat : ancien appel toggleMessagePanel → redirige vers la page Inbox
+function toggleMessagePanel() {
+    showPage('inbox');
+}
+
+async function loadUserMessages() {
+    return loadInboxPage();
 }
 
 async function markSingleMessageRead(messageId) {
     try {
         await api.markMessageRead(messageId);
-        // Mettre à jour visuellement
-        const item = document.querySelector(`.message-item[data-msg-id="${messageId}"]`);
-        if (item) {
-            item.classList.remove('message-item-unread');
-            item.classList.add('message-item-read');
-            const btn = item.querySelector('.message-item-mark-read');
-            if (btn) btn.remove();
-        }
         // Décrémenter le badge immédiatement (optimiste)
         const badge = document.getElementById('messageBellBadge');
         const current = parseInt(badge?.textContent) || 0;
         updateMessageBellBadge(Math.max(0, current - 1));
+        // Rafraîchir l’inbox si visible
+        const inbox = document.getElementById('userInboxSection');
+        if (inbox && !inbox.classList.contains('d-none')) {
+            await loadInboxPage();
+        }
     } catch (error) {
         showToast('Erreur', error.message, 'danger');
     }
@@ -9657,7 +10001,10 @@ async function markAllUserMessagesRead() {
     try {
         await api.markAllMessagesRead();
         updateMessageBellBadge(0);
-        loadUserMessages();
+        const inbox = document.getElementById('userInboxSection');
+        if (inbox && !inbox.classList.contains('d-none')) {
+            await loadInboxPage();
+        }
     } catch (error) {
         showToast('Erreur', error.message, 'danger');
     }
@@ -9674,10 +10021,10 @@ function handleIncomingMessage(msgData) {
     // Afficher une carte de notification flottante (style HUBapp_TEMPLATE)
     showNotificationCard(msgData);
 
-    // Si le panneau de messages est ouvert, le rafraîchir
-    const panel = document.getElementById('messagePanel');
-    if (panel && !panel.classList.contains('d-none')) {
-        loadUserMessages();
+    // Si l’inbox est ouverte, la rafraîchir
+    const inbox = document.getElementById('userInboxSection');
+    if (inbox && !inbox.classList.contains('d-none')) {
+        loadInboxPage();
     }
 }
 
@@ -9768,9 +10115,9 @@ function dismissNotificationCard(id, markAsRead = false) {
                 const badge = document.getElementById('messageBellBadge');
                 const current = parseInt(badge?.textContent) || 0;
                 updateMessageBellBadge(Math.max(0, current - 1));
-                // Rafraîchir le panneau de messages s'il est ouvert
-                const panel = document.getElementById('messagePanel');
-                if (panel && !panel.classList.contains('d-none')) {
+                // Rafraîchir l'inbox si elle est ouverte
+                const inbox = document.getElementById('userInboxSection');
+                if (inbox && !inbox.classList.contains('d-none')) {
                     loadUserMessages();
                 }
             }).catch(() => {});
@@ -9796,7 +10143,13 @@ function dismissAllNotificationCards() {
     // Marquer comme lus et rafraîchir le badge
     if (cardIds.length > 0) {
         Promise.all(cardIds.map(id => api.markMessageRead(id).catch(() => {})))
-            .then(() => loadUnreadMessageCount());
+            .then(() => {
+                loadUnreadMessageCount();
+                const inbox = document.getElementById('userInboxSection');
+                if (inbox && !inbox.classList.contains('d-none')) {
+                    loadInboxPage();
+                }
+            });
     }
 }
 

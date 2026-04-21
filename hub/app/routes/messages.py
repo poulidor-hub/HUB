@@ -63,7 +63,11 @@ async def _send_user_message_sse(user_id: int, message_data: dict):
         pass
 
 
-def _message_to_brief(msg: UserMessage, is_read: bool = False) -> dict:
+def _message_to_brief(
+    msg: UserMessage,
+    is_read: bool = False,
+    receipt: Optional["MessageReadReceipt"] = None,
+) -> dict:
     """Convertit un UserMessage en dict pour MessageBrief / SSE."""
     return {
         "id": msg.id,
@@ -77,6 +81,11 @@ def _message_to_brief(msg: UserMessage, is_read: bool = False) -> dict:
         "created_at": msg.created_at.isoformat() if msg.created_at else None,
         "expires_at": msg.expires_at.isoformat() if msg.expires_at else None,
         "is_read": is_read,
+        "status": getattr(msg, "status", "active") or "active",
+        "target_type": msg.target_type,
+        "delivered_at": (receipt.delivered_at.isoformat() if (receipt and receipt.delivered_at) else None),
+        "clicked_at": (receipt.clicked_at.isoformat() if (receipt and receipt.clicked_at) else None),
+        "read_at": (receipt.read_at.isoformat() if (receipt and receipt.read_at) else None),
     }
 
 
@@ -140,6 +149,8 @@ async def send_message(
     messages_created = []
 
     if payload.target_type == "broadcast":
+        # Snapshot du nombre total de destinataires à l'envoi
+        total_targets = await db.scalar(select(func.count(User.id))) or 0
         msg = UserMessage(
             sender_type="admin",
             sender_id=current_user.id,
@@ -150,6 +161,8 @@ async def send_message(
             action_url=payload.action_url,
             action_label=payload.action_label,
             expires_at=payload.expires_at,
+            status="active",
+            total_targets=total_targets,
         )
         db.add(msg)
         await db.flush()
@@ -175,6 +188,8 @@ async def send_message(
                 action_url=payload.action_url,
                 action_label=payload.action_label,
                 expires_at=payload.expires_at,
+                status="active",
+                total_targets=1,
             )
             db.add(msg)
             await db.flush()
@@ -212,6 +227,8 @@ async def list_messages(
     target_type: Optional[str] = Query(None),
     search: Optional[str] = Query(None),
     hours: Optional[int] = Query(None, ge=1, le=8760),
+    status: Optional[str] = Query(None, description="Filtre cycle de vie : active | archived | expired | all (défaut: all)"),
+    expiring_within_hours: Optional[int] = Query(None, ge=1, le=8760),
     current_user: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db)
 ):
@@ -219,6 +236,7 @@ async def list_messages(
     query = select(UserMessage)
     count_query = select(func.count(UserMessage.id))
 
+    now = utcnow()
     filters = []
     if priority:
         filters.append(UserMessage.priority == priority)
@@ -237,8 +255,23 @@ async def list_messages(
             UserMessage.body.ilike(search_pattern),
         ))
     if hours:
-        since = utcnow() - timedelta(hours=hours)
+        since = now - timedelta(hours=hours)
         filters.append(UserMessage.created_at >= since)
+    if status and status != "all":
+        if status == "active":
+            filters.append(UserMessage.status == "active")
+            filters.append(or_(UserMessage.expires_at.is_(None), UserMessage.expires_at > now))
+        elif status == "archived":
+            filters.append(UserMessage.status == "archived")
+        elif status == "expired":
+            filters.append(UserMessage.status == "active")
+            filters.append(UserMessage.expires_at.isnot(None))
+            filters.append(UserMessage.expires_at <= now)
+    if expiring_within_hours:
+        until = now + timedelta(hours=expiring_within_hours)
+        filters.append(UserMessage.expires_at.isnot(None))
+        filters.append(UserMessage.expires_at <= until)
+        filters.append(UserMessage.expires_at > now)
 
     if filters:
         query = query.where(and_(*filters))
@@ -263,7 +296,7 @@ async def list_messages(
             user_ids.add(m.target_user_id)
     users_map = await _build_users_map(db, user_ids)
 
-    # Compter les lectures pour chaque message
+    # Compter les lectures pour chaque message (read_at IS NOT NULL)
     msg_ids = [m.id for m in messages]
     read_counts = {}
     if msg_ids:
@@ -271,8 +304,12 @@ async def list_messages(
             select(
                 MessageReadReceipt.message_id,
                 func.count(MessageReadReceipt.id)
-            ).where(MessageReadReceipt.message_id.in_(msg_ids))
-            .group_by(MessageReadReceipt.message_id)
+            ).where(
+                and_(
+                    MessageReadReceipt.message_id.in_(msg_ids),
+                    MessageReadReceipt.read_at.isnot(None),
+                )
+            ).group_by(MessageReadReceipt.message_id)
         )
         read_counts = {row[0]: row[1] for row in rc_result.all()}
 
@@ -281,6 +318,11 @@ async def list_messages(
 
     items = []
     for m in messages:
+        rc = read_counts.get(m.id, m.read_count or 0)
+        tt = m.total_targets if (m.total_targets and m.total_targets > 0) else (
+            total_users if m.target_type == "broadcast" else 1
+        )
+        is_expired = bool(m.expires_at and m.expires_at <= now)
         items.append(MessageResponse(
             id=m.id,
             sender_type=m.sender_type,
@@ -297,8 +339,15 @@ async def list_messages(
             action_label=m.action_label,
             expires_at=m.expires_at,
             created_at=m.created_at,
-            read_count=read_counts.get(m.id, 0),
-            total_targets=total_users if m.target_type == "broadcast" else 1,
+            read_count=rc,
+            total_targets=tt,
+            status=m.status or "active",
+            archived_at=m.archived_at,
+            delivered_count=m.delivered_count or 0,
+            click_count=m.click_count or 0,
+            is_expired=is_expired,
+            is_resend=m.is_resend or False,
+            original_message_id=m.original_message_id,
         ))
 
     return PaginatedMessagesResponse(
@@ -353,12 +402,79 @@ async def get_message_stats(
     )
     by_app = {row[0]: row[1] for row in app_result.all()}
 
+    # ===== Enrichissements (cycle de vie + engagement) =====
+    now = utcnow()
+    total_active = await db.scalar(
+        select(func.count(UserMessage.id)).where(
+            and_(where_clause,
+                 UserMessage.status == "active",
+                 or_(UserMessage.expires_at.is_(None), UserMessage.expires_at > now))
+        )
+    ) or 0
+    total_archived = await db.scalar(
+        select(func.count(UserMessage.id)).where(
+            and_(where_clause, UserMessage.status == "archived")
+        )
+    ) or 0
+    total_expired = await db.scalar(
+        select(func.count(UserMessage.id)).where(
+            and_(where_clause,
+                 UserMessage.status == "active",
+                 UserMessage.expires_at.isnot(None),
+                 UserMessage.expires_at <= now)
+        )
+    ) or 0
+
+    # Taux moyens (sur les messages avec total_targets > 0 pour éviter divisions par zéro)
+    rates_row = await db.execute(
+        select(
+            func.coalesce(func.avg(
+                case(
+                    (UserMessage.total_targets > 0,
+                     UserMessage.read_count * 1.0 / UserMessage.total_targets),
+                    else_=None,
+                )
+            ), 0.0),
+            func.coalesce(func.avg(
+                case(
+                    (UserMessage.total_targets > 0,
+                     UserMessage.click_count * 1.0 / UserMessage.total_targets),
+                    else_=None,
+                )
+            ), 0.0),
+            func.coalesce(func.avg(
+                case(
+                    (UserMessage.total_targets > 0,
+                     UserMessage.delivered_count * 1.0 / UserMessage.total_targets),
+                    else_=None,
+                )
+            ), 0.0),
+        ).where(where_clause)
+    )
+    avg_read, avg_click, avg_delivered = rates_row.one()
+
+    # Top apps émettrices
+    top_apps = [
+        {"app": slug, "count": cnt}
+        for slug, cnt in by_app.items()
+    ]
+    top_apps.sort(key=lambda x: x["count"], reverse=True)
+
     return {
         "period_hours": hours,
         "total": total,
         "by_priority": by_priority,
         "by_sender_type": by_sender_type,
         "by_app": by_app,
+        # Ajouts (rétro-compat : nouveaux champs)
+        "total_active": total_active,
+        "total_archived": total_archived,
+        "total_expired": total_expired,
+        "avg_read_rate": round(float(avg_read or 0.0), 4),
+        "avg_click_rate": round(float(avg_click or 0.0), 4),
+        "avg_delivered_rate": round(float(avg_delivered or 0.0), 4),
+        "apps_count": len(by_app),
+        "top_apps": top_apps[:10],
     }
 
 
@@ -437,48 +553,79 @@ async def export_messages_csv(
 
 @router.get("/me")
 async def get_my_messages(
+    include_archived: bool = Query(False, description="Inclure les messages archivés par l'admin"),
+    include_expired: bool = Query(True, description="Inclure les messages expirés"),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """Messages de l'utilisateur connecté (ciblés + broadcasts, non expirés)."""
+    """Messages de l'utilisateur connecté (ciblés + broadcasts).
+
+    Marque automatiquement les messages comme "livrés" (delivered_at) au passage,
+    pour le tracking d'engagement (rentre dans la même transaction).
+    """
     now = utcnow()
 
-    # Messages ciblés pour cet utilisateur OU broadcasts
+    msg_filters = [
+        or_(
+            UserMessage.target_user_id == current_user.id,
+            UserMessage.target_type == "broadcast",
+        )
+    ]
+    if not include_archived:
+        msg_filters.append(UserMessage.status == "active")
+    if not include_expired:
+        msg_filters.append(or_(UserMessage.expires_at.is_(None), UserMessage.expires_at > now))
+
     query = (
         select(UserMessage)
-        .where(
-            or_(
-                UserMessage.target_user_id == current_user.id,
-                UserMessage.target_type == "broadcast",
-            )
-        )
-        .where(
-            or_(
-                UserMessage.expires_at.is_(None),
-                UserMessage.expires_at > now,
-            )
-        )
+        .where(and_(*msg_filters))
         .order_by(desc(UserMessage.created_at))
-        .limit(100)
+        .limit(200)
     )
     result = await db.execute(query)
     messages = result.scalars().all()
 
-    # Récupérer les accusés de lecture de cet utilisateur
+    # Récupérer les receipts existants de cet utilisateur pour ces messages
     msg_ids = [m.id for m in messages]
-    read_msg_ids = set()
+    receipts_by_msg: dict[int, MessageReadReceipt] = {}
     if msg_ids:
         rr_result = await db.execute(
-            select(MessageReadReceipt.message_id)
-            .where(and_(
+            select(MessageReadReceipt).where(and_(
                 MessageReadReceipt.message_id.in_(msg_ids),
                 MessageReadReceipt.user_id == current_user.id,
             ))
         )
-        read_msg_ids = {row[0] for row in rr_result.all()}
+        for r in rr_result.scalars().all():
+            receipts_by_msg[r.message_id] = r
+
+    # Auto-delivery : pour chaque message visible non encore livré, créer ou mettre
+    # à jour le receipt avec delivered_at + incrémenter delivered_count.
+    new_deliveries = 0
+    for m in messages:
+        rcpt = receipts_by_msg.get(m.id)
+        if rcpt is None:
+            rcpt = MessageReadReceipt(
+                message_id=m.id,
+                user_id=current_user.id,
+                delivered_at=now,
+            )
+            db.add(rcpt)
+            receipts_by_msg[m.id] = rcpt
+            m.delivered_count = (m.delivered_count or 0) + 1
+            new_deliveries += 1
+        elif rcpt.delivered_at is None:
+            rcpt.delivered_at = now
+            m.delivered_count = (m.delivered_count or 0) + 1
+            new_deliveries += 1
+    if new_deliveries:
+        await db.commit()
 
     return [
-        MessageBrief(**_message_to_brief(m, is_read=(m.id in read_msg_ids)))
+        MessageBrief(**_message_to_brief(
+            m,
+            is_read=(receipts_by_msg.get(m.id) is not None and receipts_by_msg[m.id].read_at is not None),
+            receipt=receipts_by_msg.get(m.id),
+        ))
         for m in messages
     ]
 
@@ -491,10 +638,13 @@ async def get_unread_count(
     """Nombre de messages non lus de l'utilisateur connecté."""
     now = utcnow()
 
-    # Sous-requête : IDs des messages déjà lus
+    # Sous-requête : IDs des messages déjà lus (read_at IS NOT NULL)
     read_subq = (
         select(MessageReadReceipt.message_id)
-        .where(MessageReadReceipt.user_id == current_user.id)
+        .where(and_(
+            MessageReadReceipt.user_id == current_user.id,
+            MessageReadReceipt.read_at.isnot(None),
+        ))
         .scalar_subquery()
     )
 
@@ -506,6 +656,7 @@ async def get_unread_count(
                 UserMessage.target_type == "broadcast",
             )
         )
+        .where(UserMessage.status == "active")
         .where(
             or_(
                 UserMessage.expires_at.is_(None),
@@ -526,21 +677,25 @@ async def mark_all_read(
     """Marquer tous les messages de l'utilisateur comme lus."""
     now = utcnow()
 
-    # Messages non lus de cet utilisateur
+    # Messages visibles non encore lus
     read_subq = (
         select(MessageReadReceipt.message_id)
-        .where(MessageReadReceipt.user_id == current_user.id)
+        .where(and_(
+            MessageReadReceipt.user_id == current_user.id,
+            MessageReadReceipt.read_at.isnot(None),
+        ))
         .scalar_subquery()
     )
 
     result = await db.execute(
-        select(UserMessage.id)
+        select(UserMessage)
         .where(
             or_(
                 UserMessage.target_user_id == current_user.id,
                 UserMessage.target_type == "broadcast",
             )
         )
+        .where(UserMessage.status == "active")
         .where(
             or_(
                 UserMessage.expires_at.is_(None),
@@ -549,17 +704,44 @@ async def mark_all_read(
         )
         .where(UserMessage.id.notin_(read_subq))
     )
-    unread_ids = [row[0] for row in result.all()]
+    msgs = result.scalars().all()
 
-    if unread_ids:
-        for mid in unread_ids:
+    if not msgs:
+        return {"marked_read": 0}
+
+    # Charger les receipts existants (delivered-only) pour ces messages
+    msg_ids = [m.id for m in msgs]
+    existing_receipts = await db.execute(
+        select(MessageReadReceipt).where(and_(
+            MessageReadReceipt.message_id.in_(msg_ids),
+            MessageReadReceipt.user_id == current_user.id,
+        ))
+    )
+    by_msg = {r.message_id: r for r in existing_receipts.scalars().all()}
+
+    marked = 0
+    for m in msgs:
+        rcpt = by_msg.get(m.id)
+        if rcpt is None:
             db.add(MessageReadReceipt(
-                message_id=mid,
+                message_id=m.id,
                 user_id=current_user.id,
+                delivered_at=now,
+                read_at=now,
             ))
-        await db.commit()
+            m.delivered_count = (m.delivered_count or 0) + 1
+        elif rcpt.read_at is None:
+            rcpt.read_at = now
+            if rcpt.delivered_at is None:
+                rcpt.delivered_at = now
+                m.delivered_count = (m.delivered_count or 0) + 1
+        else:
+            continue
+        m.read_count = (m.read_count or 0) + 1
+        marked += 1
 
-    return {"marked_read": len(unread_ids)}
+    await db.commit()
+    return {"marked_read": marked}
 
 
 @router.post("/{message_id}/read")
@@ -573,28 +755,139 @@ async def mark_message_read(
     if not msg:
         raise HTTPException(status_code=404, detail="Message introuvable")
 
-    # Vérifier que l'utilisateur est bien destinataire
     if msg.target_type == "user" and msg.target_user_id != current_user.id:
         raise HTTPException(status_code=403, detail="Ce message ne vous est pas destiné")
 
-    # Vérifier si déjà lu
+    now = utcnow()
     existing = await db.execute(
         select(MessageReadReceipt).where(and_(
             MessageReadReceipt.message_id == message_id,
             MessageReadReceipt.user_id == current_user.id,
         ))
     )
-    if existing.scalar_one_or_none():
-        return {"status": "already_read"}
+    receipt = existing.scalar_one_or_none()
 
-    receipt = MessageReadReceipt(
-        message_id=message_id,
-        user_id=current_user.id,
-    )
-    db.add(receipt)
+    if receipt is None:
+        receipt = MessageReadReceipt(
+            message_id=message_id,
+            user_id=current_user.id,
+            delivered_at=now,
+            read_at=now,
+        )
+        db.add(receipt)
+        msg.delivered_count = (msg.delivered_count or 0) + 1
+        msg.read_count = (msg.read_count or 0) + 1
+        await db.commit()
+        return {"status": "read", "message_id": message_id}
+
+    if receipt.read_at is not None:
+        return {"status": "already_read", "message_id": message_id}
+
+    # Receipt existe (delivered-only) : on marque la lecture
+    receipt.read_at = now
+    if receipt.delivered_at is None:
+        receipt.delivered_at = now
+        msg.delivered_count = (msg.delivered_count or 0) + 1
+    msg.read_count = (msg.read_count or 0) + 1
     await db.commit()
-
     return {"status": "read", "message_id": message_id}
+
+
+@router.post("/{message_id}/delivered")
+async def mark_message_delivered(
+    message_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Marquer un message comme livré (idempotent).
+
+    Appelé par le client au chargement initial de la boîte de réception ou à la réception
+    SSE, pour permettre un tracking précis du taux de livraison vs lecture.
+    """
+    msg = await db.get(UserMessage, message_id)
+    if not msg:
+        raise HTTPException(status_code=404, detail="Message introuvable")
+    if msg.target_type == "user" and msg.target_user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Ce message ne vous est pas destiné")
+
+    now = utcnow()
+    existing = await db.execute(
+        select(MessageReadReceipt).where(and_(
+            MessageReadReceipt.message_id == message_id,
+            MessageReadReceipt.user_id == current_user.id,
+        ))
+    )
+    receipt = existing.scalar_one_or_none()
+
+    if receipt is None:
+        db.add(MessageReadReceipt(
+            message_id=message_id,
+            user_id=current_user.id,
+            delivered_at=now,
+        ))
+        msg.delivered_count = (msg.delivered_count or 0) + 1
+        await db.commit()
+        return {"status": "delivered", "message_id": message_id}
+
+    if receipt.delivered_at is not None:
+        return {"status": "already_delivered", "message_id": message_id}
+
+    receipt.delivered_at = now
+    msg.delivered_count = (msg.delivered_count or 0) + 1
+    await db.commit()
+    return {"status": "delivered", "message_id": message_id}
+
+
+@router.post("/{message_id}/click")
+async def mark_message_clicked(
+    message_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Tracking du clic sur action_url. Idempotent (1 clic compté par utilisateur)."""
+    msg = await db.get(UserMessage, message_id)
+    if not msg:
+        raise HTTPException(status_code=404, detail="Message introuvable")
+    if msg.target_type == "user" and msg.target_user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Ce message ne vous est pas destiné")
+
+    now = utcnow()
+    existing = await db.execute(
+        select(MessageReadReceipt).where(and_(
+            MessageReadReceipt.message_id == message_id,
+            MessageReadReceipt.user_id == current_user.id,
+        ))
+    )
+    receipt = existing.scalar_one_or_none()
+
+    if receipt is None:
+        receipt = MessageReadReceipt(
+            message_id=message_id,
+            user_id=current_user.id,
+            delivered_at=now,
+            read_at=now,
+            clicked_at=now,
+        )
+        db.add(receipt)
+        msg.delivered_count = (msg.delivered_count or 0) + 1
+        msg.read_count = (msg.read_count or 0) + 1
+        msg.click_count = (msg.click_count or 0) + 1
+        await db.commit()
+        return {"status": "clicked", "message_id": message_id}
+
+    if receipt.clicked_at is not None:
+        return {"status": "already_clicked", "message_id": message_id}
+
+    receipt.clicked_at = now
+    if receipt.read_at is None:
+        receipt.read_at = now
+        msg.read_count = (msg.read_count or 0) + 1
+    if receipt.delivered_at is None:
+        receipt.delivered_at = now
+        msg.delivered_count = (msg.delivered_count or 0) + 1
+    msg.click_count = (msg.click_count or 0) + 1
+    await db.commit()
+    return {"status": "clicked", "message_id": message_id}
 
 
 # =============================================================================
@@ -649,18 +942,116 @@ async def get_message_detail(
             action_label=msg.action_label,
             expires_at=msg.expires_at,
             created_at=msg.created_at,
-            read_count=len(receipts),
-            total_targets=total_users if msg.target_type == "broadcast" else 1,
+            read_count=len([r for r in receipts if r.read_at is not None]),
+            total_targets=msg.total_targets if (msg.total_targets and msg.total_targets > 0) else (
+                total_users if msg.target_type == "broadcast" else 1
+            ),
+            status=msg.status or "active",
+            archived_at=msg.archived_at,
+            delivered_count=msg.delivered_count or 0,
+            click_count=msg.click_count or 0,
+            is_expired=bool(msg.expires_at and msg.expires_at <= utcnow()),
+            is_resend=msg.is_resend or False,
+            original_message_id=msg.original_message_id,
         ),
         "read_receipts": [
             {
                 "user_id": r.user_id,
                 "username": users_map.get(r.user_id, "?"),
                 "read_at": r.read_at.isoformat() if r.read_at else None,
+                "delivered_at": r.delivered_at.isoformat() if r.delivered_at else None,
+                "clicked_at": r.clicked_at.isoformat() if r.clicked_at else None,
             }
             for r in receipts
         ],
     }
+
+
+@router.post("/{message_id}/archive")
+async def archive_message(
+    message_id: int,
+    current_user: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """Archive un message (soft-delete admin). Reste consultable côté user dans l'historique."""
+    from app.routes.audit import log_action
+
+    msg = await db.get(UserMessage, message_id)
+    if not msg:
+        raise HTTPException(status_code=404, detail="Message introuvable")
+    if msg.status == "archived":
+        return {"status": "already_archived", "message_id": message_id}
+
+    msg.status = "archived"
+    msg.archived_at = utcnow()
+    await db.commit()
+
+    await log_action(
+        db, current_user.id, "archive_message",
+        target=f"message:{message_id}",
+        details=f"title={msg.title}",
+        notify_sse=False,
+    )
+    await db.commit()
+    _notify_message("messages_updated", {"action": "archived", "id": message_id})
+    return {"status": "archived", "message_id": message_id}
+
+
+@router.post("/{message_id}/restore")
+async def restore_message(
+    message_id: int,
+    current_user: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """Restaure un message archivé (status -> active)."""
+    from app.routes.audit import log_action
+
+    msg = await db.get(UserMessage, message_id)
+    if not msg:
+        raise HTTPException(status_code=404, detail="Message introuvable")
+    if msg.status != "archived":
+        return {"status": "not_archived", "message_id": message_id}
+
+    msg.status = "active"
+    msg.archived_at = None
+    await db.commit()
+
+    await log_action(
+        db, current_user.id, "restore_message",
+        target=f"message:{message_id}",
+        details=f"title={msg.title}",
+        notify_sse=False,
+    )
+    await db.commit()
+    _notify_message("messages_updated", {"action": "restored", "id": message_id})
+    return {"status": "restored", "message_id": message_id}
+
+
+@router.delete("/{message_id}/hard")
+async def hard_delete_message(
+    message_id: int,
+    current_user: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """Suppression définitive d'un message (purge la DB, supprime les receipts)."""
+    from app.routes.audit import log_action
+
+    msg = await db.get(UserMessage, message_id)
+    if not msg:
+        raise HTTPException(status_code=404, detail="Message introuvable")
+    title = msg.title
+    await db.delete(msg)
+    await db.commit()
+
+    await log_action(
+        db, current_user.id, "hard_delete_message",
+        target=f"message:{message_id}",
+        details=f"title={title}",
+        notify_sse=False,
+    )
+    await db.commit()
+    _notify_message("messages_updated", {"action": "hard_deleted", "id": message_id})
+    return {"status": "hard_deleted", "message_id": message_id}
 
 
 @router.delete("/")
@@ -669,13 +1060,13 @@ async def purge_messages(
     priority: Optional[str] = Query(None),
     sender_app: Optional[str] = Query(None),
     target_type: Optional[str] = Query(None),
+    hard: bool = Query(False, description="Si true, suppression définitive (au lieu de simple archivage)"),
     current_user: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db)
 ):
-    """Purge des messages avec filtres optionnels (admin)."""
+    """Archive (soft-delete) ou supprime définitivement (?hard=true) les messages filtrés (admin)."""
     from app.routes.audit import log_action
 
-    stmt = delete(UserMessage)
     filters = []
     if hours:
         since = utcnow() - timedelta(hours=hours)
@@ -687,32 +1078,51 @@ async def purge_messages(
     if target_type:
         filters.append(UserMessage.target_type == target_type)
 
-    if filters:
-        stmt = stmt.where(and_(*filters))
-
-    result = await db.execute(stmt)
-    deleted = result.rowcount
-    await db.commit()
+    if hard:
+        stmt = delete(UserMessage)
+        if filters:
+            stmt = stmt.where(and_(*filters))
+        result = await db.execute(stmt)
+        affected = result.rowcount
+        await db.commit()
+        action = "purge_messages_hard"
+        msg_label = "supprimé(s) définitivement"
+        sse_action = "purged"
+    else:
+        # Soft-archive : seuls les messages encore actifs sont archivables
+        from sqlalchemy import update as sql_update
+        stmt = sql_update(UserMessage).values(
+            status="archived", archived_at=utcnow()
+        ).where(UserMessage.status == "active")
+        if filters:
+            stmt = stmt.where(and_(*filters))
+        result = await db.execute(stmt)
+        affected = result.rowcount
+        await db.commit()
+        action = "archive_messages"
+        msg_label = "archivé(s)"
+        sse_action = "archived"
 
     await log_action(
-        db, current_user.id, "purge_messages",
-        details=f"deleted={deleted}, hours={hours}, priority={priority}, app={sender_app}",
+        db, current_user.id, action,
+        details=f"affected={affected}, hours={hours}, priority={priority}, app={sender_app}, hard={hard}",
         notify_sse=False
     )
     await db.commit()
 
-    _notify_message("messages_updated", {"action": "purged", "count": deleted})
+    _notify_message("messages_updated", {"action": sse_action, "count": affected})
 
-    return {"deleted": deleted, "message": f"{deleted} message(s) supprimé(s)"}
+    return {"affected": affected, "deleted": affected, "message": f"{affected} message(s) {msg_label}", "hard": hard}
 
 
 @router.delete("/batch")
 async def delete_messages_batch(
     payload: dict,
+    hard: bool = Query(False),
     current_user: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db)
 ):
-    """Supprime une liste de messages par leurs IDs (admin)."""
+    """Archive (soft) ou supprime (?hard=true) une liste de messages par leurs IDs (admin)."""
     from app.routes.audit import log_action
 
     ids = payload.get("ids", [])
@@ -721,28 +1131,46 @@ async def delete_messages_batch(
     if len(ids) > 500:
         raise HTTPException(status_code=400, detail="Maximum 500 messages par requête")
 
-    # Valider que ce sont bien des entiers
     try:
         ids = [int(i) for i in ids]
     except (ValueError, TypeError):
         raise HTTPException(status_code=400, detail="IDs invalides")
 
-    result = await db.execute(
-        delete(UserMessage).where(UserMessage.id.in_(ids))
-    )
-    deleted = result.rowcount
-    await db.commit()
+    if hard:
+        result = await db.execute(
+            delete(UserMessage).where(UserMessage.id.in_(ids))
+        )
+        affected = result.rowcount
+        await db.commit()
+        action = "delete_messages_batch_hard"
+        msg_label = "supprimé(s) définitivement"
+        sse_action = "deleted"
+    else:
+        from sqlalchemy import update as sql_update
+        result = await db.execute(
+            sql_update(UserMessage).values(
+                status="archived", archived_at=utcnow()
+            ).where(and_(
+                UserMessage.id.in_(ids),
+                UserMessage.status == "active",
+            ))
+        )
+        affected = result.rowcount
+        await db.commit()
+        action = "archive_messages_batch"
+        msg_label = "archivé(s)"
+        sse_action = "archived"
 
     await log_action(
-        db, current_user.id, "delete_messages_batch",
-        details=f"deleted={deleted}, ids={ids[:10]}{'...' if len(ids) > 10 else ''}",
+        db, current_user.id, action,
+        details=f"affected={affected}, ids={ids[:10]}{'...' if len(ids) > 10 else ''}, hard={hard}",
         notify_sse=False
     )
     await db.commit()
 
-    _notify_message("messages_updated", {"action": "deleted", "count": deleted})
+    _notify_message("messages_updated", {"action": sse_action, "count": affected})
 
-    return {"deleted": deleted, "message": f"{deleted} message(s) supprimé(s)"}
+    return {"affected": affected, "deleted": affected, "message": f"{affected} message(s) {msg_label}", "hard": hard}
 
 
 # =============================================================================
@@ -797,6 +1225,8 @@ async def m2m_send_message(
             expires_at=payload.expires_at,
             is_resend=getattr(payload, 'is_resend', False) or False,
             original_message_id=getattr(payload, 'original_hub_message_id', None),
+            status="active",
+            total_targets=1,
         )
         db.add(msg)
         await db.flush()
@@ -867,13 +1297,16 @@ async def m2m_sync_messages(
             user_ids.add(m.target_user_id)
     users_map = await _build_users_map(db, user_ids)
 
-    # Charger les read_receipts si demandé
+    # Charger les read_receipts si demandé (read_at IS NOT NULL pour compat)
     receipts_by_msg = {}
     if include_receipts and messages:
         msg_ids = [m.id for m in messages]
         rc_result = await db.execute(
             select(MessageReadReceipt)
-            .where(MessageReadReceipt.message_id.in_(msg_ids))
+            .where(and_(
+                MessageReadReceipt.message_id.in_(msg_ids),
+                MessageReadReceipt.read_at.isnot(None),
+            ))
         )
         all_receipts = rc_result.scalars().all()
         # Résoudre les usernames des receipts
@@ -885,10 +1318,12 @@ async def m2m_sync_messages(
                     user_id=r.user_id,
                     username=receipt_users_map.get(r.user_id, "?"),
                     read_at=r.read_at,
+                    delivered_at=r.delivered_at,
+                    clicked_at=r.clicked_at,
                 )
             )
 
-    # Comptage des lectures par message
+    # Comptage des lectures par message (read_at IS NOT NULL)
     read_counts = {}
     if messages:
         msg_ids = [m.id for m in messages]
@@ -896,8 +1331,10 @@ async def m2m_sync_messages(
             select(
                 MessageReadReceipt.message_id,
                 func.count(MessageReadReceipt.id)
-            ).where(MessageReadReceipt.message_id.in_(msg_ids))
-            .group_by(MessageReadReceipt.message_id)
+            ).where(and_(
+                MessageReadReceipt.message_id.in_(msg_ids),
+                MessageReadReceipt.read_at.isnot(None),
+            )).group_by(MessageReadReceipt.message_id)
         )
         read_counts = {row[0]: row[1] for row in rc_count_result.all()}
 
@@ -924,8 +1361,14 @@ async def m2m_sync_messages(
             is_resend=m.is_resend or False,
             original_message_id=m.original_message_id,
             read_count=read_counts.get(m.id, 0),
-            total_targets=total_users if m.target_type == "broadcast" else 1,
+            total_targets=m.total_targets if (m.total_targets and m.total_targets > 0) else (
+                total_users if m.target_type == "broadcast" else 1
+            ),
             read_receipts=receipts_by_msg.get(m.id, []),
+            status=m.status or "active",
+            archived_at=m.archived_at,
+            delivered_count=m.delivered_count or 0,
+            click_count=m.click_count or 0,
         ))
 
     return MessageSyncResponse(
@@ -958,16 +1401,20 @@ async def m2m_sync_receipts(
     except (ValueError, TypeError):
         raise HTTPException(status_code=400, detail="Format de date invalide (ISO 8601 attendu)")
 
-    count_query = select(func.count(MessageReadReceipt.id)).where(
-        MessageReadReceipt.read_at > since_dt
-    )
+    count_query = select(func.count(MessageReadReceipt.id)).where(and_(
+        MessageReadReceipt.read_at > since_dt,
+        MessageReadReceipt.read_at.isnot(None),
+    ))
     total = await db.scalar(count_query) or 0
     pages = max(1, (total + per_page - 1) // per_page)
 
     offset = (page - 1) * per_page
     result = await db.execute(
         select(MessageReadReceipt)
-        .where(MessageReadReceipt.read_at > since_dt)
+        .where(and_(
+            MessageReadReceipt.read_at > since_dt,
+            MessageReadReceipt.read_at.isnot(None),
+        ))
         .order_by(MessageReadReceipt.read_at.asc())
         .offset(offset).limit(per_page)
     )
@@ -983,6 +1430,8 @@ async def m2m_sync_receipts(
             user_id=r.user_id,
             username=users_map.get(r.user_id),
             read_at=r.read_at,
+            delivered_at=r.delivered_at,
+            clicked_at=r.clicked_at,
         )
         for r in receipts
     ]
@@ -1097,8 +1546,14 @@ async def m2m_get_message_detail(
         created_at=msg.created_at,
         is_resend=msg.is_resend or False,
         original_message_id=msg.original_message_id,
-        read_count=len(receipts),
-        total_targets=total_users if msg.target_type == "broadcast" else 1,
+        read_count=len([r for r in receipts if r.read_at is not None]),
+        total_targets=msg.total_targets if (msg.total_targets and msg.total_targets > 0) else (
+            total_users if msg.target_type == "broadcast" else 1
+        ),
+        status=msg.status or "active",
+        archived_at=msg.archived_at,
+        delivered_count=msg.delivered_count or 0,
+        click_count=msg.click_count or 0,
     )
 
     receipt_items = [
@@ -1107,8 +1562,11 @@ async def m2m_get_message_detail(
             user_id=r.user_id,
             username=users_map.get(r.user_id),
             read_at=r.read_at,
+            delivered_at=r.delivered_at,
+            clicked_at=r.clicked_at,
         )
         for r in receipts
+        if r.read_at is not None
     ]
 
     return MessageDetailSyncResponse(

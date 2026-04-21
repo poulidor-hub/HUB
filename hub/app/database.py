@@ -57,11 +57,26 @@ def _strip_sql_comments(sql_block: str) -> str:
     return '\n'.join(lines).strip()
 
 
+class MigrationError(RuntimeError):
+    """Levée quand une migration SQL échoue. Stoppe le démarrage de l'application."""
+
+
 async def apply_migrations():
     """
     Applique automatiquement les migrations SQL depuis le dossier migrations/.
-    Utilise une table schema_migrations pour suivre les migrations appliquées.
-    Les fichiers doivent suivre le format NNN_description.sql (ex: 001_add_column.sql).
+
+    Garanties :
+    - Une transaction par migration : un échec ⇒ rollback complet de cette
+      migration, qui n'est PAS marquée comme appliquée et sera réessayée au
+      prochain boot après correction.
+    - Fail-fast : toute erreur SQL lève une MigrationError et stoppe le boot
+      (on refuse de servir l'API avec un schéma incohérent).
+    - Détection de collision de version : deux fichiers avec la même version
+      (ex. deux fichiers `020_*.sql`) lèvent une erreur explicite.
+    - Détection de version déjà appliquée mais introuvable sur disque :
+      log d'avertissement (cas typique d'une migration renommée/supprimée).
+
+    Les fichiers doivent suivre le format NNN_description.sql.
     """
     migrations_dir = Path("/code/migrations")
     if not migrations_dir.exists():
@@ -72,45 +87,81 @@ async def apply_migrations():
         logger.warning("⚠️ Dossier migrations non trouvé")
         return
 
-    # Lister et trier les fichiers de migration
+    # Lister, trier et vérifier l'unicité des versions
     migration_files = sorted(migrations_dir.glob("*.sql"))
     if not migration_files:
         return
 
+    by_version: dict[str, Path] = {}
+    for mf in migration_files:
+        version = mf.name.split('_')[0]
+        if version in by_version:
+            raise MigrationError(
+                f"Collision de version de migration : {by_version[version].name} "
+                f"et {mf.name} portent le même préfixe '{version}'."
+            )
+        by_version[version] = mf
+
+    # Préparer la table de suivi et lire l'état actuel (transaction courte)
     async with engine.begin() as conn:
-        # Créer la table de suivi si elle n'existe pas
         await conn.execute(text("""
             CREATE TABLE IF NOT EXISTS schema_migrations (
                 version VARCHAR(10) PRIMARY KEY,
                 filename VARCHAR(255) NOT NULL,
-                applied_at TIMESTAMP DEFAULT NOW()
+                applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """))
+        result = await conn.execute(
+            text("SELECT version, filename FROM schema_migrations")
+        )
+        applied = {row[0]: row[1] for row in result.fetchall()}
 
-        # Récupérer les migrations déjà appliquées
-        result = await conn.execute(text("SELECT version FROM schema_migrations"))
-        applied = {row[0] for row in result.fetchall()}
+    # Avertir si la DB référence des migrations qui n'existent plus sur disque
+    missing_on_disk = sorted(set(applied) - set(by_version))
+    if missing_on_disk:
+        logger.warning(
+            "⚠️ Migrations enregistrées en DB mais absentes sur disque : %s "
+            "(versions à ne pas réutiliser pour de nouvelles migrations).",
+            ", ".join(f"{v} ({applied[v]})" for v in missing_on_disk),
+        )
 
-        # Appliquer les nouvelles migrations dans l'ordre
-        for mf in migration_files:
-            version = mf.name.split('_')[0]
-            if version in applied:
-                continue
+    pending = [
+        (v, by_version[v]) for v in sorted(by_version) if v not in applied
+    ]
+    if not pending:
+        logger.info("✅ Schéma à jour (%d migrations appliquées)", len(applied))
+        return
 
-            logger.info(f"📦 Application de la migration {mf.name}...")
-            sql = mf.read_text()
-            for statement in sql.split(';'):
-                statement = _strip_sql_comments(statement)
-                if statement:
-                    try:
-                        await conn.execute(text("SAVEPOINT migration_stmt"))
-                        await conn.execute(text(statement))
-                        await conn.execute(text("RELEASE SAVEPOINT migration_stmt"))
-                    except Exception as e:
-                        await conn.execute(text("ROLLBACK TO SAVEPOINT migration_stmt"))
-                        logger.warning(f"Migration {mf.name} statement ignoré: {e}")
+    logger.info(
+        "📦 %d migration(s) à appliquer : %s",
+        len(pending), ", ".join(v for v, _ in pending),
+    )
 
-            await conn.execute(text(
-                "INSERT INTO schema_migrations (version, filename) VALUES (:v, :f)"
-            ), {"v": version, "f": mf.name})
-            logger.info(f"✅ Migration {mf.name} appliquée")
+    # Une transaction par migration → rollback isolé en cas d'échec
+    for version, mf in pending:
+        logger.info("📦 Application de la migration %s...", mf.name)
+        sql = mf.read_text()
+        statements = [
+            s for s in (_strip_sql_comments(stmt) for stmt in sql.split(';')) if s
+        ]
+        try:
+            async with engine.begin() as conn:
+                for statement in statements:
+                    await conn.execute(text(statement))
+                await conn.execute(
+                    text(
+                        "INSERT INTO schema_migrations (version, filename) "
+                        "VALUES (:v, :f)"
+                    ),
+                    {"v": version, "f": mf.name},
+                )
+        except Exception as e:
+            logger.error(
+                "❌ Échec de la migration %s : %s. "
+                "Aucune modification appliquée pour cette migration.",
+                mf.name, e,
+            )
+            raise MigrationError(
+                f"Migration {mf.name} a échoué : {e}"
+            ) from e
+        logger.info("✅ Migration %s appliquée", mf.name)

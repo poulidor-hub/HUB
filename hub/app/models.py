@@ -514,6 +514,16 @@ class UserMessage(Base):
     # Horodatage
     created_at = Column(DateTime, default=utcnow, index=True)
     
+    # Cycle de vie (soft-delete admin) — "expired" reste calculé via expires_at
+    status = Column(String(20), nullable=False, default="active")  # "active" | "archived"
+    archived_at = Column(DateTime, nullable=True)
+    
+    # Compteurs agrégés cachés (perf admin) — maintenus par le code applicatif
+    delivered_count = Column(Integer, nullable=False, default=0)
+    read_count = Column(Integer, nullable=False, default=0)
+    click_count = Column(Integer, nullable=False, default=0)
+    total_targets = Column(Integer, nullable=False, default=0)
+    
     # Renvoi (resend)
     is_resend = Column(Boolean, default=False)
     original_message_id = Column(Integer, ForeignKey('user_messages.id', ondelete='SET NULL'), nullable=True)
@@ -533,7 +543,10 @@ class MessageReadReceipt(Base):
     id = Column(Integer, primary_key=True, index=True)
     message_id = Column(Integer, ForeignKey('user_messages.id', ondelete='CASCADE'), nullable=False)
     user_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
-    read_at = Column(DateTime, default=utcnow)
+    # read_at est nullable : un receipt peut exister pour tracker la livraison sans lecture
+    read_at = Column(DateTime, nullable=True)
+    delivered_at = Column(DateTime, nullable=True)  # Push SSE ou GET /me
+    clicked_at = Column(DateTime, nullable=True)    # Clic sur action_url
     
     # Relations
     message = relationship("UserMessage", back_populates="read_receipts")

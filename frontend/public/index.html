@@ -68,7 +68,7 @@
                     </span>
                     <!-- Cloche de notifications messages -->
                     <div id="messageBellContainer" class="d-none position-relative me-2">
-                        <button class="btn btn-outline-light btn-sm" onclick="toggleMessagePanel()" title="Messages">
+                        <button class="btn btn-outline-light btn-sm" onclick="showPage('inbox')" title="Mes notifications">
                             <i class="bi bi-bell"></i>
                             <span class="badge bg-danger position-absolute top-0 start-100 translate-middle rounded-pill" id="messageBellBadge" style="display: none; font-size: 0.6em;">0</span>
                         </button>
@@ -1303,47 +1303,73 @@
                 </li>
             </ul>
 
-            <!-- Stats cards -->
-            <div class="row mb-4">
+            <!-- KPI cards -->
+            <div class="row g-3 mb-3">
                 <div class="col-md-3">
-                    <div class="card border-primary">
-                        <div class="card-body text-center py-2">
-                            <div class="text-muted small">Total envoyés</div>
-                            <div class="h4 mb-0" id="msgStatTotal">0</div>
+                    <div class="notif-kpi-card">
+                        <div class="notif-kpi-icon notif-kpi-icon-blue"><i class="bi bi-bell-fill"></i></div>
+                        <div class="notif-kpi-text">
+                            <div class="notif-kpi-label">Actives en cours</div>
+                            <div class="notif-kpi-value" id="kpiActiveCount">0</div>
                         </div>
                     </div>
                 </div>
                 <div class="col-md-3">
-                    <div class="card border-info">
-                        <div class="card-body text-center py-2">
-                            <div class="text-muted small">Info</div>
-                            <div class="h4 mb-0 text-info" id="msgStatInfo">0</div>
+                    <div class="notif-kpi-card">
+                        <div class="notif-kpi-icon notif-kpi-icon-green"><i class="bi bi-bar-chart-fill"></i></div>
+                        <div class="notif-kpi-text">
+                            <div class="notif-kpi-label">Taux de lecture moyen</div>
+                            <div class="notif-kpi-value" id="kpiReadRate">0%</div>
                         </div>
                     </div>
                 </div>
                 <div class="col-md-3">
-                    <div class="card border-warning">
-                        <div class="card-body text-center py-2">
-                            <div class="text-muted small">Warning</div>
-                            <div class="h4 mb-0 text-warning" id="msgStatWarning">0</div>
+                    <div class="notif-kpi-card">
+                        <div class="notif-kpi-icon notif-kpi-icon-indigo"><i class="bi bi-app-indicator"></i></div>
+                        <div class="notif-kpi-text">
+                            <div class="notif-kpi-label">Apps émettrices</div>
+                            <div class="notif-kpi-value" id="kpiAppsCount">0</div>
                         </div>
                     </div>
                 </div>
                 <div class="col-md-3">
-                    <div class="card border-danger">
-                        <div class="card-body text-center py-2">
-                            <div class="text-muted small">Urgent</div>
-                            <div class="h4 mb-0 text-danger" id="msgStatUrgent">0</div>
+                    <div class="notif-kpi-card">
+                        <div class="notif-kpi-icon notif-kpi-icon-amber"><i class="bi bi-archive-fill"></i></div>
+                        <div class="notif-kpi-text">
+                            <div class="notif-kpi-label">Expirées en attente</div>
+                            <div class="notif-kpi-value" id="kpiExpiredCount">0</div>
                         </div>
                     </div>
                 </div>
             </div>
 
+            <!-- Compteurs secondaires par priorité -->
+            <div class="d-flex flex-wrap gap-2 mb-3 align-items-center">
+                <span class="text-muted small me-1">Par priorité :</span>
+                <span class="badge bg-info" title="Info"><i class="bi bi-info-circle me-1"></i>Info <span id="msgStatInfo">0</span></span>
+                <span class="badge bg-warning text-dark" title="Warning"><i class="bi bi-exclamation-triangle me-1"></i>Warning <span id="msgStatWarning">0</span></span>
+                <span class="badge bg-danger" title="Urgent"><i class="bi bi-exclamation-octagon me-1"></i>Urgent <span id="msgStatUrgent">0</span></span>
+                <span class="badge bg-secondary ms-2" title="Total"><i class="bi bi-collection me-1"></i>Total <span id="msgStatTotal">0</span></span>
+            </div>
+
             <!-- Filtres -->
             <div class="card mb-3">
                 <div class="card-body py-2">
-                    <div class="row g-2 align-items-end">
-                        <div class="col-md-2">
+                    <div class="row g-2 align-items-end messages-filters-row">
+                        <div class="col-lg-4 col-md-6">
+                            <label class="form-label small mb-0">Cycle de vie</label>
+                            <div class="btn-group btn-group-sm w-100 msg-status-filter" role="group" id="msgStatusFilter">
+                                <input type="radio" class="btn-check" name="msgStatus" id="msgStatusAll" value="all" checked onchange="loadMessagesPage()">
+                                <label class="btn btn-outline-secondary" for="msgStatusAll" title="Tout">Tout</label>
+                                <input type="radio" class="btn-check" name="msgStatus" id="msgStatusActive" value="active" onchange="loadMessagesPage()">
+                                <label class="btn btn-outline-success" for="msgStatusActive" title="Actives">Actives</label>
+                                <input type="radio" class="btn-check" name="msgStatus" id="msgStatusExpired" value="expired" onchange="loadMessagesPage()">
+                                <label class="btn btn-outline-warning" for="msgStatusExpired" title="Expirées">Expirées</label>
+                                <input type="radio" class="btn-check" name="msgStatus" id="msgStatusArchived" value="archived" onchange="loadMessagesPage()">
+                                <label class="btn btn-outline-secondary" for="msgStatusArchived" title="Archivées">Archivées</label>
+                            </div>
+                        </div>
+                        <div class="col-lg-2 col-md-3">
                             <label class="form-label small mb-0">Priorité</label>
                             <select class="form-select form-select-sm" id="msgFilterPriority" onchange="loadMessagesPage()">
                                 <option value="">Toutes</option>
@@ -1352,7 +1378,7 @@
                                 <option value="urgent">Urgent</option>
                             </select>
                         </div>
-                        <div class="col-md-2">
+                        <div class="col-lg-2 col-md-3">
                             <label class="form-label small mb-0">Expéditeur</label>
                             <select class="form-select form-select-sm" id="msgFilterSender" onchange="loadMessagesPage()">
                                 <option value="">Tous</option>
@@ -1361,33 +1387,33 @@
                                 <option value="system">Système</option>
                             </select>
                         </div>
-                        <div class="col-md-2">
+                        <div class="col-lg-2 col-md-4">
                             <label class="form-label small mb-0">App source</label>
                             <input type="text" class="form-control form-control-sm" id="msgFilterApp" placeholder="slug..." onchange="loadMessagesPage()">
                         </div>
-                        <div class="col-md-2">
+                        <div class="col-lg-2 col-md-4">
                             <label class="form-label small mb-0">Recherche</label>
                             <input type="text" class="form-control form-control-sm" id="msgFilterSearch" placeholder="titre/corps..." onchange="loadMessagesPage()">
                         </div>
-                        <div class="col-md-2">
+                        <div class="col-lg-2 col-md-3">
                             <label class="form-label small mb-0">Période</label>
                             <select class="form-select form-select-sm" id="msgFilterHours" onchange="loadMessagesPage()">
                                 <option value="">Tout</option>
-                                <option value="24" selected>24h</option>
+                                <option value="24">24h</option>
                                 <option value="48">48h</option>
                                 <option value="168">7 jours</option>
-                                <option value="720">30 jours</option>
+                                <option value="720" selected>30 jours</option>
                             </select>
                         </div>
-                        <div class="col-md-2 d-flex gap-1">
-                            <button class="btn btn-outline-danger btn-sm" id="btnDeleteSelected" onclick="deleteSelectedMessages()" title="Supprimer la sélection" style="display: none;">
-                                <i class="bi bi-trash me-1"></i><span id="deleteSelectedCount">0</span>
+                        <div class="col-lg-12 d-flex gap-1 justify-content-end mt-2">
+                            <button class="btn btn-outline-secondary btn-sm" id="btnArchiveSelected" onclick="archiveSelectedMessages()" title="Archiver la sélection" style="display: none;">
+                                <i class="bi bi-archive me-1"></i><span id="archiveSelectedCount">0</span>
                             </button>
-                            <button class="btn btn-outline-warning btn-sm" onclick="purgeMessagesFiltered()" title="Purger (filtrés)">
-                                <i class="bi bi-trash"></i>
+                            <button class="btn btn-outline-warning btn-sm" onclick="purgeMessagesFiltered()" title="Archiver les messages filtrés">
+                                <i class="bi bi-archive"></i>
                             </button>
-                            <button class="btn btn-outline-danger btn-sm" onclick="purgeAllMessages()" title="Purger tout">
-                                <i class="bi bi-trash-fill"></i> Tout
+                            <button class="btn btn-outline-danger btn-sm" onclick="purgeAllMessages()" title="Suppression définitive (filtre actif)">
+                                <i class="bi bi-trash-fill"></i>
                             </button>
                         </div>
                     </div>
@@ -1396,21 +1422,19 @@
 
             <!-- Tableau des messages -->
             <div class="table-responsive">
-                <table class="table table-sm table-hover">
+                <table class="table table-sm table-hover align-middle">
                     <thead>
                         <tr>
                             <th style="width: 30px;"><input type="checkbox" id="msgSelectAll" onchange="toggleSelectAllMessages(this)" title="Tout sélectionner"></th>
-                            <th>Date</th>
-                            <th>Priorité</th>
-                            <th>Expéditeur</th>
-                            <th>Titre</th>
-                            <th>Cible</th>
-                            <th>Lu</th>
-                            <th>Actions</th>
+                            <th>Notification</th>
+                            <th>Statut & Rétention</th>
+                            <th>Source</th>
+                            <th style="min-width: 160px;">Engagement</th>
+                            <th class="text-end">Actions</th>
                         </tr>
                     </thead>
                     <tbody id="messagesTableBody">
-                        <tr><td colspan="8" class="text-center text-muted">Chargement...</td></tr>
+                        <tr><td colspan="6" class="text-center text-muted">Chargement...</td></tr>
                     </tbody>
                 </table>
             </div>
@@ -1483,21 +1507,56 @@
         </div>
     </div>
 
-    <!-- Panneau messages utilisateur (dropdown depuis la cloche) -->
-    <div id="messagePanel" class="message-panel d-none">
-        <div class="message-panel-header d-flex justify-content-between align-items-center">
-            <strong><i class="bi bi-bell me-1"></i>Mes messages</strong>
-            <div>
-                <button class="btn btn-link btn-sm p-0 text-muted" onclick="markAllUserMessagesRead()" title="Tout marquer comme lu">
-                    <i class="bi bi-check2-all"></i>
-                </button>
-                <button class="btn btn-link btn-sm p-0 text-muted ms-2" onclick="toggleMessagePanel()" title="Fermer">
-                    <i class="bi bi-x-lg"></i>
-                </button>
-            </div>
-        </div>
-        <div id="messagePanelBody" class="message-panel-body">
-            <p class="text-muted text-center small mt-3">Aucun message</p>
+    <!-- ================================================================= -->
+    <!-- Section Mes Notifications (Utilisateur) — Boîte de réception 3 volets -->
+    <!-- ================================================================= -->
+    <div id="userInboxSection" class="d-none" style="margin-top: 70px;">
+        <div class="inbox-layout">
+            <!-- Volet gauche : sidebar -->
+            <aside class="inbox-sidebar">
+                <div class="inbox-sidebar-header">
+                    <h6 class="mb-0"><i class="bi bi-bell-fill text-primary me-2"></i>Mes Notifications</h6>
+                </div>
+                <div class="inbox-sidebar-body">
+                    <button class="inbox-tab inbox-tab-active" id="inboxTabInbox" onclick="selectInboxTab('inbox')">
+                        <i class="bi bi-inbox me-2"></i>Boîte de réception
+                        <span class="badge bg-primary ms-auto" id="inboxUnreadBadge" style="display: none;">0</span>
+                    </button>
+                    <button class="inbox-tab" id="inboxTabHistory" onclick="selectInboxTab('history')">
+                        <i class="bi bi-clock-history me-2"></i>Historique
+                    </button>
+                    <div class="inbox-sidebar-section">Par application</div>
+                    <div id="inboxAppList">
+                        <div class="text-muted small px-3 py-2">Aucune source</div>
+                    </div>
+                </div>
+                <div class="inbox-sidebar-footer">
+                    <button class="btn btn-sm btn-link text-decoration-none" onclick="markAllUserMessagesRead()">
+                        <i class="bi bi-check2-all me-1"></i>Tout marquer comme lu
+                    </button>
+                </div>
+            </aside>
+
+            <!-- Volet centre : liste des messages -->
+            <section class="inbox-list">
+                <div class="inbox-list-header">
+                    <strong id="inboxListTitle">Boîte de réception</strong>
+                    <button class="btn btn-sm btn-link text-decoration-none p-0" onclick="loadInboxPage()" title="Rafraîchir">
+                        <i class="bi bi-arrow-clockwise"></i>
+                    </button>
+                </div>
+                <div class="inbox-list-body" id="inboxListBody">
+                    <div class="text-center text-muted small py-4">Chargement…</div>
+                </div>
+            </section>
+
+            <!-- Volet droit : détail message -->
+            <section class="inbox-detail" id="inboxDetail">
+                <div class="inbox-detail-empty">
+                    <i class="bi bi-envelope-open" style="font-size: 3rem; opacity: 0.3;"></i>
+                    <p class="mt-3">Sélectionnez un message pour le lire</p>
+                </div>
+            </section>
         </div>
     </div>
 

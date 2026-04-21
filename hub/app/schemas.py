@@ -1327,6 +1327,12 @@ class MessageBrief(BaseModel):
     created_at: datetime
     expires_at: Optional[datetime] = None
     is_read: bool = False
+    # Champs ajoutés (rétro-compat : optionnels)
+    status: Optional[str] = "active"
+    target_type: Optional[str] = None
+    delivered_at: Optional[datetime] = None
+    clicked_at: Optional[datetime] = None
+    read_at: Optional[datetime] = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -1335,7 +1341,10 @@ class MessageReadReceiptResponse(BaseModel):
     """Accusé de lecture"""
     user_id: int
     username: str
-    read_at: datetime
+    read_at: Optional[datetime] = None
+    # Champs optionnels (rétro-compat)
+    delivered_at: Optional[datetime] = None
+    clicked_at: Optional[datetime] = None
 
 
 class MessageResponse(BaseModel):
@@ -1359,6 +1368,12 @@ class MessageResponse(BaseModel):
     total_targets: int = 0
     is_resend: bool = False
     original_message_id: Optional[int] = None
+    # Cycle de vie + engagement (ajouts rétro-compat)
+    status: str = "active"
+    archived_at: Optional[datetime] = None
+    delivered_count: int = 0
+    click_count: int = 0
+    is_expired: bool = False
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -1396,6 +1411,11 @@ class MessageSyncItem(BaseModel):
     read_count: int = 0
     total_targets: int = 0
     read_receipts: List[MessageReadReceiptResponse] = []
+    # Cycle de vie + engagement (ajouts rétro-compat)
+    status: Optional[str] = "active"
+    archived_at: Optional[datetime] = None
+    delivered_count: int = 0
+    click_count: int = 0
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -1414,7 +1434,9 @@ class ReceiptSyncItem(BaseModel):
     message_id: int
     user_id: int
     username: Optional[str] = None
-    read_at: datetime
+    read_at: Optional[datetime] = None
+    delivered_at: Optional[datetime] = None
+    clicked_at: Optional[datetime] = None
 
 
 class ReceiptSyncResponse(BaseModel):

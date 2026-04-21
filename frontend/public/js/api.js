@@ -1189,7 +1189,7 @@ class HubAPI {
     }
 
     async getMessages(params = {}) {
-        const { page = 1, perPage = 50, priority, senderType, senderApp, targetUserId, targetType, search, hours } = params;
+        const { page = 1, perPage = 50, priority, senderType, senderApp, targetUserId, targetType, search, hours, status, expiringWithinHours } = params;
         let url = `/messages/?page=${page}&per_page=${perPage}`;
         if (priority) url += `&priority=${encodeURIComponent(priority)}`;
         if (senderType) url += `&sender_type=${encodeURIComponent(senderType)}`;
@@ -1198,6 +1198,8 @@ class HubAPI {
         if (targetType) url += `&target_type=${encodeURIComponent(targetType)}`;
         if (search) url += `&search=${encodeURIComponent(search)}`;
         if (hours) url += `&hours=${hours}`;
+        if (status) url += `&status=${encodeURIComponent(status)}`;
+        if (expiringWithinHours) url += `&expiring_within_hours=${expiringWithinHours}`;
         return this.request(url);
     }
 
@@ -1230,20 +1232,44 @@ class HubAPI {
         return this.request('/messages/read-all', { method: 'POST' });
     }
 
+    // Lifecycle (admin)
+    async archiveMessage(id) {
+        return this.request(`/messages/${id}/archive`, { method: 'POST' });
+    }
+
+    async restoreMessage(id) {
+        return this.request(`/messages/${id}/restore`, { method: 'POST' });
+    }
+
+    async hardDeleteMessage(id) {
+        return this.request(`/messages/${id}/hard`, { method: 'DELETE' });
+    }
+
+    // Engagement (user)
+    async markMessageDelivered(id) {
+        return this.request(`/messages/${id}/delivered`, { method: 'POST' });
+    }
+
+    async markMessageClicked(id) {
+        return this.request(`/messages/${id}/click`, { method: 'POST' });
+    }
+
     async purgeMessages(params = {}) {
-        const { hours, priority, senderApp, targetType } = params;
+        const { hours, priority, senderApp, targetType, hard } = params;
         let url = '/messages/';
         const p = [];
         if (hours) p.push(`hours=${hours}`);
         if (priority) p.push(`priority=${encodeURIComponent(priority)}`);
         if (senderApp) p.push(`sender_app=${encodeURIComponent(senderApp)}`);
         if (targetType) p.push(`target_type=${encodeURIComponent(targetType)}`);
+        if (hard) p.push('hard=true');
         if (p.length > 0) url += '?' + p.join('&');
         return this.request(url, { method: 'DELETE' });
     }
 
-    async deleteMessagesByIds(ids) {
-        return this.request('/messages/batch', {
+    async deleteMessagesByIds(ids, hard = false) {
+        const url = '/messages/batch' + (hard ? '?hard=true' : '');
+        return this.request(url, {
             method: 'DELETE',
             body: JSON.stringify({ ids }),
         });
