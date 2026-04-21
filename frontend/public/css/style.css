@@ -1177,12 +1177,14 @@ body {
 
 /* Badge priorité urgente pulsant */
 .msg-priority-urgent {
-    animation: msg-pulse 1.5s infinite;
+    animation: msg-pulse 1.6s infinite;
+    box-shadow: 0 0 0 0 rgba(220, 53, 69, 0.35);
 }
 
 @keyframes msg-pulse {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.6; }
+    0% { box-shadow: 0 0 0 0 rgba(220, 53, 69, 0.35); }
+    70% { box-shadow: 0 0 0 8px rgba(220, 53, 69, 0); }
+    100% { box-shadow: 0 0 0 0 rgba(220, 53, 69, 0); }
 }
 
 /* ── Notification Banner (cartes flottantes top-right) ── */
@@ -1451,29 +1453,52 @@ body {
 .notif-status-badge {
     display: inline-flex;
     align-items: center;
-    padding: 2px 8px;
+    padding: 3px 10px;
     border-radius: 12px;
     font-size: 0.72rem;
-    font-weight: 500;
+    font-weight: 600;
     border: 1px solid transparent;
 }
-.notif-status-badge.active   { background: #e6f4ea; color: #146c43; border-color: #b6e0c4; }
-.notif-status-badge.expired  { background: #fff3cd; color: #856404; border-color: #ffe69c; }
-.notif-status-badge.archived { background: #e9ecef; color: #495057; border-color: #ced4da; }
+.notif-status-badge.active   { background: #dcf5e5; color: #0f5132; border-color: #99d4b0; }
+.notif-status-badge.expired  { background: #ffefba; color: #7c5200; border-color: #f3c86b; }
+.notif-status-badge.archived { background: #e2e8f0; color: #334155; border-color: #cbd5e1; }
 
 /* Source badges */
 .notif-source-badge {
     display: inline-flex;
     align-items: center;
-    padding: 2px 8px;
-    border-radius: 4px;
+    padding: 3px 10px;
+    border-radius: 999px;
     font-size: 0.75rem;
-    font-weight: 500;
+    font-weight: 600;
     border: 1px solid transparent;
 }
-.notif-source-badge.app    { background: #e7f1fb; color: #1a5fa3; border-color: #b8d6f0; }
-.notif-source-badge.system { background: #f3e8ff; color: #6f42c1; border-color: #d6c2f1; }
-.notif-source-badge.admin  { background: #fff5e6; color: #b35900; border-color: #ffd9a8; }
+.notif-source-badge.app    { background: #dcebff; color: #0f4c81; border-color: #8ebde6; }
+.notif-source-badge.system { background: #ddfbf4; color: #0f766e; border-color: #8ee3d2; }
+.notif-source-badge.admin  { background: #fff0d9; color: #9a3412; border-color: #fdba74; }
+
+.notif-target-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 10px;
+    border-radius: 999px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    border: 1px solid transparent;
+}
+
+.notif-target-badge.broadcast {
+    background: #deefff;
+    color: #0b5cab;
+    border-color: #acd2ff;
+}
+
+.notif-target-badge.user {
+    background: #f1f5f9;
+    color: #334155;
+    border-color: #cbd5e1;
+}
 
 /* Engagement bar */
 .notif-engagement { min-width: 140px; }
@@ -1489,23 +1514,31 @@ body {
 }
 
 /* Filtres admin - page Messages */
-.messages-filters-row .msg-status-filter {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 4px;
+.messages-filters-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 0.75rem;
+    margin: 0;
 }
 
-.messages-filters-row .msg-status-filter .btn {
-    flex: 1 1 calc(50% - 4px);
-    min-width: 100px;
-    border-radius: 0.375rem;
+.messages-filters-row > [class*="col-"] {
+    width: auto;
+    max-width: none;
+    padding: 0;
 }
 
-@media (max-width: 768px) {
-    .messages-filters-row .msg-status-filter .btn {
-        flex: 1 1 100%;
-        min-width: 0;
-    }
+.messages-filters-row > .col-lg-12 {
+    grid-column: 1 / -1;
+}
+
+.admin-apps-toolbar {
+    background: linear-gradient(180deg, #fbfcfe 0%, #f4f7fb 100%);
+    border: 1px solid #e2e8f0;
+}
+
+.admin-apps-toolbar .input-group-text {
+    background: #fff;
+    color: #64748b;
 }
 
 /* =================================================================== */

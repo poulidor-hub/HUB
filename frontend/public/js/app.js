@@ -5,6 +5,9 @@
 let currentUser = null;
 let allApps = [];
 let allServiceAccounts = [];
+let adminAppsSearchQuery = '';
+let adminAppsStatusFilter = 'all';
+let adminAppsCategoryFilter = 'all';
 let hubHost = null;  // IP/hostname du Hub (chargé depuis l'API)
 let beaconToken = null;  // Token HMAC éphémère pour sécuriser beacon-logout
 let dashboardFilter = 'all'; // 'all' | 'favorites' | catégorie
@@ -1523,14 +1526,135 @@ async function loadAdminData() {
         console.log('loadAdminData: Apps chargées:', apps?.length || 0);
         console.log('loadAdminData: Service accounts chargés:', serviceAccounts?.length || 0);
         
-        allApps = apps;
-        allServiceAccounts = serviceAccounts;
-        renderAppsTable(apps);
-        renderServiceAccountsTable(serviceAccounts);
+        allApps = Array.isArray(apps) ? apps : [];
+        allServiceAccounts = Array.isArray(serviceAccounts) ? serviceAccounts : [];
+
+        syncAdminAppsFilterControls();
+        renderAppsTable(getFilteredAdminApps());
+        renderServiceAccountsTable(allServiceAccounts);
     } catch (error) {
         console.error('loadAdminData: Erreur:', error);
         throw error;
     }
+}
+
+function compareAdminAppsByName(leftApp, rightApp) {
+    const leftName = (leftApp?.name || leftApp?.slug || '').trim();
+    const rightName = (rightApp?.name || rightApp?.slug || '').trim();
+    return leftName.localeCompare(rightName, 'fr', { sensitivity: 'base', numeric: true });
+}
+
+function getAdminAppCategories() {
+    return [...new Set(
+        allApps
+            .map(app => (app.category || '').trim())
+            .filter(Boolean)
+    )].sort((left, right) => left.localeCompare(right, 'fr', { sensitivity: 'base', numeric: true }));
+}
+
+function syncAdminAppsFilterControls() {
+    const searchInput = document.getElementById('adminAppsSearch');
+    const statusSelect = document.getElementById('adminAppsStatusFilter');
+    const categorySelect = document.getElementById('adminAppsCategoryFilter');
+    const clearBtn = document.getElementById('adminAppsSearchClear');
+
+    if (searchInput && searchInput.value !== adminAppsSearchQuery) {
+        searchInput.value = adminAppsSearchQuery;
+    }
+
+    if (statusSelect) {
+        statusSelect.value = adminAppsStatusFilter;
+    }
+
+    if (categorySelect) {
+        const categories = getAdminAppCategories();
+        categorySelect.innerHTML = [
+            '<option value="all">Toutes</option>',
+            ...categories.map(category => `<option value="${escapeHtml(category)}">${escapeHtml(category)}</option>`)
+        ].join('');
+
+        if (!categories.includes(adminAppsCategoryFilter)) {
+            adminAppsCategoryFilter = 'all';
+        }
+        categorySelect.value = adminAppsCategoryFilter;
+    }
+
+    if (clearBtn) {
+        clearBtn.classList.toggle('d-none', !adminAppsSearchQuery.trim());
+    }
+}
+
+function getFilteredAdminApps() {
+    const normalizedQuery = adminAppsSearchQuery.trim().toLowerCase();
+
+    return allApps.filter(app => {
+        const isPending = app.approval_status === 'pending';
+        const isRejected = app.approval_status === 'rejected';
+
+        if (normalizedQuery) {
+            const matchesQuery = [
+                app.name,
+                app.slug,
+                app.frontend_url,
+                app.description,
+                app.category,
+            ].some(value => (value || '').toLowerCase().includes(normalizedQuery));
+
+            if (!matchesQuery) {
+                return false;
+            }
+        }
+
+        if (adminAppsStatusFilter === 'active' && (isPending || isRejected || !app.is_active)) {
+            return false;
+        }
+
+        if (adminAppsStatusFilter === 'inactive' && (isPending || isRejected || app.is_active)) {
+            return false;
+        }
+
+        if (adminAppsStatusFilter === 'pending' && !isPending) {
+            return false;
+        }
+
+        if (adminAppsStatusFilter === 'rejected' && !isRejected) {
+            return false;
+        }
+
+        if (adminAppsCategoryFilter !== 'all' && (app.category || '').trim() !== adminAppsCategoryFilter) {
+            return false;
+        }
+
+        return true;
+    });
+}
+
+function filterAdminApps() {
+    adminAppsSearchQuery = document.getElementById('adminAppsSearch')?.value || '';
+    adminAppsStatusFilter = document.getElementById('adminAppsStatusFilter')?.value || 'all';
+    adminAppsCategoryFilter = document.getElementById('adminAppsCategoryFilter')?.value || 'all';
+
+    syncAdminAppsFilterControls();
+    renderAppsTable(getFilteredAdminApps());
+}
+
+function clearAdminAppsSearch() {
+    adminAppsSearchQuery = '';
+    const searchInput = document.getElementById('adminAppsSearch');
+    if (searchInput) {
+        searchInput.value = '';
+        searchInput.focus();
+    }
+    syncAdminAppsFilterControls();
+    renderAppsTable(getFilteredAdminApps());
+}
+
+function resetAdminAppsFilters() {
+    adminAppsSearchQuery = '';
+    adminAppsStatusFilter = 'all';
+    adminAppsCategoryFilter = 'all';
+    syncAdminAppsFilterControls();
+    renderAppsTable(getFilteredAdminApps());
 }
 
 // ===== Status Monitoring =====
@@ -1788,14 +1912,14 @@ async function refreshServiceAccountsStatus() {
 
 function renderAppsTable(apps) {
     const container = document.getElementById('appsTable');
-    
-    if (apps.length === 0) {
-        container.innerHTML = '<p class="text-muted text-center py-4">Aucune application configurée</p>';
-        return;
-    }
+    const sortedApps = [...apps].sort(compareAdminAppsByName);
+    const totalApps = allApps.length;
+    const hasActiveFilters = Boolean(adminAppsSearchQuery.trim()) || adminAppsStatusFilter !== 'all' || adminAppsCategoryFilter !== 'all';
+
+    syncAdminAppsFilterControls();
 
     // Compter les apps pending pour le badge
-    const pendingCount = apps.filter(a => a.approval_status === 'pending' || a.approval_status === 'rejected').length;
+    const pendingCount = allApps.filter(a => a.approval_status === 'pending' || a.approval_status === 'rejected').length;
     const badge = document.getElementById('pendingAppsBadge');
     if (badge) {
         if (pendingCount > 0) {
@@ -1806,9 +1930,33 @@ function renderAppsTable(apps) {
         }
     }
 
+    const countLabel = hasActiveFilters
+        ? `${sortedApps.length} application(s) sur ${totalApps}`
+        : `${totalApps} application(s)`;
+
+    if (totalApps === 0) {
+        container.innerHTML = '<p class="text-muted text-center py-4 mb-0">Aucune application configurée</p>';
+        return;
+    }
+
+    if (sortedApps.length === 0) {
+        container.innerHTML = `
+            <div class="d-flex justify-content-between align-items-center mb-2">
+                <small class="text-muted">${countLabel} • triées de A à Z</small>
+                <button class="btn btn-sm btn-outline-secondary" onclick="refreshAppsStatus()" title="Vérifier la connectivité">
+                    <i class="bi bi-arrow-clockwise me-1"></i>Tester connectivité
+                </button>
+            </div>
+            <div class="border rounded-3 bg-light text-center text-muted py-4 px-3">
+                Aucune application ne correspond aux filtres actuels.
+            </div>
+        `;
+        return;
+    }
+
     container.innerHTML = `
         <div class="d-flex justify-content-between align-items-center mb-2">
-            <small class="text-muted">${apps.length} application(s)</small>
+            <small class="text-muted">${countLabel} • triées de A à Z</small>
             <button class="btn btn-sm btn-outline-secondary" onclick="refreshAppsStatus()" title="Vérifier la connectivité">
                 <i class="bi bi-arrow-clockwise me-1"></i>Tester connectivité
             </button>
@@ -1826,7 +1974,7 @@ function renderAppsTable(apps) {
                 </tr>
             </thead>
             <tbody id="appsTableBody">
-                ${apps.map(app => {
+                ${sortedApps.map(app => {
                     // Les ic\u00f4nes Docker/Health sont d'abord en \u00e9tat "inconnu"
                     // puis mises \u00e0 jour via SSE (docker_status_changed / app_health_changed)
                     let dockerIcon = '<i class="bi bi-question-circle text-muted" title="Docker: Chargement..."></i>';
@@ -9224,7 +9372,7 @@ async function loadMessagesPage() {
     const senderApp = document.getElementById('msgFilterApp')?.value || '';
     const search = document.getElementById('msgFilterSearch')?.value || '';
     const hours = document.getElementById('msgFilterHours')?.value || '';
-    const status = document.querySelector('input[name="msgStatus"]:checked')?.value || 'all';
+    const status = document.getElementById('msgFilterStatus')?.value || 'all';
 
     try {
         const targetType = _getActiveTargetType();
@@ -9343,8 +9491,8 @@ function renderMessagesTable(data) {
             : '';
         const bodyExtract = m.body ? `<div class="small text-muted text-truncate" style="max-width: 320px;">${escapeHtml(m.body)}</div>` : '';
         const targetLabel = m.target_type === 'broadcast'
-            ? '<span class="badge bg-light text-dark border">Tous</span>'
-            : `<span class="badge bg-light text-dark border" title="${escapeHtml(m.target_username || '')}">@${escapeHtml(m.target_username || ('User #' + m.target_user_id))}</span>`;
+            ? '<span class="notif-target-badge broadcast"><i class="bi bi-people-fill"></i>Tous</span>'
+            : `<span class="notif-target-badge user" title="${escapeHtml(m.target_username || '')}"><i class="bi bi-person-fill"></i>@${escapeHtml(m.target_username || ('User #' + m.target_user_id))}</span>`;
 
         const isArchived = m.status === 'archived';
         const archiveBtn = isArchived

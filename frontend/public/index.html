@@ -1158,6 +1158,43 @@
                             </button>
                         </div>
                     </div>
+                    <div class="card border-0 shadow-sm mb-3 admin-apps-toolbar">
+                        <div class="card-body py-3">
+                            <div class="row g-2 align-items-end">
+                                <div class="col-xl-5 col-lg-6">
+                                    <label class="form-label small mb-1">Recherche</label>
+                                    <div class="input-group input-group-sm">
+                                        <span class="input-group-text"><i class="bi bi-search"></i></span>
+                                        <input type="search" class="form-control" id="adminAppsSearch" placeholder="Nom, slug, URL, catégorie..." oninput="filterAdminApps()">
+                                        <button class="btn btn-outline-secondary d-none" type="button" id="adminAppsSearchClear" onclick="clearAdminAppsSearch()" title="Effacer la recherche">
+                                            <i class="bi bi-x-lg"></i>
+                                        </button>
+                                    </div>
+                                </div>
+                                <div class="col-xl-3 col-md-6">
+                                    <label class="form-label small mb-1">Statut</label>
+                                    <select class="form-select form-select-sm" id="adminAppsStatusFilter" onchange="filterAdminApps()">
+                                        <option value="all">Tous</option>
+                                        <option value="active">Actives</option>
+                                        <option value="inactive">Inactives</option>
+                                        <option value="pending">En attente</option>
+                                        <option value="rejected">Rejetées</option>
+                                    </select>
+                                </div>
+                                <div class="col-xl-3 col-md-6">
+                                    <label class="form-label small mb-1">Catégorie</label>
+                                    <select class="form-select form-select-sm" id="adminAppsCategoryFilter" onchange="filterAdminApps()">
+                                        <option value="all">Toutes</option>
+                                    </select>
+                                </div>
+                                <div class="col-xl-1 col-md-6 d-grid">
+                                    <button class="btn btn-outline-secondary btn-sm" type="button" onclick="resetAdminAppsFilters()" title="Réinitialiser les filtres">
+                                        <i class="bi bi-arrow-counterclockwise"></i>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
                     <div id="appsTable" class="table-responsive">
                         <!-- Table loaded dynamically -->
                     </div>
@@ -1356,18 +1393,14 @@
             <div class="card mb-3">
                 <div class="card-body py-2">
                     <div class="row g-2 align-items-end messages-filters-row">
-                        <div class="col-lg-4 col-md-6">
+                        <div class="col-lg-2 col-md-3">
                             <label class="form-label small mb-0">Cycle de vie</label>
-                            <div class="btn-group btn-group-sm w-100 msg-status-filter" role="group" id="msgStatusFilter">
-                                <input type="radio" class="btn-check" name="msgStatus" id="msgStatusAll" value="all" checked onchange="loadMessagesPage()">
-                                <label class="btn btn-outline-secondary" for="msgStatusAll" title="Tout">Tout</label>
-                                <input type="radio" class="btn-check" name="msgStatus" id="msgStatusActive" value="active" onchange="loadMessagesPage()">
-                                <label class="btn btn-outline-success" for="msgStatusActive" title="Actives">Actives</label>
-                                <input type="radio" class="btn-check" name="msgStatus" id="msgStatusExpired" value="expired" onchange="loadMessagesPage()">
-                                <label class="btn btn-outline-warning" for="msgStatusExpired" title="Expirées">Expirées</label>
-                                <input type="radio" class="btn-check" name="msgStatus" id="msgStatusArchived" value="archived" onchange="loadMessagesPage()">
-                                <label class="btn btn-outline-secondary" for="msgStatusArchived" title="Archivées">Archivées</label>
-                            </div>
+                            <select class="form-select form-select-sm" id="msgFilterStatus" onchange="loadMessagesPage()">
+                                <option value="all" selected>Tout</option>
+                                <option value="active">Actives</option>
+                                <option value="expired">Expirées</option>
+                                <option value="archived">Archivées</option>
+                            </select>
                         </div>
                         <div class="col-lg-2 col-md-3">
                             <label class="form-label small mb-0">Priorité</label>
