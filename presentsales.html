@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="fr" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hub 3.7.0 - Version Sales</title>
+    <!-- Chargement de Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .flow-arrow-h::after {
+            content: '↔';
+            font-size: 1.5rem;
+            color: #6b7280;
+            margin: 0 0.5rem;
+        }
+        
+        .flow-arrow-v::after {
+            content: '↓';
+            font-size: 1.2rem;
+            color: #4b5563;
+            display: block;
+            margin: 0.2rem 0;
+        }
+
+        .hub-glow {
+            box-shadow: 0 0 25px rgba(139, 92, 246, 0.2);
+        }
+
+        .feature-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+            gap: 0.75rem;
+        }
+
+        .app-card {
+            background: rgba(31, 41, 55, 0.5);
+            backdrop-filter: blur(4px);
+        }
+
+        .x-slug-bridge {
+            background: repeating-linear-gradient(
+                45deg,
+                rgba(16, 185, 129, 0.1),
+                rgba(16, 185, 129, 0.1) 10px,
+                transparent 10px,
+                transparent 20px
+            );
+            border: 2px dashed #10b981;
+        }
+    </style>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        'hub': '#8b5cf6',      /* Violet - Central */
+                        'app': '#10b981',      /* Emeraude - Indépendance */
+                        'logic': '#3b82f6',    /* Bleu - Métier */
+                        'data': '#f59e0b',     /* Ambre - Backup/Restore */
+                        'workflow': '#6366f1', /* Indigo - Dev/CI */
+                        'security': '#ef4444', /* Rouge - Securite */
+                    }
+                }
+            }
+        }
+    </script>
+</head>
+<body class="bg-gray-900 text-slate-200 min-h-screen p-4 md:p-8 font-sans">
+
+    <header class="max-w-6xl mx-auto text-center mb-12">
+        <h1 class="text-4xl font-extrabold text-white mb-4">Hub <span class="text-hub">3.7.0</span> pour accelerer vos applications</h1>
+        <p class="text-slate-400 max-w-2xl mx-auto">
+            Une plateforme unique pour connecter vos apps, securiser les acces, notifier vos utilisateurs en temps reel et reduire fortement le temps d'integration.
+        </p>
+        <div class="mt-4 inline-flex items-center gap-2 rounded-full border border-gray-700 bg-gray-800/70 px-4 py-1 text-xs text-slate-300">
+            <span class="h-2 w-2 rounded-full bg-app"></span>
+            Version sales - argumentaire avril 2026
+        </div>
+    </header>
+
+    <main class="max-w-7xl mx-auto space-y-12">
+
+        <!-- SECTION 1: LE HUB CENTRAL -->
+        <section class="relative bg-gray-800/50 p-8 rounded-3xl border border-hub/30 hub-glow">
+            <div class="absolute -top-4 left-1/2 -translate-x-1/2 bg-hub px-4 py-1 rounded-full text-xs font-bold uppercase tracking-widest text-white">
+                Plateforme Centrale de Confiance
+            </div>
+            
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-8 items-start">
+                <div class="text-center md:text-left">
+                    <h2 class="text-2xl font-bold text-hub mb-2">Hub SSO</h2>
+                    <p class="text-sm text-slate-400 italic">Un seul point d'entree pour vos collaborateurs, vos apps et vos partenaires</p>
+                </div>
+
+                <div class="flex justify-center">
+                    <div class="flex space-x-2">
+                        <div class="p-3 bg-gray-900 rounded-lg border border-gray-700 text-center w-24">
+                            <div class="text-xs text-slate-500 uppercase">Experience</div>
+                            <div class="font-bold text-logic">Interface unifiee</div>
+                        </div>
+                        <div class="p-3 bg-gray-900 rounded-lg border border-gray-700 text-center w-24">
+                            <div class="text-xs text-slate-500 uppercase">Moteur</div>
+                            <div class="font-bold text-logic">API robuste</div>
+                        </div>
+                        <div class="p-3 bg-gray-900 rounded-lg border border-gray-700 text-center w-24">
+                            <div class="text-xs text-slate-500 uppercase">Confiance</div>
+                            <div class="font-bold text-data">Traçabilite</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="bg-gray-900/80 p-4 rounded-xl border border-data/40">
+                    <h4 class="text-sm font-bold text-data mb-2 flex items-center">
+                        <span class="mr-2">💾</span> Continuite d'activite
+                    </h4>
+                    <p class="text-[11px] text-slate-400">
+                        Vos donnees critiques restent recuperables grace a des sauvegardes applicatives et une restauration securisee.
+                    </p>
+                </div>
+            </div>
+
+            <div class="mt-6 feature-grid">
+                <div class="rounded-xl border border-workflow/30 bg-workflow/10 p-3">
+                    <div class="text-[10px] uppercase text-workflow font-bold">Gouvernance des acces</div>
+                    <div class="text-xs text-slate-300 mt-1">Profils multiples et roles harmonises pour appliquer la bonne permission, au bon moment.</div>
+                </div>
+                <div class="rounded-xl border border-app/30 bg-app/10 p-3">
+                    <div class="text-[10px] uppercase text-app font-bold">Communication instantanee</div>
+                    <div class="text-xs text-slate-300 mt-1">Messages cibles ou broadcast, alertes en temps reel et suivi d'engagement des utilisateurs.</div>
+                </div>
+                <div class="rounded-xl border border-logic/30 bg-logic/10 p-3">
+                    <div class="text-[10px] uppercase text-logic font-bold">Onboarding accelere</div>
+                    <div class="text-xs text-slate-300 mt-1">Decouverte automatique des endpoints et integration simplifiee de nouvelles applications.</div>
+                </div>
+                <div class="rounded-xl border border-security/30 bg-security/10 p-3">
+                    <div class="text-[10px] uppercase text-security font-bold">Securite proactive</div>
+                    <div class="text-xs text-slate-300 mt-1">Protection des flux de connexion et controles renforces pour limiter les risques d'abus.</div>
+                </div>
+            </div>
+        </section>
+
+        <!-- SECTION 2: LE PONT X-SLUG -->
+        <div class="flex justify-center items-center py-4">
+            <div class="x-slug-bridge px-8 py-3 rounded-full flex items-center space-x-4">
+                <span class="text-app font-mono font-bold">Connecteur X-slug + M2M</span>
+                <span class="text-slate-500">↔</span>
+                <span class="text-xs text-slate-300">Connexion fluide entre applications, donnees et notifications</span>
+            </div>
+        </div>
+
+        <!-- SECTION 3: LES APPLICATIONS (SATELLITES) -->
+        <section class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+            
+            <!-- APPLICATION TYPE -->
+            <div class="app-card p-6 rounded-2xl border-2 border-app/40 relative overflow-hidden">
+                <div class="absolute top-0 right-0 bg-app/20 text-app px-3 py-1 rounded-bl-xl text-[10px] font-bold uppercase">
+                    Application Indépendante
+                </div>
+                
+                <h3 class="text-xl font-bold mb-6 flex items-center">
+                    <span class="w-3 h-3 bg-app rounded-full mr-3"></span>
+                    Parcours d'integration d'une application
+                </h3>
+
+                <div class="space-y-4">
+                    <!-- Template Layer -->
+                    <div class="bg-gray-900 p-4 rounded-xl border border-blue-500/30">
+                        <div class="flex justify-between items-center mb-3">
+                            <span class="text-[10px] font-bold text-blue-400 uppercase tracking-tighter">Demarrage rapide</span>
+                            <span class="text-[10px] text-slate-500 italic">Auto-register + credentials dynamiques</span>
+                        </div>
+                        
+                        <!-- Developer Work Area -->
+                        <div class="grid grid-cols-2 gap-4">
+                            <div class="p-3 bg-logic/10 border border-logic rounded-lg text-center">
+                                <h4 class="text-sm font-bold text-logic">Equipe Produit</h4>
+                                <p class="text-[10px] text-slate-400">Concentre ses efforts sur la valeur metier</p>
+                            </div>
+                            <div class="p-3 bg-logic/10 border border-logic rounded-lg text-center">
+                                <h4 class="text-sm font-bold text-logic">Equipe Tech</h4>
+                                <p class="text-[10px] text-slate-400">S'appuie sur un socle auth et M2M deja pret</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- App Local Resources -->
+                    <div class="flex justify-around items-center pt-2">
+                        <div class="text-center">
+                            <div class="text-[10px] uppercase text-slate-500">Autonomie</div>
+                            <div class="font-bold text-sm">Chaque app reste independante</div>
+                        </div>
+                        <div class="text-slate-700 text-xl">|</div>
+                        <div class="text-center">
+                            <div class="text-[10px] uppercase text-slate-500">Conformite</div>
+                            <div class="font-bold text-sm text-amber-500 italic">Historique et audits preserves</div>
+                        </div>
+                    </div>
+
+                    <div class="grid grid-cols-2 gap-3 pt-1">
+                        <div class="rounded-lg bg-gray-900/80 border border-gray-700 p-3 text-center">
+                            <div class="text-[10px] uppercase text-slate-500">Mise en service</div>
+                            <div class="text-xs text-slate-300">Activation et droits synchronises automatiquement</div>
+                        </div>
+                        <div class="rounded-lg bg-gray-900/80 border border-gray-700 p-3 text-center">
+                            <div class="text-[10px] uppercase text-slate-500">Evolution continue</div>
+                            <div class="text-xs text-slate-300">Nouveaux services partages disponibles sans refonte lourde</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- WORKFLOW & TOOLS -->
+            <div class="bg-gray-800/30 p-6 rounded-2xl border border-gray-700">
+                <h3 class="text-xl font-bold mb-6 flex items-center">
+                    <span class="w-3 h-3 bg-workflow rounded-full mr-3"></span>
+                    Preuves de fiabilite
+                </h3>
+
+                <div class="space-y-6">
+                    <!-- Pre-commit logic -->
+                    <div class="p-4 bg-workflow/5 border border-workflow/30 rounded-xl relative">
+                        <div class="flex items-center space-x-4">
+                            <div class="bg-workflow p-2 rounded-lg">🐍</div>
+                            <div>
+                                <h4 class="font-bold text-sm">Pilotage des evolutions</h4>
+                                <p class="text-[10px] text-slate-400">Versioning automatise et documentation synchronisee pour des deploiements predictibles.</p>
+                            </div>
+                        </div>
+                        <div class="mt-3 flex space-x-2">
+                            <span class="text-[9px] bg-gray-900 px-2 py-1 rounded text-slate-300">Version claire</span>
+                            <span class="text-[9px] bg-gray-900 px-2 py-1 rounded text-slate-300">Historique lisible</span>
+                            <span class="text-[9px] bg-gray-900 px-2 py-1 rounded text-slate-300">Impact maitrise</span>
+                        </div>
+                    </div>
+
+                    <div class="p-4 bg-security/5 border border-security/30 rounded-xl relative">
+                        <div class="flex items-center space-x-4">
+                            <div class="bg-security p-2 rounded-lg">🛡️</div>
+                            <div>
+                                <h4 class="font-bold text-sm text-security">Securite renforcee en continu</h4>
+                                <p class="text-[10px] text-slate-400">Renforcement progressif des controles d'authentification et de la securisation des echanges.</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- QA & Tools -->
+                    <div class="grid grid-cols-2 gap-4">
+                        <div class="p-3 bg-gray-900 rounded-lg border border-gray-700 text-center">
+                            <div class="text-xs text-slate-500 uppercase mb-1">Qualite logicielle</div>
+                            <div class="font-bold text-logic">Pytest</div>
+                        </div>
+                        <div class="p-3 bg-gray-900 rounded-lg border border-gray-700 text-center">
+                            <div class="text-xs text-slate-500 uppercase mb-1">Visibilite operationnelle</div>
+                            <div class="font-bold text-pink-500">Temps reel + audit + indicateurs</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+        </section>
+
+        <section class="bg-gray-800/30 p-6 rounded-2xl border border-gray-700">
+            <h3 class="text-xl font-bold mb-5 flex items-center">
+                <span class="w-3 h-3 bg-data rounded-full mr-3"></span>
+                Ce que le Hub apporte a votre organisation
+            </h3>
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3 text-xs">
+                <div class="rounded-lg border border-gray-700 bg-gray-900/70 p-3">Moins de friction au demarrage de nouvelles applications</div>
+                <div class="rounded-lg border border-gray-700 bg-gray-900/70 p-3">Meilleur pilotage des droits et des parcours utilisateurs</div>
+                <div class="rounded-lg border border-gray-700 bg-gray-900/70 p-3">Communication interne plus rapide grace aux notifications cibles</div>
+                <div class="rounded-lg border border-gray-700 bg-gray-900/70 p-3">Reduction des risques grace a la supervision et aux backups</div>
+            </div>
+        </section>
+
+    </main>
+
+    <footer class="mt-16 pt-8 border-t border-gray-800 text-center text-slate-500 text-[10px] uppercase tracking-widest">
+        Hub 3.7.0 - plateforme SSO et interconnexion applicative pour passer de l'idee a la production plus vite
+    </footer>
+
+</body>
+</html>
