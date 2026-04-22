@@ -4,9 +4,10 @@ Tests d'intégration pour les endpoints API des utilisateurs
 import pytest
 import io
 from httpx import AsyncClient
+from sqlalchemy import select
 
 from app.auth import create_access_token, get_password_hash
-from app.models import User, Profile, Application, UserAppRole, user_profiles
+from app.models import User, Profile, Application, UserAppRole, UserSession, user_profiles
 from tests.conftest import get_auth_header
 
 
@@ -219,6 +220,44 @@ class TestUsersEndpoints:
         )
         
         assert response.status_code in [200, 204]
+
+    @pytest.mark.asyncio
+    async def test_delete_user_with_active_sessions(self, client: AsyncClient, admin_user: User, async_session):
+        """La suppression d'un utilisateur supprime aussi ses sessions au lieu de nullifier user_id"""
+        user_to_delete = User(
+            username="todelete-session",
+            email="delete-session@example.com",
+            hashed_password=get_password_hash("password123"),
+            is_active=True
+        )
+        async_session.add(user_to_delete)
+        await async_session.commit()
+        await async_session.refresh(user_to_delete)
+
+        session = UserSession(
+            user_id=user_to_delete.id,
+            ip_address="127.0.0.1",
+            user_agent="pytest"
+        )
+        async_session.add(session)
+        await async_session.commit()
+
+        token, _, _ = create_access_token(
+            username=admin_user.username,
+            apps={}
+        )
+
+        response = await client.delete(
+            f"/api/users/{user_to_delete.id}",
+            headers=get_auth_header(token)
+        )
+
+        assert response.status_code in [200, 204]
+
+        sessions_result = await async_session.execute(
+            select(UserSession).where(UserSession.user_id == user_to_delete.id)
+        )
+        assert sessions_result.scalars().first() is None
     
     @pytest.mark.asyncio
     async def test_admin_cannot_delete_self(self, client: AsyncClient, admin_user: User):

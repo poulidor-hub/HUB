@@ -150,6 +150,8 @@ class User(Base):
                              primaryjoin="User.id == user_profiles.c.user_id",
                              secondaryjoin="Profile.id == user_profiles.c.profile_id")
     favorites = relationship("UserFavorite", back_populates="user", cascade="all, delete-orphan", lazy="raise")
+    refresh_tokens = relationship("RefreshToken", back_populates="user", cascade="all, delete-orphan")
+    sessions = relationship("UserSession", back_populates="user", cascade="all, delete-orphan")
     
     @property
     def applications(self):
@@ -354,7 +356,7 @@ class RefreshToken(Base):
     user_agent = Column(String(255))
     
     # Relations
-    user = relationship("User", backref="refresh_tokens")
+    user = relationship("User", back_populates="refresh_tokens")
     service_account = relationship("ServiceAccount", backref="refresh_tokens")
     
     @property
@@ -400,7 +402,7 @@ class UserSession(Base):
     current_app_slug = Column(String(50), nullable=True)  # Application actuellement active (dernière accédée)
     
     # Relations
-    user = relationship("User", backref="sessions")
+    user = relationship("User", back_populates="sessions")
     
     @property
     def duration_seconds(self) -> Optional[int]:
