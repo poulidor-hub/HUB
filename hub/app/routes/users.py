@@ -23,7 +23,8 @@ from app.schemas import (
     BulkAppRolesAssignRequest, BulkAppRolesAssignResponse, BulkAppRoleAssignResult,
     BulkRemoveAppAccessRequest, BulkRemoveAppAccessResponse, BulkRemoveAppAccessResult,
     CsvUserPreviewLine, CsvPreviewResponse, ProfileBriefResponse,
-    M2MObservedUsersRolesRequest, M2MObservedAppRole, M2MObservedUserData
+    M2MObservedUsersRolesRequest, M2MObservedAppRole, M2MObservedUserData,
+    M2MUserSearchItem, M2MUserSearchResponse
 )
 from app.auth import get_current_admin, get_current_entity, get_password_hash, revoke_all_user_tokens
 
@@ -111,6 +112,76 @@ async def m2m_bulk_user_app_roles(
         )
 
     return response_map
+
+
+@router.get("/m2m/search", response_model=M2MUserSearchResponse)
+async def m2m_search_users(
+    q: Optional[str] = Query(default=None, max_length=100, description="Filtre prefixe/contient sur username ou email"),
+    app_slug: Optional[str] = Query(default=None, description="Restreindre à une application précise (doit être autorisée pour le SA)"),
+    limit: int = Query(default=20, ge=1, le=50),
+    db: AsyncSession = Depends(get_db),
+    current_entity: Union[User, ServiceAccount] = Depends(get_current_entity)
+):
+    """
+    Recherche d'utilisateurs Hub pour les Service Accounts.
+
+    Retourne uniquement les utilisateurs actifs ayant un rôle sur l'une des
+    applications autorisées pour le service account appelant. Si `app_slug`
+    est fourni, restreint aux utilisateurs de cette application (et refuse
+    si l'app n'est pas autorisée pour le SA).
+    """
+    if isinstance(current_entity, User):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Cet endpoint est réservé aux Service Accounts (authentification M2M)"
+        )
+
+    allowed_app_slugs = {app.slug for app in current_entity.applications if app.is_active}
+    if not allowed_app_slugs:
+        return M2MUserSearchResponse(count=0, users=[])
+
+    target_slugs = allowed_app_slugs
+    if app_slug:
+        if app_slug not in allowed_app_slugs:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Application '{app_slug}' non autorisée pour ce service account"
+            )
+        target_slugs = {app_slug}
+
+    stmt = (
+        select(User.username, User.email, Application.slug, UserAppRole.role)
+        .join(UserAppRole, UserAppRole.user_id == User.id)
+        .join(Application, Application.id == UserAppRole.app_id)
+        .where(User.is_active == True)
+        .where(Application.is_active == True)
+        .where(Application.slug.in_(target_slugs))
+    )
+
+    needle = (q or "").strip()
+    if needle:
+        like = f"%{needle}%"
+        stmt = stmt.where(or_(User.username.ilike(like), User.email.ilike(like)))
+
+    stmt = stmt.order_by(User.username, Application.slug).limit(limit * 4)
+
+    result = await db.execute(stmt)
+    seen_usernames = set()
+    items: List[M2MUserSearchItem] = []
+    for username, email, slug, role in result.all():
+        if username in seen_usernames:
+            continue
+        seen_usernames.add(username)
+        items.append(M2MUserSearchItem(
+            username=username,
+            email=email,
+            app_slug=slug,
+            role=role,
+        ))
+        if len(items) >= limit:
+            break
+
+    return M2MUserSearchResponse(count=len(items), users=items)
 
 
 @router.get("/")

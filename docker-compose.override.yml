@@ -9,6 +9,11 @@
 # =============================================================================
 
 services:
+  db:
+    # En développement, évite les dumps SQL très longs quand une requête est
+    # annulée par un reload/arrêt côté client.
+    command: postgres -c log_min_error_statement=fatal
+
   hub-api:
     # Hot-reload pour le développement
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --timeout-graceful-shutdown 5

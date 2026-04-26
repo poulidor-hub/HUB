@@ -3,15 +3,17 @@ Tests du runner de migrations (`apply_migrations`).
 
 Garanties vérifiées :
 - Fail-fast : un SQL invalide lève MigrationError et n'enregistre PAS la
-  migration (rollback complet, ré-exécution possible au prochain boot).
+    migration (rollback complet, ré-exécution possible au prochain boot).
 - Détection de collision : deux fichiers avec le même préfixe de version
-  lèvent MigrationError avant toute exécution.
+    lèvent MigrationError avant toute exécution.
 - Réussite : une migration valide s'applique et est enregistrée.
+- Historique réservé : une migration déjà enregistrée en DB mais conservée
+    comme placeholder sur disque ne doit pas être signalée comme absente.
 """
 from __future__ import annotations
 
+import logging
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 from sqlalchemy import text
@@ -115,3 +117,150 @@ async def test_apply_migrations_detects_version_collision(
 
     with pytest.raises(MigrationError, match="Collision"):
         await apply_migrations()
+
+
+@pytest.mark.asyncio
+async def test_apply_migrations_keeps_reserved_placeholder_on_disk(
+    temp_engine, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog
+):
+    """Un placeholder reserve ne doit pas etre signale comme manquant."""
+    migrations_dir = tmp_path / "migrations_reserved"
+    migrations_dir.mkdir()
+    (migrations_dir / "020_add_oidc_support.sql").write_text(
+        "-- migration reservee; aucune action SQL\n"
+    )
+    _patch_migrations_dir(monkeypatch, migrations_dir)
+
+    async with temp_engine.begin() as conn:
+        await conn.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS schema_migrations (
+                    version VARCHAR(10) PRIMARY KEY,
+                    filename VARCHAR(255) NOT NULL,
+                    applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+        )
+        await conn.execute(
+            text(
+                "INSERT INTO schema_migrations (version, filename) "
+                "VALUES ('020', '020_add_oidc_support.sql')"
+            )
+        )
+
+    await apply_migrations()
+
+    assert "absentes sur disque" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_apply_migrations_skips_message_migration_already_applied_as_020(
+    temp_engine, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog
+):
+    """Une ancienne 020 messages couvre la 021 messages actuelle."""
+    caplog.set_level(logging.INFO)
+    migrations_dir = tmp_path / "migrations_message_alias"
+    migrations_dir.mkdir()
+    (migrations_dir / "020_add_oidc_support.sql").write_text(
+        "-- migration reservee; aucune action SQL\n"
+    )
+    message_migration = (
+        migrations_dir / "021_add_message_lifecycle_and_engagement.sql"
+    )
+    message_migration.write_text(
+        "CREATE TABLE should_not_run (id INTEGER PRIMARY KEY);"
+    )
+    _patch_migrations_dir(monkeypatch, migrations_dir)
+
+    async with temp_engine.begin() as conn:
+        await conn.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS schema_migrations (
+                    version VARCHAR(10) PRIMARY KEY,
+                    filename VARCHAR(255) NOT NULL,
+                    applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+        )
+        await conn.execute(
+            text(
+                "INSERT INTO schema_migrations (version, filename) "
+                "VALUES "
+                "('020', '020_add_message_lifecycle_and_engagement.sql')"
+            )
+        )
+
+    await apply_migrations()
+
+    async with temp_engine.begin() as conn:
+        result = await conn.execute(
+            text(
+                "SELECT name FROM sqlite_master "
+                "WHERE type = 'table' AND name = 'should_not_run'"
+            )
+        )
+        assert result.scalar_one_or_none() is None
+    assert "déjà couverte par l'historique" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_apply_migrations_runs_message_migration_after_reserved_020(
+    temp_engine, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """Une 020 OIDC/no-op ne couvre pas la 021 messages."""
+    migrations_dir = tmp_path / "migrations_reserved_then_message"
+    migrations_dir.mkdir()
+    (migrations_dir / "020_add_oidc_support.sql").write_text(
+        "-- migration reservee; aucune action SQL\n"
+    )
+    message_migration = (
+        migrations_dir / "021_add_message_lifecycle_and_engagement.sql"
+    )
+    message_migration.write_text(
+        "CREATE TABLE message_marker (id INTEGER PRIMARY KEY);"
+    )
+    _patch_migrations_dir(monkeypatch, migrations_dir)
+
+    async with temp_engine.begin() as conn:
+        await conn.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS schema_migrations (
+                    version VARCHAR(10) PRIMARY KEY,
+                    filename VARCHAR(255) NOT NULL,
+                    applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+        )
+        await conn.execute(
+            text(
+                "INSERT INTO schema_migrations (version, filename) "
+                "VALUES ('020', '020_add_oidc_support.sql')"
+            )
+        )
+
+    await apply_migrations()
+
+    async with temp_engine.begin() as conn:
+        result = await conn.execute(
+            text(
+                "SELECT name FROM sqlite_master "
+                "WHERE type = 'table' AND name = 'message_marker'"
+            )
+        )
+        assert result.scalar_one_or_none() == "message_marker"
+        result = await conn.execute(
+            text(
+                "SELECT filename FROM schema_migrations "
+                "WHERE version = '021'"
+            )
+        )
+        assert (
+            result.scalar_one()
+            == "021_add_message_lifecycle_and_engagement.sql"
+        )

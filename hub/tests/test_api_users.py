@@ -451,6 +451,172 @@ class TestM2MBulkUserRoles:
         assert isinstance(data[test_user.username]["apps"], list)
 
 
+class TestM2MSearchUsers:
+    """Tests pour l'endpoint M2M de recherche d'utilisateurs"""
+
+    async def _get_service_account_token(self, client: AsyncClient, service_account) -> str:
+        response = await client.post(
+            "/api/auth/token",
+            data={
+                "grant_type": "client_credentials",
+                "client_id": service_account.client_id,
+                "client_secret": "secret123"
+            }
+        )
+        assert response.status_code == 200
+        return response.json()["access_token"]
+
+    @pytest.mark.asyncio
+    async def test_m2m_search_returns_users_of_allowed_apps(
+        self,
+        client: AsyncClient,
+        async_session,
+        service_account,
+        test_user: User,
+        test_app: Application,
+    ):
+        """Le SA voit uniquement les users ayant un rôle sur ses apps autorisées."""
+        # User dans une app NON autorisée pour le SA → doit être exclu
+        hidden_app = Application(
+            name="Hidden App",
+            slug="hidden-app",
+            api_url="http://localhost:8010",
+            is_active=True,
+            requires_auth=True,
+        )
+        other_user = User(
+            username="alice",
+            email="alice@example.com",
+            hashed_password=get_password_hash("testpass123"),
+            is_active=True,
+        )
+        async_session.add_all([hidden_app, other_user])
+        await async_session.commit()
+        await async_session.refresh(hidden_app)
+        await async_session.refresh(other_user)
+
+        async_session.add_all([
+            UserAppRole(user_id=test_user.id, app_id=test_app.id, role="manager"),
+            UserAppRole(user_id=other_user.id, app_id=hidden_app.id, role="user"),
+        ])
+        await async_session.commit()
+
+        token = await self._get_service_account_token(client, service_account)
+        response = await client.get(
+            "/api/users/m2m/search",
+            params={"limit": 10},
+            headers=get_auth_header(token),
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        usernames = {u["username"] for u in data["users"]}
+        assert test_user.username in usernames
+        assert "alice" not in usernames
+
+    @pytest.mark.asyncio
+    async def test_m2m_search_filters_by_query(
+        self,
+        client: AsyncClient,
+        async_session,
+        service_account,
+        test_user: User,
+        test_app: Application,
+    ):
+        """Le paramètre q filtre sur username/email (ilike)."""
+        bob = User(
+            username="bob",
+            email="bob@example.com",
+            hashed_password=get_password_hash("testpass123"),
+            is_active=True,
+        )
+        async_session.add(bob)
+        await async_session.commit()
+        await async_session.refresh(bob)
+
+        async_session.add_all([
+            UserAppRole(user_id=test_user.id, app_id=test_app.id, role="user"),
+            UserAppRole(user_id=bob.id, app_id=test_app.id, role="user"),
+        ])
+        await async_session.commit()
+
+        token = await self._get_service_account_token(client, service_account)
+        response = await client.get(
+            "/api/users/m2m/search",
+            params={"q": "bob"},
+            headers=get_auth_header(token),
+        )
+        assert response.status_code == 200
+        data = response.json()
+        usernames = {u["username"] for u in data["users"]}
+        assert usernames == {"bob"}
+
+    @pytest.mark.asyncio
+    async def test_m2m_search_excludes_inactive_users(
+        self,
+        client: AsyncClient,
+        async_session,
+        service_account,
+        test_app: Application,
+    ):
+        """Les utilisateurs inactifs sont exclus."""
+        inactive = User(
+            username="inactive-user",
+            email="inactive@example.com",
+            hashed_password=get_password_hash("testpass123"),
+            is_active=False,
+        )
+        async_session.add(inactive)
+        await async_session.commit()
+        await async_session.refresh(inactive)
+
+        async_session.add(
+            UserAppRole(user_id=inactive.id, app_id=test_app.id, role="user")
+        )
+        await async_session.commit()
+
+        token = await self._get_service_account_token(client, service_account)
+        response = await client.get(
+            "/api/users/m2m/search",
+            params={"q": "inactive"},
+            headers=get_auth_header(token),
+        )
+        assert response.status_code == 200
+        data = response.json()
+        usernames = {u["username"] for u in data["users"]}
+        assert "inactive-user" not in usernames
+
+    @pytest.mark.asyncio
+    async def test_m2m_search_app_slug_must_be_allowed(
+        self,
+        client: AsyncClient,
+        service_account,
+    ):
+        """Demander un app_slug non autorisé → 403."""
+        token = await self._get_service_account_token(client, service_account)
+        response = await client.get(
+            "/api/users/m2m/search",
+            params={"app_slug": "not-allowed-slug"},
+            headers=get_auth_header(token),
+        )
+        assert response.status_code == 403
+
+    @pytest.mark.asyncio
+    async def test_m2m_search_forbidden_for_human_user(
+        self, client: AsyncClient, test_user: User
+    ):
+        """Un token user (non-SA) reçoit 403."""
+        token, _, _ = create_access_token(
+            username=test_user.username,
+            apps={},
+        )
+        response = await client.get(
+            "/api/users/m2m/search",
+            headers=get_auth_header(token),
+        )
+        assert response.status_code == 403
+
+
 class TestCsvImport:
     """Tests pour les endpoints CSV d'import d'utilisateurs"""
 

@@ -61,6 +61,16 @@ class MigrationError(RuntimeError):
     """Levée quand une migration SQL échoue. Stoppe le démarrage de l'application."""
 
 
+MIGRATION_ALIASES = {
+    # Certaines instances ont enregistré la migration message sous le préfixe
+    # 020 avant que ce numéro soit réservé à l'historique OIDC.
+    ("020", "020_add_message_lifecycle_and_engagement.sql"): (
+        "021",
+        "021_add_message_lifecycle_and_engagement.sql",
+    ),
+}
+
+
 async def apply_migrations():
     """
     Applique automatiquement les migrations SQL depuis le dossier migrations/.
@@ -116,6 +126,23 @@ async def apply_migrations():
         )
         applied = {row[0]: row[1] for row in result.fetchall()}
 
+    applied_versions = set(applied)
+    for old_migration, current_migration in MIGRATION_ALIASES.items():
+        old_version, old_filename = old_migration
+        current_version, current_filename = current_migration
+        current_path = by_version.get(current_version)
+        if (
+            applied.get(old_version) == old_filename
+            and current_path is not None
+            and current_path.name == current_filename
+        ):
+            applied_versions.add(current_version)
+            logger.info(
+                "↔️ Migration %s déjà couverte par l'historique %s",
+                current_filename,
+                old_filename,
+            )
+
     # Avertir si la DB référence des migrations qui n'existent plus sur disque
     missing_on_disk = sorted(set(applied) - set(by_version))
     if missing_on_disk:
@@ -126,7 +153,9 @@ async def apply_migrations():
         )
 
     pending = [
-        (v, by_version[v]) for v in sorted(by_version) if v not in applied
+        (v, by_version[v])
+        for v in sorted(by_version)
+        if v not in applied_versions
     ]
     if not pending:
         logger.info("✅ Schéma à jour (%d migrations appliquées)", len(applied))

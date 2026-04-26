@@ -1233,6 +1233,20 @@ class M2MObservedUserData(BaseModel):
     apps: List[M2MObservedAppRole] = []
 
 
+class M2MUserSearchItem(BaseModel):
+    """Utilisateur retourné par la recherche M2M"""
+    username: str
+    email: Optional[EmailStr] = None
+    app_slug: str
+    role: str
+
+
+class M2MUserSearchResponse(BaseModel):
+    """Réponse paginée de la recherche M2M d'utilisateurs"""
+    count: int
+    users: List[M2MUserSearchItem] = []
+
+
 # ─── CSV Import Schemas ───
 
 class CsvUserPreviewLine(BaseModel):

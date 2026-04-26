@@ -1,4 +1,4 @@
--- Migration 020: Cycle de vie des messages + tracking d'engagement
+-- Migration 021: Cycle de vie des messages + tracking d'engagement
 -- Date: 2026-04-21
 -- Description:
 --   Refonte du Notification Center.

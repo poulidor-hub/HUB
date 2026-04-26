@@ -1,0 +1,8 @@
+-- Migration 020: réservation historique pour le support OIDC
+-- Date: 2026-04-25
+-- Description:
+--   Cette version a déjà été enregistrée en base sur certaines instances
+--   sous le nom `020_add_oidc_support.sql`, mais le fichier n'était plus
+--   présent sur disque. On la réintroduit comme migration no-op pour
+--   préserver l'historique, supprimer le warning de boot et éviter toute
+--   réutilisation accidentelle du préfixe 020.
