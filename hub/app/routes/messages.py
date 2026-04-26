@@ -14,13 +14,14 @@ from sqlalchemy import select, func, and_, or_, delete, desc, case
 from sqlalchemy.orm import selectinload
 from datetime import datetime, timedelta, timezone
 from typing import Optional, List, Union
+from urllib.parse import urlparse, urljoin
 import csv
 import io
 import time
 import logging
 
 from app.database import get_db
-from app.models import User, UserMessage, MessageReadReceipt, ServiceAccount, utcnow
+from app.models import User, UserMessage, MessageReadReceipt, ServiceAccount, Application, utcnow
 from app.auth import get_current_user, get_current_entity, get_current_admin, get_settings
 from app.schemas import (
     MessageCreate, MessageM2MCreate, MessageResponse, MessageBrief,
@@ -105,6 +106,42 @@ async def _build_users_map(db: AsyncSession, user_ids: set[int]) -> dict[int, st
         select(User.id, User.username).where(User.id.in_(user_ids))
     )
     return {row.id: row.username for row in result.all()}
+
+
+def _resolve_app_action_url(action_url: Optional[str], frontend_url: Optional[str]) -> Optional[str]:
+    """
+    Résout une `action_url` envoyée par une application via M2M.
+
+    - Si `action_url` est vide, retourne None.
+    - Si `action_url` est absolue (scheme http/https), la retourne telle quelle.
+    - Si `action_url` est relative et `frontend_url` est disponible, la préfixe avec
+      `frontend_url` (en ajoutant `http://` par défaut si le scheme manque).
+    - Si `action_url` est relative mais `frontend_url` indisponible, log un warning et
+      retourne `action_url` telle quelle.
+
+    Tronque le résultat à 500 caractères (limite colonne `action_url`).
+    """
+    if not action_url:
+        return None
+
+    parsed = urlparse(action_url)
+    if parsed.scheme in ("http", "https"):
+        return action_url[:500]
+
+    if not frontend_url:
+        logger.warning(
+            "action_url relative '%s' mais frontend_url manquant pour l'app expéditrice — lien non résolu",
+            action_url,
+        )
+        return action_url[:500]
+
+    base = frontend_url.strip()
+    if not urlparse(base).scheme:
+        base = "http://" + base
+    if not base.endswith("/"):
+        base = base + "/"
+    resolved = urljoin(base, action_url.lstrip("/"))
+    return resolved[:500]
 
 
 async def purge_old_messages(db: AsyncSession, retention_days: int) -> int:
@@ -1197,6 +1234,22 @@ async def m2m_send_message(
         entity.applications[0].slug if entity.applications else None
     ) or entity.name
 
+    # Résoudre l'URL frontale de l'app expéditrice pour enrichir une `action_url` relative.
+    sender_app_frontend_url: Optional[str] = None
+    sender_app = next(
+        (a for a in (entity.applications or []) if a.slug == sender_app_slug),
+        None,
+    )
+    if sender_app is None:
+        result = await db.execute(
+            select(Application.frontend_url).where(Application.slug == sender_app_slug)
+        )
+        sender_app_frontend_url = result.scalar_one_or_none()
+    else:
+        sender_app_frontend_url = sender_app.frontend_url
+
+    resolved_action_url = _resolve_app_action_url(payload.action_url, sender_app_frontend_url)
+
     # Résoudre les usernames
     username_map = await _resolve_usernames(db, payload.target_usernames)
     not_found = set(payload.target_usernames) - set(username_map.keys())
@@ -1220,7 +1273,7 @@ async def m2m_send_message(
             priority=payload.priority.value,
             title=title,
             body=payload.body,
-            action_url=payload.action_url,
+            action_url=resolved_action_url,
             action_label=payload.action_label,
             expires_at=payload.expires_at,
             is_resend=getattr(payload, 'is_resend', False) or False,
