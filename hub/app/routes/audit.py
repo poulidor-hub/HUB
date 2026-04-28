@@ -427,7 +427,8 @@ async def get_active_sessions(
 
 @router.get("/sessions/history")
 async def get_session_history(
-    user_id: Optional[int] = Query(None, description="Filtrer par utilisateur"),
+    user_id: Optional[int] = Query(None, description="Filtrer par utilisateur (ID)"),
+    username: Optional[str] = Query(None, description="Filtrer par nom d'utilisateur (recherche partielle)"),
     days: int = Query(7, ge=1, le=90, description="Nombre de jours d'historique"),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
@@ -440,9 +441,10 @@ async def get_session_history(
     if not current_user.is_admin and user_id and user_id != current_user.id:
         raise HTTPException(status_code=403, detail="Accès non autorisé")
     
-    # Si non-admin, forcer à ses propres sessions
+    # Si non-admin, forcer à ses propres sessions et ignorer le filtre username
     if not current_user.is_admin:
         user_id = current_user.id
+        username = None
     
     since = utcnow() - timedelta(days=days)
     
@@ -452,6 +454,16 @@ async def get_session_history(
     
     if user_id:
         query = query.where(UserSession.user_id == user_id)
+
+    if username:
+        username_pattern = f"%{username.strip()}%"
+        ids_result = await db.execute(
+            select(User.id).where(User.username.ilike(username_pattern))
+        )
+        matching_ids = [row[0] for row in ids_result.all()]
+        if not matching_ids:
+            return {"period_days": days, "total_sessions": 0, "sessions": []}
+        query = query.where(UserSession.user_id.in_(matching_ids))
     
     query = query.order_by(UserSession.login_at.desc())
     
@@ -698,7 +710,8 @@ async def get_audit_logs(
     days: int = Query(30, ge=1, le=365, description="Période en jours"),
     action: Optional[str] = Query(None, description="Filtrer par action (access_app, login, logout...)"),
     target: Optional[str] = Query(None, description="Filtrer par cible (app_slug)"),
-    user_id: Optional[int] = Query(None, description="Filtrer par utilisateur"),
+    user_id: Optional[int] = Query(None, description="Filtrer par utilisateur (ID)"),
+    username: Optional[str] = Query(None, description="Filtrer par nom d'utilisateur (recherche partielle, insensible à la casse)"),
     page: int = Query(1, ge=1, description="Numéro de page"),
     page_size: int = Query(50, ge=10, le=200, description="Éléments par page"),
     current_user: User = Depends(get_current_user),
@@ -712,9 +725,10 @@ async def get_audit_logs(
     if not current_user.is_admin and user_id and user_id != current_user.id:
         raise HTTPException(status_code=403, detail="Accès non autorisé")
     
-    # Si non-admin, forcer à ses propres logs
+    # Si non-admin, forcer à ses propres logs et ignorer le filtre username
     if not current_user.is_admin:
         user_id = current_user.id
+        username = None
     
     since = utcnow() - timedelta(days=days)
     
@@ -733,6 +747,26 @@ async def get_audit_logs(
     if user_id:
         query = query.where(AuditLog.user_id == user_id)
         count_query = count_query.where(AuditLog.user_id == user_id)
+
+    # Filtre par username (recherche partielle ILIKE) — résolu en liste d'IDs
+    if username:
+        username_pattern = f"%{username.strip()}%"
+        ids_result = await db.execute(
+            select(User.id).where(User.username.ilike(username_pattern))
+        )
+        matching_ids = [row[0] for row in ids_result.all()]
+        if not matching_ids:
+            # Aucun user ne matche → résultat vide immédiat
+            return {
+                "period_days": days,
+                "total_count": 0,
+                "page": page,
+                "page_size": page_size,
+                "total_pages": 0,
+                "logs": [],
+            }
+        query = query.where(AuditLog.user_id.in_(matching_ids))
+        count_query = count_query.where(AuditLog.user_id.in_(matching_ids))
     
     # Compte total
     result = await db.execute(count_query)
@@ -996,6 +1030,8 @@ async def export_audit_logs_csv(
     days: int = Query(30, ge=1, le=365, description="Période en jours"),
     action: Optional[str] = Query(None, description="Filtrer par action"),
     target: Optional[str] = Query(None, description="Filtrer par cible (app_slug)"),
+    user_id: Optional[int] = Query(None, description="Filtrer par utilisateur (ID)"),
+    username: Optional[str] = Query(None, description="Filtrer par nom d'utilisateur (recherche partielle)"),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
@@ -1014,6 +1050,19 @@ async def export_audit_logs_csv(
         query = query.where(AuditLog.action == action)
     if target:
         query = query.where(AuditLog.target == target)
+    if user_id:
+        query = query.where(AuditLog.user_id == user_id)
+    if username:
+        username_pattern = f"%{username.strip()}%"
+        ids_result = await db.execute(
+            select(User.id).where(User.username.ilike(username_pattern))
+        )
+        matching_ids = [row[0] for row in ids_result.all()]
+        if matching_ids:
+            query = query.where(AuditLog.user_id.in_(matching_ids))
+        else:
+            # Aucun user matché → CSV vide (juste l'entête)
+            query = query.where(AuditLog.id == -1)
     
     query = query.order_by(desc(AuditLog.created_at))
     

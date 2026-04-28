@@ -155,6 +155,7 @@ async def periodic_backup_scheduler():
     from croniter import croniter
     from sqlalchemy import select
     from app.models import Application
+    from app.routes.app_backups import perform_app_backup, BackupExecutionError
     from datetime import datetime, timezone
     
     logger.info("📅 Scheduler de backups démarré")
@@ -181,31 +182,69 @@ async def periodic_backup_scheduler():
                         # Vérifier si c'est l'heure du backup
                         if app.next_backup_at and app.next_backup_at <= now:
                             logger.info(f"📦 Déclenchement backup planifié pour {app.slug}")
-                            
-                            # Mettre à jour le statut
+
+                            # Marquer comme en cours et calculer le prochain créneau
                             app.last_backup_status = "running"
-                            
-                            # Calculer le prochain backup
-                            cron = croniter(app.backup_cron, now)
-                            app.next_backup_at = cron.get_next(datetime)
-                            
+                            try:
+                                cron = croniter(app.backup_cron, now)
+                                app.next_backup_at = cron.get_next(datetime)
+                            except Exception as cron_err:
+                                logger.error(
+                                    f"❌ Cron invalide pour {app.slug} ('{app.backup_cron}'): {cron_err}",
+                                    exc_info=True,
+                                )
+                                app.last_backup_status = "failed"
+                                await db.commit()
+                                continue
                             await db.commit()
-                            
-                            # TODO: Déclencher réellement le backup
-                            # Pour l'instant, on log juste l'événement
-                            # L'implémentation complète nécessiterait d'appeler l'API de l'app
-                            
-                            logger.info(f"📅 Prochain backup pour {app.slug}: {app.next_backup_at}")
-                        
+
+                            # Déclencher le backup réel via la logique partagée
+                            try:
+                                await perform_app_backup(
+                                    db,
+                                    app,
+                                    created_by="scheduler",
+                                    created_by_type="scheduler",
+                                    description_prefix="Backup planifié (cron)",
+                                )
+                                logger.info(
+                                    f"✅ Backup planifié réussi pour {app.slug}. "
+                                    f"Prochain: {app.next_backup_at}"
+                                )
+                            except BackupExecutionError as be:
+                                app.last_backup_status = "failed"
+                                await db.commit()
+                                logger.error(
+                                    f"❌ Backup planifié échoué pour {app.slug}: {be.message}"
+                                )
+                            except Exception as run_err:
+                                app.last_backup_status = "failed"
+                                await db.commit()
+                                logger.error(
+                                    f"❌ Backup planifié échoué pour {app.slug}: {run_err}",
+                                    exc_info=True,
+                                )
+
                         # Si next_backup_at n'est pas défini, le calculer
                         elif not app.next_backup_at and app.backup_cron:
-                            cron = croniter(app.backup_cron, now)
-                            app.next_backup_at = cron.get_next(datetime)
-                            await db.commit()
-                            logger.info(f"📅 Prochain backup programmé pour {app.slug}: {app.next_backup_at}")
-                            
+                            try:
+                                cron = croniter(app.backup_cron, now)
+                                app.next_backup_at = cron.get_next(datetime)
+                                await db.commit()
+                                logger.info(
+                                    f"📅 Prochain backup programmé pour {app.slug}: {app.next_backup_at}"
+                                )
+                            except Exception as cron_err:
+                                logger.error(
+                                    f"❌ Cron invalide pour {app.slug} ('{app.backup_cron}'): {cron_err}",
+                                    exc_info=True,
+                                )
+
                     except Exception as e:
-                        logger.warning(f"⚠️ Erreur scheduler backup pour {app.slug}: {e}")
+                        logger.error(
+                            f"❌ Erreur scheduler backup pour {app.slug}: {e}",
+                            exc_info=True,
+                        )
             
             # Vérifier toutes les 60 secondes
             await asyncio.sleep(60)
@@ -214,7 +253,7 @@ async def periodic_backup_scheduler():
             logger.info("🛑 Scheduler de backups arrêté")
             break
         except Exception as e:
-            logger.warning(f"⚠️ Erreur dans le scheduler de backups: {e}")
+            logger.error(f"❌ Erreur dans le scheduler de backups: {e}", exc_info=True)
             await asyncio.sleep(60)
 
 
@@ -557,6 +596,23 @@ app.include_router(settings_routes.router)
 @app.get("/health")
 async def health_check():
     return {"status": "healthy", "service": "hub-auth"}
+
+
+@app.get("/api/system/time")
+async def get_system_time():
+    """
+    Retourne l'heure courante du Hub en UTC.
+
+    Utile côté UI pour aider l'utilisateur à composer ses expressions cron
+    en comparant avec son heure locale (les cron de backup sont évalués
+    en UTC côté serveur).
+    """
+    now = utcnow()
+    return {
+        "utc_now": now.isoformat(),
+        "utc_now_human": now.strftime("%Y-%m-%d %H:%M:%S UTC"),
+        "timezone": "UTC",
+    }
 
 
 @app.get("/api/config/hub-host")

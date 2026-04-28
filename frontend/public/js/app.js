@@ -3659,7 +3659,7 @@ async function loadAuditLogsTab() {
     const days = parseInt(document.getElementById('auditPeriod')?.value || 30);
     const action = document.getElementById('logsFilterAction')?.value || null;
     const target = document.getElementById('logsFilterApp')?.value || null;
-    const userId = document.getElementById('logsFilterUser')?.value || null;
+    const username = document.getElementById('logsFilterUser')?.value?.trim() || null;
     
     try {
         // Charger les filtres si pas encore fait
@@ -3669,7 +3669,7 @@ async function loadAuditLogsTab() {
             days,
             action: action || null,
             target: target || null,
-            userId: userId ? parseInt(userId) : null,
+            username: username || null,
             page: auditLogsPage,
             pageSize: 50
         });
@@ -4972,7 +4972,7 @@ async function loadAuditPageLogsTab() {
     const days = parseInt(document.getElementById('auditPeriodPage')?.value || 30);
     const action = document.getElementById('pageLogsFilterAction')?.value || null;
     const target = document.getElementById('pageLogsFilterApp')?.value || null;
-    const userId = document.getElementById('pageLogsFilterUser')?.value || null;
+    const username = document.getElementById('pageLogsFilterUser')?.value?.trim() || null;
     
     try {
         await loadPageLogsFilters();
@@ -4981,7 +4981,7 @@ async function loadAuditPageLogsTab() {
             days,
             action: action || null,
             target: target || null,
-            userId: userId ? parseInt(userId) : null,
+            username: username || null,
             page: pageAuditLogsPage,
             pageSize: 50
         });
@@ -5022,6 +5022,22 @@ async function loadPageLogsFilters() {
             });
         } catch (e) {
             console.warn('Impossible de charger les apps:', e);
+        }
+    }
+
+    // Peupler la datalist des usernames pour l'autocomplete
+    const usersDatalist = document.getElementById('auditUsersDatalist');
+    if (usersDatalist && usersDatalist.options.length === 0) {
+        try {
+            const usersResp = await api.getUsers({ page: 0 });
+            const usersList = Array.isArray(usersResp) ? usersResp : (usersResp.users || usersResp.items || []);
+            usersList.forEach(u => {
+                const opt = document.createElement('option');
+                opt.value = u.username;
+                usersDatalist.appendChild(opt);
+            });
+        } catch (e) {
+            console.warn('Impossible de charger la liste des utilisateurs pour autocomplete:', e);
         }
     }
 }
@@ -7783,6 +7799,18 @@ async function showAppBackupConfig(slug, name) {
         
         toggleCronInput();
         appBackupConfigModal.show();
+
+        // Afficher l'heure UTC du Hub pour aider l'utilisateur à composer le cron
+        const hubTimeEl = document.getElementById('backupConfigHubTime');
+        if (hubTimeEl) {
+            hubTimeEl.textContent = '…';
+            try {
+                const t = await api.getSystemTime();
+                hubTimeEl.textContent = t.utc_now_human || t.utc_now || '?';
+            } catch (e) {
+                hubTimeEl.textContent = 'indisponible';
+            }
+        }
         
     } catch (error) {
         console.error('Erreur chargement config backup:', error);
@@ -9735,11 +9763,19 @@ async function purgeMessagesFiltered() {
 }
 
 async function purgeAllMessages() {
-    const targetType = _getActiveTargetType();
-    const label = targetType === 'broadcast' ? 'TOUTES les notifications globales' : (targetType === 'user' ? 'TOUTES les notifications individuelles' : 'TOUTES les notifications du filtre');
-    if (!confirm(`Suppression DÉFINITIVE de ${label} ? Cette action est irréversible et supprime aussi les accusés de lecture.`)) return;
+    // Conservé pour rétrocompat — délègue désormais à la suppression de la sélection.
+    return hardDeleteSelectedMessages();
+}
+
+async function hardDeleteSelectedMessages() {
+    const selected = Array.from(document.querySelectorAll('.msg-select-checkbox:checked')).map(cb => parseInt(cb.value));
+    if (selected.length === 0) {
+        showToast('Information', 'Sélectionnez au moins une notification à supprimer.', 'info');
+        return;
+    }
+    if (!confirm(`Suppression DÉFINITIVE de ${selected.length} notification(s) sélectionnée(s) ? Cette action est irréversible et supprime aussi les accusés de lecture.`)) return;
     try {
-        const result = await api.purgeMessages({ targetType, hard: true });
+        const result = await api.deleteMessagesByIds(selected, true);
         showToast('Succès', result.message, 'success');
         await loadMessagesPage();
     } catch (error) {
@@ -9765,6 +9801,14 @@ function updateDeleteSelectedButton() {
         } else {
             btn.style.display = 'none';
         }
+    }
+
+    // Bouton de suppression définitive (poubelle rouge)
+    const delBtn = document.getElementById('btnDeleteSelected');
+    const delCount = document.getElementById('deleteSelectedCount');
+    if (delBtn) {
+        delBtn.disabled = selected.length === 0;
+        if (delCount) delCount.textContent = selected.length;
     }
 }
 

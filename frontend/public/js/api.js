@@ -432,6 +432,10 @@ class HubAPI {
         return this.request('/config/hub-host');
     }
 
+    async getSystemTime() {
+        return this.request('/system/time');
+    }
+
     // Apps
     async getApps() {
         return this.request('/apps/');
@@ -570,9 +574,10 @@ class HubAPI {
         return this.request('/audit/sessions/active');
     }
 
-    async getSessionHistory(days = 7, userId = null) {
+    async getSessionHistory(days = 7, userId = null, username = null) {
         let url = `/audit/sessions/history?days=${days}`;
         if (userId) url += `&user_id=${userId}`;
+        if (username) url += `&username=${encodeURIComponent(username)}`;
         return this.request(url);
     }
 
@@ -586,11 +591,12 @@ class HubAPI {
 
     // Audit Logs détaillés
     async getAuditLogs(params = {}) {
-        const { days = 30, action = null, target = null, userId = null, page = 1, pageSize = 50 } = params;
+        const { days = 30, action = null, target = null, userId = null, username = null, page = 1, pageSize = 50 } = params;
         let url = `/audit/logs?days=${days}&page=${page}&page_size=${pageSize}`;
         if (action) url += `&action=${encodeURIComponent(action)}`;
         if (target) url += `&target=${encodeURIComponent(target)}`;
         if (userId) url += `&user_id=${userId}`;
+        if (username) url += `&username=${encodeURIComponent(username)}`;
         return this.request(url);
     }
 
@@ -609,10 +615,12 @@ class HubAPI {
 
     // Export CSV
     async exportAuditLogs(params = {}) {
-        const { days = 30, action = null, target = null } = params;
+        const { days = 30, action = null, target = null, userId = null, username = null } = params;
         let url = `/audit/export/logs?days=${days}`;
         if (action) url += `&action=${encodeURIComponent(action)}`;
         if (target) url += `&target=${encodeURIComponent(target)}`;
+        if (userId) url += `&user_id=${userId}`;
+        if (username) url += `&username=${encodeURIComponent(username)}`;
         
         // Téléchargement direct du fichier CSV
         const response = await fetch(`${API_BASE}${url}`, {

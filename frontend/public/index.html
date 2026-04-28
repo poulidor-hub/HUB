@@ -470,7 +470,11 @@
                                 </div>
                                 <div class="col-md-3">
                                     <label class="form-label small">Utilisateur</label>
-                                    <input type="text" class="form-control form-control-sm" id="pageLogsFilterUser" placeholder="ID utilisateur" onchange="loadAuditPageLogsTab()">
+                                    <input type="text" class="form-control form-control-sm" id="pageLogsFilterUser"
+                                           list="auditUsersDatalist"
+                                           placeholder="Nom d'utilisateur" autocomplete="off"
+                                           onchange="loadAuditPageLogsTab()">
+                                    <datalist id="auditUsersDatalist"></datalist>
                                 </div>
                                 <div class="col-md-3">
                                     <button class="btn btn-sm btn-outline-secondary w-100" onclick="resetPageLogsFilters()">
@@ -1445,8 +1449,8 @@
                             <button class="btn btn-outline-warning btn-sm" onclick="purgeMessagesFiltered()" title="Archiver les messages filtrés">
                                 <i class="bi bi-archive"></i>
                             </button>
-                            <button class="btn btn-outline-danger btn-sm" onclick="purgeAllMessages()" title="Suppression définitive (filtre actif)">
-                                <i class="bi bi-trash-fill"></i>
+                            <button class="btn btn-outline-danger btn-sm" id="btnDeleteSelected" onclick="hardDeleteSelectedMessages()" title="Suppression définitive de la sélection" disabled>
+                                <i class="bi bi-trash-fill me-1"></i><span id="deleteSelectedCount">0</span>
                             </button>
                         </div>
                     </div>
@@ -2589,6 +2593,12 @@
                                 <code>0 3 * * 0</code> (dimanche 3h), 
                                 <code>0 0 1 * *</code> (1er du mois)
                             </small>
+                            <div class="alert alert-info mt-2 mb-0 py-2 small">
+                                <i class="bi bi-clock-history me-1"></i>
+                                Les cron sont évalués en <strong>UTC</strong>. Heure actuelle du Hub :
+                                <strong id="backupConfigHubTime">…</strong>
+                                — comparez-la à votre heure locale pour calculer le bon décalage.
+                            </div>
                         </div>
                         
                         <div class="mb-3">
