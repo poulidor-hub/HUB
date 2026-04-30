@@ -32,7 +32,7 @@ from datetime import datetime, timezone
 from typing import Optional
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Request
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form, Request
 from fastapi.responses import StreamingResponse, FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, delete
@@ -46,6 +46,7 @@ from app.database import get_db
 from app.models import Application, AppBackup, ServiceAccount, User, utcnow
 from app.auth import get_current_admin, get_current_entity
 from app.config import get_settings
+from app.routes.audit import log_action
 from app.schemas import (
     AppBackupConfig, AppBackupConfigUpdate, AppBackupReceive,
     AppBackupResponse, AppBackupListResponse, AppBackupStatusResponse,
@@ -112,6 +113,43 @@ def compute_checksum(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+def safe_int(value, default: int = 0) -> int:
+    """Convertit une valeur metadata en int sans faire échouer le backup."""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def metadata_value(payload: dict, key: str, default=None):
+    """Lit une valeur top-level ou dans payload.metadata."""
+    if not isinstance(payload, dict):
+        return default
+    value = payload.get(key)
+    if value is not None:
+        return value
+    metadata = payload.get("metadata")
+    if isinstance(metadata, dict):
+        value = metadata.get(key)
+        if value is not None:
+            return value
+    return default
+
+
+def bool_to_form_value(value: bool) -> str:
+    """Formate un booléen pour relayage multipart."""
+    return str(bool(value)).lower()
+
+
+def parse_bool(value, default: bool = False) -> bool:
+    """Parse les booléens envoyés comme strings par des clients multipart/query."""
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
 def human_readable_size(size: int) -> str:
     """Convertit une taille en bytes en format lisible"""
     for unit in ["B", "KB", "MB", "GB", "TB"]:
@@ -145,19 +183,31 @@ def extract_metadata_from_zip(zip_content: bytes) -> dict:
     """
     result = {
         "app_version": None,
+        "format_version": None,
         "total_items": 0,
         "total_preferences": 0,
         "total_files": 0,
+        "total_tables": 0,
+        "total_rows": 0,
+        "includes_vaultwarden_snapshot": False,
+        "includes_secret_bundle": False,
+        "restore_requires_offline": False,
         "content_summary": ""
     }
     
     try:
         with zipfile.ZipFile(io.BytesIO(zip_content), 'r') as zf:
+            file_list = zf.namelist()
+            normalized_names = {name.lstrip("./"): name for name in file_list}
+            result["includes_vaultwarden_snapshot"] = "vaultwarden/manifest.json" in normalized_names
+            result["includes_secret_bundle"] = "secrets/backup-secrets.json" in normalized_names
+            result["restore_requires_offline"] = result["includes_vaultwarden_snapshot"]
+
             # Chercher data.json ou manifest.json
             data_file = None
             for name in ['data.json', 'manifest.json', 'backup.json']:
-                if name in zf.namelist():
-                    data_file = name
+                if name in normalized_names:
+                    data_file = normalized_names[name]
                     break
             
             if data_file:
@@ -167,6 +217,21 @@ def extract_metadata_from_zip(zip_content: bytes) -> dict:
                     # Extraire la version depuis metadata
                     metadata = data.get("metadata", {})
                     result["app_version"] = metadata.get("app_version") or metadata.get("version")
+                    result["format_version"] = metadata.get("format_version")
+                    result["total_tables"] = safe_int(metadata.get("total_tables"))
+                    result["total_rows"] = safe_int(metadata.get("total_rows"))
+                    result["includes_vaultwarden_snapshot"] = (
+                        result["includes_vaultwarden_snapshot"]
+                        or parse_bool(metadata.get("includes_vaultwarden_snapshot"))
+                    )
+                    result["includes_secret_bundle"] = (
+                        result["includes_secret_bundle"]
+                        or parse_bool(metadata.get("includes_secret_bundle"))
+                    )
+                    result["restore_requires_offline"] = (
+                        result["restore_requires_offline"]
+                        or parse_bool(metadata.get("restore_requires_offline"))
+                    )
                     
                     # Extraire les compteurs depuis data
                     backup_data = data.get("data", {})
@@ -199,7 +264,6 @@ def extract_metadata_from_zip(zip_content: bytes) -> dict:
                         result["content_summary"] = "Backup vide"
             else:
                 # Pas de fichier de données trouvé, lister les fichiers du ZIP
-                file_list = zf.namelist()
                 result["total_files"] = len(file_list)
                 result["content_summary"] = f"{len(file_list)} fichier(s) dans l'archive"
                 
@@ -453,13 +517,19 @@ async def receive_backup(
     slug: str,
     request: Request,
     file: UploadFile = File(..., description="Fichier ZIP du backup"),
-    backup_id: Optional[str] = None,
-    app_version: Optional[str] = None,
-    total_items: int = 0,
-    total_preferences: int = 0,
-    total_files: int = 0,
-    checksum: Optional[str] = None,
-    description: Optional[str] = None,
+    backup_id: Optional[str] = Form(None),
+    app_version: Optional[str] = Form(None),
+    format_version: Optional[str] = Form(None),
+    total_items: int = Form(0),
+    total_preferences: int = Form(0),
+    total_files: int = Form(0),
+    total_tables: int = Form(0),
+    total_rows: int = Form(0),
+    checksum: Optional[str] = Form(None),
+    description: Optional[str] = Form(None),
+    includes_vaultwarden_snapshot: bool = Form(False),
+    includes_secret_bundle: bool = Form(False),
+    restore_requires_offline: bool = Form(False),
     db: AsyncSession = Depends(get_db),
     current_user = Depends(get_current_entity)
 ):
@@ -481,6 +551,23 @@ async def receive_backup(
     else:
         created_by = current_user.username
         created_by_type = "user"
+
+    # Compatibilité: avant l'usage explicite de Form(...), certains clients
+    # pouvaient envoyer ces métadonnées en query params.
+    query_params = request.query_params
+    backup_id = backup_id or query_params.get("backup_id")
+    app_version = app_version or query_params.get("app_version")
+    format_version = format_version or query_params.get("format_version")
+    total_items = total_items if total_items > 0 else safe_int(query_params.get("total_items"), total_items)
+    total_preferences = total_preferences if total_preferences > 0 else safe_int(query_params.get("total_preferences"), total_preferences)
+    total_files = total_files if total_files > 0 else safe_int(query_params.get("total_files"), total_files)
+    total_tables = total_tables if total_tables > 0 else safe_int(query_params.get("total_tables"), total_tables)
+    total_rows = total_rows if total_rows > 0 else safe_int(query_params.get("total_rows"), total_rows)
+    checksum = checksum or query_params.get("checksum")
+    description = description or query_params.get("description")
+    includes_vaultwarden_snapshot = includes_vaultwarden_snapshot or parse_bool(query_params.get("includes_vaultwarden_snapshot"))
+    includes_secret_bundle = includes_secret_bundle or parse_bool(query_params.get("includes_secret_bundle"))
+    restore_requires_offline = restore_requires_offline or parse_bool(query_params.get("restore_requires_offline"))
     
     # Générer un backup_id si non fourni
     if not backup_id:
@@ -506,6 +593,18 @@ async def receive_backup(
     final_total_items = total_items if total_items > 0 else zip_metadata.get("total_items", 0)
     final_total_preferences = total_preferences if total_preferences > 0 else zip_metadata.get("total_preferences", 0)
     final_total_files = total_files if total_files > 0 else zip_metadata.get("total_files", 0)
+    final_format_version = format_version or zip_metadata.get("format_version")
+    final_total_tables = total_tables if total_tables > 0 else zip_metadata.get("total_tables", 0)
+    final_total_rows = total_rows if total_rows > 0 else zip_metadata.get("total_rows", 0)
+    final_includes_vaultwarden_snapshot = (
+        includes_vaultwarden_snapshot or bool(zip_metadata.get("includes_vaultwarden_snapshot"))
+    )
+    final_includes_secret_bundle = includes_secret_bundle or bool(zip_metadata.get("includes_secret_bundle"))
+    final_restore_requires_offline = (
+        restore_requires_offline
+        or bool(zip_metadata.get("restore_requires_offline"))
+        or final_includes_vaultwarden_snapshot
+    )
     
     # Générer une description automatique si non fournie
     content_summary = zip_metadata.get("content_summary", "")
@@ -532,6 +631,12 @@ async def receive_backup(
         total_items=final_total_items,
         total_preferences=final_total_preferences,
         total_files=final_total_files,
+        format_version=final_format_version,
+        total_tables=final_total_tables,
+        total_rows=final_total_rows,
+        includes_vaultwarden_snapshot=final_includes_vaultwarden_snapshot,
+        includes_secret_bundle=final_includes_secret_bundle,
+        restore_requires_offline=final_restore_requires_offline,
         total_size_bytes=file_size,
         checksum=computed_checksum,
         storage_path=storage_path,
@@ -586,7 +691,8 @@ async def list_app_backups(
     backup_config = AppBackupConfig(
         backup_mode=BackupModeEnum(app.backup_mode or "manual"),
         backup_cron=app.backup_cron,
-        backup_retention=app.backup_retention or 5
+        backup_retention=app.backup_retention or 5,
+        backup_quiesce=bool(getattr(app, "backup_quiesce", False)),
     )
     
     return AppBackupListResponse(
@@ -820,7 +926,8 @@ async def get_backup_config(
     return AppBackupConfig(
         backup_mode=BackupModeEnum(app.backup_mode or "manual"),
         backup_cron=app.backup_cron,
-        backup_retention=app.backup_retention or 5
+        backup_retention=app.backup_retention or 5,
+        backup_quiesce=bool(getattr(app, "backup_quiesce", False)),
     )
 
 
@@ -869,7 +976,10 @@ async def update_backup_config(
         app.backup_retention = config.backup_retention
         # Appliquer immédiatement la nouvelle rétention
         await apply_retention_policy(db, slug, config.backup_retention)
-    
+
+    if config.backup_quiesce is not None:
+        app.backup_quiesce = bool(config.backup_quiesce)
+
     await db.commit()
     await db.refresh(app)
     
@@ -878,7 +988,8 @@ async def update_backup_config(
     return AppBackupConfig(
         backup_mode=BackupModeEnum(app.backup_mode or "manual"),
         backup_cron=app.backup_cron,
-        backup_retention=app.backup_retention or 5
+        backup_retention=app.backup_retention or 5,
+        backup_quiesce=bool(getattr(app, "backup_quiesce", False)),
     )
 
 
@@ -954,8 +1065,17 @@ async def perform_app_backup(
     async with httpx.AsyncClient(timeout=120.0) as client:
         # 1. Créer le backup côté app
         create_url = f"{app.api_url.rstrip('/')}/api/admin/backup"
+        create_params = {}
+        if getattr(app, "backup_quiesce", False):
+            create_params["quiesce_vaultwarden"] = "true"
+            logger.info(
+                f"🛑 Quiesce Vaultwarden demande pour backup {slug} "
+                "(stop/start auto du conteneur pendant le snapshot)"
+            )
         create_response = await client.post(
-            create_url, headers={"Authorization": f"Bearer {m2m_token}"}
+            create_url,
+            headers={"Authorization": f"Bearer {m2m_token}"},
+            params=create_params or None,
         )
 
         if create_response.status_code != 200:
@@ -969,7 +1089,7 @@ async def perform_app_backup(
             )
 
         backup_info = create_response.json()
-        remote_backup_id = backup_info.get("backup_id") or backup_info.get("metadata", {}).get("backup_id")
+        remote_backup_id = metadata_value(backup_info, "backup_id")
         logger.info(f"✅ Backup créé sur l'app {slug}: {remote_backup_id}")
 
         # 2. Télécharger le ZIP
@@ -992,7 +1112,7 @@ async def perform_app_backup(
         logger.info(f"📥 Backup téléchargé pour {slug}: {human_readable_size(file_size)}")
 
     # 3. Stocker le backup localement
-    backup_id = remote_backup_id or str(uuid.uuid4())
+    backup_id = str(remote_backup_id) if remote_backup_id else str(uuid.uuid4())
     checksum = compute_checksum(zip_content)
 
     app_dir = ensure_storage_dir(slug)
@@ -1005,21 +1125,27 @@ async def perform_app_backup(
 
     zip_metadata = extract_metadata_from_zip(zip_content)
 
-    app_version = backup_info.get("app_version") or zip_metadata.get("app_version")
-    total_items = (
-        backup_info.get("total_items")
-        if backup_info.get("total_items") is not None
-        else zip_metadata.get("total_items", 0)
+    app_version = metadata_value(backup_info, "app_version") or zip_metadata.get("app_version")
+    format_version = metadata_value(backup_info, "format_version") or zip_metadata.get("format_version")
+    total_items = safe_int(metadata_value(backup_info, "total_items"), zip_metadata.get("total_items", 0))
+    total_preferences = safe_int(
+        metadata_value(backup_info, "total_preferences"), zip_metadata.get("total_preferences", 0)
     )
-    total_preferences = (
-        backup_info.get("total_preferences")
-        if backup_info.get("total_preferences") is not None
-        else zip_metadata.get("total_preferences", 0)
+    total_files = safe_int(metadata_value(backup_info, "total_files"), zip_metadata.get("total_files", 0))
+    total_tables = safe_int(metadata_value(backup_info, "total_tables"), zip_metadata.get("total_tables", 0))
+    total_rows = safe_int(metadata_value(backup_info, "total_rows"), zip_metadata.get("total_rows", 0))
+    includes_vaultwarden_snapshot = (
+        parse_bool(metadata_value(backup_info, "includes_vaultwarden_snapshot"))
+        or bool(zip_metadata.get("includes_vaultwarden_snapshot"))
     )
-    total_files = (
-        backup_info.get("total_files")
-        if backup_info.get("total_files") is not None
-        else zip_metadata.get("total_files", 0)
+    includes_secret_bundle = (
+        parse_bool(metadata_value(backup_info, "includes_secret_bundle"))
+        or bool(zip_metadata.get("includes_secret_bundle"))
+    )
+    restore_requires_offline = (
+        parse_bool(metadata_value(backup_info, "restore_requires_offline"))
+        or bool(zip_metadata.get("restore_requires_offline"))
+        or includes_vaultwarden_snapshot
     )
     content_summary = zip_metadata.get("content_summary", "")
 
@@ -1033,9 +1159,15 @@ async def perform_app_backup(
         app_id=app.id,
         app_slug=slug,
         app_version=app_version,
+        format_version=format_version,
         total_items=total_items,
         total_preferences=total_preferences,
         total_files=total_files,
+        total_tables=total_tables,
+        total_rows=total_rows,
+        includes_vaultwarden_snapshot=includes_vaultwarden_snapshot,
+        includes_secret_bundle=includes_secret_bundle,
+        restore_requires_offline=restore_requires_offline,
         total_size_bytes=file_size,
         checksum=checksum,
         storage_path=storage_path,
@@ -1123,6 +1255,132 @@ async def trigger_backup(
 # RESTAURATION VERS UNE APPLICATION
 # =============================================================================
 
+def validate_vaultwarden_restore_options(
+    options: RestoreToAppRequest,
+    backup: AppBackup | None = None,
+):
+    """Applique les garde-fous Hub avant une restauration Vaultwarden complète."""
+    if options.restore_vaultwarden and not options.confirm_full_restore:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="confirm_full_restore=true est requis pour restaurer le snapshot Vaultwarden complet"
+        )
+
+    if backup is None:
+        return
+
+    if options.restore_vaultwarden and not getattr(backup, "includes_vaultwarden_snapshot", False):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Ce backup ne contient pas de snapshot Vaultwarden complet"
+        )
+
+    if options.restore_secret_bundle and not getattr(backup, "includes_secret_bundle", False):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Ce backup ne contient pas de bundle de secrets chiffré"
+        )
+
+
+def build_restore_form_data(options: RestoreToAppRequest) -> dict:
+    """Construit les champs multipart relayés à l'application cible."""
+    return {
+        "clear_existing": bool_to_form_value(options.clear_existing),
+        "restore_items": bool_to_form_value(options.restore_items),
+        "restore_preferences": bool_to_form_value(options.restore_preferences),
+        "restore_files": bool_to_form_value(options.restore_files),
+        "restore_test_data": bool_to_form_value(options.restore_test_data),
+        "restore_vaultwarden": bool_to_form_value(options.restore_vaultwarden),
+        "restore_secret_bundle": bool_to_form_value(options.restore_secret_bundle),
+        "require_vaultwarden_offline": bool_to_form_value(options.require_vaultwarden_offline),
+        "confirm_full_restore": bool_to_form_value(options.confirm_full_restore),
+    }
+
+
+def build_restore_response(result: dict, slug: str, backup_id: str) -> RestoreToAppResponse:
+    """Normalise la réponse de l'application cible pour le client Hub."""
+    errors = result.get("errors") or []
+    success = bool(result.get("success", True)) and not errors
+    return RestoreToAppResponse(
+        success=success,
+        message=result.get("message", "Restauration terminée"),
+        app_slug=slug,
+        backup_id=backup_id,
+        items_restored=result.get("items_restored", 0),
+        preferences_restored=result.get("preferences_restored", 0),
+        files_restored=result.get("files_restored", 0),
+        items_skipped=result.get("items_skipped", 0),
+        files_skipped=result.get("files_skipped", 0),
+        errors=errors,
+        warnings=result.get("warnings", []),
+        vaultwarden_snapshot_restored=result.get("vaultwarden_snapshot_restored", False),
+        vaultwarden_restore=result.get("vaultwarden_restore"),
+        secret_bundle_restored=result.get("secret_bundle_restored", False),
+        secret_bundle_secret_names=result.get("secret_bundle_secret_names", []),
+        accounts_reencrypted=result.get("accounts_reencrypted", 0),
+        requires_vaultwarden_restart=result.get("requires_vaultwarden_restart", False),
+    )
+
+
+def restore_audit_identity(current_entity):
+    """Retourne les identifiants audit user/service account selon l'appelant."""
+    if isinstance(current_entity, User):
+        return current_entity.id, None
+    if isinstance(current_entity, ServiceAccount):
+        return None, current_entity.id
+    return None, None
+
+
+async def log_restore_audit(
+    db: AsyncSession,
+    request: Request,
+    current_entity,
+    slug: str,
+    backup_id: str,
+    options: RestoreToAppRequest,
+    backup: AppBackup | None,
+    success: bool,
+    response_status: int,
+    message: str,
+):
+    """Trace une restauration sans inclure le contenu du ZIP ou des secrets."""
+    user_id, service_account_id = restore_audit_identity(current_entity)
+    action = "restore_vaultwarden_complete" if options.restore_vaultwarden else "restore_app_backup"
+    details = {
+        "app_slug": slug,
+        "backup_id": backup_id,
+        "success": success,
+        "message": message,
+        "clear_existing": options.clear_existing,
+        "restore_items": options.restore_items,
+        "restore_preferences": options.restore_preferences,
+        "restore_files": options.restore_files,
+        "restore_test_data": options.restore_test_data,
+        "restore_vaultwarden": options.restore_vaultwarden,
+        "restore_secret_bundle": options.restore_secret_bundle,
+        "require_vaultwarden_offline": options.require_vaultwarden_offline,
+        "confirm_full_restore": options.confirm_full_restore,
+    }
+    if backup is not None:
+        details.update({
+            "checksum": backup.checksum,
+            "total_size_bytes": backup.total_size_bytes,
+            "includes_vaultwarden_snapshot": getattr(backup, "includes_vaultwarden_snapshot", False),
+            "includes_secret_bundle": getattr(backup, "includes_secret_bundle", False),
+        })
+
+    await log_action(
+        db=db,
+        user_id=user_id,
+        service_account_id=service_account_id,
+        action=action,
+        target=slug,
+        request=request,
+        response_status=response_status,
+        details=json.dumps(details, ensure_ascii=False),
+    )
+
+
 async def get_admin_or_app_service_account(
     slug: str,
     current_entity = Depends(get_current_entity)
@@ -1160,6 +1418,7 @@ async def get_admin_or_app_service_account(
 async def restore_backup_to_app(
     slug: str,
     backup_id: str,
+    request: Request,
     options: RestoreToAppRequest = RestoreToAppRequest(),
     db: AsyncSession = Depends(get_db),
     current_entity = Depends(get_current_entity)
@@ -1214,6 +1473,8 @@ async def restore_backup_to_app(
             detail="Le backup ne correspond pas à l'application"
         )
     
+    validate_vaultwarden_restore_options(options, backup)
+    
     if not app.api_url:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -1264,13 +1525,7 @@ async def restore_backup_to_app(
             files = {
                 "file": (f"backup_{backup_id}.zip", backup_content, "application/zip")
             }
-            data = {
-                "clear_existing": str(options.clear_existing).lower(),
-                "restore_items": str(options.restore_items).lower(),
-                "restore_preferences": str(options.restore_preferences).lower(),
-                "restore_files": str(options.restore_files).lower(),
-                "restore_test_data": str(options.restore_test_data).lower()
-            }
+            data = build_restore_form_data(options)
             
             response = await client.post(
                 restore_url,
@@ -1282,31 +1537,60 @@ async def restore_backup_to_app(
             if response.status_code != 200:
                 error_detail = response.text[:200] if response.text else "Pas de détails"
                 logger.error(f"❌ Erreur restauration: {response.status_code} - {error_detail}")
+                await log_restore_audit(
+                    db=db,
+                    request=request,
+                    current_entity=current_entity,
+                    slug=slug,
+                    backup_id=backup_id,
+                    options=options,
+                    backup=backup,
+                    success=False,
+                    response_status=response.status_code,
+                    message=error_detail,
+                )
+                await db.commit()
                 raise HTTPException(
                     status_code=status.HTTP_502_BAD_GATEWAY,
                     detail=f"L'application a retourné une erreur: {response.status_code} - {error_detail}"
                 )
             
             result = response.json()
+            restore_response = build_restore_response(result, slug, backup_id)
             
-            logger.info(f"✅ Restauration terminée pour {slug}: {result.get('items_restored', 0)} items")
-            
-            return RestoreToAppResponse(
-                success=result.get("success", True),
-                message=result.get("message", "Restauration terminée"),
-                app_slug=slug,
+            logger.info(f"✅ Restauration terminée pour {slug}: {restore_response.items_restored} items")
+
+            await log_restore_audit(
+                db=db,
+                request=request,
+                current_entity=current_entity,
+                slug=slug,
                 backup_id=backup_id,
-                items_restored=result.get("items_restored", 0),
-                preferences_restored=result.get("preferences_restored", 0),
-                files_restored=result.get("files_restored", 0),
-                items_skipped=result.get("items_skipped", 0),
-                files_skipped=result.get("files_skipped", 0),
-                errors=result.get("errors", []),
-                warnings=result.get("warnings", [])
+                options=options,
+                backup=backup,
+                success=restore_response.success,
+                response_status=200 if restore_response.success else 502,
+                message=restore_response.message,
             )
+            await db.commit()
+
+            return restore_response
             
     except httpx.RequestError as e:
         logger.error(f"❌ Erreur réseau lors de la restauration: {e}")
+        await log_restore_audit(
+            db=db,
+            request=request,
+            current_entity=current_entity,
+            slug=slug,
+            backup_id=backup_id,
+            options=options,
+            backup=backup,
+            success=False,
+            response_status=status.HTTP_502_BAD_GATEWAY,
+            message=str(e),
+        )
+        await db.commit()
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"Impossible de contacter l'application: {str(e)}"
@@ -1316,12 +1600,17 @@ async def restore_backup_to_app(
 @router.post("/api/apps/{slug}/backup/restore/upload", response_model=RestoreToAppResponse)
 async def restore_uploaded_backup_to_app(
     slug: str,
+    request: Request,
     file: UploadFile = File(...),
-    clear_existing: bool = False,
-    restore_items: bool = True,
-    restore_preferences: bool = True,
-    restore_files: bool = True,
-    restore_test_data: bool = True,
+    clear_existing: bool = Form(False),
+    restore_items: bool = Form(True),
+    restore_preferences: bool = Form(True),
+    restore_files: bool = Form(True),
+    restore_test_data: bool = Form(True),
+    restore_vaultwarden: bool = Form(False),
+    restore_secret_bundle: bool = Form(False),
+    require_vaultwarden_offline: bool = Form(True),
+    confirm_full_restore: bool = Form(False),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_admin)
 ):
@@ -1338,6 +1627,20 @@ async def restore_uploaded_backup_to_app(
     import httpx
     from app.auth import create_access_token
     from datetime import timedelta
+
+    options = RestoreToAppRequest(
+        clear_existing=clear_existing,
+        restore_items=restore_items,
+        restore_preferences=restore_preferences,
+        restore_files=restore_files,
+        restore_test_data=restore_test_data,
+        restore_vaultwarden=restore_vaultwarden,
+        restore_secret_bundle=restore_secret_bundle,
+        require_vaultwarden_offline=require_vaultwarden_offline,
+        confirm_full_restore=confirm_full_restore,
+    )
+    validate_vaultwarden_restore_options(options)
+    backup_id_from_header = "uploaded"
     
     app = await get_app_or_404(db, slug)
     
@@ -1406,13 +1709,7 @@ async def restore_uploaded_backup_to_app(
             files = {
                 "file": (output_filename, backup_content, "application/zip")
             }
-            data = {
-                "clear_existing": str(clear_existing).lower(),
-                "restore_items": str(restore_items).lower(),
-                "restore_preferences": str(restore_preferences).lower(),
-                "restore_files": str(restore_files).lower(),
-                "restore_test_data": str(restore_test_data).lower()
-            }
+            data = build_restore_form_data(options)
             
             response = await client.post(
                 restore_url,
@@ -1424,31 +1721,60 @@ async def restore_uploaded_backup_to_app(
             if response.status_code != 200:
                 error_detail = response.text[:200] if response.text else "Pas de détails"
                 logger.error(f"❌ Erreur restauration upload: {response.status_code} - {error_detail}")
+                await log_restore_audit(
+                    db=db,
+                    request=request,
+                    current_entity=current_user,
+                    slug=slug,
+                    backup_id=backup_id_from_header,
+                    options=options,
+                    backup=None,
+                    success=False,
+                    response_status=response.status_code,
+                    message=error_detail,
+                )
+                await db.commit()
                 raise HTTPException(
                     status_code=status.HTTP_502_BAD_GATEWAY,
                     detail=f"L'application a retourné une erreur: {response.status_code} - {error_detail}"
                 )
             
             result = response.json()
+            restore_response = build_restore_response(result, slug, backup_id_from_header)
             
             logger.info(f"✅ Restauration upload terminée pour {slug}")
-            
-            return RestoreToAppResponse(
-                success=result.get("success", True),
-                message=result.get("message", "Restauration terminée"),
-                app_slug=slug,
+
+            await log_restore_audit(
+                db=db,
+                request=request,
+                current_entity=current_user,
+                slug=slug,
                 backup_id=backup_id_from_header,
-                items_restored=result.get("items_restored", 0),
-                preferences_restored=result.get("preferences_restored", 0),
-                files_restored=result.get("files_restored", 0),
-                items_skipped=result.get("items_skipped", 0),
-                files_skipped=result.get("files_skipped", 0),
-                errors=result.get("errors", []),
-                warnings=result.get("warnings", [])
+                options=options,
+                backup=None,
+                success=restore_response.success,
+                response_status=200 if restore_response.success else 502,
+                message=restore_response.message,
             )
+            await db.commit()
+
+            return restore_response
             
     except httpx.RequestError as e:
         logger.error(f"❌ Erreur réseau lors de la restauration: {e}")
+        await log_restore_audit(
+            db=db,
+            request=request,
+            current_entity=current_user,
+            slug=slug,
+            backup_id=backup_id_from_header,
+            options=options,
+            backup=None,
+            success=False,
+            response_status=status.HTTP_502_BAD_GATEWAY,
+            message=str(e),
+        )
+        await db.commit()
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"Impossible de contacter l'application: {str(e)}"

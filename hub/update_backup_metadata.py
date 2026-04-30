@@ -30,24 +30,51 @@ from app.models import AppBackup
 STORAGE_BASE_DIR = Path("/code/storage/backups")
 
 
+def safe_int(value, default: int = 0) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def parse_bool(value, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
 def extract_metadata_from_zip(zip_content: bytes) -> dict:
     """
     Extrait les métadonnées depuis un fichier ZIP de backup.
     """
     result = {
         "app_version": None,
+        "format_version": None,
         "total_items": 0,
         "total_preferences": 0,
         "total_files": 0,
+        "total_tables": 0,
+        "total_rows": 0,
+        "includes_vaultwarden_snapshot": False,
+        "includes_secret_bundle": False,
+        "restore_requires_offline": False,
         "content_summary": ""
     }
     
     try:
         with zipfile.ZipFile(io.BytesIO(zip_content), 'r') as zf:
+            file_list = zf.namelist()
+            normalized_names = {name.lstrip("./"): name for name in file_list}
+            result["includes_vaultwarden_snapshot"] = "vaultwarden/manifest.json" in normalized_names
+            result["includes_secret_bundle"] = "secrets/backup-secrets.json" in normalized_names
+            result["restore_requires_offline"] = result["includes_vaultwarden_snapshot"]
+
             data_file = None
             for name in ['data.json', 'manifest.json', 'backup.json']:
-                if name in zf.namelist():
-                    data_file = name
+                if name in normalized_names:
+                    data_file = normalized_names[name]
                     break
             
             if data_file:
@@ -56,6 +83,21 @@ def extract_metadata_from_zip(zip_content: bytes) -> dict:
                     
                     metadata = data.get("metadata", {})
                     result["app_version"] = metadata.get("app_version") or metadata.get("version")
+                    result["format_version"] = metadata.get("format_version")
+                    result["total_tables"] = safe_int(metadata.get("total_tables"))
+                    result["total_rows"] = safe_int(metadata.get("total_rows"))
+                    result["includes_vaultwarden_snapshot"] = (
+                        result["includes_vaultwarden_snapshot"]
+                        or parse_bool(metadata.get("includes_vaultwarden_snapshot"))
+                    )
+                    result["includes_secret_bundle"] = (
+                        result["includes_secret_bundle"]
+                        or parse_bool(metadata.get("includes_secret_bundle"))
+                    )
+                    result["restore_requires_offline"] = (
+                        result["restore_requires_offline"]
+                        or parse_bool(metadata.get("restore_requires_offline"))
+                    )
                     
                     backup_data = data.get("data", {})
                     
@@ -80,7 +122,6 @@ def extract_metadata_from_zip(zip_content: bytes) -> dict:
                     else:
                         result["content_summary"] = "Backup vide"
             else:
-                file_list = zf.namelist()
                 result["total_files"] = len(file_list)
                 result["content_summary"] = f"{len(file_list)} fichier(s) dans l'archive"
                 
@@ -139,6 +180,32 @@ async def update_all_backups():
             
             if backup.total_files == 0 and metadata["total_files"] > 0:
                 backup.total_files = metadata["total_files"]
+                changed = True
+
+            if not backup.format_version and metadata["format_version"]:
+                backup.format_version = metadata["format_version"]
+                changed = True
+
+            if backup.total_tables == 0 and metadata["total_tables"] > 0:
+                backup.total_tables = metadata["total_tables"]
+                changed = True
+
+            if backup.total_rows == 0 and metadata["total_rows"] > 0:
+                backup.total_rows = metadata["total_rows"]
+                changed = True
+
+            if not backup.includes_vaultwarden_snapshot and metadata["includes_vaultwarden_snapshot"]:
+                backup.includes_vaultwarden_snapshot = True
+                changed = True
+                print("  🔐 Snapshot Vaultwarden détecté")
+
+            if not backup.includes_secret_bundle and metadata["includes_secret_bundle"]:
+                backup.includes_secret_bundle = True
+                changed = True
+                print("  🔑 Bundle de secrets détecté")
+
+            if not backup.restore_requires_offline and metadata["restore_requires_offline"]:
+                backup.restore_requires_offline = True
                 changed = True
             
             if not backup.description and metadata["content_summary"]:

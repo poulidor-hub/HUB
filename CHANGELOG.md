@@ -5,6 +5,26 @@
 
 ---
 
+## [3.7.1] - 30 avril 2026
+
+### ✨ Backups planifies coherents pour Vaultwarden
+
+- Migration `023_add_backup_quiesce.sql` : nouveau champ
+  `applications.backup_quiesce` (boolean, defaut `false`). Active par defaut
+  sur l'app `vaultwarden`.
+- Modele `Application.backup_quiesce` et schemas `AppBackupConfig` /
+  `AppBackupConfigUpdate` exposent le champ. Endpoint
+  `PUT /api/apps/{slug}/backup/config` permet de l'activer.
+- `perform_app_backup` envoie `quiesce_vaultwarden=true` (query param) au
+  POST `/api/admin/backup` de l'app cible quand `backup_quiesce` est actif.
+  L'app stoppe alors son conteneur Vaultwarden pendant le snapshot puis le
+  redemarre automatiquement.
+- Doc `vaultRestorHUB.md` mise a jour : la procedure de restauration complete
+  ne demande plus l'arret manuel du conteneur Vaultwarden quand l'app cible
+  supporte le lifecycle automatique (Vaultwarden >= 0.0.2).
+
+---
+
 ## [3.7.0] - 11 avril 2026
 
 ### 🚀 Rattrapage des évolutions 3.x

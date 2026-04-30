@@ -205,6 +205,7 @@ class Application(Base):
     backup_mode = Column(String(20), default="manual")  # disabled, manual, scheduled
     backup_cron = Column(String(100), nullable=True)  # Expression cron (ex: "0 2 * * *")
     backup_retention = Column(Integer, default=5)  # Nombre de backups à conserver (0 = illimité)
+    backup_quiesce = Column(Boolean, default=False, nullable=False)  # Stop/start auto du conteneur Vaultwarden pendant snapshot
     last_backup_at = Column(DateTime, nullable=True)  # Dernier backup réussi
     last_backup_id = Column(String(36), nullable=True)  # UUID du dernier backup
     next_backup_at = Column(DateTime, nullable=True)  # Prochain backup planifié
@@ -465,6 +466,12 @@ class AppBackup(Base):
     total_files = Column(Integer, default=0)
     total_size_bytes = Column(BigInteger, default=0)
     checksum = Column(String(64))  # SHA-256 du fichier ZIP original
+    format_version = Column(String(20))
+    total_tables = Column(Integer, default=0)
+    total_rows = Column(Integer, default=0)
+    includes_vaultwarden_snapshot = Column(Boolean, default=False)
+    includes_secret_bundle = Column(Boolean, default=False)
+    restore_requires_offline = Column(Boolean, default=False)
     
     # Stockage
     storage_path = Column(String(500), nullable=False)  # Chemin relatif du fichier

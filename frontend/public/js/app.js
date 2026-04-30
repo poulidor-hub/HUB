@@ -7673,6 +7673,8 @@ function displayImportResult(result) {
 
 let appBackupConfigModal = null;
 let appBackupsListModal = null;
+let appBackupsById = {};
+let selectedRestoreBackup = null;
 
 /**
  * Charge la vue d'ensemble des sauvegardes de toutes les applications
@@ -7890,6 +7892,7 @@ async function showAppBackupsList(slug) {
         
         // Liste des backups
         const tbody = document.getElementById('backupsListBody');
+        appBackupsById = {};
         
         if (!data.backups || data.backups.length === 0) {
             tbody.innerHTML = `
@@ -7901,9 +7904,17 @@ async function showAppBackupsList(slug) {
             `;
         } else {
             tbody.innerHTML = data.backups.map(backup => {
+                appBackupsById[`${slug}:${backup.backup_id}`] = backup;
                 const date = parseUTCDate(backup.created_at);
                 const dateStr = `${date.toLocaleDateString('fr-FR')} ${date.toLocaleTimeString('fr-FR', {hour: '2-digit', minute: '2-digit'})}`;
                 const escapedAppName = escapeHtml(data.app_name).replace(/'/g, "\\'");
+                const typeBadges = [];
+                if (backup.includes_vaultwarden_snapshot) {
+                    typeBadges.push('<span class="badge bg-danger-subtle text-danger border border-danger-subtle me-1"><i class="bi bi-database-lock me-1"></i>Vaultwarden complet</span>');
+                }
+                if (backup.includes_secret_bundle) {
+                    typeBadges.push('<span class="badge bg-warning-subtle text-warning-emphasis border border-warning-subtle"><i class="bi bi-key me-1"></i>Secrets chiffrés</span>');
+                }
                 
                 // Afficher le contenu: description si disponible, sinon compteurs
                 let contentDisplay = '';
@@ -7929,6 +7940,7 @@ async function showAppBackupsList(slug) {
                             <small class="text-muted" title="${escapeHtml(backup.description || '')}">
                                 ${escapeHtml(contentDisplay)}
                             </small>
+                            ${typeBadges.length ? `<div class="mt-1">${typeBadges.join('')}</div>` : ''}
                         </td>
                         <td><small>${backup.total_size_human}</small></td>
                         <td>
@@ -7974,6 +7986,7 @@ function showRestoreBackupModal(slug, backupId, appName) {
     if (!restoreBackupModal) {
         restoreBackupModal = new bootstrap.Modal(document.getElementById('restoreBackupModal'));
     }
+    selectedRestoreBackup = appBackupsById[`${slug}:${backupId}`] || null;
     
     document.getElementById('restoreBackupSlug').value = slug;
     document.getElementById('restoreBackupId').value = backupId;
@@ -7985,8 +7998,38 @@ function showRestoreBackupModal(slug, backupId, appName) {
     document.getElementById('restorePreferences').checked = true;
     document.getElementById('restoreFiles').checked = true;
     document.getElementById('restoreTestData').checked = true;
+    document.getElementById('restoreVaultwarden').checked = false;
+    document.getElementById('restoreSecretBundle').checked = false;
+    document.getElementById('requireVaultwardenOffline').checked = true;
+    document.getElementById('confirmFullRestore').checked = false;
+
+    const hasVaultwarden = Boolean(selectedRestoreBackup?.includes_vaultwarden_snapshot);
+    const hasSecrets = Boolean(selectedRestoreBackup?.includes_secret_bundle);
+    const vaultwardenOptions = document.getElementById('vaultwardenRestoreOptions');
+    vaultwardenOptions.classList.toggle('d-none', !hasVaultwarden && !hasSecrets);
+    document.getElementById('restoreVaultwarden').disabled = !hasVaultwarden;
+    document.getElementById('restoreSecretBundle').disabled = !hasSecrets;
+    updateRestoreVaultwardenConfirmation();
     
     restoreBackupModal.show();
+}
+
+function updateRestoreVaultwardenConfirmation() {
+    const restoreVaultwarden = document.getElementById('restoreVaultwarden');
+    const confirmFullRestore = document.getElementById('confirmFullRestore');
+    const confirmGroup = document.getElementById('restoreFullConfirmGroup');
+    const executeBtn = document.getElementById('executeRestoreBtn');
+    const needsConfirmation = restoreVaultwarden && restoreVaultwarden.checked;
+
+    if (confirmGroup) {
+        confirmGroup.classList.toggle('d-none', !needsConfirmation);
+    }
+    if (!needsConfirmation && confirmFullRestore) {
+        confirmFullRestore.checked = false;
+    }
+    if (executeBtn) {
+        executeBtn.disabled = needsConfirmation && !confirmFullRestore.checked;
+    }
 }
 
 /**
@@ -8003,7 +8046,11 @@ async function executeRestore() {
         restore_items: document.getElementById('restoreItems').checked,
         restore_preferences: document.getElementById('restorePreferences').checked,
         restore_files: document.getElementById('restoreFiles').checked,
-        restore_test_data: document.getElementById('restoreTestData').checked
+        restore_test_data: document.getElementById('restoreTestData').checked,
+        restore_vaultwarden: document.getElementById('restoreVaultwarden').checked,
+        restore_secret_bundle: document.getElementById('restoreSecretBundle').checked,
+        require_vaultwarden_offline: document.getElementById('requireVaultwardenOffline').checked,
+        confirm_full_restore: document.getElementById('restoreVaultwarden').checked && document.getElementById('confirmFullRestore').checked
     };
     
     // Confirmation si clear_existing
@@ -8024,6 +8071,18 @@ async function executeRestore() {
         
         if (result.success) {
             let message = `Restauration terminée : ${result.items_restored} items, ${result.preferences_restored} prefs, ${result.files_restored} fichiers`;
+            if (result.vaultwarden_snapshot_restored) {
+                message += ', snapshot Vaultwarden restauré';
+            }
+            if (result.secret_bundle_restored) {
+                message += ', secrets chiffrés restaurés';
+            }
+            if (result.accounts_reencrypted) {
+                message += `, ${result.accounts_reencrypted} compte(s) ré-encrypté(s)`;
+            }
+            if (result.requires_vaultwarden_restart) {
+                message += '\nRedémarrage Vaultwarden requis.';
+            }
             if (result.warnings && result.warnings.length > 0) {
                 message += `\n⚠️ ${result.warnings.length} avertissement(s)`;
             }
@@ -8063,8 +8122,32 @@ function showImportRestoreModal() {
     document.getElementById('importRestorePreferences').checked = true;
     document.getElementById('importRestoreFiles').checked = true;
     document.getElementById('importRestoreTestData').checked = true;
+    document.getElementById('importRestoreVaultwarden').checked = false;
+    document.getElementById('importRestoreSecretBundle').checked = false;
+    document.getElementById('importRequireVaultwardenOffline').checked = true;
+    document.getElementById('importConfirmFullRestore').checked = false;
+    updateImportVaultwardenConfirmation();
     
     importRestoreModal.show();
+}
+
+function updateImportVaultwardenConfirmation() {
+    const restoreVaultwarden = document.getElementById('importRestoreVaultwarden');
+    const confirmFullRestore = document.getElementById('importConfirmFullRestore');
+    const confirmGroup = document.getElementById('importFullConfirmGroup');
+    const executeBtn = document.getElementById('executeImportRestoreBtn');
+    const fileSelected = Boolean(document.getElementById('importRestoreFile')?.files?.[0]);
+    const needsConfirmation = restoreVaultwarden && restoreVaultwarden.checked;
+
+    if (confirmGroup) {
+        confirmGroup.classList.toggle('d-none', !needsConfirmation);
+    }
+    if (!needsConfirmation && confirmFullRestore) {
+        confirmFullRestore.checked = false;
+    }
+    if (executeBtn) {
+        executeBtn.disabled = !fileSelected || (needsConfirmation && !confirmFullRestore.checked);
+    }
 }
 
 /**
@@ -8093,7 +8176,7 @@ function previewImportRestoreFile() {
     document.getElementById('importRestoreFilename').textContent = file.name;
     document.getElementById('importRestoreFilesize').textContent = formatFileSize(file.size);
     document.getElementById('importRestorePreview').classList.remove('d-none');
-    document.getElementById('executeImportRestoreBtn').disabled = false;
+    updateImportVaultwardenConfirmation();
 }
 
 /**
@@ -8138,6 +8221,10 @@ async function executeImportRestore() {
         formData.append('restore_preferences', document.getElementById('importRestorePreferences').checked);
         formData.append('restore_files', document.getElementById('importRestoreFiles').checked);
         formData.append('restore_test_data', document.getElementById('importRestoreTestData').checked);
+        formData.append('restore_vaultwarden', document.getElementById('importRestoreVaultwarden').checked);
+        formData.append('restore_secret_bundle', document.getElementById('importRestoreSecretBundle').checked);
+        formData.append('require_vaultwarden_offline', document.getElementById('importRequireVaultwardenOffline').checked);
+        formData.append('confirm_full_restore', document.getElementById('importRestoreVaultwarden').checked && document.getElementById('importConfirmFullRestore').checked);
         
         // Envoyer la requête
         const response = await fetch(`/api/apps/${slug}/backup/restore/upload`, {
@@ -8157,6 +8244,15 @@ async function executeImportRestore() {
         
         if (result.success) {
             let message = `Restauration terminée : ${result.items_restored} items, ${result.preferences_restored} prefs, ${result.files_restored} fichiers`;
+            if (result.vaultwarden_snapshot_restored) {
+                message += ', snapshot Vaultwarden restauré';
+            }
+            if (result.secret_bundle_restored) {
+                message += ', secrets chiffrés restaurés';
+            }
+            if (result.requires_vaultwarden_restart) {
+                message += '\nRedémarrage Vaultwarden requis.';
+            }
             showToast('Succès', message, 'success');
         } else {
             showToast('Attention', result.message || 'Restauration avec erreurs', 'warning');

@@ -650,11 +650,17 @@ class AppBackupExport(BaseModel):
     backup_id: str
     app_slug: str
     app_version: Optional[str] = None
+    format_version: Optional[str] = None
     total_items: int = 0
     total_preferences: int = 0
     total_files: int = 0
+    total_tables: int = 0
+    total_rows: int = 0
     total_size_bytes: int = 0
     checksum: Optional[str] = None
+    includes_vaultwarden_snapshot: bool = False
+    includes_secret_bundle: bool = False
+    restore_requires_offline: bool = False
     storage_filename: str  # Nom du fichier dans l'archive ZIP (ex: backups/mon-app/backup_uuid.zip)
     created_by: Optional[str] = None
     created_by_type: Optional[str] = None
@@ -892,6 +898,7 @@ class AppBackupConfig(BaseModel):
     backup_mode: BackupModeEnum = BackupModeEnum.manual
     backup_cron: Optional[str] = Field(None, description="Expression cron (ex: '0 2 * * *' = 2h du matin)")
     backup_retention: int = Field(5, ge=0, description="Nombre de backups à conserver (0 = illimité)")
+    backup_quiesce: bool = Field(False, description="Arrêter Vaultwarden pendant le snapshot pour cohérence (Vaultwarden uniquement)")
 
 
 class AppBackupConfigUpdate(BaseModel):
@@ -899,17 +906,24 @@ class AppBackupConfigUpdate(BaseModel):
     backup_mode: Optional[BackupModeEnum] = None
     backup_cron: Optional[str] = None
     backup_retention: Optional[int] = Field(None, ge=0)
+    backup_quiesce: Optional[bool] = None
 
 
 class AppBackupReceive(BaseModel):
     """Données reçues lors d'un push de backup depuis une application"""
     backup_id: str = Field(..., description="UUID du backup généré par l'application")
     app_version: Optional[str] = Field(None, description="Version de l'application")
+    format_version: Optional[str] = Field(None, description="Version du format de backup")
     total_items: int = Field(0, ge=0)
     total_preferences: int = Field(0, ge=0)
     total_files: int = Field(0, ge=0)
+    total_tables: int = Field(0, ge=0)
+    total_rows: int = Field(0, ge=0)
     checksum: Optional[str] = Field(None, description="SHA-256 du fichier ZIP")
     description: Optional[str] = None
+    includes_vaultwarden_snapshot: bool = False
+    includes_secret_bundle: bool = False
+    restore_requires_offline: bool = False
 
 
 class AppBackupResponse(BaseModel):
@@ -921,9 +935,15 @@ class AppBackupResponse(BaseModel):
     total_items: int = 0
     total_preferences: int = 0
     total_files: int = 0
+    total_tables: int = 0
+    total_rows: int = 0
     total_size_bytes: int = 0
     total_size_human: str = "0 B"
     checksum: Optional[str] = None
+    format_version: Optional[str] = None
+    includes_vaultwarden_snapshot: bool = False
+    includes_secret_bundle: bool = False
+    restore_requires_offline: bool = False
     is_encrypted: bool = False
     created_by: Optional[str] = None
     created_by_type: str = "app"
@@ -953,9 +973,15 @@ class AppBackupResponse(BaseModel):
             total_items=backup.total_items or 0,
             total_preferences=backup.total_preferences or 0,
             total_files=backup.total_files or 0,
+            total_tables=getattr(backup, "total_tables", 0) or 0,
+            total_rows=getattr(backup, "total_rows", 0) or 0,
             total_size_bytes=backup.total_size_bytes or 0,
             total_size_human=size_human,
             checksum=backup.checksum,
+            format_version=getattr(backup, "format_version", None),
+            includes_vaultwarden_snapshot=bool(getattr(backup, "includes_vaultwarden_snapshot", False)),
+            includes_secret_bundle=bool(getattr(backup, "includes_secret_bundle", False)),
+            restore_requires_offline=bool(getattr(backup, "restore_requires_offline", False)),
             is_encrypted=backup.is_encrypted or False,
             created_by=backup.created_by,
             created_by_type=backup.created_by_type or "app",
@@ -972,6 +998,8 @@ class AppBackupBrief(BaseModel):
     total_size_human: str
     created_at: datetime
     is_encrypted: bool = False
+    includes_vaultwarden_snapshot: bool = False
+    includes_secret_bundle: bool = False
     
     model_config = ConfigDict(from_attributes=True)
 
@@ -992,6 +1020,7 @@ class AppBackupStatusResponse(BaseModel):
     backup_mode: BackupModeEnum
     backup_cron: Optional[str] = None
     backup_retention: int = 5
+    backup_quiesce: bool = False
     last_backup_at: Optional[datetime] = None
     last_backup_id: Optional[str] = None
     last_backup_status: Optional[str] = None
@@ -1035,6 +1064,10 @@ class RestoreToAppRequest(BaseModel):
     restore_preferences: bool = True
     restore_files: bool = True
     restore_test_data: bool = True
+    restore_vaultwarden: bool = False
+    restore_secret_bundle: bool = False
+    require_vaultwarden_offline: bool = True
+    confirm_full_restore: bool = False
 
 
 class RestoreToAppResponse(BaseModel):
@@ -1050,6 +1083,12 @@ class RestoreToAppResponse(BaseModel):
     files_skipped: int = 0
     errors: List[str] = []
     warnings: List[str] = []
+    vaultwarden_snapshot_restored: bool = False
+    vaultwarden_restore: Optional[Dict[str, Any]] = None
+    secret_bundle_restored: bool = False
+    secret_bundle_secret_names: List[str] = []
+    accounts_reencrypted: int = 0
+    requires_vaultwarden_restart: bool = False
 
 
 # ===== Bulk Operations Schemas =====

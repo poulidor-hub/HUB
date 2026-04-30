@@ -2803,10 +2803,36 @@
                         <input class="form-check-input" type="checkbox" id="restoreTestData" checked>
                         <label class="form-check-label" for="restoreTestData">Restaurer les données de test</label>
                     </div>
+
+                    <div id="vaultwardenRestoreOptions" class="d-none">
+                        <hr class="my-3">
+                        <div class="alert alert-danger small mb-3">
+                            <i class="bi bi-shield-exclamation me-1"></i>
+                            <strong>Restauration complète Vaultwarden :</strong> cette opération peut remplacer le volume Vaultwarden et restaurer un bundle de secrets chiffré.
+                        </div>
+                        <div class="form-check mb-2">
+                            <input class="form-check-input" type="checkbox" id="restoreVaultwarden" onchange="updateRestoreVaultwardenConfirmation()">
+                            <label class="form-check-label" for="restoreVaultwarden">Restaurer le snapshot Vaultwarden complet</label>
+                        </div>
+                        <div class="form-check mb-2">
+                            <input class="form-check-input" type="checkbox" id="restoreSecretBundle">
+                            <label class="form-check-label" for="restoreSecretBundle">Restaurer le bundle de secrets chiffré</label>
+                        </div>
+                        <div class="form-check mb-2">
+                            <input class="form-check-input" type="checkbox" id="requireVaultwardenOffline" checked>
+                            <label class="form-check-label" for="requireVaultwardenOffline">Exiger Vaultwarden hors ligne côté application cible</label>
+                        </div>
+                        <div id="restoreFullConfirmGroup" class="form-check mt-3 d-none">
+                            <input class="form-check-input" type="checkbox" id="confirmFullRestore" onchange="updateRestoreVaultwardenConfirmation()">
+                            <label class="form-check-label fw-semibold text-danger" for="confirmFullRestore">
+                                Je confirme vouloir lancer une restauration complète Vaultwarden
+                            </label>
+                        </div>
+                    </div>
                 </div>
                 <div class="modal-footer">
                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuler</button>
-                    <button type="button" class="btn btn-warning" onclick="executeRestore()">
+                    <button type="button" class="btn btn-warning" id="executeRestoreBtn" onclick="executeRestore()">
                         <i class="bi bi-arrow-counterclockwise me-1"></i>Restaurer
                     </button>
                 </div>
@@ -2826,8 +2852,8 @@
                     <input type="hidden" id="importRestoreSlug">
                     
                     <div class="mb-3">
-                        <label for="importRestoreFile" class="form-label">Fichier de backup (.zip)</label>
-                        <input class="form-control" type="file" id="importRestoreFile" accept=".zip" onchange="previewImportRestoreFile()">
+                        <label for="importRestoreFile" class="form-label">Fichier de backup (.zip ou .encrypted)</label>
+                        <input class="form-control" type="file" id="importRestoreFile" accept=".zip,.encrypted" onchange="previewImportRestoreFile()">
                     </div>
                     
                     <!-- Aperçu du fichier -->
@@ -2867,6 +2893,31 @@
                     <div class="form-check mb-2">
                         <input class="form-check-input" type="checkbox" id="importRestoreTestData" checked>
                         <label class="form-check-label" for="importRestoreTestData">Restaurer les données de test</label>
+                    </div>
+
+                    <hr class="my-3">
+
+                    <div class="alert alert-danger small mb-3">
+                        <i class="bi bi-shield-exclamation me-1"></i>
+                        Options à utiliser uniquement pour un ZIP Vaultwarden complet.
+                    </div>
+                    <div class="form-check mb-2">
+                        <input class="form-check-input" type="checkbox" id="importRestoreVaultwarden" onchange="updateImportVaultwardenConfirmation()">
+                        <label class="form-check-label" for="importRestoreVaultwarden">Restaurer le snapshot Vaultwarden complet</label>
+                    </div>
+                    <div class="form-check mb-2">
+                        <input class="form-check-input" type="checkbox" id="importRestoreSecretBundle">
+                        <label class="form-check-label" for="importRestoreSecretBundle">Restaurer le bundle de secrets chiffré</label>
+                    </div>
+                    <div class="form-check mb-2">
+                        <input class="form-check-input" type="checkbox" id="importRequireVaultwardenOffline" checked>
+                        <label class="form-check-label" for="importRequireVaultwardenOffline">Exiger Vaultwarden hors ligne côté application cible</label>
+                    </div>
+                    <div id="importFullConfirmGroup" class="form-check mt-3 d-none">
+                        <input class="form-check-input" type="checkbox" id="importConfirmFullRestore" onchange="updateImportVaultwardenConfirmation()">
+                        <label class="form-check-label fw-semibold text-danger" for="importConfirmFullRestore">
+                            Je confirme vouloir lancer une restauration complète Vaultwarden
+                        </label>
                     </div>
                 </div>
                 <div class="modal-footer">
