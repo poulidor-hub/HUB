@@ -580,6 +580,13 @@ document.addEventListener('DOMContentLoaded', () => {
         handleSessionExpired(event.detail?.message);
     });
 
+    window.addEventListener('hub:beaconTokenUpdated', (event) => {
+        if (event.detail?.beacon_token) {
+            beaconToken = event.detail.beacon_token;
+            console.log('🔑 Beacon token mis à jour après refresh');
+        }
+    });
+
     // Écouter quand la page redevient visible (utilisateur revient sur l'onglet)
     // Utile pour détecter un retour après un redémarrage serveur
     document.addEventListener('visibilitychange', () => {
@@ -745,6 +752,9 @@ async function loadCurrentUser() {
         console.log('loadCurrentUser: Token présent:', !!api.token);
         currentUser = await api.getCurrentUser();
         console.log('loadCurrentUser: Utilisateur chargé:', currentUser?.username, 'is_admin:', currentUser?.is_admin);
+        if (currentUser?.beacon_token) {
+            beaconToken = currentUser.beacon_token;
+        }
         
         // Si l'utilisateur est déjà connecté et qu'un callback SSO est en attente
         // Rediriger directement vers l'application externe
@@ -1261,9 +1271,13 @@ function renderAppsGrid(apps) {
     const isAdmin = currentUser?.is_admin;
 
     grid.innerHTML = apps.map(app => {
-        // Déterminer si l'app est inactive (désactivée par l'admin)
+        // Déterminer si l'app est inactive (désactivée par l'admin) ou sans URL de lancement
         // Les statuts Docker/health arrivent en temps réel via SSE
-        const isUnavailable = !app.is_active;
+        const hasLaunchUrl = Boolean(app.callback_url || app.frontend_url);
+        const isUnavailable = !app.is_active || !hasLaunchUrl;
+        const unavailableMessage = !app.is_active
+            ? 'Cette application est désactivée.'
+            : 'Cette application n’a pas d’URL de lancement configurée.';
         const appVersionLabel = formatAppVersionLabel(app.app_version);
         const favIcon = app.is_favorite ? 'bi-star-fill text-warning' : 'bi-star';
         
@@ -1271,7 +1285,7 @@ function renderAppsGrid(apps) {
         <div class="col-sm-6 col-md-4 col-lg-3">
             <div class="card app-card shadow-sm h-100 ${isUnavailable ? 'app-inactive' : ''}" 
                  data-app-slug="${app.slug}"
-                 onclick="${!isUnavailable ? `openApp('${app.slug}', '${app.frontend_url || ''}')` : `showToast('Application indisponible', 'Cette application est désactivée.', 'warning')`}">
+                 onclick="${!isUnavailable ? `openApp('${app.slug}')` : `showToast('Application indisponible', '${unavailableMessage}', 'warning')`}">
                 <div class="card-body position-relative">
                     <button class="btn btn-sm btn-link favorite-btn" onclick="toggleFavorite(event, ${app.id})" title="${app.is_favorite ? 'Retirer des favoris' : 'Ajouter aux favoris'}">
                         <i class="bi ${favIcon}"></i>
@@ -1338,6 +1352,9 @@ async function refreshTokenAfterAppChange(actionType = null, silent = false) {
         if (tokenRefreshed) {
             try {
                 currentUser = await api.getCurrentUser();
+                if (currentUser?.beacon_token) {
+                    beaconToken = currentUser.beacon_token;
+                }
             } catch (e) {
                 console.log('Impossible de recharger currentUser:', e);
             }
@@ -1401,12 +1418,7 @@ async function updateMyAppRole(appSlug, role) {
     }
 }
 
-async function openApp(slug, frontendUrl) {
-    if (!frontendUrl) {
-        showToast('Information', 'Cette application n\'a pas de frontend configuré', 'warning');
-        return;
-    }
-
+async function openApp(slug) {
     // Nettoyer les références aux fenêtres déjà fermées
     cleanupClosedWindows();
 
@@ -1441,18 +1453,21 @@ async function openApp(slug, frontendUrl) {
     openedAppWindows.set(windowName, appWindow);
 
     try {
-        // 2. S'assurer que le token est valide AVANT de naviguer
-        await api.ensureFreshToken(slug);
+        // 2. Garder la session Hub fraîche sans dépendre du rôle app dans le JWT global
+        await api.ensureFreshToken();
 
-        // 3. Logger l'accès à l'application (non bloquant)
-        api.logAppAccess(slug).catch(e => console.warn('Échec log accès app:', e));
+        // 3. Préparer un lancement dédié côté Hub avec un token frais pour cette app
+        const launch = await api.createAppLaunch(slug);
+        if (!launch?.launch_url || !launch?.access_token) {
+            throw new Error('Réponse de lancement invalide');
+        }
 
-        // 4. Naviguer vers l'app avec un token garanti valide
-        const separator = frontendUrl.includes('?') ? '&' : '?';
-        appWindow.location.href = `${frontendUrl}${separator}access_token=${api.token}`;
+        // 4. Naviguer vers l'URL d'entrée de l'app, callback_url en priorité côté API
+        const separator = launch.launch_url.includes('?') ? '&' : '?';
+        appWindow.location.href = `${launch.launch_url}${separator}access_token=${encodeURIComponent(launch.access_token)}`;
         console.log(`Application ${slug} ouverte dans l'onglet ${windowName}`);
     } catch (e) {
-        // En cas d'échec du refresh, garder une page explicite au lieu de fermer brutalement l'onglet
+        // En cas d'échec du lancement, garder une page explicite au lieu de fermer brutalement l'onglet
         console.error(`Échec ouverture app ${slug}:`, e);
         openedAppWindows.delete(windowName);
 
@@ -1465,7 +1480,7 @@ async function openApp(slug, frontendUrl) {
                 <body style="display:flex;align-items:center;justify-content:center;height:100vh;margin:0;font-family:system-ui,sans-serif;background:#f8f9fa;color:#212529;">
                     <div style="max-width:460px;padding:2rem;border:1px solid #dee2e6;border-radius:12px;background:white;box-shadow:0 10px 30px rgba(0,0,0,0.08);text-align:center;">
                         <h2 style="margin-top:0;margin-bottom:1rem;">Connexion au Hub requise</h2>
-                        <p style="margin-bottom:1.5rem;color:#6c757d;">L'application n'a pas pu être ouverte car le jeton Hub n'a pas pu être synchronisé. Reconnectez-vous puis relancez l'application.</p>
+                        <p style="margin-bottom:1.5rem;color:#6c757d;">L'application n'a pas pu être ouverte car le lancement Hub n'a pas pu être préparé. Reconnectez-vous puis relancez l'application.</p>
                         <div style="display:flex;gap:0.75rem;justify-content:center;flex-wrap:wrap;">
                             <button onclick="window.location.href='${loginUrl}'" style="padding:0.75rem 1rem;border:none;border-radius:8px;background:#0d6efd;color:white;cursor:pointer;">Ouvrir le Hub</button>
                             <button onclick="window.close()" style="padding:0.75rem 1rem;border:1px solid #ced4da;border-radius:8px;background:white;color:#212529;cursor:pointer;">Fermer</button>

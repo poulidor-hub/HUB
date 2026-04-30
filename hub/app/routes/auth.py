@@ -11,8 +11,8 @@ import secrets
 import logging
 
 from app.database import get_db
-from app.models import User, AuditLog, ServiceAccount, UserAppRole, UserSession, utcnow
-from app.schemas import Token, LoginRequest, TokenIntrospection, RefreshTokenRequest, LogoutRequest, PasswordChangeRequest
+from app.models import User, AuditLog, ServiceAccount, UserAppRole, UserSession, Application, utcnow
+from app.schemas import Token, LoginRequest, TokenIntrospection, RefreshTokenRequest, LogoutRequest, PasswordChangeRequest, AppLaunchResponse
 from app.routes.events import notify_stats_update, notify_event
 from app.auth import (
     verify_password,
@@ -120,10 +120,12 @@ async def login_for_token(
         
         new_refresh_token, refresh_obj = result
         
+        beacon_token = None
         if refresh_obj.user:
             user = refresh_obj.user
             apps = user.get_apps_with_roles()  # Dict {app_slug: role}
             sub = user.username
+            beacon_token = generate_beacon_token(user.id)
             
             # Mettre à jour l'activité de la session (le refresh = activité)
             from app.routes.audit import update_session_activity
@@ -145,7 +147,8 @@ async def login_for_token(
         return Token(
             access_token=token,
             expires_at=expire,
-            refresh_token=new_refresh_token
+            refresh_token=new_refresh_token,
+            beacon_token=beacon_token
         )
     
     # === GRANT TYPE: CLIENT CREDENTIALS (M2M) ===
@@ -685,11 +688,13 @@ async def refresh_access_token(
     
     new_refresh_token, refresh_obj = result
     
+    beacon_token = None
     if refresh_obj.user:
         user = refresh_obj.user
         apps = user.get_apps_with_roles()  # Dict {app_slug: role}
         sub = user.username
         is_sa = False
+        beacon_token = generate_beacon_token(user.id)
     else:
         sa = refresh_obj.service_account
         # Service accounts ont accès "service" aux apps
@@ -706,7 +711,90 @@ async def refresh_access_token(
     return Token(
         access_token=token,
         expires_at=expire,
-        refresh_token=new_refresh_token
+        refresh_token=new_refresh_token,
+        beacon_token=beacon_token
+    )
+
+
+@router.post("/apps/{app_slug}/launch", response_model=AppLaunchResponse)
+async def create_app_launch_token(
+    app_slug: str,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Prépare l'ouverture d'une application depuis le dashboard Hub.
+    Retourne un token de lancement frais et une URL d'entrée privilégiant callback_url.
+    """
+    result = await db.execute(
+        select(Application).where(Application.slug == app_slug)
+    )
+    app = result.scalar_one_or_none()
+
+    if not app:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Application '{app_slug}' non trouvée"
+        )
+
+    if not app.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Application désactivée"
+        )
+
+    raw_launch_url = app.callback_url or app.frontend_url
+    if not raw_launch_url:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Application sans URL de lancement configurée"
+        )
+    launch_url = str(raw_launch_url)
+    current_user_id = int(current_user.id)
+    current_username = str(current_user.username)
+    app_slug_value = str(app.slug)
+    app_name = str(app.name)
+
+    user_role = current_user.get_role_for_app(app_slug)
+    if not current_user.is_admin and not user_role:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Accès refusé à l'application {app_slug}"
+        )
+
+    apps = current_user.get_apps_with_roles()
+    role = user_role
+    if current_user.is_admin and app_slug not in apps:
+        apps[app_slug] = "admin"
+        role = "admin"
+    elif current_user.is_admin and not role:
+        role = apps.get(app_slug, "admin")
+
+    token, expire, jti = create_access_token(
+        username=current_username,
+        apps=apps
+    )
+
+    from app.routes.audit import update_session_activity
+    await update_session_activity(db, current_user_id, app_slug=app_slug)
+    await log_action(
+        db=db,
+        user_id=current_user_id,
+        action="access_app",
+        target=app_slug,
+        request=request,
+        response_status=200,
+        details=f"Lancement de {app_name} avec rôle: {role}"
+    )
+    await db.commit()
+
+    return AppLaunchResponse(
+        access_token=token,
+        expires_at=expire,
+        launch_url=launch_url,
+        app_slug=app_slug_value,
+        role=role or "user"
     )
 
 

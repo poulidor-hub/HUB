@@ -1166,6 +1166,17 @@ Le Hub accepte plusieurs paramètres dans l'URL pour contrôler le comportement 
 | \`callback\` | URL de retour après connexion réussie | \`?callback=http://app:4178/callback\` |
 | \`action\` | Action spéciale à effectuer | \`?action=logout\` |
 
+### Ouverture depuis le dashboard Hub
+
+Quand un utilisateur clique sur une application dans le dashboard, le Hub prépare le lancement via \`POST /api/auth/apps/{slug}/launch\` :
+
+- il vérifie que l'utilisateur a accès à l'application ;
+- il crée un JWT frais contenant \`apps[slug]\` avec le rôle applicatif ;
+- il redirige l'onglet app vers \`callback_url\` si elle est configurée, sinon vers \`frontend_url\` ;
+- il ajoute le token dans l'URL sous la forme \`?access_token=...\`.
+
+Votre frontend doit donc accepter le token sur sa route \`callback_url\`, généralement \`/callback\`. Cette route est l'entrée recommandée pour initialiser la session applicative.
+
 #### ⚠️ Éviter la reconnexion automatique après déconnexion
 
 Quand un utilisateur se déconnecte de votre application, **n'utilisez PAS** \`callback\` pour rediriger vers le Hub, sinon le Hub le reconnectera automatiquement s'il a une session active.
@@ -1186,6 +1197,7 @@ Le paramètre \`action=logout\` :
 - Efface tout callback en attente
 - Affiche le portail Hub (dashboard si connecté, login sinon)
 - **Ne redirige PAS automatiquement** vers une application
+- Doit être réservé à une déconnexion explicite de l'utilisateur, pas à un échec silencieux d'initialisation de l'application
 
 ### Configuration JavaScript
 

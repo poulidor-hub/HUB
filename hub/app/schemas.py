@@ -497,6 +497,15 @@ class Token(BaseModel):
     beacon_token: Optional[str] = None  # Token HMAC éphémère pour sécuriser beacon-logout
 
 
+class AppLaunchResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    expires_at: datetime
+    launch_url: str
+    app_slug: str
+    role: str
+
+
 class TokenPayload(BaseModel):
     sub: str
     roles: List[str]

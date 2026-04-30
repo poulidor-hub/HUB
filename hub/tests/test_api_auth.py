@@ -1,6 +1,9 @@
 """
 Tests d'intégration pour les endpoints API d'authentification
 """
+import base64
+import json
+
 import pytest
 from httpx import AsyncClient
 from datetime import datetime, timedelta
@@ -8,6 +11,12 @@ from datetime import datetime, timedelta
 from app.auth import create_access_token, get_password_hash
 from app.models import User, Application, UserAppRole
 from tests.conftest import get_auth_header
+
+
+def decode_jwt_payload(token: str) -> dict:
+    payload_b64 = token.split('.')[1]
+    payload_b64 += '=' * (-len(payload_b64) % 4)
+    return json.loads(base64.urlsafe_b64decode(payload_b64))
 
 
 class TestAuthEndpoints:
@@ -223,6 +232,130 @@ class TestAuthEndpoints:
         )
         
         assert response.status_code == 200
+
+
+class TestAppLaunch:
+    """Tests pour le lancement d'applications depuis le dashboard."""
+
+    @pytest.mark.asyncio
+    async def test_app_launch_user_role_uses_callback_url(
+        self, client: AsyncClient, user_with_app_access
+    ):
+        """Un utilisateur autorisé reçoit un token app et l'URL callback en priorité."""
+        user, app = user_with_app_access
+        token, _, _ = create_access_token(username=str(user.username), apps={})
+
+        response = await client.post(
+            f"/api/auth/apps/{app.slug}/launch",
+            headers=get_auth_header(token)
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["launch_url"] == app.callback_url
+        assert data["app_slug"] == app.slug
+        assert data["role"] == "user"
+
+        payload = decode_jwt_payload(data["access_token"])
+        assert payload["sub"] == user.username
+        assert payload["apps"][app.slug] == "user"
+
+    @pytest.mark.asyncio
+    async def test_app_launch_admin_without_explicit_role_gets_admin(
+        self, client: AsyncClient, admin_user: User, test_app: Application
+    ):
+        """Un admin Hub sans rôle explicite obtient un rôle admin dans le token de lancement."""
+        token, _, _ = create_access_token(username=str(admin_user.username), apps={})
+
+        response = await client.post(
+            f"/api/auth/apps/{test_app.slug}/launch",
+            headers=get_auth_header(token)
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["role"] == "admin"
+
+        payload = decode_jwt_payload(data["access_token"])
+        assert payload["apps"][test_app.slug] == "admin"
+
+    @pytest.mark.asyncio
+    async def test_app_launch_forbidden_without_role(
+        self, client: AsyncClient, test_user: User, test_app: Application
+    ):
+        """Un utilisateur non admin sans rôle applicatif ne peut pas lancer l'app."""
+        token, _, _ = create_access_token(username=str(test_user.username), apps={})
+
+        response = await client.post(
+            f"/api/auth/apps/{test_app.slug}/launch",
+            headers=get_auth_header(token)
+        )
+
+        assert response.status_code == 403
+
+    @pytest.mark.asyncio
+    async def test_app_launch_forbidden_when_app_inactive(
+        self, client: AsyncClient, user_with_app_access, async_session
+    ):
+        """Une application désactivée ne peut pas être lancée."""
+        user, app = user_with_app_access
+        app.is_active = False
+        await async_session.commit()
+        token, _, _ = create_access_token(username=str(user.username), apps={})
+
+        response = await client.post(
+            f"/api/auth/apps/{app.slug}/launch",
+            headers=get_auth_header(token)
+        )
+
+        assert response.status_code == 403
+
+    @pytest.mark.asyncio
+    async def test_app_launch_requires_launch_url(
+        self, client: AsyncClient, user_with_app_access, async_session
+    ):
+        """Une application sans callback_url ni frontend_url retourne une erreur explicite."""
+        user, app = user_with_app_access
+        app.callback_url = None
+        app.frontend_url = None
+        await async_session.commit()
+        token, _, _ = create_access_token(username=str(user.username), apps={})
+
+        response = await client.post(
+            f"/api/auth/apps/{app.slug}/launch",
+            headers=get_auth_header(token)
+        )
+
+        assert response.status_code == 400
+
+    @pytest.mark.asyncio
+    async def test_json_refresh_token_includes_apps_and_beacon_token(
+        self, client: AsyncClient, user_with_app_access
+    ):
+        """Le refresh JSON conserve les rôles app et fournit un beacon_token utilisateur."""
+        user, app = user_with_app_access
+        login_response = await client.post(
+            "/api/auth/token",
+            data={
+                "grant_type": "password",
+                "username": user.username,
+                "password": "testpass123"
+            }
+        )
+        assert login_response.status_code == 200
+        refresh_token = login_response.json()["refresh_token"]
+
+        response = await client.post(
+            "/api/auth/token/refresh",
+            json={"refresh_token": refresh_token}
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["beacon_token"]
+
+        payload = decode_jwt_payload(data["access_token"])
+        assert payload["apps"][app.slug] == "user"
 
 
 class TestClientCredentials:

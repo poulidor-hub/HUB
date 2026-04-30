@@ -182,6 +182,12 @@ class HubAPI {
             }
             console.warn('⚠️ Refresh échoué, utilisation du token existant');
         }
+
+        if (!this._hasUsableAccessToken(appSlug, 30 * 1000)) {
+            throw new Error(appSlug
+                ? 'Le token synchronisé ne contient pas l’accès à cette application'
+                : 'Le token synchronisé n’est pas assez récent');
+        }
     }
 
     getHeaders() {
@@ -255,6 +261,11 @@ class HubAPI {
                 this.setToken(data.access_token);
                 if (data.refresh_token) {
                     this.setRefreshToken(data.refresh_token);
+                }
+                if (data.beacon_token) {
+                    window.dispatchEvent(new CustomEvent('hub:beaconTokenUpdated', {
+                        detail: { beacon_token: data.beacon_token }
+                    }));
                 }
                 this._lastRefreshTime = Date.now(); // Marquer le succès
                 return true;
@@ -456,6 +467,12 @@ class HubAPI {
         return this.request(`/apps/${id}`, {
             method: 'PATCH',
             body: JSON.stringify(appData)
+        });
+    }
+
+    async createAppLaunch(appSlug) {
+        return this.request(`/auth/apps/${encodeURIComponent(appSlug)}/launch`, {
+            method: 'POST'
         });
     }
 
