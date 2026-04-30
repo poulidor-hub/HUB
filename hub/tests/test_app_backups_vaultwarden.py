@@ -288,7 +288,7 @@ class TestVaultwardenBackupTrigger:
             async def __aexit__(self, exc_type, exc, tb):
                 return False
 
-            async def post(self, url, headers=None):
+            async def post(self, url, headers=None, **kwargs):
                 captured["create_url"] = url
                 captured["create_headers"] = headers
                 return FakeResponse(
@@ -298,7 +298,7 @@ class TestVaultwardenBackupTrigger:
                     }
                 )
 
-            async def get(self, url, headers=None):
+            async def get(self, url, headers=None, **kwargs):
                 captured["download_url"] = url
                 captured["download_headers"] = headers
                 return FakeResponse(content_data=content)
@@ -307,14 +307,45 @@ class TestVaultwardenBackupTrigger:
 
         monkeypatch.setattr(httpx, "AsyncClient", FakeAsyncClient)
 
+        # Le trigger lance une tâche de fond qui ouvre sa propre session via
+        # async_session_maker. Pour que la tâche utilise la même DB de test,
+        # on patche async_session_maker pour réutiliser la session de test.
+        class _SessionCtx:
+            async def __aenter__(self):
+                return async_session
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
+        def _fake_session_maker():
+            return _SessionCtx()
+
+        import app.database as _db_module
+        monkeypatch.setattr(_db_module, "async_session_maker", _fake_session_maker)
+
         response = await client.post(
             f"/api/apps/{test_app.slug}/backup/trigger",
             headers=get_auth_header(admin_token),
         )
 
-        assert response.status_code == 200, response.text
+        # Le trigger est asynchrone : il renvoie 202 et crée la ligne en pending,
+        # puis lance une tâche de fond qui finalise le backup.
+        assert response.status_code == 202, response.text
         data = response.json()
-        assert data["backup_id"] == "trigger-vw-001"
+        assert data["status"] == "pending"
+        assert data["backup_id"]
+        initial_backup_id = data["backup_id"]
+
+        # Attendre la fin de la tâche de fond (elle remplace backup_id par celui de l'app)
+        import asyncio as _asyncio
+        for _ in range(50):
+            await _asyncio.sleep(0.05)
+            existing = await async_session.execute(
+                select(AppBackup).where(AppBackup.backup_id == "trigger-vw-001")
+            )
+            if existing.scalar_one_or_none() is not None:
+                break
+
         assert captured["create_url"] == f"{test_app.api_url}/api/admin/backup"
         assert captured["download_url"] == f"{test_app.api_url}/api/admin/backup/download?backup_id=trigger-vw-001"
 
@@ -323,6 +354,8 @@ class TestVaultwardenBackupTrigger:
         )
         backup = result.scalar_one()
         assert backup.created_by_type == "hub"
+        assert backup.status == "success"
+        assert backup.duration_seconds is not None
         assert backup.app_version == "9.9.9"
         assert backup.format_version == "3.0"
         assert backup.total_tables == 7
@@ -337,8 +370,10 @@ class TestVaultwardenBackupTrigger:
             headers=get_auth_header(admin_token),
         )
         assert list_response.status_code == 200, list_response.text
-        listed_backup = list_response.json()["backups"][0]
-        assert listed_backup["backup_id"] == "trigger-vw-001"
+        backups_listed = list_response.json()["backups"]
+        # Filtrer le backup d'intérêt (la liste peut contenir aussi la ligne initiale
+        # si jamais initial_backup_id != "trigger-vw-001")
+        listed_backup = next(b for b in backups_listed if b["backup_id"] == "trigger-vw-001")
         assert listed_backup["includes_vaultwarden_snapshot"] is True
         assert listed_backup["includes_secret_bundle"] is True
 

@@ -7,6 +7,39 @@
 
 ## [3.7.1] - 30 avril 2026
 
+### ⚡ Sauvegardes d'applications asynchrones avec progression temps réel
+
+- Migration `024_add_backup_progress.sql` : nouveaux champs sur `app_backups`
+  (`status`, `started_at`, `completed_at`, `duration_seconds`, `progress_step`,
+  `progress_percent`, `error_message`) ; `storage_path` devient nullable pour
+  permettre les enregistrements `pending`/`running`/`failed`/`timeout`. Index
+  partiel `idx_app_backups_running` pour repérer rapidement les sauvegardes
+  actives par application.
+- `POST /api/apps/{slug}/backup/trigger` retourne désormais `202 Accepted`
+  et lance la sauvegarde en arrière-plan via `asyncio.create_task`. Renvoie
+  `409 Conflict` si une sauvegarde est déjà en cours pour l'application,
+  empêchant tout double déclenchement (anti mis-clic).
+- Nouvel endpoint `GET /api/admin/backups/in-progress` : liste les
+  sauvegardes en cours avec progression (`progress_step`, `progress_percent`),
+  durée écoulée et durée moyenne historique pour estimer une ETA.
+- Téléchargement des backups distants protégé par un timeout de 120 s, retenté
+  une fois avec timeout étendu à 300 s pour les apps lentes ; en cas de
+  second timeout l'enregistrement passe en `status='timeout'` avec le vrai
+  message d'erreur stocké dans `error_message` (au lieu d'un message générique).
+- Diffusion SSE temps réel : événements `backup_started`, `backup_progress`,
+  `backup_completed`, `backup_failed` consommés par le frontend pour mettre
+  à jour la barre de progression et afficher des notifications enrichies
+  (durée formatée, message d'erreur réel).
+- Kill-switch au démarrage du Hub : `cleanup_stale_running_backups()`
+  requalifie en `failed` toute sauvegarde restée bloquée en `pending`/`running`
+  plus de 30 minutes (interruption Hub pendant un job).
+- Frontend : nouvelle section "Sauvegardes en cours" sur l'onglet
+  *App Backups* avec barre de progression Bootstrap animée, étape en cours,
+  durée écoulée temps réel et ETA. Le bouton de déclenchement est remplacé
+  par un badge "En cours…" tant que la sauvegarde n'est pas terminée. La
+  liste de rétention affiche désormais la durée formatée (`Durée: 1m 23s`)
+  sous l'auteur de chaque backup.
+
 ### ✨ Backups planifies coherents pour Vaultwarden
 
 - Migration `023_add_backup_quiesce.sql` : nouveau champ

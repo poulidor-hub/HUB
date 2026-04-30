@@ -289,7 +289,14 @@ async def lifespan(app: FastAPI):
     
     # Démarrer le scheduler de backups
     _backup_scheduler_task = asyncio.create_task(periodic_backup_scheduler())
-    
+
+    # Kill-switch backups : requalifier les backups restés "running" (cas crash)
+    try:
+        from app.routes.app_backups import cleanup_stale_running_backups
+        await cleanup_stale_running_backups()
+    except Exception as exc:
+        logger.warning(f"⚠️ Kill-switch backups au démarrage a échoué: {exc}")
+
     # Initialiser le Service Account Discovery
     from app.routes.discovery import init_discovery_service_account
     await init_discovery_service_account()

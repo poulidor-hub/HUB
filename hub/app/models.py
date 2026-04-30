@@ -474,10 +474,23 @@ class AppBackup(Base):
     restore_requires_offline = Column(Boolean, default=False)
     
     # Stockage
-    storage_path = Column(String(500), nullable=False)  # Chemin relatif du fichier
+    # Nullable: la ligne est créée AVANT le téléchargement (status=pending),
+    # le storage_path est rempli une fois le ZIP écrit sur disque.
+    storage_path = Column(String(500), nullable=True)
     encrypted_path = Column(String(500))  # Chemin du fichier chiffré (si exporté)
     is_encrypted = Column(Boolean, default=False)
-    
+
+    # Cycle de vie / progression (migration 024)
+    status = Column(String(20), nullable=False, default="success")
+    # Valeurs: pending|running|success|failed|timeout
+    started_at = Column(DateTime, nullable=True)
+    completed_at = Column(DateTime, nullable=True)
+    duration_seconds = Column(Integer, nullable=True)
+    progress_step = Column(String(40), default="done")
+    # Valeurs: queued|create|downloading|storing|done
+    progress_percent = Column(Integer, default=100)
+    error_message = Column(Text, nullable=True)
+
     # Traçabilité
     created_by = Column(String(100))  # Username ou service_account
     created_by_type = Column(String(20), default="app")  # 'app', 'user', 'scheduler'

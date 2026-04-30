@@ -1142,7 +1142,7 @@
                     </button>
                 </li>
                 <li class="nav-item">
-                    <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tabAppBackups" onclick="loadAppBackupsOverview()">
+                    <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tabAppBackups" onclick="loadAppBackupsOverview(); hydrateRunningBackups();">
                         <i class="bi bi-hdd-stack me-1"></i>Sauvegardes
                     </button>
                 </li>
@@ -1266,6 +1266,23 @@
                         </div>
                     </div>
                     
+                    <!-- Section "Sauvegardes en cours" (affichée seulement si au moins 1 active) -->
+                    <div id="appBackupsRunningSection" class="mb-3 d-none">
+                        <div class="card border-primary">
+                            <div class="card-header bg-primary-subtle d-flex align-items-center justify-content-between">
+                                <span>
+                                    <span class="spinner-border spinner-border-sm text-primary me-2" role="status" aria-hidden="true"></span>
+                                    <strong>Sauvegardes en cours</strong>
+                                    <span class="badge bg-primary ms-2" id="appBackupsRunningCount">0</span>
+                                </span>
+                                <small class="text-muted">Mises à jour en temps réel</small>
+                            </div>
+                            <div class="card-body p-2" id="appBackupsRunningBody">
+                                <!-- Contenu généré dynamiquement -->
+                            </div>
+                        </div>
+                    </div>
+
                     <!-- Tableau des applications avec leurs backups -->
                     <div class="table-responsive" id="appBackupsTable">
                         <table class="table table-hover align-middle">

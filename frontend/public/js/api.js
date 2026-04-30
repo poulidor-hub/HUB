@@ -938,7 +938,25 @@ class HubAPI {
     }
     
     // ===== Backup/Restore API =====
-    
+
+    /**
+     * Liste les backups d'applications en cours d'exécution (pending/running)
+     * @returns {Promise<{items: Array, total: number}>}
+     */
+    async listInProgressBackups() {
+        return this.request('/admin/backups/in-progress');
+    }
+
+    /**
+     * Annule (kill-switch manuel) un backup bloqué en pending/running.
+     * @param {string} backupId - identifiant du backup à annuler
+     */
+    async cancelInProgressBackup(backupId) {
+        return this.request(`/admin/backups/${encodeURIComponent(backupId)}/cancel`, {
+            method: 'POST'
+        });
+    }
+
     /**
      * Exporte l'environnement complet (backup)
      * @param {boolean} includeJwtKeys - Inclure les clés JWT

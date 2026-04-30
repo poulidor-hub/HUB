@@ -384,7 +384,78 @@ function handleSSEEvent(data) {
             localStorage.setItem('errorsLastAcknowledgedAt', errorsLastAcknowledgedAt);
             updateNavErrorBadge(0);
             break;
-            
+
+        case 'backup_started': {
+            const slug = data.data?.app_slug;
+            if (!slug) break;
+            runningBackups.set(slug, {
+                backup_id: data.data.backup_id,
+                app_name: data.data.app_name || slug,
+                status: data.data.status || 'pending',
+                progress_step: data.data.progress_step || 'queued',
+                progress_percent: data.data.progress_percent ?? 0,
+                started_at: data.data.started_at || data.data.created_at || new Date().toISOString(),
+                avg_duration_seconds: data.data.avg_duration_seconds ?? null
+            });
+            renderRunningBackups();
+            if (currentPage === 'app-backups') {
+                loadAppBackupsOverview();
+            }
+            break;
+        }
+
+        case 'backup_progress': {
+            const slug = data.data?.app_slug;
+            if (!slug) break;
+            const existing = runningBackups.get(slug) || {
+                app_name: data.data.app_name || slug,
+                started_at: data.data.started_at || new Date().toISOString()
+            };
+            existing.backup_id = data.data.backup_id || existing.backup_id;
+            existing.status = data.data.status || 'running';
+            existing.progress_step = data.data.progress_step || existing.progress_step;
+            existing.progress_percent = data.data.progress_percent ?? existing.progress_percent ?? 0;
+            if (data.data.app_name) existing.app_name = data.data.app_name;
+            if (data.data.avg_duration_seconds !== undefined) existing.avg_duration_seconds = data.data.avg_duration_seconds;
+            runningBackups.set(slug, existing);
+            renderRunningBackups();
+            break;
+        }
+
+        case 'backup_completed': {
+            const slug = data.data?.app_slug;
+            if (slug && runningBackups.has(slug)) {
+                runningBackups.delete(slug);
+                renderRunningBackups();
+            }
+            const okName = data.data?.app_name || slug || 'Application';
+            const dur = data.data?.duration_human ? ` (${data.data.duration_human})` : '';
+            showToast('Sauvegarde terminée', `${okName}${dur}`, 'success');
+            if (currentPage === 'app-backups') {
+                loadAppBackupsOverview();
+                if (appBackupsListModal && document.getElementById('backupsListAppSlug')?.value === slug) {
+                    showAppBackupsList(slug);
+                }
+            }
+            break;
+        }
+
+        case 'backup_failed': {
+            const slug = data.data?.app_slug;
+            if (slug && runningBackups.has(slug)) {
+                runningBackups.delete(slug);
+                renderRunningBackups();
+            }
+            const failName = data.data?.app_name || slug || 'Application';
+            const reason = data.data?.error_message || 'Erreur inconnue';
+            const kind = data.data?.status === 'timeout' ? 'Timeout sauvegarde' : 'Échec sauvegarde';
+            showToast(kind, `${failName} : ${reason}`, 'danger');
+            if (currentPage === 'app-backups') {
+                loadAppBackupsOverview();
+            }
+            break;
+        }
+
         case 'force_logout':
             // Vérifier si c'est l'utilisateur courant qui doit être déconnecté
             if (currentUser && data.data?.user_id === currentUser.id) {
@@ -7691,6 +7762,180 @@ let appBackupsListModal = null;
 let appBackupsById = {};
 let selectedRestoreBackup = null;
 
+// Map<app_slug, {backup_id, app_name, status, progress_step, progress_percent, started_at, avg_duration_seconds}>
+const runningBackups = new Map();
+let _runningBackupsTimer = null;
+
+/**
+ * Formate une durée en secondes en chaîne courte (ex: "1m 23s", "45s", "2h 5m").
+ */
+function formatBackupDuration(seconds) {
+    if (seconds === null || seconds === undefined || isNaN(seconds)) return '-';
+    const total = Math.max(0, Math.floor(Number(seconds)));
+    if (total < 60) return `${total}s`;
+    const h = Math.floor(total / 3600);
+    const m = Math.floor((total % 3600) / 60);
+    const s = total % 60;
+    if (h > 0) return s > 0 ? `${h}h ${m}m ${s}s` : `${h}h ${m}m`;
+    return s > 0 ? `${m}m ${s}s` : `${m}m`;
+}
+
+const BACKUP_STEP_LABELS = {
+    queued: 'En attente…',
+    create: 'Création sur l\'app…',
+    downloading: 'Téléchargement…',
+    download_complete: 'Téléchargement terminé',
+    storing: 'Enregistrement…',
+    done: 'Terminé'
+};
+
+/**
+ * Démarre/arrête le timer 1s qui rafraîchit les durées écoulées des backups en cours.
+ */
+function ensureRunningBackupsTimer() {
+    if (runningBackups.size === 0) {
+        if (_runningBackupsTimer) {
+            clearInterval(_runningBackupsTimer);
+            _runningBackupsTimer = null;
+        }
+        return;
+    }
+    if (_runningBackupsTimer) return;
+    _runningBackupsTimer = setInterval(() => {
+        // Refresh elapsed seconds inline
+        runningBackups.forEach((entry, slug) => {
+            const el = document.querySelector(`[data-running-elapsed="${slug}"]`);
+            if (el && entry.started_at) {
+                const startMs = parseUTCDate(entry.started_at).getTime();
+                const elapsed = Math.max(0, Math.floor((Date.now() - startMs) / 1000));
+                el.textContent = formatBackupDuration(elapsed);
+            }
+        });
+    }, 1000);
+}
+
+/**
+ * Restitue la section "Sauvegardes en cours" à partir de la Map runningBackups.
+ */
+function renderRunningBackups() {
+    const section = document.getElementById('appBackupsRunningSection');
+    const body = document.getElementById('appBackupsRunningBody');
+    const countEl = document.getElementById('appBackupsRunningCount');
+    if (!section || !body) return;
+
+    if (runningBackups.size === 0) {
+        section.classList.add('d-none');
+        body.innerHTML = '';
+        if (countEl) countEl.textContent = '0';
+        ensureRunningBackupsTimer();
+        return;
+    }
+
+    section.classList.remove('d-none');
+    if (countEl) countEl.textContent = String(runningBackups.size);
+
+    const items = Array.from(runningBackups.entries()).map(([slug, entry]) => {
+        const percent = Math.max(0, Math.min(100, Number(entry.progress_percent) || 0));
+        const stepLabel = BACKUP_STEP_LABELS[entry.progress_step] || entry.progress_step || '…';
+        const safeSlug = escapeHtml(slug);
+        const safeName = escapeHtml(entry.app_name || slug);
+        let elapsed = '0s';
+        if (entry.started_at) {
+            const elapsedSec = Math.max(0, Math.floor((Date.now() - parseUTCDate(entry.started_at).getTime()) / 1000));
+            elapsed = formatBackupDuration(elapsedSec);
+        }
+        const eta = entry.avg_duration_seconds
+            ? `<small class="text-muted ms-2">Moy. ${formatBackupDuration(entry.avg_duration_seconds)}</small>`
+            : '';
+        return `
+            <div class="px-2 py-2 border-bottom" data-running-row="${safeSlug}">
+                <div class="d-flex justify-content-between align-items-center mb-1">
+                    <div>
+                        <strong>${safeName}</strong>
+                        <small class="text-muted ms-2">${escapeHtml(stepLabel)}</small>
+                        ${eta}
+                    </div>
+                    <div class="d-flex align-items-center gap-2">
+                        <small class="text-muted">
+                            Écoulé : <span data-running-elapsed="${safeSlug}">${elapsed}</span>
+                        </small>
+                        <button type="button"
+                                class="btn btn-sm btn-outline-danger"
+                                title="Annuler / Kill-switch"
+                                onclick="cancelRunningBackup('${escapeHtml(entry.backup_id)}', '${safeName.replace(/'/g, "\\'")}')">
+                            <i class="bi bi-x-circle"></i> Annuler
+                        </button>
+                    </div>
+                </div>
+                <div class="progress" style="height: 10px;">
+                    <div class="progress-bar progress-bar-striped progress-bar-animated bg-primary"
+                         role="progressbar"
+                         style="width: ${percent}%;"
+                         aria-valuenow="${percent}" aria-valuemin="0" aria-valuemax="100">
+                        ${percent}%
+                    </div>
+                </div>
+            </div>
+        `;
+    }).join('');
+
+    body.innerHTML = items;
+    ensureRunningBackupsTimer();
+}
+
+/**
+ * Hydrate la Map runningBackups à partir de l'API (utilisé à l'entrée d'onglet).
+ */
+async function hydrateRunningBackups() {
+    try {
+        const data = await api.listInProgressBackups();
+        runningBackups.clear();
+        (data.items || []).forEach(item => {
+            runningBackups.set(item.app_slug, {
+                backup_id: item.backup_id,
+                app_name: item.app_name,
+                status: item.status,
+                progress_step: item.progress_step,
+                progress_percent: item.progress_percent,
+                started_at: item.started_at,
+                avg_duration_seconds: item.avg_duration_seconds
+            });
+        });
+        renderRunningBackups();
+    } catch (e) {
+        console.warn('Hydratation backups en cours échouée:', e);
+    }
+}
+
+/**
+ * Kill-switch manuel : annule un backup bloqué en pending/running.
+ */
+async function cancelRunningBackup(backupId, appName) {
+    if (!backupId) return;
+    if (!confirm(`Annuler la sauvegarde en cours pour ${appName} ?\n\nLa ligne sera marquée comme échouée et le verrou libéré pour permettre un nouveau déclenchement.`)) {
+        return;
+    }
+    try {
+        const resp = await api.cancelInProgressBackup(backupId);
+        showToast('Sauvegarde annulée', resp?.message || `Sauvegarde de ${appName} annulée`, 'warning');
+        // Optimistic UI : retirer immédiatement de la Map (le SSE backup_failed
+        // va également arriver et confirmer).
+        for (const [slug, entry] of runningBackups.entries()) {
+            if (entry.backup_id === backupId) {
+                runningBackups.delete(slug);
+                break;
+            }
+        }
+        renderRunningBackups();
+        loadAppBackupsOverview();
+    } catch (error) {
+        console.error('Erreur annulation backup:', error);
+        showToast('Erreur', error?.message || 'Impossible d\'annuler la sauvegarde', 'danger');
+        // Re-hydrater au cas où le backend l'a déjà nettoyé
+        hydrateRunningBackups();
+    }
+}
+
 /**
  * Charge la vue d'ensemble des sauvegardes de toutes les applications
  */
@@ -7745,6 +7990,9 @@ async function loadAppBackupsOverview() {
                 const statusIcon = app.last_backup_status === 'success' ? '✅' : 
                                    app.last_backup_status === 'failed' ? '❌' : '⏳';
                 lastBackupInfo = `${statusIcon} ${lastDate.toLocaleDateString('fr-FR')} ${lastDate.toLocaleTimeString('fr-FR', {hour: '2-digit', minute: '2-digit'})}`;
+                if (app.last_backup_duration_human) {
+                    lastBackupInfo += ` <span class="text-muted">(${escapeHtml(app.last_backup_duration_human)})</span>`;
+                }
             }
             
             // Prochain backup
@@ -7755,7 +8003,18 @@ async function loadAppBackupsOverview() {
             } else if (app.backup_mode === 'scheduled' && app.backup_cron) {
                 nextBackupInfo = `<code class="small">${app.backup_cron}</code>`;
             }
-            
+
+            const isRunning = runningBackups.has(app.app_slug);
+            const triggerCell = isRunning
+                ? `<button class="btn btn-outline-secondary" disabled title="Sauvegarde en cours">
+                       <span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>
+                       <span class="ms-1">En cours…</span>
+                   </button>`
+                : `<button class="btn btn-outline-success" onclick="showTriggerBackupConfirm('${app.app_slug}', '${escapeHtml(app.app_name).replace(/'/g, "\\'")}')"
+                     title="Déclencher sauvegarde" ${app.backup_mode === 'disabled' ? 'style="display: none;"' : ''}>
+                        <i class="bi bi-play-circle"></i>
+                    </button>`;
+
             return `
                 <tr>
                     <td>
@@ -7771,10 +8030,7 @@ async function loadAppBackupsOverview() {
                     <td>${app.total_size_human}</td>
                     <td class="text-end">
                         <div class="btn-group btn-group-sm">
-                            <button class="btn btn-outline-success" onclick="showTriggerBackupConfirm('${app.app_slug}', '${escapeHtml(app.app_name).replace(/'/g, "\\'")}')"
-                             title="Déclencher sauvegarde" ${app.backup_mode === 'disabled' ? 'style="display: none;"' : ''}>
-                                <i class="bi bi-play-circle"></i>
-                            </button>
+                            ${triggerCell}
                             <button class="btn btn-outline-primary" onclick="showAppBackupsList('${app.app_slug}')" title="Voir les sauvegardes">
                                 <i class="bi bi-hdd-stack"></i>
                             </button>
@@ -7960,6 +8216,7 @@ async function showAppBackupsList(slug) {
                         <td><small>${backup.total_size_human}</small></td>
                         <td>
                             <span class="badge bg-light text-dark">${backup.created_by_type}</span>
+                            ${backup.duration_human ? `<br><small class="text-muted">Durée: ${escapeHtml(backup.duration_human)}</small>` : ''}
                         </td>
                         <td class="text-end">
                             <div class="btn-group btn-group-sm">
@@ -8444,31 +8701,59 @@ async function triggerAppBackup() {
  * Effectue le déclenchement du backup
  */
 async function doTriggerBackup(slug, appName) {
-    // Toast de progression
+    // Garde-fou : si une sauvegarde est déjà en cours pour cette app, ne rien faire.
+    if (runningBackups.has(slug)) {
+        showToast('Sauvegarde en cours', `Une sauvegarde est déjà en cours pour ${appName}.`, 'warning');
+        return;
+    }
+
     showToast('Sauvegarde', `Déclenchement de la sauvegarde pour ${appName}...`, 'info');
-    
+
     try {
         const response = await api.request(`/apps/${slug}/backup/trigger`, {
             method: 'POST'
         });
-        
-        if (response.success) {
-            showToast('Succès', response.message || `Sauvegarde créée pour ${appName}`, 'success');
-            
-            // Rafraîchir les données
+
+        // Nouveau flux asynchrone (202 Accepted)
+        if (response && response.status === 'pending') {
+            // Insérer immédiatement dans la Map en attendant le 1er événement SSE
+            runningBackups.set(slug, {
+                backup_id: response.backup_id,
+                app_name: appName,
+                status: 'pending',
+                progress_step: 'queued',
+                progress_percent: 0,
+                started_at: response.started_at || new Date().toISOString(),
+                avg_duration_seconds: null
+            });
+            renderRunningBackups();
             loadAppBackupsOverview();
-            
-            // Si le modal de liste est ouvert, le rafraîchir
+            showToast('Sauvegarde lancée', `Sauvegarde de ${appName} en cours…`, 'info');
+            return;
+        }
+
+        // Compatibilité descendante (réponse synchrone)
+        if (response && response.success) {
+            showToast('Succès', response.message || `Sauvegarde créée pour ${appName}`, 'success');
+            loadAppBackupsOverview();
             if (appBackupsListModal && document.getElementById('backupsListAppSlug').value === slug) {
                 showAppBackupsList(slug);
             }
         } else {
-            showToast('Information', response.message || 'Backup non créé', 'warning');
+            showToast('Information', (response && response.message) || 'Backup non créé', 'warning');
         }
-        
+
     } catch (error) {
         console.error('Erreur déclenchement backup:', error);
-        showToast('Erreur', error.message || 'Impossible de déclencher la sauvegarde', 'danger');
+        // 409 Conflict (déjà en cours) → message dédié
+        const detail = error?.message || error?.detail || 'Impossible de déclencher la sauvegarde';
+        if (error?.status === 409 || /en cours|conflict/i.test(detail)) {
+            showToast('Sauvegarde déjà en cours', detail, 'warning');
+            // Forcer une hydratation pour afficher l'état réel
+            hydrateRunningBackups();
+        } else {
+            showToast('Erreur', detail, 'danger');
+        }
     }
 }
 

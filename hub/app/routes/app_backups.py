@@ -27,6 +27,7 @@ import json
 import hashlib
 import secrets
 import zipfile
+import asyncio
 from pathlib import Path
 from datetime import datetime, timezone
 from typing import Optional
@@ -51,7 +52,8 @@ from app.schemas import (
     AppBackupConfig, AppBackupConfigUpdate, AppBackupReceive,
     AppBackupResponse, AppBackupListResponse, AppBackupStatusResponse,
     AllBackupsResponse, BackupTriggerResponse, BackupExportResponse,
-    BackupModeEnum, RestoreToAppRequest, RestoreToAppResponse
+    BackupModeEnum, RestoreToAppRequest, RestoreToAppResponse,
+    InProgressBackupItem, InProgressBackupsResponse,
 )
 
 logger = logging.getLogger(__name__)
@@ -63,6 +65,22 @@ SECRETS_DIR = Path("/code/secrets")
 JWT_PRIVATE_KEY_PATH = SECRETS_DIR / "jwt_private_key.pem"
 
 router = APIRouter(tags=["App Backups"])
+
+
+def _naive_utc(dt: Optional[datetime]) -> Optional[datetime]:
+    """Normalise un datetime en naïf UTC.
+
+    Les colonnes `started_at` / `completed_at` ajoutées par la migration 024
+    sont `TIMESTAMP WITH TIME ZONE` : SQLAlchemy les retourne donc *aware*,
+    alors que `utcnow()` (models) renvoie du *naive*. Pour éviter
+    `TypeError: can't subtract offset-naive and offset-aware datetimes`,
+    on ramène toujours les valeurs en naïf UTC avant calcul.
+    """
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        return dt
+    return dt.astimezone(timezone.utc).replace(tzinfo=None)
 
 
 async def reassociate_orphan_backups(db: AsyncSession, app: Application) -> int:
@@ -469,41 +487,49 @@ async def get_backup_or_404(db: AsyncSession, backup_id: str) -> AppBackup:
 
 
 async def apply_retention_policy(db: AsyncSession, app_slug: str, retention: int):
-    """Applique la politique de rétention en supprimant les anciens backups"""
+    """Applique la politique de rétention en supprimant les anciens backups réussis.
+
+    Les backups en cours (pending/running) et en échec sont ignorés : ils ne
+    comptent pas dans la rétention et ne sont pas supprimés ici.
+    """
     if retention <= 0:
         return  # 0 = illimité
-    
-    # Compter les backups existants
+
+    # Compter les backups réussis existants
     count_result = await db.execute(
-        select(func.count(AppBackup.id)).where(AppBackup.app_slug == app_slug)
+        select(func.count(AppBackup.id))
+        .where(AppBackup.app_slug == app_slug)
+        .where(AppBackup.status == "success")
     )
     count = count_result.scalar() or 0
-    
+
     if count <= retention:
         return
-    
-    # Supprimer les plus anciens
+
+    # Supprimer les plus anciens (parmi les réussis)
     to_delete = count - retention
     oldest_result = await db.execute(
         select(AppBackup)
         .where(AppBackup.app_slug == app_slug)
+        .where(AppBackup.status == "success")
         .order_by(AppBackup.created_at.asc())
         .limit(to_delete)
     )
     oldest_backups = oldest_result.scalars().all()
-    
+
     for backup in oldest_backups:
-        # Supprimer les fichiers physiques
-        storage_path = STORAGE_BASE_DIR / backup.storage_path
-        if storage_path.exists():
-            storage_path.unlink()
+        # Supprimer les fichiers physiques (storage_path peut être NULL pour anciennes lignes)
+        if backup.storage_path:
+            storage_path = STORAGE_BASE_DIR / backup.storage_path
+            if storage_path.exists():
+                storage_path.unlink()
         if backup.encrypted_path:
             encrypted_path = STORAGE_BASE_DIR / backup.encrypted_path
             if encrypted_path.exists():
                 encrypted_path.unlink()
-        
+
         await db.delete(backup)
-    
+
     await db.commit()
     logger.info(f"🗑️ Rétention appliquée pour {app_slug}: {to_delete} backup(s) supprimé(s)")
 
@@ -642,24 +668,43 @@ async def receive_backup(
         storage_path=storage_path,
         created_by=created_by,
         created_by_type=created_by_type,
-        description=final_description
+        description=final_description,
+        status="success",
+        started_at=utcnow(),
+        completed_at=utcnow(),
+        duration_seconds=0,
+        progress_step="done",
+        progress_percent=100,
     )
-    
+
     db.add(backup)
-    
+
     # Mettre à jour l'application
     app.last_backup_at = utcnow()
     app.last_backup_id = backup_id
     app.last_backup_status = "success"
-    
+
     await db.commit()
     await db.refresh(backup)
-    
+
     # Appliquer la politique de rétention
     await apply_retention_policy(db, slug, app.backup_retention)
-    
+
     logger.info(f"📦 Backup reçu pour {slug}: {backup_id} ({human_readable_size(file_size)})")
-    
+
+    # Notifier les clients SSE qu'un backup a été reçu (rafraîchir la vue admin)
+    try:
+        from app.routes.events import broadcast_event
+        await broadcast_event("backup_completed", {
+            "app_slug": slug,
+            "backup_id": backup_id,
+            "duration_seconds": 0,
+            "source": "push",
+        })
+        await broadcast_event("apps_updated", {"reason": "backup_received", "slug": slug})
+    except Exception as exc:
+        logger.warning(f"⚠️ Impossible de diffuser SSE backup_completed pour {slug}: {exc}")
+
     return AppBackupResponse.from_orm_model(backup)
 
 
@@ -1001,6 +1046,118 @@ class BackupExecutionError(Exception):
         self.status_code = status_code
 
 
+# --- Constantes pour le suivi de progression -----------------------------
+PROGRESS_STEPS = {
+    "queued":            ("queued", 0),
+    "create":            ("create", 10),
+    "downloading":       ("downloading", 30),
+    "download_complete": ("download_complete", 70),
+    "storing":           ("storing", 85),
+    "done":              ("done", 100),
+}
+
+# Au-delà de cette ancienneté, un backup resté `running` est considéré orphelin
+# (cas crash du Hub pendant l'exécution). Il sera marqué `timeout` au démarrage.
+STALE_RUNNING_BACKUP_MAX_AGE_SECONDS = 30 * 60  # 30 minutes
+
+
+async def _emit_backup_event(event_type: str, payload: dict) -> None:
+    """Diffuse un événement SSE backup_* sans faire échouer l'opération en cas d'erreur."""
+    try:
+        from app.routes.events import broadcast_event
+        await broadcast_event(event_type, payload)
+    except Exception as exc:
+        logger.warning(f"⚠️ SSE {event_type} non diffusé: {exc}")
+
+
+async def _update_backup_progress(
+    db: AsyncSession,
+    backup: AppBackup,
+    step: str,
+    *,
+    extra_payload: Optional[dict] = None,
+) -> None:
+    """Met à jour la progression d'un backup en base et émet un événement SSE."""
+    label, percent = PROGRESS_STEPS.get(step, (step, backup.progress_percent or 0))
+    backup.progress_step = label
+    backup.progress_percent = percent
+    if step != "done":
+        backup.status = "running"
+    await db.commit()
+
+    payload = {
+        "backup_id": backup.backup_id,
+        "app_slug": backup.app_slug,
+        "progress_step": label,
+        "progress_percent": percent,
+        "status": backup.status,
+    }
+    if extra_payload:
+        payload.update(extra_payload)
+    await _emit_backup_event("backup_progress", payload)
+
+
+async def cleanup_stale_running_backups() -> int:
+    """Kill-switch : marque comme `timeout` les backups restés `running` trop longtemps.
+
+    Appelé au démarrage du Hub : si le processus a crashé pendant un backup,
+    la ligne reste bloquée en `running`. On les requalifie pour libérer le verrou
+    qui empêche un nouveau déclenchement.
+
+    Retourne le nombre de backups requalifiés.
+    """
+    from app.database import async_session_maker
+    from datetime import timedelta
+
+    cutoff = utcnow() - timedelta(seconds=STALE_RUNNING_BACKUP_MAX_AGE_SECONDS)
+    requalified = 0
+
+    async with async_session_maker() as db:
+        result = await db.execute(
+            select(AppBackup).where(
+                AppBackup.status.in_(["pending", "running"]),
+            )
+        )
+        stale = result.scalars().all()
+
+        for backup in stale:
+            ref = _naive_utc(backup.started_at or backup.created_at)
+            # Toujours requalifier ce qui est plus vieux que cutoff ; au démarrage
+            # on requalifie aussi les `pending` même récents (pas de tâche en cours).
+            if ref and ref > cutoff and backup.status == "running":
+                continue
+            backup.status = "timeout"
+            backup.completed_at = utcnow()
+            backup.error_message = (
+                "Backup interrompu (Hub redémarré ou délai dépassé). "
+                "Statut requalifié au démarrage."
+            )
+            started = _naive_utc(backup.started_at)
+            completed = _naive_utc(backup.completed_at)
+            if started and completed:
+                backup.duration_seconds = int(
+                    (completed - started).total_seconds()
+                )
+            requalified += 1
+
+            # Réaligner le statut de l'application si elle pointe sur ce backup
+            if backup.app_id:
+                app_res = await db.execute(
+                    select(Application).where(Application.id == backup.app_id)
+                )
+                target_app = app_res.scalar_one_or_none()
+                if target_app and target_app.last_backup_status == "running":
+                    target_app.last_backup_status = "failed"
+
+        if requalified:
+            await db.commit()
+            logger.warning(
+                f"⏱️ Kill-switch backups : {requalified} backup(s) requalifié(s) en 'timeout' au démarrage"
+            )
+
+    return requalified
+
+
 async def perform_app_backup(
     db: AsyncSession,
     app: Application,
@@ -1008,18 +1165,19 @@ async def perform_app_backup(
     created_by: str,
     created_by_type: str = "hub",
     description_prefix: Optional[str] = None,
+    backup: Optional[AppBackup] = None,
 ) -> AppBackup:
     """
     Exécute un backup réel pour une application : appelle l'API distante,
     télécharge le ZIP, l'enregistre localement, met à jour les statuts et
     applique la politique de rétention.
 
+    La ligne `AppBackup` est créée immédiatement avec `status='running'` (si non
+    fournie) afin d'exposer la progression. La progression est diffusée via SSE
+    (`backup_progress`, `backup_completed`, `backup_failed`).
+
     Levée :
         BackupExecutionError en cas d'échec contrôlé (réseau, app, validation).
-
-    Cette fonction est utilisée à la fois par l'endpoint manuel et par le
-    scheduler périodique. Elle ne lève pas d'HTTPException directement pour
-    pouvoir être appelée hors contexte HTTP.
     """
     import httpx
     from app.auth import create_access_token
@@ -1027,43 +1185,90 @@ async def perform_app_backup(
 
     slug = app.slug
 
-    if app.backup_mode == "disabled":
-        raise BackupExecutionError(
-            "Les sauvegardes sont désactivées pour cette application", status_code=400
+    # 0. Créer ou réutiliser la ligne AppBackup avec statut "running"
+    started_at = utcnow()
+    if backup is None:
+        backup = AppBackup(
+            backup_id=str(uuid.uuid4()),
+            app_id=app.id,
+            app_slug=slug,
+            status="running",
+            started_at=started_at,
+            progress_step="queued",
+            progress_percent=0,
+            created_by=created_by,
+            created_by_type=created_by_type,
+            description=description_prefix or f"Backup déclenché par {created_by}",
+        )
+        db.add(backup)
+        await db.commit()
+        await db.refresh(backup)
+    else:
+        backup.status = "running"
+        if not backup.started_at:
+            backup.started_at = started_at
+        await db.commit()
+
+    app.last_backup_status = "running"
+    await db.commit()
+
+    async def _fail(message: str, status_code: int = 500, *, kind: str = "failed") -> None:
+        """Marque le backup en échec, diffuse l'événement SSE et lève l'erreur."""
+        backup.status = kind  # 'failed' ou 'timeout'
+        backup.completed_at = utcnow()
+        backup.error_message = message[:2000]
+        started = _naive_utc(backup.started_at)
+        completed = _naive_utc(backup.completed_at)
+        if started and completed:
+            backup.duration_seconds = int(
+                (completed - started).total_seconds()
+            )
+        app.last_backup_status = "failed"
+        try:
+            await db.commit()
+        except Exception:
+            await db.rollback()
+        await _emit_backup_event("backup_failed", {
+            "backup_id": backup.backup_id,
+            "app_slug": slug,
+            "status": kind,
+            "error_message": backup.error_message,
+            "duration_seconds": backup.duration_seconds,
+        })
+        raise BackupExecutionError(message, status_code=status_code)
+
+    try:
+        if app.backup_mode == "disabled":
+            await _fail("Les sauvegardes sont désactivées pour cette application", status_code=400)
+
+        if not app.api_url:
+            await _fail("L'application n'a pas d'URL d'API configurée", status_code=400)
+
+        # Récupérer un service account utilisable
+        sa_result = await db.execute(
+            select(ServiceAccount)
+            .join(ServiceAccount.applications)
+            .where(Application.slug == slug)
+            .limit(1)
+        )
+        sa = sa_result.scalar_one_or_none()
+
+        if not sa:
+            await _fail(
+                "Aucun service account trouvé pour cette application. Créez-en un avec accès à l'app.",
+                status_code=400,
+            )
+
+        # Token M2M admin pour l'app cible
+        m2m_token, _, _ = create_access_token(
+            username=sa.client_id,
+            apps={slug: "admin"},
+            expires_delta=timedelta(minutes=10),
+            is_service_account=True,
         )
 
-    if not app.api_url:
-        raise BackupExecutionError(
-            "L'application n'a pas d'URL d'API configurée", status_code=400
-        )
+        logger.info(f"🔄 Déclenchement backup pour {slug} via {app.api_url}")
 
-    # Récupérer un service account utilisable
-    sa_result = await db.execute(
-        select(ServiceAccount)
-        .join(ServiceAccount.applications)
-        .where(Application.slug == slug)
-        .limit(1)
-    )
-    sa = sa_result.scalar_one_or_none()
-
-    if not sa:
-        raise BackupExecutionError(
-            "Aucun service account trouvé pour cette application. Créez-en un avec accès à l'app.",
-            status_code=400,
-        )
-
-    # Token M2M admin pour l'app cible
-    m2m_token, _, _ = create_access_token(
-        username=sa.client_id,
-        apps={slug: "admin"},
-        expires_delta=timedelta(minutes=10),
-        is_service_account=True,
-    )
-
-    logger.info(f"🔄 Déclenchement backup pour {slug} via {app.api_url}")
-
-    async with httpx.AsyncClient(timeout=120.0) as client:
-        # 1. Créer le backup côté app
         create_url = f"{app.api_url.rstrip('/')}/api/admin/backup"
         create_params = {}
         if getattr(app, "backup_quiesce", False):
@@ -1072,183 +1277,330 @@ async def perform_app_backup(
                 f"🛑 Quiesce Vaultwarden demande pour backup {slug} "
                 "(stop/start auto du conteneur pendant le snapshot)"
             )
-        create_response = await client.post(
-            create_url,
-            headers={"Authorization": f"Bearer {m2m_token}"},
-            params=create_params or None,
+
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            await _update_backup_progress(db, backup, "create")
+
+            try:
+                create_response = await client.post(
+                    create_url,
+                    headers={"Authorization": f"Bearer {m2m_token}"},
+                    params=create_params or None,
+                )
+            except httpx.RequestError as net_err:
+                await _fail(
+                    f"Impossible de contacter {create_url}: {net_err}",
+                    status_code=502,
+                )
+
+            if create_response.status_code != 200:
+                error_detail = create_response.text[:500] if create_response.text else "Pas de détails"
+                logger.error(
+                    f"❌ Erreur création backup {slug}: {create_response.status_code} - {error_detail}"
+                )
+                await _fail(
+                    f"L'application a retourné HTTP {create_response.status_code} sur {create_url} : {error_detail}",
+                    status_code=502,
+                )
+
+            backup_info = create_response.json()
+            remote_backup_id = metadata_value(backup_info, "backup_id")
+            logger.info(f"✅ Backup créé sur l'app {slug}: {remote_backup_id}")
+
+            await _update_backup_progress(db, backup, "downloading", extra_payload={
+                "remote_backup_id": remote_backup_id,
+            })
+
+            # 2. Télécharger le ZIP — avec un retry à timeout étendu si le premier
+            # essai timeout (cas où l'app a bien créé le backup mais répond lentement).
+            download_url = f"{app.api_url.rstrip('/')}/api/admin/backup/download?backup_id={remote_backup_id}"
+            headers = {"Authorization": f"Bearer {m2m_token}"}
+            download_response = None
+            try:
+                download_response = await client.get(download_url, headers=headers)
+            except httpx.TimeoutException:
+                logger.warning(
+                    f"⏳ Timeout download backup {slug} (1er essai). Retry avec timeout étendu (300s)..."
+                )
+
+            if download_response is None:
+                # Retry avec timeout étendu
+                async with httpx.AsyncClient(timeout=300.0) as retry_client:
+                    try:
+                        download_response = await retry_client.get(download_url, headers=headers)
+                    except httpx.TimeoutException:
+                        await _fail(
+                            f"Timeout lors du téléchargement du backup {remote_backup_id} "
+                            f"depuis {download_url} (>300s). L'app a peut-être créé le backup "
+                            "mais la transmission a échoué.",
+                            status_code=504,
+                            kind="timeout",
+                        )
+                    except httpx.RequestError as net_err:
+                        await _fail(
+                            f"Erreur réseau au retry de download ({download_url}): {net_err}",
+                            status_code=502,
+                        )
+
+            if download_response.status_code != 200:
+                detail = download_response.text[:500] if download_response.text else "Pas de détails"
+                logger.error(
+                    f"❌ Erreur téléchargement backup {slug}: {download_response.status_code} - {detail}"
+                )
+                await _fail(
+                    f"L'application a retourné HTTP {download_response.status_code} sur {download_url} : {detail}",
+                    status_code=502,
+                )
+
+            zip_content = download_response.content
+            file_size = len(zip_content)
+            logger.info(f"📥 Backup téléchargé pour {slug}: {human_readable_size(file_size)}")
+
+        await _update_backup_progress(db, backup, "download_complete", extra_payload={
+            "total_size_bytes": file_size,
+        })
+
+        # 3. Stocker le backup localement
+        backup_id = str(remote_backup_id) if remote_backup_id else backup.backup_id
+        checksum = compute_checksum(zip_content)
+
+        app_dir = ensure_storage_dir(slug)
+        filename = f"backup_{backup_id}.zip"
+        storage_path = f"{slug}/{filename}"
+        full_path = app_dir / filename
+
+        await _update_backup_progress(db, backup, "storing")
+
+        try:
+            with open(full_path, "wb") as f:
+                f.write(zip_content)
+        except OSError as os_err:
+            await _fail(
+                f"Impossible d'écrire le fichier de backup {full_path}: {os_err}",
+                status_code=500,
+            )
+
+        zip_metadata = extract_metadata_from_zip(zip_content)
+
+        app_version = metadata_value(backup_info, "app_version") or zip_metadata.get("app_version")
+        format_version = metadata_value(backup_info, "format_version") or zip_metadata.get("format_version")
+        total_items = safe_int(metadata_value(backup_info, "total_items"), zip_metadata.get("total_items", 0))
+        total_preferences = safe_int(
+            metadata_value(backup_info, "total_preferences"), zip_metadata.get("total_preferences", 0)
+        )
+        total_files = safe_int(metadata_value(backup_info, "total_files"), zip_metadata.get("total_files", 0))
+        total_tables = safe_int(metadata_value(backup_info, "total_tables"), zip_metadata.get("total_tables", 0))
+        total_rows = safe_int(metadata_value(backup_info, "total_rows"), zip_metadata.get("total_rows", 0))
+        includes_vaultwarden_snapshot = (
+            parse_bool(metadata_value(backup_info, "includes_vaultwarden_snapshot"))
+            or bool(zip_metadata.get("includes_vaultwarden_snapshot"))
+        )
+        includes_secret_bundle = (
+            parse_bool(metadata_value(backup_info, "includes_secret_bundle"))
+            or bool(zip_metadata.get("includes_secret_bundle"))
+        )
+        restore_requires_offline = (
+            parse_bool(metadata_value(backup_info, "restore_requires_offline"))
+            or bool(zip_metadata.get("restore_requires_offline"))
+            or includes_vaultwarden_snapshot
+        )
+        content_summary = zip_metadata.get("content_summary", "")
+
+        description = content_summary or (
+            f"{description_prefix} par {created_by}" if description_prefix
+            else f"Backup déclenché par {created_by}"
         )
 
-        if create_response.status_code != 200:
-            error_detail = create_response.text[:200] if create_response.text else "Pas de détails"
-            logger.error(
-                f"❌ Erreur création backup {slug}: {create_response.status_code} - {error_detail}"
-            )
-            raise BackupExecutionError(
-                f"L'application a retourné une erreur: {create_response.status_code}",
-                status_code=502,
+        # Mise à jour finale de la ligne (qui a été créée à status=running)
+        backup.backup_id = backup_id  # peut être différent du UUID temporaire
+        backup.app_version = app_version
+        backup.format_version = format_version
+        backup.total_items = total_items
+        backup.total_preferences = total_preferences
+        backup.total_files = total_files
+        backup.total_tables = total_tables
+        backup.total_rows = total_rows
+        backup.includes_vaultwarden_snapshot = includes_vaultwarden_snapshot
+        backup.includes_secret_bundle = includes_secret_bundle
+        backup.restore_requires_offline = restore_requires_offline
+        backup.total_size_bytes = file_size
+        backup.checksum = checksum
+        backup.storage_path = storage_path
+        backup.description = description
+        backup.status = "success"
+        backup.completed_at = utcnow()
+        backup.progress_step = "done"
+        backup.progress_percent = 100
+        backup.error_message = None
+        started = _naive_utc(backup.started_at)
+        completed = _naive_utc(backup.completed_at)
+        if started and completed:
+            backup.duration_seconds = int(
+                (completed - started).total_seconds()
             )
 
-        backup_info = create_response.json()
-        remote_backup_id = metadata_value(backup_info, "backup_id")
-        logger.info(f"✅ Backup créé sur l'app {slug}: {remote_backup_id}")
+        app.last_backup_at = utcnow()
+        app.last_backup_id = backup_id
+        app.last_backup_status = "success"
 
-        # 2. Télécharger le ZIP
-        download_url = f"{app.api_url.rstrip('/')}/api/admin/backup/download?backup_id={remote_backup_id}"
-        download_response = await client.get(
-            download_url, headers={"Authorization": f"Bearer {m2m_token}"}
+        await db.commit()
+        await db.refresh(backup)
+
+        await apply_retention_policy(db, slug, app.backup_retention)
+
+        logger.info(
+            f"✅ Backup {backup_id} stocké pour {slug} "
+            f"({human_readable_size(file_size)}, {backup.duration_seconds}s)"
         )
 
-        if download_response.status_code != 200:
-            logger.error(
-                f"❌ Erreur téléchargement backup {slug}: {download_response.status_code}"
+        await _emit_backup_event("backup_completed", {
+            "backup_id": backup_id,
+            "app_slug": slug,
+            "duration_seconds": backup.duration_seconds,
+            "total_size_bytes": file_size,
+            "status": "success",
+        })
+        await _emit_backup_event("apps_updated", {"reason": "backup_completed", "slug": slug})
+
+        return backup
+
+    except BackupExecutionError:
+        # _fail a déjà mis à jour la base et émis l'événement SSE.
+        raise
+    except Exception as exc:
+        # Erreur inattendue : marquer en échec et propager.
+        logger.error(f"💥 Erreur inattendue durant backup {slug}: {exc}", exc_info=True)
+        try:
+            await _fail(f"Erreur inattendue: {exc}", status_code=500)
+        except BackupExecutionError:
+            pass
+        raise
+
+
+async def _run_backup_job(backup_pk: int, app_id: int, created_by: str) -> None:
+    """Tâche de fond exécutant un backup déclenché manuellement.
+
+    Ouvre sa propre session DB pour ne pas dépendre de la requête HTTP qui a
+    rendu 202 immédiatement.
+    """
+    from app.database import async_session_maker
+
+    async with async_session_maker() as db:
+        try:
+            backup_res = await db.execute(
+                select(AppBackup).where(AppBackup.id == backup_pk)
             )
-            raise BackupExecutionError(
-                f"Impossible de télécharger le backup: {download_response.status_code}",
-                status_code=502,
+            backup = backup_res.scalar_one_or_none()
+            app_res = await db.execute(
+                select(Application).where(Application.id == app_id)
             )
+            app = app_res.scalar_one_or_none()
 
-        zip_content = download_response.content
-        file_size = len(zip_content)
-        logger.info(f"📥 Backup téléchargé pour {slug}: {human_readable_size(file_size)}")
+            if not backup or not app:
+                logger.error(
+                    f"❌ _run_backup_job introuvable: backup_pk={backup_pk}, app_id={app_id}"
+                )
+                return
 
-    # 3. Stocker le backup localement
-    backup_id = str(remote_backup_id) if remote_backup_id else str(uuid.uuid4())
-    checksum = compute_checksum(zip_content)
-
-    app_dir = ensure_storage_dir(slug)
-    filename = f"backup_{backup_id}.zip"
-    storage_path = f"{slug}/{filename}"
-    full_path = app_dir / filename
-
-    with open(full_path, "wb") as f:
-        f.write(zip_content)
-
-    zip_metadata = extract_metadata_from_zip(zip_content)
-
-    app_version = metadata_value(backup_info, "app_version") or zip_metadata.get("app_version")
-    format_version = metadata_value(backup_info, "format_version") or zip_metadata.get("format_version")
-    total_items = safe_int(metadata_value(backup_info, "total_items"), zip_metadata.get("total_items", 0))
-    total_preferences = safe_int(
-        metadata_value(backup_info, "total_preferences"), zip_metadata.get("total_preferences", 0)
-    )
-    total_files = safe_int(metadata_value(backup_info, "total_files"), zip_metadata.get("total_files", 0))
-    total_tables = safe_int(metadata_value(backup_info, "total_tables"), zip_metadata.get("total_tables", 0))
-    total_rows = safe_int(metadata_value(backup_info, "total_rows"), zip_metadata.get("total_rows", 0))
-    includes_vaultwarden_snapshot = (
-        parse_bool(metadata_value(backup_info, "includes_vaultwarden_snapshot"))
-        or bool(zip_metadata.get("includes_vaultwarden_snapshot"))
-    )
-    includes_secret_bundle = (
-        parse_bool(metadata_value(backup_info, "includes_secret_bundle"))
-        or bool(zip_metadata.get("includes_secret_bundle"))
-    )
-    restore_requires_offline = (
-        parse_bool(metadata_value(backup_info, "restore_requires_offline"))
-        or bool(zip_metadata.get("restore_requires_offline"))
-        or includes_vaultwarden_snapshot
-    )
-    content_summary = zip_metadata.get("content_summary", "")
-
-    description = content_summary or (
-        f"{description_prefix} par {created_by}" if description_prefix
-        else f"Backup déclenché par {created_by}"
-    )
-
-    backup = AppBackup(
-        backup_id=backup_id,
-        app_id=app.id,
-        app_slug=slug,
-        app_version=app_version,
-        format_version=format_version,
-        total_items=total_items,
-        total_preferences=total_preferences,
-        total_files=total_files,
-        total_tables=total_tables,
-        total_rows=total_rows,
-        includes_vaultwarden_snapshot=includes_vaultwarden_snapshot,
-        includes_secret_bundle=includes_secret_bundle,
-        restore_requires_offline=restore_requires_offline,
-        total_size_bytes=file_size,
-        checksum=checksum,
-        storage_path=storage_path,
-        created_by=created_by,
-        created_by_type=created_by_type,
-        description=description,
-    )
-
-    db.add(backup)
-
-    app.last_backup_at = utcnow()
-    app.last_backup_id = backup_id
-    app.last_backup_status = "success"
-
-    await db.commit()
-    await db.refresh(backup)
-
-    await apply_retention_policy(db, slug, app.backup_retention)
-
-    logger.info(f"✅ Backup {backup_id} stocké pour {slug} ({human_readable_size(file_size)})")
-
-    return backup
+            await perform_app_backup(
+                db,
+                app,
+                created_by=created_by,
+                created_by_type="hub",
+                description_prefix="Backup déclenché manuellement depuis le HUB",
+                backup=backup,
+            )
+        except BackupExecutionError as be:
+            logger.error(f"❌ Backup async échoué: {be.message}")
+        except Exception as exc:
+            logger.error(f"💥 Erreur inattendue _run_backup_job: {exc}", exc_info=True)
 
 
-@router.post("/api/apps/{slug}/backup/trigger", response_model=BackupTriggerResponse)
+@router.post(
+    "/api/apps/{slug}/backup/trigger",
+    response_model=BackupTriggerResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
 async def trigger_backup(
     slug: str,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_admin)
 ):
     """
-    Déclenche manuellement un backup pour une application.
-    
-    Le HUB appelle l'endpoint POST /api/admin/backup de l'application
-    puis récupère le résultat via GET /api/admin/backup/download
-    et stocke le fichier localement.
-    """
-    import httpx
+    Déclenche un backup en tâche de fond pour une application.
 
+    Le HUB renvoie immédiatement HTTP 202 avec le backup_id et l'état initial.
+    La progression est diffusée via SSE (`backup_progress`, `backup_completed`,
+    `backup_failed`). L'UI doit s'abonner pour suivre l'avancement.
+
+    Retourne 409 Conflict si un backup est déjà en cours pour cette app.
+    """
     app = await get_app_or_404(db, slug)
 
-    # Marquer comme en cours
+    if app.backup_mode == "disabled":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Les sauvegardes sont désactivées pour cette application",
+        )
+
+    # Vérifier qu'aucun backup n'est déjà en cours pour cette app
+    running_res = await db.execute(
+        select(AppBackup)
+        .where(AppBackup.app_slug == slug)
+        .where(AppBackup.status.in_(["pending", "running"]))
+        .limit(1)
+    )
+    in_progress = running_res.scalar_one_or_none()
+    if in_progress is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"Un backup est déjà en cours pour {slug} "
+                f"(backup_id={in_progress.backup_id}, étape={in_progress.progress_step})."
+            ),
+        )
+
+    # Créer la ligne AppBackup en statut 'pending' pour verrouiller
+    started_at = utcnow()
+    backup = AppBackup(
+        backup_id=str(uuid.uuid4()),
+        app_id=app.id,
+        app_slug=slug,
+        status="pending",
+        started_at=started_at,
+        progress_step="queued",
+        progress_percent=0,
+        created_by=current_user.username,
+        created_by_type="hub",
+        description="Backup déclenché manuellement depuis le HUB",
+    )
+    db.add(backup)
     app.last_backup_status = "running"
     await db.commit()
+    await db.refresh(backup)
 
-    try:
-        backup = await perform_app_backup(
-            db,
-            app,
-            created_by=current_user.username,
-            created_by_type="hub",
-            description_prefix="Backup déclenché manuellement depuis le HUB",
-        )
+    # Émettre l'événement SSE 'backup_started'
+    await _emit_backup_event("backup_started", {
+        "backup_id": backup.backup_id,
+        "app_slug": slug,
+        "app_name": app.name,
+        "started_at": started_at.isoformat(),
+        "created_by": current_user.username,
+    })
 
-        return BackupTriggerResponse(
-            success=True,
-            message=f"Backup créé avec succès ({human_readable_size(backup.total_size_bytes)})",
-            backup_id=backup.backup_id,
-            app_slug=slug,
-        )
+    # Lancer la tâche de fond (capturer les valeurs primitives, pas les ORM)
+    backup_pk = backup.id
+    app_id = app.id
+    asyncio.create_task(_run_backup_job(backup_pk, app_id, current_user.username))
 
-    except BackupExecutionError as e:
-        app.last_backup_status = "failed"
-        await db.commit()
-        raise HTTPException(status_code=e.status_code, detail=e.message)
-    except httpx.RequestError as e:
-        app.last_backup_status = "failed"
-        await db.commit()
-        logger.error(f"❌ Erreur réseau lors du backup pour {slug}: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Impossible de contacter l'application: {str(e)}",
-        )
-    except Exception as e:
-        app.last_backup_status = "failed"
-        await db.commit()
-        logger.error(f"❌ Erreur lors du déclenchement du backup pour {slug}: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e),
-        )
+    return BackupTriggerResponse(
+        success=True,
+        message="Backup démarré, suivi en cours via SSE",
+        backup_id=backup.backup_id,
+        app_slug=slug,
+        status="pending",
+        started_at=started_at,
+    )
 
 
 # =============================================================================
@@ -1535,7 +1887,7 @@ async def restore_backup_to_app(
             )
             
             if response.status_code != 200:
-                error_detail = response.text[:200] if response.text else "Pas de détails"
+                error_detail = response.text[:2000] if response.text else "Pas de détails"
                 logger.error(f"❌ Erreur restauration: {response.status_code} - {error_detail}")
                 await log_restore_audit(
                     db=db,
@@ -1719,7 +2071,7 @@ async def restore_uploaded_backup_to_app(
             )
             
             if response.status_code != 200:
-                error_detail = response.text[:200] if response.text else "Pas de détails"
+                error_detail = response.text[:2000] if response.text else "Pas de détails"
                 logger.error(f"❌ Erreur restauration upload: {response.status_code} - {error_detail}")
                 await log_restore_audit(
                     db=db,
@@ -1802,34 +2154,60 @@ async def get_all_backups_overview(
         .order_by(Application.name)
     )
     apps = apps_result.scalars().all()
-    
+
     app_statuses = []
     total_backups = 0
     total_size = 0
-    
+
     for app in apps:
         backups = app.backups or []
-        backups_count = len(backups)
-        app_total_size = sum(b.total_size_bytes or 0 for b in backups)
-        
+        # Pour les compteurs/sizes globaux on ne compte que les backups réussis
+        success_backups = [b for b in backups if (getattr(b, "status", "success") or "success") == "success"]
+        backups_count = len(success_backups)
+        app_total_size = sum(b.total_size_bytes or 0 for b in success_backups)
+
         total_backups += backups_count
         total_size += app_total_size
-        
+
+        # Backup en cours pour cette app ?
+        running_backup = next(
+            (b for b in backups if (b.status or "") in ("pending", "running")),
+            None,
+        )
+
+        # Dernière durée + moyenne (5 derniers succès)
+        recent_success = sorted(
+            [b for b in success_backups if b.duration_seconds is not None],
+            key=lambda b: b.created_at or utcnow(),
+            reverse=True,
+        )[:5]
+        last_duration = recent_success[0].duration_seconds if recent_success else None
+        avg_duration = (
+            int(sum(b.duration_seconds for b in recent_success) / len(recent_success))
+            if recent_success else None
+        )
+
         app_statuses.append(AppBackupStatusResponse(
             app_slug=app.slug,
             app_name=app.name,
             backup_mode=BackupModeEnum(app.backup_mode or "manual"),
             backup_cron=app.backup_cron,
             backup_retention=app.backup_retention or 5,
+            backup_quiesce=bool(getattr(app, "backup_quiesce", False)),
             last_backup_at=app.last_backup_at,
             last_backup_id=app.last_backup_id,
             last_backup_status=app.last_backup_status,
+            last_backup_duration_seconds=last_duration,
+            last_backup_duration_human=_format_duration_human_local(last_duration),
+            avg_backup_duration_seconds=avg_duration,
             next_backup_at=app.next_backup_at,
             backups_count=backups_count,
             total_size_bytes=app_total_size,
-            total_size_human=human_readable_size(app_total_size)
+            total_size_human=human_readable_size(app_total_size),
+            has_running_backup=running_backup is not None,
+            running_backup_id=running_backup.backup_id if running_backup else None,
         ))
-    
+
     return AllBackupsResponse(
         apps=app_statuses,
         total_apps=len(apps),
@@ -1837,6 +2215,163 @@ async def get_all_backups_overview(
         total_size_bytes=total_size,
         total_size_human=human_readable_size(total_size)
     )
+
+
+def _format_duration_human_local(seconds: Optional[int]) -> str:
+    """Helper local équivalent à schemas._format_duration_human (évite import circulaire)."""
+    if seconds is None or seconds < 0:
+        return ""
+    seconds = int(seconds)
+    if seconds < 60:
+        return f"{seconds}s"
+    minutes, sec = divmod(seconds, 60)
+    if minutes < 60:
+        return f"{minutes}m {sec}s" if sec else f"{minutes}m"
+    hours, minutes = divmod(minutes, 60)
+    return f"{hours}h {minutes}m" if minutes else f"{hours}h"
+
+
+@router.get("/api/admin/backups/in-progress", response_model=InProgressBackupsResponse)
+async def get_in_progress_backups(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_admin),
+):
+    """Liste les backups actuellement en cours d'exécution sur le Hub."""
+    result = await db.execute(
+        select(AppBackup)
+        .where(AppBackup.status.in_(["pending", "running"]))
+        .order_by(AppBackup.started_at.asc())
+    )
+    running = result.scalars().all()
+
+    # Cache des noms d'app + moyennes de durée par slug
+    items: list[InProgressBackupItem] = []
+    for backup in running:
+        # Nom de l'app
+        app_name = backup.app_slug
+        if backup.app_id:
+            app_res = await db.execute(
+                select(Application.name).where(Application.id == backup.app_id)
+            )
+            row = app_res.scalar_one_or_none()
+            if row:
+                app_name = row
+
+        # Moyenne durée des 5 derniers succès
+        avg_res = await db.execute(
+            select(AppBackup.duration_seconds)
+            .where(AppBackup.app_slug == backup.app_slug)
+            .where(AppBackup.status == "success")
+            .where(AppBackup.duration_seconds.isnot(None))
+            .order_by(AppBackup.created_at.desc())
+            .limit(5)
+        )
+        durations = [d for d in avg_res.scalars().all() if d is not None]
+        avg_duration = int(sum(durations) / len(durations)) if durations else None
+
+        elapsed = 0
+        if backup.started_at:
+            started = _naive_utc(backup.started_at)
+            elapsed = max(0, int((utcnow() - started).total_seconds())) if started else 0
+
+        items.append(InProgressBackupItem(
+            backup_id=backup.backup_id,
+            app_slug=backup.app_slug,
+            app_name=app_name,
+            status=backup.status or "running",
+            progress_step=backup.progress_step or "queued",
+            progress_percent=int(backup.progress_percent or 0),
+            started_at=backup.started_at,
+            elapsed_seconds=elapsed,
+            avg_duration_seconds=avg_duration,
+            avg_duration_human=_format_duration_human_local(avg_duration),
+            created_by=backup.created_by,
+            created_by_type=backup.created_by_type,
+        ))
+
+    return InProgressBackupsResponse(items=items, total=len(items))
+
+
+@router.post("/api/admin/backups/{backup_id}/cancel")
+async def cancel_running_backup(
+    backup_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_admin),
+):
+    """Kill-switch manuel : annule un backup bloqué en `pending` ou `running`.
+
+    Marque la ligne en `failed` avec un message explicite, libère le verrou
+    (qui empêchait un nouveau déclenchement via le 409) et diffuse un
+    événement SSE `backup_failed` pour mettre à jour l'UI temps réel.
+
+    Note : la tâche `asyncio` en arrière-plan n'est pas interrompue de force
+    (Python n'offre pas d'annulation propre depuis l'extérieur), mais quand
+    elle finira par revenir, elle écrira sur une ligne déjà marquée comme
+    annulée — le statut "cancelled" sera donc préservé tant que la tâche
+    n'a pas commit après le cancel. En pratique, ça libère immédiatement
+    l'utilisateur côté UI.
+    """
+    result = await db.execute(
+        select(AppBackup).where(AppBackup.backup_id == backup_id)
+    )
+    backup = result.scalar_one_or_none()
+    if backup is None:
+        raise HTTPException(status_code=404, detail="Backup introuvable")
+
+    if backup.status not in ("pending", "running"):
+        raise HTTPException(
+            status_code=409,
+            detail=f"Backup déjà terminé (statut: {backup.status})",
+        )
+
+    backup.status = "failed"
+    backup.completed_at = utcnow()
+    backup.error_message = (
+        f"Annulé manuellement par {current_user.username} "
+        f"(étape: {backup.progress_step or 'inconnue'})"
+    )
+    started = _naive_utc(backup.started_at)
+    completed = _naive_utc(backup.completed_at)
+    if started and completed:
+        backup.duration_seconds = int((completed - started).total_seconds())
+
+    # Réaligner l'application si besoin
+    if backup.app_id:
+        app_res = await db.execute(
+            select(Application).where(Application.id == backup.app_id)
+        )
+        target_app = app_res.scalar_one_or_none()
+        if target_app and target_app.last_backup_status == "running":
+            target_app.last_backup_status = "failed"
+
+    await db.commit()
+
+    await log_action(
+        db,
+        user_id=current_user.id,
+        action="cancel_backup",
+        target=f"app_backup:{backup.backup_id}",
+        details=(
+            f"Annulation manuelle du backup {backup.backup_id} pour l'app "
+            f"{backup.app_slug} (étape: {backup.progress_step or 'inconnue'})"
+        ),
+    )
+
+    await _emit_backup_event("backup_failed", {
+        "backup_id": backup.backup_id,
+        "app_slug": backup.app_slug,
+        "status": "failed",
+        "error_message": backup.error_message,
+        "duration_seconds": backup.duration_seconds,
+        "cancelled": True,
+    })
+
+    return {
+        "success": True,
+        "message": f"Sauvegarde {backup_id} annulée",
+        "backup_id": backup.backup_id,
+        "duration_seconds": backup.duration_seconds,
+    }
 
 
 @router.get("/api/admin/backups/stats")

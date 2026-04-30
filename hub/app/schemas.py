@@ -896,10 +896,26 @@ class BackupModeEnum(str, Enum):
 
 
 class BackupStatusEnum(str, Enum):
-    """Statut du dernier backup"""
+    """Statut d'un backup individuel ou du dernier backup d'une app"""
+    pending = "pending"
+    running = "running"
     success = "success"
     failed = "failed"
-    running = "running"
+    timeout = "timeout"
+
+
+def _format_duration_human(seconds: Optional[int]) -> str:
+    """Format une durée en secondes en chaîne lisible (ex: '1m 23s', '2h 5m')."""
+    if seconds is None or seconds < 0:
+        return ""
+    seconds = int(seconds)
+    if seconds < 60:
+        return f"{seconds}s"
+    minutes, sec = divmod(seconds, 60)
+    if minutes < 60:
+        return f"{minutes}m {sec}s" if sec else f"{minutes}m"
+    hours, minutes = divmod(minutes, 60)
+    return f"{hours}h {minutes}m" if minutes else f"{hours}h"
 
 
 class AppBackupConfig(BaseModel):
@@ -958,7 +974,16 @@ class AppBackupResponse(BaseModel):
     created_by_type: str = "app"
     created_at: datetime
     description: Optional[str] = None
-    
+    # Cycle de vie / progression (migration 024)
+    status: str = "success"
+    started_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+    duration_seconds: Optional[int] = None
+    duration_human: str = ""
+    progress_step: Optional[str] = "done"
+    progress_percent: int = 100
+    error_message: Optional[str] = None
+
     model_config = ConfigDict(from_attributes=True)
     
     @classmethod
@@ -995,7 +1020,15 @@ class AppBackupResponse(BaseModel):
             created_by=backup.created_by,
             created_by_type=backup.created_by_type or "app",
             created_at=backup.created_at,
-            description=backup.description
+            description=backup.description,
+            status=getattr(backup, "status", None) or "success",
+            started_at=getattr(backup, "started_at", None),
+            completed_at=getattr(backup, "completed_at", None),
+            duration_seconds=getattr(backup, "duration_seconds", None),
+            duration_human=_format_duration_human(getattr(backup, "duration_seconds", None)),
+            progress_step=getattr(backup, "progress_step", None) or "done",
+            progress_percent=int(getattr(backup, "progress_percent", None) or 100),
+            error_message=getattr(backup, "error_message", None),
         )
 
 
@@ -1033,10 +1066,15 @@ class AppBackupStatusResponse(BaseModel):
     last_backup_at: Optional[datetime] = None
     last_backup_id: Optional[str] = None
     last_backup_status: Optional[str] = None
+    last_backup_duration_seconds: Optional[int] = None
+    last_backup_duration_human: str = ""
+    avg_backup_duration_seconds: Optional[int] = None
     next_backup_at: Optional[datetime] = None
     backups_count: int = 0
     total_size_bytes: int = 0
     total_size_human: str = "0 B"
+    has_running_backup: bool = False
+    running_backup_id: Optional[str] = None
 
 
 class AllBackupsResponse(BaseModel):
@@ -1054,6 +1092,30 @@ class BackupTriggerResponse(BaseModel):
     message: str
     backup_id: Optional[str] = None
     app_slug: str
+    status: str = "pending"
+    started_at: Optional[datetime] = None
+
+
+class InProgressBackupItem(BaseModel):
+    """Backup actuellement en cours d'exécution."""
+    backup_id: str
+    app_slug: str
+    app_name: str
+    status: str
+    progress_step: str
+    progress_percent: int
+    started_at: Optional[datetime] = None
+    elapsed_seconds: int = 0
+    avg_duration_seconds: Optional[int] = None
+    avg_duration_human: str = ""
+    created_by: Optional[str] = None
+    created_by_type: Optional[str] = None
+
+
+class InProgressBackupsResponse(BaseModel):
+    """Liste des backups en cours sur l'ensemble du Hub."""
+    items: List[InProgressBackupItem] = []
+    total: int = 0
 
 
 class BackupExportResponse(BaseModel):
