@@ -2986,6 +2986,7 @@ document.addEventListener('click', (e) => {
 // ===== User CRUD =====
 
 function showAddUserForm() {
+    resetUserFormOriginalState();
     document.getElementById('userFormTitle').textContent = 'Nouvel Utilisateur';
     document.getElementById('userForm').reset();
     document.getElementById('userId').value = '';
@@ -2996,6 +2997,10 @@ function showAddUserForm() {
     document.getElementById('userAdmin').checked = false;
     const mustChangePwdEl = document.getElementById('userMustChangePassword');
     if (mustChangePwdEl) mustChangePwdEl.checked = false;
+    const canChangePwdEl = document.getElementById('userCanChangePassword');
+    if (canChangePwdEl) canChangePwdEl.checked = true;
+    document.querySelectorAll('.user-profile-cb').forEach(checkbox => { checkbox.checked = false; });
+    updateUserProfileDropdownLabel([]);
     loadUserAppsCheckboxes([]);
     userFormModal.show();
 }
@@ -3021,10 +3026,22 @@ async function editUser(id) {
     if (mustChangePwdEl) {
         mustChangePwdEl.checked = user.must_change_password || false;
     }
+
+    const canChangePwdEl = document.getElementById('userCanChangePassword');
+    if (canChangePwdEl) {
+        canChangePwdEl.checked = user.can_change_password !== false;
+    }
+
+    const userProfileIds = (user.profiles || []).map(profile => profile.id);
+    document.querySelectorAll('.user-profile-cb').forEach(checkbox => {
+        checkbox.checked = userProfileIds.includes(parseInt(checkbox.value, 10));
+    });
+    updateUserProfileDropdownLabel(userProfileIds);
     
     // Charger les apps avec leurs rôles
     const userAppRoles = user.app_roles || [];
     loadUserAppsWithRoles(userAppRoles);
+    setUserFormOriginalState(user);
     
     userFormModal.show();
 }
@@ -3106,6 +3123,89 @@ function loadUserAppsCheckboxes(selectedIds) {
     loadUserAppsWithRoles(appRoles);
 }
 
+function normalizeUserProfileIds(profileIds) {
+    return [...new Set(
+        (profileIds || [])
+            .map(profileId => parseInt(profileId, 10))
+            .filter(profileId => Number.isInteger(profileId))
+    )].sort((leftId, rightId) => leftId - rightId);
+}
+
+function getSelectedUserProfileIds() {
+    return normalizeUserProfileIds(
+        Array.from(document.querySelectorAll('.user-profile-cb:checked'))
+            .map(checkbox => checkbox.value)
+    );
+}
+
+function hasUserProfileControls() {
+    return document.querySelectorAll('.user-profile-cb').length > 0;
+}
+
+function sameUserProfileIds(leftIds, rightIds) {
+    const normalizedLeftIds = normalizeUserProfileIds(leftIds);
+    const normalizedRightIds = normalizeUserProfileIds(rightIds);
+    if (normalizedLeftIds.length !== normalizedRightIds.length) return false;
+    return normalizedLeftIds.every((profileId, index) => profileId === normalizedRightIds[index]);
+}
+
+function resetUserFormOriginalState() {
+    const form = document.getElementById('userForm');
+    if (!form) return;
+    delete form.dataset.originalUserState;
+}
+
+function setUserFormOriginalState(user) {
+    const form = document.getElementById('userForm');
+    if (!form) return;
+    form.dataset.originalUserState = JSON.stringify({
+        email: user.email || null,
+        is_admin: Boolean(user.is_admin),
+        is_active: Boolean(user.is_active),
+        must_change_password: Boolean(user.must_change_password),
+        can_change_password: user.can_change_password !== false,
+        profile_ids: normalizeUserProfileIds((user.profiles || []).map(profile => profile.id))
+    });
+}
+
+function getUserFormOriginalState() {
+    const form = document.getElementById('userForm');
+    if (!form?.dataset?.originalUserState) return null;
+    try {
+        return JSON.parse(form.dataset.originalUserState);
+    } catch (error) {
+        console.warn('État utilisateur initial illisible:', error);
+        return null;
+    }
+}
+
+function buildChangedUserUpdateData(data, selectedProfileIds, password) {
+    const originalState = getUserFormOriginalState();
+    const updateData = {};
+    const normalizedEmail = data.email || null;
+    const normalizedProfileIds = normalizeUserProfileIds(selectedProfileIds);
+
+    if (!originalState || normalizedEmail !== (originalState.email || null)) {
+        updateData.email = normalizedEmail;
+    }
+
+    ['is_admin', 'is_active', 'must_change_password', 'can_change_password'].forEach(field => {
+        if (!originalState || data[field] !== originalState[field]) {
+            updateData[field] = data[field];
+        }
+    });
+
+    if (hasUserProfileControls() && (!originalState || !sameUserProfileIds(normalizedProfileIds, originalState.profile_ids))) {
+        updateData.profile_ids = normalizedProfileIds;
+    }
+
+    if (password) {
+        updateData.password = password;
+    }
+
+    return updateData;
+}
+
 async function handleSaveUser(event) {
     event.preventDefault();
     
@@ -3121,8 +3221,8 @@ async function handleSaveUser(event) {
     };
     
     // Profils (checkboxes)
-    const selectedProfileIds = Array.from(document.querySelectorAll('.user-profile-cb:checked')).map(cb => parseInt(cb.value));
-    data.profile_ids = selectedProfileIds.length > 0 ? selectedProfileIds : [];
+    const selectedProfileIds = getSelectedUserProfileIds();
+    data.profile_ids = selectedProfileIds;
     
     // is_active n'est pas dans le schéma UserCreate, uniquement pour la mise à jour
     if (!isCreating) {
@@ -3154,7 +3254,10 @@ async function handleSaveUser(event) {
     try {
         let userId = id;
         if (id) {
-            await api.updateUser(id, data);
+            const updateData = buildChangedUserUpdateData(data, selectedProfileIds, password);
+            if (Object.keys(updateData).length > 0) {
+                await api.updateUser(id, updateData);
+            }
         } else {
             // Ne pas envoyer profile_ids dans la création (pas dans le schéma UserCreate)
             const { profile_ids, ...createData } = data;
@@ -6045,6 +6148,7 @@ function updateUserProfileDropdownLabel(selectedIds) {
 }
 
 function showAddUserFormPage() {
+    resetUserFormOriginalState();
     document.getElementById('userFormTitle').textContent = 'Nouvel Utilisateur';
     document.getElementById('userForm').reset();
     document.getElementById('userId').value = '';
@@ -6108,6 +6212,7 @@ async function editUserPage(id) {
     
     const userAppRoles = user.app_roles || [];
     loadUserAppsWithRoles(userAppRoles);
+    setUserFormOriginalState(user);
     
     userFormModal.show();
 }
