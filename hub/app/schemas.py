@@ -1619,3 +1619,23 @@ class AccountRequestReview(BaseModel):
     """Validation ou rejet d'une demande par un admin"""
     rejection_reason: Optional[str] = Field(None, max_length=500)
     profile_ids: Optional[List[int]] = None
+
+
+class AccountRequestNotificationAdmin(BaseModel):
+    """Admin pouvant recevoir les notifications de demandes de compte"""
+    id: int
+    username: str
+    email: Optional[EmailStr] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class AccountRequestNotificationAdminsResponse(BaseModel):
+    """Configuration des admins notifies pour les demandes de compte"""
+    selected_admin_ids: List[int] = []
+    admins: List[AccountRequestNotificationAdmin] = []
+
+
+class AccountRequestNotificationAdminsUpdate(BaseModel):
+    """Mise a jour des admins notifies pour les demandes de compte"""
+    admin_ids: List[int] = []

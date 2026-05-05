@@ -16,9 +16,10 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 from sqlalchemy.orm import selectinload
-from typing import Optional
+from typing import Optional, Iterable
 import secrets
 import logging
+import json
 
 from app.database import get_db
 from app.models import (
@@ -29,11 +30,15 @@ from app.auth import get_password_hash, get_current_admin
 from app.schemas import (
     AccountRequestCreate, AccountRequestResponse,
     AccountRequestStatusResponse, AccountRequestReview,
+    AccountRequestNotificationAdmin,
+    AccountRequestNotificationAdminsResponse,
+    AccountRequestNotificationAdminsUpdate,
 )
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/account-requests", tags=["Account Requests"])
+ACCOUNT_REQUEST_NOTIFICATION_ADMINS_KEY = "account_request_notification_admin_ids"
 
 
 # =============================================================================
@@ -105,15 +110,8 @@ async def submit_account_request(
 
     await db.commit()
 
-    # Notifier tous les admins
+    # Notifier les admins selectionnes
     await _notify_admins_new_request(db, request_id, first_name, last_name, username)
-
-    # Émettre SSE pour rafraîchir l'onglet demandes côté admin
-    try:
-        from app.routes.events import broadcast_event
-        await broadcast_event("account_requests_updated", {"action": "new_request", "request_id": request_id})
-    except ImportError:
-        pass
 
     return {"request_id": request_id, "polling_token": polling_token}
 
@@ -247,14 +245,95 @@ async def auto_login_with_token(
 
 @router.get("/count")
 async def get_pending_count(
-    _: User = Depends(get_current_admin),
+    current_admin: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db)
 ):
     """Retourne le nombre de demandes en attente."""
+    selected_admin_ids = await _get_selected_notification_admin_ids(db)
+    if current_admin.id not in selected_admin_ids:
+        return {"count": 0}
+
     result = await db.execute(
         select(func.count(AccountRequest.id)).where(AccountRequest.status == "pending")
     )
     return {"count": result.scalar() or 0}
+
+
+@router.get("/notification-admins", response_model=AccountRequestNotificationAdminsResponse)
+async def get_notification_admins(
+    _: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """Retourne les admins actifs et ceux selectionnes pour les notifications."""
+    admins = await _get_active_admins(db)
+    active_admin_ids = {admin.id for admin in admins}
+    selected_admin_ids = sorted(
+        admin_id for admin_id in await _get_selected_notification_admin_ids(db)
+        if admin_id in active_admin_ids
+    )
+
+    return AccountRequestNotificationAdminsResponse(
+        selected_admin_ids=selected_admin_ids,
+        admins=[
+            AccountRequestNotificationAdmin(
+                id=admin.id,
+                username=admin.username,
+                email=admin.email,
+            )
+            for admin in admins
+        ],
+    )
+
+
+@router.put("/notification-admins", response_model=AccountRequestNotificationAdminsResponse)
+async def update_notification_admins(
+    payload: AccountRequestNotificationAdminsUpdate,
+    current_admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """Met a jour les admins qui recoivent les notifications de demandes."""
+    requested_ids = _dedupe_int_ids(payload.admin_ids)
+    admins = await _get_active_admins(db)
+    active_admin_ids = {admin.id for admin in admins}
+
+    invalid_ids = sorted(set(requested_ids) - active_admin_ids)
+    if invalid_ids:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Administrateurs invalides: {invalid_ids}",
+        )
+
+    selected_admin_ids = sorted(requested_ids)
+    result = await db.execute(
+        select(AppSetting).where(AppSetting.key == ACCOUNT_REQUEST_NOTIFICATION_ADMINS_KEY)
+    )
+    setting = result.scalar_one_or_none()
+    if not setting:
+        setting = AppSetting(key=ACCOUNT_REQUEST_NOTIFICATION_ADMINS_KEY, value="[]")
+        db.add(setting)
+
+    setting.value = json.dumps(selected_admin_ids)
+    setting.updated_at = utcnow()
+    setting.updated_by_id = current_admin.id
+    await db.commit()
+
+    try:
+        from app.routes.events import broadcast_event
+        await broadcast_event("account_request_notification_admins_updated", {"action": "updated"})
+    except ImportError:
+        pass
+
+    return AccountRequestNotificationAdminsResponse(
+        selected_admin_ids=selected_admin_ids,
+        admins=[
+            AccountRequestNotificationAdmin(
+                id=admin.id,
+                username=admin.username,
+                email=admin.email,
+            )
+            for admin in admins
+        ],
+    )
 
 
 @router.get("/")
@@ -381,10 +460,10 @@ async def approve_account_request(
     except Exception:
         pass
 
-    # SSE : notifier le rafraîchissement
+    # SSE : notifier le rafraîchissement aux admins selectionnes
     try:
-        from app.routes.events import broadcast_event, notify_stats_update
-        await broadcast_event("account_requests_updated", {
+        from app.routes.events import notify_stats_update
+        await _send_account_requests_updated_to_notification_admins(db, {
             "action": "reviewed", "request_id": request_id, "status": "approved"
         })
         from app.routes.events import notify_event
@@ -439,14 +518,9 @@ async def reject_account_request(
     except Exception:
         pass
 
-    # SSE : notifier le rafraîchissement
-    try:
-        from app.routes.events import broadcast_event
-        await broadcast_event("account_requests_updated", {
-            "action": "reviewed", "request_id": request_id, "status": "rejected"
-        })
-    except ImportError:
-        pass
+    await _send_account_requests_updated_to_notification_admins(db, {
+        "action": "reviewed", "request_id": request_id, "status": "rejected"
+    })
 
     return {"message": "Demande refusée", "request_id": request_id}
 
@@ -455,19 +529,104 @@ async def reject_account_request(
 # HELPERS
 # =============================================================================
 
+def _dedupe_int_ids(ids: Iterable[int]) -> list[int]:
+    """Retourne des IDs entiers uniques en conservant l'ordre d'arrivee."""
+    unique_ids = []
+    seen = set()
+    for raw_id in ids:
+        admin_id = int(raw_id)
+        if admin_id in seen:
+            continue
+        seen.add(admin_id)
+        unique_ids.append(admin_id)
+    return unique_ids
+
+
+def _parse_notification_admin_ids(raw_value: Optional[str]) -> set[int]:
+    if not raw_value:
+        return set()
+    try:
+        data = json.loads(raw_value)
+    except (TypeError, json.JSONDecodeError):
+        return set()
+    if not isinstance(data, list):
+        return set()
+
+    admin_ids = set()
+    for item in data:
+        if isinstance(item, bool):
+            continue
+        try:
+            admin_id = int(item)
+        except (TypeError, ValueError):
+            continue
+        if admin_id > 0:
+            admin_ids.add(admin_id)
+    return admin_ids
+
+
+async def _get_selected_notification_admin_ids(db: AsyncSession) -> set[int]:
+    result = await db.execute(
+        select(AppSetting.value).where(AppSetting.key == ACCOUNT_REQUEST_NOTIFICATION_ADMINS_KEY)
+    )
+    return _parse_notification_admin_ids(result.scalar_one_or_none())
+
+
+async def _get_active_admins(db: AsyncSession):
+    result = await db.execute(
+        select(User)
+        .where(User.is_admin == True, User.is_active == True)
+        .order_by(User.username)
+    )
+    return result.scalars().all()
+
+
+async def _get_notification_admins(db: AsyncSession):
+    selected_admin_ids = await _get_selected_notification_admin_ids(db)
+    if not selected_admin_ids:
+        return []
+
+    result = await db.execute(
+        select(User)
+        .where(
+            User.id.in_(selected_admin_ids),
+            User.is_admin == True,
+            User.is_active == True,
+        )
+        .order_by(User.username)
+    )
+    return result.scalars().all()
+
+
+async def _send_account_requests_updated_to_notification_admins(
+    db: AsyncSession,
+    payload: dict,
+    admins=None,
+):
+    """Envoie le rafraichissement des demandes aux admins selectionnes."""
+    if admins is None:
+        admins = await _get_notification_admins(db)
+    if not admins:
+        return
+
+    try:
+        from app.routes.events import send_to_user
+        for admin in admins:
+            await send_to_user(admin.id, "account_requests_updated", payload)
+    except ImportError:
+        pass
+
+
 async def _notify_admins_new_request(
     db: AsyncSession, request_id: int, first_name: str, last_name: str, username: str
 ):
-    """Envoie une notification (UserMessage) à chaque admin pour une nouvelle demande."""
+    """Envoie une notification aux admins selectionnes pour une nouvelle demande."""
     try:
-        from app.routes.events import send_to_user
         from app.routes.messages import _message_to_brief, _send_user_message_sse
 
-        # Récupérer tous les admins actifs
-        result = await db.execute(
-            select(User).where(User.is_admin == True, User.is_active == True)
-        )
-        admins = result.scalars().all()
+        admins = await _get_notification_admins(db)
+        if not admins:
+            return
 
         for admin in admins:
             msg = UserMessage(
@@ -488,5 +647,10 @@ async def _notify_admins_new_request(
             await _send_user_message_sse(admin.id, _message_to_brief(msg))
 
         await db.commit()
+        await _send_account_requests_updated_to_notification_admins(
+            db,
+            {"action": "new_request", "request_id": request_id},
+            admins=admins,
+        )
     except Exception as e:
         logger.warning(f"Erreur lors de la notification des admins: {e}")

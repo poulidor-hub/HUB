@@ -486,6 +486,16 @@ function handleSSEEvent(data) {
             }
             break;
 
+        case 'account_request_notification_admins_updated':
+            if (currentPage === 'users' && currentUser?.is_admin) {
+                loadPendingRequestsCount();
+                const reqTab = document.querySelector('#tabAccountRequests');
+                if (reqTab && reqTab.classList.contains('show')) {
+                    loadAccountRequestsTab();
+                }
+            }
+            break;
+
         case 'settings_updated':
             // Mettre à jour le toggle admin si l'onglet demandes est visible
             if (data.data?.key === 'account_requests_enabled') {
@@ -10878,6 +10888,7 @@ let _accountRequestPollingTimer = null;
 let approveRequestModal = null;
 let rejectRequestModal = null;
 let accountRequestModal = null;
+let accountRequestNotificationAdminsModal = null;
 
 /**
  * Ouvre la modale de demande de compte depuis la page de login.
@@ -11188,6 +11199,79 @@ async function handleToggleAccountRequests(checked) {
         // Remettre le toggle dans l'état précédent
         const toggle = document.getElementById('toggleAccountRequests');
         if (toggle) toggle.checked = !checked;
+    }
+}
+
+async function showAccountRequestNotificationAdminsModal() {
+    if (!accountRequestNotificationAdminsModal) {
+        accountRequestNotificationAdminsModal = new bootstrap.Modal(document.getElementById('accountRequestNotificationAdminsModal'));
+    }
+
+    const list = document.getElementById('accountRequestNotificationAdminsList');
+    const error = document.getElementById('accountRequestNotificationAdminsError');
+    const saveBtn = document.getElementById('saveAccountRequestNotificationAdminsBtn');
+    error.classList.add('d-none');
+    error.textContent = '';
+    saveBtn.disabled = true;
+    list.innerHTML = '<small class="text-muted">Chargement...</small>';
+    accountRequestNotificationAdminsModal.show();
+
+    try {
+        const data = await api.getAccountRequestNotificationAdmins();
+        renderAccountRequestNotificationAdmins(data);
+        saveBtn.disabled = false;
+    } catch (err) {
+        list.innerHTML = '<small class="text-danger">Erreur de chargement</small>';
+        error.textContent = err.message || 'Impossible de charger les administrateurs';
+        error.classList.remove('d-none');
+    }
+}
+
+function renderAccountRequestNotificationAdmins(data) {
+    const list = document.getElementById('accountRequestNotificationAdminsList');
+    const admins = data.admins || [];
+    const selectedIds = new Set((data.selected_admin_ids || []).map(id => parseInt(id)));
+
+    if (admins.length === 0) {
+        list.innerHTML = '<small class="text-muted">Aucun administrateur actif</small>';
+        return;
+    }
+
+    list.innerHTML = admins.map(admin => {
+        const adminId = parseInt(admin.id);
+        const checkboxId = `accountRequestNotificationAdmin${adminId}`;
+        const email = admin.email ? `<small class="text-muted ms-1">${escapeHtml(admin.email)}</small>` : '';
+        return `
+            <div class="form-check py-1">
+                <input class="form-check-input account-request-notification-admin-cb" type="checkbox" value="${adminId}" id="${checkboxId}" ${selectedIds.has(adminId) ? 'checked' : ''}>
+                <label class="form-check-label" for="${checkboxId}">
+                    <span>${escapeHtml(admin.username)}</span>${email}
+                </label>
+            </div>`;
+    }).join('');
+}
+
+async function handleSaveAccountRequestNotificationAdmins(event) {
+    event.preventDefault();
+    const saveBtn = document.getElementById('saveAccountRequestNotificationAdminsBtn');
+    const error = document.getElementById('accountRequestNotificationAdminsError');
+    const adminIds = Array.from(document.querySelectorAll('.account-request-notification-admin-cb:checked'))
+        .map(cb => parseInt(cb.value));
+
+    error.classList.add('d-none');
+    error.textContent = '';
+    saveBtn.disabled = true;
+
+    try {
+        await api.updateAccountRequestNotificationAdmins(adminIds);
+        accountRequestNotificationAdminsModal.hide();
+        showToast('Notifications', 'Destinataires mis à jour', 'success');
+        loadPendingRequestsCount();
+    } catch (err) {
+        error.textContent = err.message || "Impossible d'enregistrer les destinataires";
+        error.classList.remove('d-none');
+    } finally {
+        saveBtn.disabled = false;
     }
 }
 

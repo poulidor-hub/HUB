@@ -1354,6 +1354,17 @@ class HubAPI {
         return this.request('/account-requests/count');
     }
 
+    async getAccountRequestNotificationAdmins() {
+        return this.request('/account-requests/notification-admins');
+    }
+
+    async updateAccountRequestNotificationAdmins(adminIds = []) {
+        return this.request('/account-requests/notification-admins', {
+            method: 'PUT',
+            body: JSON.stringify({ admin_ids: adminIds })
+        });
+    }
+
     async approveAccountRequest(id, data = {}) {
         return this.request(`/account-requests/${id}/approve`, {
             method: 'POST',

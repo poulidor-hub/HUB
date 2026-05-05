@@ -13,11 +13,12 @@ Couvre :
 """
 
 import pytest
+import json
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
-from app.models import User, AccountRequest, AppSetting
+from app.models import User, AccountRequest, AppSetting, UserMessage
 from app.auth import get_password_hash, create_access_token
 from tests.conftest import get_auth_header
 
@@ -50,6 +51,43 @@ async def submit_request(
             "password": password,
         },
     )
+
+
+async def set_notification_admins(db: AsyncSession, admin_ids: list[int]):
+    """Configure les admins notifies pour les demandes de compte."""
+    result = await db.execute(
+        select(AppSetting).where(AppSetting.key == "account_request_notification_admin_ids")
+    )
+    setting = result.scalar_one_or_none()
+    if setting:
+        setting.value = json.dumps(admin_ids)
+    else:
+        db.add(AppSetting(
+            key="account_request_notification_admin_ids",
+            value=json.dumps(admin_ids),
+        ))
+    await db.commit()
+
+
+async def create_admin(
+    db: AsyncSession,
+    username: str,
+    is_active: bool = True,
+) -> tuple[User, str]:
+    """Cree un admin de test et son token."""
+    admin = User(
+        username=username,
+        email=f"{username}@example.com",
+        hashed_password=get_password_hash("admin123456"),
+        is_active=is_active,
+        is_admin=True,
+    )
+    db.add(admin)
+    await db.commit()
+    await db.refresh(admin)
+
+    token, _, _ = create_access_token(username=admin.username, apps={})
+    return admin, token
 
 
 # =============================================================================
@@ -538,8 +576,11 @@ class TestAdminEndpoints:
         client: AsyncClient,
         admin_user: User,
         admin_token: str,
+        async_session: AsyncSession,
     ):
         """GET /count retourne le nombre de demandes pending."""
+        await set_notification_admins(async_session, [admin_user.id])
+
         # D'abord 0
         r0 = await client.get(
             "/api/account-requests/count",
@@ -557,6 +598,25 @@ class TestAdminEndpoints:
             headers=get_auth_header(admin_token),
         )
         assert r2.json()["count"] == 2
+
+    async def test_pending_count_zero_for_unselected_admin(
+        self,
+        client: AsyncClient,
+        admin_user: User,
+        admin_token: str,
+        async_session: AsyncSession,
+    ):
+        """Un admin non selectionne ne voit pas de badge pending."""
+        other_admin, _ = await create_admin(async_session, "requests.receiver")
+        await set_notification_admins(async_session, [other_admin.id])
+        await submit_request(client, username="hidden.count")
+
+        r = await client.get(
+            "/api/account-requests/count",
+            headers=get_auth_header(admin_token),
+        )
+        assert r.status_code == 200
+        assert r.json()["count"] == 0
 
     async def test_list_requests(
         self,
@@ -631,6 +691,151 @@ class TestAdminEndpoints:
             headers=get_auth_header(user_token),
         )
         assert r.status_code == 403
+
+
+# =============================================================================
+# Configuration des admins notifies
+# =============================================================================
+
+class TestNotificationAdmins:
+    """Tests des destinataires de notifications des demandes de compte."""
+
+    async def test_get_notification_admins_admin_only(
+        self,
+        client: AsyncClient,
+        admin_user: User,
+        admin_token: str,
+        test_user: User,
+        user_token: str,
+        async_session: AsyncSession,
+    ):
+        """Un admin lit la configuration, un non-admin est refuse."""
+        await set_notification_admins(async_session, [admin_user.id])
+
+        ok = await client.get(
+            "/api/account-requests/notification-admins",
+            headers=get_auth_header(admin_token),
+        )
+        assert ok.status_code == 200
+        data = ok.json()
+        assert data["selected_admin_ids"] == [admin_user.id]
+        assert any(admin["id"] == admin_user.id for admin in data["admins"])
+        assert all(admin["id"] != test_user.id for admin in data["admins"])
+
+        denied = await client.get(
+            "/api/account-requests/notification-admins",
+            headers=get_auth_header(user_token),
+        )
+        assert denied.status_code == 403
+
+    async def test_update_notification_admins_accepts_empty_list(
+        self,
+        client: AsyncClient,
+        admin_user: User,
+        admin_token: str,
+        async_session: AsyncSession,
+    ):
+        """Une liste vide est une configuration valide."""
+        await set_notification_admins(async_session, [admin_user.id])
+
+        resp = await client.put(
+            "/api/account-requests/notification-admins",
+            json={"admin_ids": []},
+            headers=get_auth_header(admin_token),
+        )
+        assert resp.status_code == 200
+        assert resp.json()["selected_admin_ids"] == []
+
+        result = await async_session.execute(
+            select(AppSetting).where(AppSetting.key == "account_request_notification_admin_ids")
+        )
+        setting = result.scalar_one()
+        assert json.loads(setting.value) == []
+        assert setting.updated_by_id == admin_user.id
+
+    async def test_update_notification_admins_rejects_invalid_targets(
+        self,
+        client: AsyncClient,
+        admin_user: User,
+        admin_token: str,
+        test_user: User,
+        async_session: AsyncSession,
+    ):
+        """Seuls les admins actifs peuvent etre selectionnes."""
+        inactive_admin, _ = await create_admin(async_session, "inactive.admin", is_active=False)
+
+        non_admin = await client.put(
+            "/api/account-requests/notification-admins",
+            json={"admin_ids": [test_user.id]},
+            headers=get_auth_header(admin_token),
+        )
+        assert non_admin.status_code == 400
+
+        inactive = await client.put(
+            "/api/account-requests/notification-admins",
+            json={"admin_ids": [inactive_admin.id]},
+            headers=get_auth_header(admin_token),
+        )
+        assert inactive.status_code == 400
+
+        missing = await client.put(
+            "/api/account-requests/notification-admins",
+            json={"admin_ids": [99999]},
+            headers=get_auth_header(admin_token),
+        )
+        assert missing.status_code == 400
+
+    async def test_update_notification_admins_requires_admin(
+        self,
+        client: AsyncClient,
+        test_user: User,
+        user_token: str,
+    ):
+        """Un non-admin ne peut pas modifier les destinataires."""
+        resp = await client.put(
+            "/api/account-requests/notification-admins",
+            json={"admin_ids": []},
+            headers=get_auth_header(user_token),
+        )
+        assert resp.status_code == 403
+
+    async def test_submit_notifies_only_selected_admins(
+        self,
+        client: AsyncClient,
+        admin_user: User,
+        async_session: AsyncSession,
+    ):
+        """Une nouvelle demande cree un message seulement pour les admins selectionnes."""
+        unselected_admin, _ = await create_admin(async_session, "unselected.admin")
+        await set_notification_admins(async_session, [admin_user.id])
+
+        resp = await submit_request(client, username="notify.selected")
+        assert resp.status_code == 201
+
+        result = await async_session.execute(
+            select(UserMessage).where(UserMessage.title == "Nouvelle demande de compte")
+        )
+        messages = result.scalars().all()
+        assert len(messages) == 1
+        assert messages[0].target_user_id == admin_user.id
+        assert messages[0].target_user_id != unselected_admin.id
+
+    async def test_submit_with_empty_selection_notifies_nobody(
+        self,
+        client: AsyncClient,
+        admin_user: User,
+        async_session: AsyncSession,
+    ):
+        """Une selection vide ne cree aucun message admin."""
+        await set_notification_admins(async_session, [])
+
+        resp = await submit_request(client, username="notify.nobody")
+        assert resp.status_code == 201
+
+        result = await async_session.execute(
+            select(UserMessage).where(UserMessage.title == "Nouvelle demande de compte")
+        )
+        assert result.scalars().all() == []
 
 
 # =============================================================================
