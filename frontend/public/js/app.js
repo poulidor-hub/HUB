@@ -5827,6 +5827,8 @@ function showProfileModal(profileId = null) {
     document.getElementById('profileForm').reset();
     document.getElementById('profileId').value = '';
     document.getElementById('profileColor').value = '#6c757d';
+    const profileAppsSearchInput = document.getElementById('profileAppsSearchInput');
+    if (profileAppsSearchInput) profileAppsSearchInput.value = '';
     updateProfilePreview();
     
     // Charger les apps dans le formulaire
@@ -5879,12 +5881,16 @@ function loadProfileAppsCheckboxes(existingRoles) {
         rolesByAppId[ar.app_id] = ar.role;
     });
 
-    container.innerHTML = allApps.map(app => {
+    const sortedApps = [...allApps].sort(compareAdminAppsByName);
+
+    container.innerHTML = sortedApps.map(app => {
         const currentRole = rolesByAppId[app.id] || '';
         const isChecked = currentRole !== '';
+        const searchName = normalizeProfileAppSearchText(app.name);
+        const searchSlug = normalizeProfileAppSearchText(app.slug);
         
         return `
-            <div class="d-flex align-items-center mb-2 app-role-row">
+            <div class="d-flex align-items-center mb-2 app-role-row" data-app-name="${escapeHtml(searchName)}" data-app-slug="${escapeHtml(searchSlug)}">
                 <div class="form-check me-3" style="min-width: 200px;">
                     <input class="form-check-input profile-app-checkbox" type="checkbox" value="${app.id}" 
                         id="profileApp${app.id}" ${isChecked ? 'checked' : ''}
@@ -5906,6 +5912,25 @@ function loadProfileAppsCheckboxes(existingRoles) {
             </div>
         `;
     }).join('');
+
+    filterProfileApps();
+}
+
+function normalizeProfileAppSearchText(value) {
+    return String(value || '')
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .toLowerCase();
+}
+
+function filterProfileApps() {
+    const search = normalizeProfileAppSearchText(document.getElementById('profileAppsSearchInput')?.value).trim();
+    document.querySelectorAll('#profileAppsCheckboxes .app-role-row').forEach(row => {
+        const appName = row.dataset.appName || '';
+        const appSlug = row.dataset.appSlug || '';
+        const isMatch = !search || appName.includes(search) || appSlug.includes(search);
+        row.style.display = isMatch ? '' : 'none';
+    });
 }
 
 function toggleProfileRoleSelect(appId) {
@@ -5921,10 +5946,17 @@ function toggleProfileRoleSelect(appId) {
 }
 
 function profileSelectAllApps(checked) {
-    document.querySelectorAll('.profile-app-checkbox').forEach(cb => {
+    document.querySelectorAll('#profileAppsCheckboxes .app-role-row').forEach(row => {
+        if (row.style.display === 'none') return;
+
+        const cb = row.querySelector('.profile-app-checkbox');
+        if (!cb) return;
+
         cb.checked = checked;
         const appId = cb.value;
         const roleSelect = document.getElementById(`profileAppRole${appId}`);
+        if (!roleSelect) return;
+
         if (checked) {
             roleSelect.disabled = false;
             if (!roleSelect.value) roleSelect.value = 'user';

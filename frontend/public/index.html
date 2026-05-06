@@ -2313,6 +2313,12 @@
                             </div>
                             <div class="col-12">
                                 <label class="form-label">Applications et rôles</label>
+                                <div class="mb-2">
+                                    <div class="input-group input-group-sm">
+                                        <span class="input-group-text"><i class="bi bi-search"></i></span>
+                                        <input type="text" class="form-control" id="profileAppsSearchInput" placeholder="Filtrer les applications..." oninput="filterProfileApps()">
+                                    </div>
+                                </div>
                                 <div class="mb-2 d-flex gap-2">
                                     <button type="button" class="btn btn-outline-secondary btn-sm" onclick="profileSelectAllApps(true)">
                                         <i class="bi bi-check-all me-1"></i>Tout cocher
