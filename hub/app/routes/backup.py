@@ -211,7 +211,18 @@ async def _do_export(
             backups = backups_result.scalars().all()
             
             for backup in backups:
-                # Vérifier que le fichier physique existe
+                backup_status = getattr(backup, "status", "success") or "success"
+                if backup_status != "success":
+                    logger.warning(
+                        f"⚠️ Backup {backup.backup_id} ({app_slug}) : statut {backup_status}, ignoré pour l'export"
+                    )
+                    continue
+                if not backup.storage_path:
+                    logger.warning(
+                        f"⚠️ Backup {backup.backup_id} ({app_slug}) : aucun fichier physique enregistré, ignoré"
+                    )
+                    continue
+
                 full_path = STORAGE_BASE_DIR / backup.storage_path
                 if not full_path.exists():
                     logger.warning(f"⚠️ Backup {backup.backup_id} ({app_slug}) : fichier physique introuvable, ignoré")
@@ -708,7 +719,7 @@ async def download_export(
     
     timestamp = utcnow().strftime('%Y%m%d_%H%M%S')
     
-    if include_app_backups and export_data.app_backups:
+    if include_app_backups:
         # Générer une archive ZIP
         zip_buffer = _build_zip_archive(export_data)
         filename = f"hub_backup_{timestamp}.zip"
@@ -747,6 +758,9 @@ def _build_zip_archive(export_data: BackupExport) -> io.BytesIO:
         
         # 2. Ajouter les fichiers de backup des applications
         for ab in export_data.app_backups:
+            if not ab.storage_filename:
+                logger.warning(f"⚠️ Backup {ab.backup_id} sans storage_filename, ignoré dans l'archive")
+                continue
             # Le storage_filename est sous la forme "backups/{slug}/backup_{uuid}.zip"
             # Le fichier physique est dans STORAGE_BASE_DIR/{slug}/backup_{uuid}.zip
             # On doit extraire le chemin relatif depuis le storage_filename
@@ -760,6 +774,59 @@ def _build_zip_archive(export_data: BackupExport) -> io.BytesIO:
     
     zip_buffer.seek(0)
     return zip_buffer
+
+
+async def create_hub_backup_archive(
+    db: AsyncSession,
+    *,
+    backup_id: str,
+    created_by: str,
+    include_jwt_keys: bool = False,
+    include_sa_secrets: bool = True,
+    include_app_backups: bool = False,
+) -> dict:
+    """Crée une archive ZIP de configuration du Hub pour le flux AppBackup."""
+
+    class ExportActor:
+        username = created_by
+
+    export_data = await _do_export(
+        db,
+        ExportActor(),
+        include_jwt_keys,
+        include_sa_secrets,
+        include_app_backups,
+    )
+    zip_buffer = _build_zip_archive(export_data)
+    content = zip_buffer.getvalue()
+
+    app_dir = STORAGE_BASE_DIR / "hub"
+    app_dir.mkdir(parents=True, exist_ok=True)
+    filename = f"backup_{backup_id}.zip"
+    storage_path = f"hub/{filename}"
+    full_path = app_dir / filename
+    with open(full_path, "wb") as archive_file:
+        archive_file.write(content)
+
+    total_items = (
+        len(export_data.users)
+        + len(export_data.applications)
+        + len(export_data.service_accounts)
+        + len(export_data.user_app_roles)
+    )
+    total_rows = total_items + len(export_data.app_backups)
+
+    return {
+        "storage_path": storage_path,
+        "total_size_bytes": len(content),
+        "checksum": hashlib.sha256(content).hexdigest(),
+        "format_version": export_data.version,
+        "total_items": total_items,
+        "total_files": 1,
+        "total_tables": 5,
+        "total_rows": total_rows,
+        "description": "Export de configuration Hub",
+    }
 
 
 @router.post("/import/upload", response_model=ImportResult)

@@ -398,7 +398,9 @@ async def get_apps_status(
     import asyncio
     from datetime import datetime, timezone
     
-    result = await db.execute(select(Application))
+    result = await db.execute(
+        select(Application).where(Application.is_system_app == False)
+    )
     apps = result.scalars().all()
     
     loop = asyncio.get_running_loop()
@@ -529,7 +531,9 @@ async def list_apps(
     if current_user.is_admin:
         # Tri alphabétique par nom pour un ordre stable et prévisible
         result = await db.execute(
-            select(Application).order_by(Application.name)
+            select(Application)
+            .where(Application.is_system_app == False)
+            .order_by(Application.name)
         )
         apps = result.scalars().all()
         logger.debug(f"Admin {current_user.username}: {len(apps)} applications trouvées")
@@ -547,7 +551,8 @@ async def list_apps(
         # Tri alphabétique par nom pour un ordre stable et prévisible
         apps_count = len(user.app_roles)
         logger.debug(f"User {current_user.username}: {apps_count} applications accessibles")
-        sorted_roles = sorted(user.app_roles, key=lambda ar: ar.application.name.lower())
+        visible_roles = [ar for ar in user.app_roles if not getattr(ar.application, "is_system_app", False)]
+        sorted_roles = sorted(visible_roles, key=lambda ar: ar.application.name.lower())
         return [
             AppResponseWithMyRole.from_app_with_role(
                 ar.application, 
@@ -736,6 +741,7 @@ async def list_all_apps_with_users(
         select(Application).options(
             selectinload(Application.user_roles).selectinload(UserAppRole.user)
         )
+        .where(Application.is_system_app == False)
     )
     apps = result.scalars().all()
     return [
@@ -1737,6 +1743,12 @@ async def toggle_app_active(
     
     if not app:
         raise HTTPException(status_code=404, detail="Application non trouvée")
+
+    if getattr(app, "is_system_app", False):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="L'application système Hub ne peut pas être activée/désactivée depuis cette vue"
+        )
     
     app.is_active = not app.is_active
     await db.commit()
@@ -2497,6 +2509,12 @@ async def delete_pending_app(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Impossible de supprimer une application approuvée via cet endpoint. Utilisez DELETE /api/apps/{slug}"
         )
+
+    if getattr(app, "is_system_app", False):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="L'application système Hub ne peut pas être supprimée"
+        )
     
     client_ip = request.client.host if request.client else None
     
@@ -2564,6 +2582,12 @@ async def update_app(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Application non trouvée"
+        )
+
+    if getattr(app, "is_system_app", False):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="L'application système Hub ne se modifie pas depuis cette vue"
         )
     
     update_data = app_data.model_dump(exclude_unset=True)
@@ -2636,6 +2660,12 @@ async def delete_app(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Application non trouvée"
+        )
+
+    if getattr(app, "is_system_app", False):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="L'application système Hub ne peut pas être supprimée"
         )
     
     app_name = app.name
@@ -3479,7 +3509,9 @@ async def auto_sync_docker_applications(db: AsyncSession) -> dict:
         return {"error": f"Docker non accessible: {docker_scanner.last_error}"}
     
     # Récupérer toutes les applications en base
-    result = await db.execute(select(Application))
+    result = await db.execute(
+        select(Application).where(Application.is_system_app == False)
+    )
     apps = result.scalars().all()
     
     if not apps:

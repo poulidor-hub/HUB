@@ -232,9 +232,13 @@ function showPage(page) {
                 showToast('Accès refusé', 'Vous devez être administrateur', 'danger');
                 return;
             }
-            document.getElementById('cloneMigrateSection').classList.remove('d-none');
-            currentPage = 'clone-migrate';
-            loadBackupInfo();
+            document.getElementById('adminSection').classList.remove('d-none');
+            currentPage = 'app-backups';
+            const backupTabButton = document.querySelector('[data-bs-target="#tabAppBackups"]');
+            if (backupTabButton) {
+                bootstrap.Tab.getOrCreateInstance(backupTabButton).show();
+            }
+            switchBackupWorkspace('migration');
             break;
         case 'messages':
             if (!currentUser?.is_admin) {

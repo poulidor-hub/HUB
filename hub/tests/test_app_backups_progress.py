@@ -41,9 +41,11 @@ def _make_zip() -> bytes:
 @pytest.fixture
 def backup_storage(tmp_path, monkeypatch):
     import app.routes.app_backups as app_backups_route
+    import app.routes.backup as backup_route
 
     storage = tmp_path / "backups"
     monkeypatch.setattr(app_backups_route, "STORAGE_BASE_DIR", storage)
+    monkeypatch.setattr(backup_route, "STORAGE_BASE_DIR", storage)
     return storage
 
 
@@ -186,6 +188,32 @@ class TestTriggerAsync:
 
 
 class TestPerformAppBackup:
+    @pytest.mark.asyncio
+    async def test_hub_system_app_backup_creates_local_export(
+        self,
+        async_session: AsyncSession,
+        backup_storage,
+    ):
+        from app.routes.app_backups import ensure_hub_system_application, perform_app_backup
+
+        hub_app = await ensure_hub_system_application(async_session)
+
+        backup = await perform_app_backup(
+            async_session,
+            hub_app,
+            created_by="admin",
+            created_by_type="hub",
+        )
+
+        assert backup.status == "success"
+        assert backup.app_slug == "hub"
+        assert backup.app_version == "hub"
+        assert backup.storage_path.startswith("hub/backup_")
+        archive_path = backup_storage / backup.storage_path
+        assert archive_path.exists()
+        with zipfile.ZipFile(archive_path) as archive:
+            assert "environment.json" in archive.namelist()
+
     @pytest.mark.asyncio
     async def test_success_path_sets_duration(
         self,

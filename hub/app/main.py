@@ -14,7 +14,7 @@ from app.database import init_db, async_session_maker, apply_migrations
 from app.models import User, ErrorLog, utcnow
 from app.auth import get_password_hash, cleanup_expired_tokens
 from app.config import get_settings
-from app.routes import auth, users, apps, service_accounts, backup, audit, docs, events, app_backups, profiles, discovery, messages, account_requests
+from app.routes import auth, users, apps, service_accounts, backup, audit, docs, events, app_backups, backup_clusters, profiles, discovery, messages, account_requests
 from app.routes import settings as settings_routes
 
 import logging
@@ -592,6 +592,7 @@ app.include_router(audit.router)
 app.include_router(docs.router)
 app.include_router(events.router)
 app.include_router(app_backups.router)
+app.include_router(backup_clusters.router)
 app.include_router(profiles.router)
 app.include_router(discovery.router)
 app.include_router(messages.router)

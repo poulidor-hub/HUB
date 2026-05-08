@@ -957,6 +957,37 @@ class HubAPI {
         });
     }
 
+    async listBackupClusters() {
+        return this.request('/admin/backup-clusters/');
+    }
+
+    async createBackupCluster(payload) {
+        return this.request('/admin/backup-clusters/', {
+            method: 'POST',
+            body: JSON.stringify(payload)
+        });
+    }
+
+    async updateBackupCluster(clusterId, payload) {
+        return this.request(`/admin/backup-clusters/${encodeURIComponent(clusterId)}`, {
+            method: 'PUT',
+            body: JSON.stringify(payload)
+        });
+    }
+
+    async deleteBackupCluster(clusterId) {
+        return this.request(`/admin/backup-clusters/${encodeURIComponent(clusterId)}`, {
+            method: 'DELETE'
+        });
+    }
+
+    async updateBackupClusterConfig(clusterId, config) {
+        return this.request(`/admin/backup-clusters/${encodeURIComponent(clusterId)}/backup/config`, {
+            method: 'PUT',
+            body: JSON.stringify(config)
+        });
+    }
+
     /**
      * Exporte l'environnement complet (backup)
      * @param {boolean} includeJwtKeys - Inclure les clés JWT

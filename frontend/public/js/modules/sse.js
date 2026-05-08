@@ -413,6 +413,12 @@ function handleSSEEvent(data) {
             break;
         }
 
+        case 'backup_clusters_updated':
+            if (currentPage === 'app-backups') {
+                loadBackupClusters();
+            }
+            break;
+
         case 'force_logout':
             // Vérifier si c'est l'utilisateur courant qui doit être déconnecté
             if (currentUser && data.data?.user_id === currentUser.id) {

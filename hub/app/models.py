@@ -57,6 +57,41 @@ user_profiles = Table(
     UniqueConstraint('user_id', 'profile_id', name='uq_user_profiles_user_profile'),
 )
 
+# Table d'association BackupCluster <-> Application
+backup_cluster_apps = Table(
+    'backup_cluster_apps',
+    Base.metadata,
+    Column('cluster_id', Integer, ForeignKey('backup_clusters.id', ondelete='CASCADE'), nullable=False),
+    Column('app_id', Integer, ForeignKey('applications.id', ondelete='CASCADE'), nullable=False),
+    Column('created_at', DateTime, default=utcnow),
+    UniqueConstraint('cluster_id', 'app_id', name='uq_backup_cluster_apps_cluster_app'),
+)
+
+
+class BackupCluster(Base):
+    """Groupe d'applications dont les sauvegardes sont pilotees ensemble."""
+    __tablename__ = "backup_clusters"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(100), unique=True, nullable=False)
+    slug = Column(String(50), unique=True, index=True, nullable=False)
+    description = Column(Text)
+    color = Column(String(7), default="#0d6efd")
+    created_at = Column(DateTime, default=utcnow)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
+    created_by_id = Column(Integer, ForeignKey('users.id', ondelete='SET NULL'), nullable=True)
+
+    applications = relationship(
+        "Application",
+        secondary=backup_cluster_apps,
+        back_populates="backup_clusters",
+        lazy="raise",
+    )
+    created_by = relationship("User", foreign_keys=[created_by_id], lazy="raise")
+
+    def __repr__(self):
+        return f"<BackupCluster {self.slug}>"
+
 
 class ProfileAppRole(Base):
     """Apps + rôles inclus dans un profil"""
@@ -191,6 +226,7 @@ class Application(Base):
     is_active = Column(Boolean, default=True)
     requires_auth = Column(Boolean, default=True)
     is_shared_service = Column(Boolean, default=False)  # Si True, accessible par tous les service accounts
+    is_system_app = Column(Boolean, default=False, nullable=False)  # Application interne du Hub
     
     # Informations sur l'hébergement de l'application
     is_remote = Column(Boolean, default=False)  # True si hébergée sur un serveur distant (pas le même que le HUB)
@@ -226,6 +262,7 @@ class Application(Base):
     service_accounts = relationship("ServiceAccount", secondary=service_account_app_access, back_populates="applications", lazy="raise")
     # Note: pas de cascade delete-orphan pour conserver les backups même si l'app est supprimée
     backups = relationship("AppBackup", back_populates="application", lazy="raise")
+    backup_clusters = relationship("BackupCluster", secondary=backup_cluster_apps, back_populates="applications", lazy="raise")
     
     @property
     def users(self):

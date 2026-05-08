@@ -26,22 +26,25 @@ async function loadBackupInfo() {
 
     // Charger les compteurs de l'environnement courant
     try {
-        const usersCount = (await api.request('/admin/users')).length;
+        const usersResp = await api.getUsers({ page: 0 });
+        const users = Array.isArray(usersResp) ? usersResp : (usersResp.users || usersResp.items || []);
         const appsCount = allApps.length || (await api.request('/apps')).length;
         const saCount = allServiceAccounts.length || 0;
-        // Compteur de rôles : somme des rôles de tous les users
-        let rolesCount = 0;
-        try {
-            const users = await api.request('/admin/users');
-            rolesCount = users.reduce((sum, u) => sum + (u.apps || []).length, 0);
-        } catch (_) { /* ignore */ }
+        const rolesCount = users.reduce((sum, user) => {
+            const appRoles = user.app_roles || user.apps || [];
+            return sum + appRoles.length;
+        }, 0);
 
-        document.getElementById('envSummaryUsers').textContent = usersCount;
+        document.getElementById('envSummaryUsers').textContent = users.length;
         document.getElementById('envSummaryApps').textContent = appsCount;
         document.getElementById('envSummaryRoles').textContent = rolesCount;
         document.getElementById('envSummarySA').textContent = saCount;
     } catch (e) {
         console.warn('Impossible de charger le résumé environnement', e);
+        document.getElementById('envSummaryUsers').textContent = '–';
+        document.getElementById('envSummaryApps').textContent = allApps.length || '–';
+        document.getElementById('envSummaryRoles').textContent = '–';
+        document.getElementById('envSummarySA').textContent = allServiceAccounts.length || '–';
     }
 }
 

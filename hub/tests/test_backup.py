@@ -3,12 +3,14 @@ Tests pour le système de backup/restore du Hub
 Vérifie l'export et l'import complet des données
 """
 import pytest
+import io
+import zipfile
 from datetime import datetime
 from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import User, Application, ServiceAccount, UserAppRole, ApprovalStatus
+from app.models import User, Application, ServiceAccount, UserAppRole, ApprovalStatus, AppBackup
 from app.auth import get_password_hash
 
 
@@ -145,6 +147,40 @@ class TestBackupExport:
         data = response.json()
         assert data.get("jwt_private_key_b64") is None
         assert data.get("jwt_public_key_b64") is None
+
+    @pytest.mark.asyncio
+    async def test_export_download_skips_unfinished_app_backups(
+        self,
+        client: AsyncClient,
+        async_session: AsyncSession,
+        admin_token: str,
+        test_app: Application,
+    ):
+        """L'export ZIP ignore les backups sans fichier physique au lieu de planter."""
+        pending_backup = AppBackup(
+            backup_id="pending-without-file",
+            app_id=test_app.id,
+            app_slug=test_app.slug,
+            status="pending",
+            storage_path=None,
+            total_size_bytes=0,
+            created_by="test",
+            created_by_type="hub",
+        )
+        async_session.add(pending_backup)
+        await async_session.commit()
+
+        response = await client.get(
+            "/api/admin/backup/export/download?include_jwt_keys=false&include_sa_secrets=true&include_app_backups=true",
+            headers={"Authorization": f"Bearer {admin_token}"},
+        )
+
+        assert response.status_code == 200
+        assert response.headers["content-type"] == "application/zip"
+
+        with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
+            assert "environment.json" in archive.namelist()
+            assert all("pending-without-file" not in name for name in archive.namelist())
 
 
 class TestBackupImport:

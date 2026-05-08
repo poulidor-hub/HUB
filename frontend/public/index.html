@@ -1124,11 +1124,6 @@
                     <h1 class="h3 mb-1"><i class="bi bi-gear-fill me-2"></i>Administration</h1>
                     <p class="text-muted mb-0">Gestion des applications, service accounts et sauvegardes</p>
                 </div>
-                <div class="d-flex gap-2">
-                    <button class="btn btn-outline-secondary" onclick="showPage('clone-migrate')">
-                        <i class="bi bi-arrow-left-right me-1"></i>Cloner / Migrer
-                    </button>
-                </div>
             </div>
 
             <!-- Sous-navigation avec onglets -->
@@ -1145,7 +1140,7 @@
                     </button>
                 </li>
                 <li class="nav-item">
-                    <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tabAppBackups" onclick="loadAppBackupsOverview(); hydrateRunningBackups();">
+                    <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tabAppBackups" onclick="switchBackupWorkspace('apps');">
                         <i class="bi bi-hdd-stack me-1"></i>Sauvegardes
                     </button>
                 </li>
@@ -1232,7 +1227,19 @@
                             <i class="bi bi-arrow-clockwise me-1"></i>Actualiser
                         </button>
                     </div>
-                    
+                    <div class="d-flex flex-wrap gap-2 mb-3" role="group" aria-label="Navigation sauvegardes">
+                        <button type="button" class="btn btn-primary btn-sm" id="backupWorkspaceAppsTab" onclick="switchBackupWorkspace('apps')">
+                            <i class="bi bi-hdd-stack me-1"></i>Applications
+                        </button>
+                        <button type="button" class="btn btn-outline-primary btn-sm" id="backupWorkspaceClustersTab" onclick="switchBackupWorkspace('clusters')">
+                            <i class="bi bi-diagram-3 me-1"></i>Clusters
+                        </button>
+                        <button type="button" class="btn btn-outline-primary btn-sm" id="backupWorkspaceMigrationTab" onclick="switchBackupWorkspace('migration')">
+                            <i class="bi bi-arrow-left-right me-1"></i>Clone / migration Hub
+                        </button>
+                    </div>
+
+                    <div id="backupWorkspaceApps">
                     <!-- Stats globales -->
                     <div class="row mb-4" id="appBackupsStats">
                         <div class="col-md-3">
@@ -1319,6 +1326,49 @@
                                 <span class="badge bg-success ms-3 me-2">Planifié</span> Sauvegarde automatique selon le cron
                             </small>
                         </div>
+                    </div>
+                    </div>
+
+                    <div id="backupWorkspaceClusters" class="d-none">
+                        <div class="d-flex justify-content-between align-items-center mb-3">
+                            <div>
+                                <h6 class="mb-0"><i class="bi bi-diagram-3 me-2"></i>Clusters de sauvegarde</h6>
+                                <small class="text-muted">Regroupez des applications et appliquez une configuration commune.</small>
+                            </div>
+                            <div class="btn-group btn-group-sm">
+                                <button class="btn btn-outline-secondary" onclick="loadBackupClusters()" title="Rafraîchir">
+                                    <i class="bi bi-arrow-clockwise"></i>
+                                </button>
+                                <button class="btn btn-primary" onclick="showBackupClusterModal()">
+                                    <i class="bi bi-plus-lg me-1"></i>Cluster
+                                </button>
+                            </div>
+                        </div>
+                        <div class="table-responsive">
+                            <table class="table table-hover align-middle">
+                                <thead class="table-dark">
+                                    <tr>
+                                        <th>Cluster</th>
+                                        <th>Applications</th>
+                                        <th>Planifiées</th>
+                                        <th>Backups</th>
+                                        <th>Taille</th>
+                                        <th class="text-end">Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="backupClustersTableBody">
+                                    <tr>
+                                        <td colspan="6" class="text-center text-muted py-4">
+                                            <i class="bi bi-hourglass-split me-2"></i>Chargement...
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <div id="backupWorkspaceMigration" class="d-none">
+                        <div id="backupMigrationMount"></div>
                     </div>
                 </div>
             </div>
@@ -1623,7 +1673,7 @@
             <!-- En-tête avec bouton retour -->
             <div class="d-flex justify-content-between align-items-center mb-4">
                 <div>
-                    <button class="btn btn-link text-muted p-0 mb-2" onclick="showPage('admin')">
+                    <button class="btn btn-link text-muted p-0 mb-2 d-none" onclick="showPage('admin')">
                         <i class="bi bi-arrow-left me-1"></i>Retour à l'administration
                     </button>
                     <h1 class="h3 mb-1"><i class="bi bi-arrow-left-right me-2"></i>Cloner / Migrer l'environnement HUB</h1>
@@ -2638,13 +2688,40 @@
                         </div>
                         
                         <div class="mb-3" id="cronInputGroup" style="display: none;">
-                            <label class="form-label">Expression Cron</label>
-                            <input type="text" class="form-control" id="backupConfigCron" placeholder="0 2 * * *">
-                            <small class="text-muted">
-                                Exemples : <code>0 2 * * *</code> (2h chaque jour), 
-                                <code>0 3 * * 0</code> (dimanche 3h), 
-                                <code>0 0 1 * *</code> (1er du mois)
-                            </small>
+                            <label class="form-label">Planification</label>
+                            <div class="row g-2">
+                                <div class="col-md-5">
+                                    <select class="form-select" id="backupCronPreset" onchange="updateCronBuilderVisibility(); updateCronFromBuilder();">
+                                        <option value="daily">Tous les jours</option>
+                                        <option value="weekly">Chaque semaine</option>
+                                        <option value="monthly">Chaque mois</option>
+                                        <option value="custom">Cron avancé</option>
+                                    </select>
+                                </div>
+                                <div class="col-md-3">
+                                    <input type="time" class="form-control" id="backupCronTime" value="02:00" onchange="updateCronFromBuilder()">
+                                </div>
+                                <div class="col-md-4" id="backupCronWeekdayGroup">
+                                    <select class="form-select" id="backupCronWeekday" onchange="updateCronFromBuilder()">
+                                        <option value="1">Lundi</option>
+                                        <option value="2">Mardi</option>
+                                        <option value="3">Mercredi</option>
+                                        <option value="4">Jeudi</option>
+                                        <option value="5">Vendredi</option>
+                                        <option value="6">Samedi</option>
+                                        <option value="0">Dimanche</option>
+                                    </select>
+                                </div>
+                                <div class="col-md-4 d-none" id="backupCronMonthdayGroup">
+                                    <input type="number" class="form-control" id="backupCronMonthday" min="1" max="28" value="1" onchange="updateCronFromBuilder()">
+                                </div>
+                            </div>
+                            <div class="mt-2 d-none" id="backupCronAdvancedGroup">
+                                <input type="text" class="form-control" id="backupConfigCron" placeholder="0 2 * * *" oninput="updateCronPreview()">
+                            </div>
+                            <div class="form-text">
+                                Expression générée : <code id="backupCronPreview">0 2 * * *</code>
+                            </div>
                             <div class="alert alert-info mt-2 mb-0 py-2 small">
                                 <i class="bi bi-clock-history me-1"></i>
                                 Les cron sont évalués en <strong>UTC</strong>. Heure actuelle du Hub :
@@ -2652,11 +2729,97 @@
                                 — comparez-la à votre heure locale pour calculer le bon décalage.
                             </div>
                         </div>
+
+                        <div class="form-check form-switch mb-3">
+                            <input class="form-check-input" type="checkbox" id="backupConfigQuiesce">
+                            <label class="form-check-label" for="backupConfigQuiesce">
+                                <i class="bi bi-pause-circle me-1 text-warning"></i>Mode quiesce si l'application le supporte
+                                <small class="text-muted d-block">Demande un état stable pendant le snapshot applicatif.</small>
+                            </label>
+                        </div>
                         
                         <div class="mb-3">
                             <label class="form-label">Rétention (nombre de backups à conserver)</label>
                             <input type="number" class="form-control" id="backupConfigRetention" min="0" value="5">
                             <small class="text-muted">0 = illimité (attention à l'espace disque)</small>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuler</button>
+                        <button type="submit" class="btn btn-primary">
+                            <i class="bi bi-check-lg me-1"></i>Enregistrer
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- Backup Cluster Modal -->
+    <div class="modal fade" id="backupClusterModal" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header bg-primary text-white">
+                    <h5 class="modal-title"><i class="bi bi-diagram-3 me-2"></i><span id="backupClusterModalTitle">Cluster de sauvegarde</span></h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <form id="backupClusterForm" onsubmit="saveBackupCluster(event)">
+                    <div class="modal-body">
+                        <input type="hidden" id="backupClusterId">
+                        <div class="row g-3">
+                            <div class="col-md-5">
+                                <label class="form-label">Nom</label>
+                                <input type="text" class="form-control" id="backupClusterName" required maxlength="100" oninput="suggestBackupClusterSlug()">
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label">Slug</label>
+                                <input type="text" class="form-control" id="backupClusterSlug" required maxlength="50" pattern="[a-z0-9-]+">
+                            </div>
+                            <div class="col-md-3">
+                                <label class="form-label">Couleur</label>
+                                <input type="color" class="form-control form-control-color w-100" id="backupClusterColor" value="#0d6efd">
+                            </div>
+                            <div class="col-12">
+                                <label class="form-label">Description</label>
+                                <textarea class="form-control" id="backupClusterDescription" rows="2"></textarea>
+                            </div>
+                        </div>
+                        <hr>
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <label class="form-label mb-0">Applications du cluster</label>
+                            <small class="text-muted"><span id="backupClusterSelectedCount">0</span> sélectionnée(s)</small>
+                        </div>
+                        <div class="border rounded p-2" id="backupClusterAppsList" style="max-height: 260px; overflow-y: auto;">
+                            <div class="text-center text-muted py-3">Chargement...</div>
+                        </div>
+                        <div class="mt-3 border rounded p-3 bg-light">
+                            <h6 class="mb-2"><i class="bi bi-clock-history me-1"></i>Configuration groupée</h6>
+                            <div class="row g-2 align-items-end">
+                                <div class="col-md-4">
+                                    <label class="form-label small mb-1">Mode</label>
+                                    <select class="form-select form-select-sm" id="backupClusterConfigMode">
+                                        <option value="">Ne pas modifier</option>
+                                        <option value="disabled">Désactivé</option>
+                                        <option value="manual">Manuel</option>
+                                        <option value="scheduled">Planifié</option>
+                                    </select>
+                                </div>
+                                <div class="col-md-4">
+                                    <label class="form-label small mb-1">Cron</label>
+                                    <input type="text" class="form-control form-control-sm" id="backupClusterConfigCron" placeholder="0 2 * * *">
+                                </div>
+                                <div class="col-md-2">
+                                    <label class="form-label small mb-1">Rétention</label>
+                                    <input type="number" class="form-control form-control-sm" id="backupClusterConfigRetention" min="0" placeholder="5">
+                                </div>
+                                <div class="col-md-2">
+                                    <div class="form-check form-switch">
+                                        <input class="form-check-input" type="checkbox" id="backupClusterConfigQuiesce">
+                                        <label class="form-check-label small" for="backupClusterConfigQuiesce">Quiesce</label>
+                                    </div>
+                                </div>
+                            </div>
+                            <small class="text-muted">Ces champs sont appliqués aux applications du cluster après l'enregistrement si au moins une valeur est renseignée.</small>
                         </div>
                     </div>
                     <div class="modal-footer">
@@ -3221,7 +3384,7 @@
     <script src="js/modules/admin-users-profiles.js?v=3.7.1"></script>
     <script src="js/modules/audit-errors.js?v=3.7.1"></script>
     <script src="js/modules/discovery.js?v=3.7.1"></script>
-    <script src="js/modules/backup-import.js?v=3.7.1"></script>
+    <script src="js/modules/backup-import.js?v=3.7.2"></script>
     <script src="js/modules/app-backups.js?v=3.7.1"></script>
     <script src="js/modules/bulk-users-csv.js?v=3.7.1"></script>
     <script src="js/modules/messages-inbox.js?v=3.7.1"></script>

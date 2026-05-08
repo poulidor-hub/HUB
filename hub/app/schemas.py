@@ -263,6 +263,7 @@ class AppResponse(AppBase):
     id: int
     is_active: bool
     is_shared_service: bool
+    is_system_app: bool = False
     is_remote: bool = False  # True si hébergée sur un serveur distant
     registered_from_ip: Optional[str] = None  # IP source lors de l'auto-enregistrement
     frontend_https_port: Optional[int] = None  # Port HTTPS du frontend (si HTTPS activé)
@@ -311,6 +312,7 @@ class AppResponseWithMyRole(AppResponse):
             is_active=app.is_active,
             requires_auth=app.requires_auth,
             is_shared_service=app.is_shared_service,
+            is_system_app=bool(getattr(app, 'is_system_app', False)),
             is_remote=getattr(app, 'is_remote', False) or False,
             registered_from_ip=getattr(app, 'registered_from_ip', None),
             frontend_https_port=getattr(app, 'frontend_https_port', None),
@@ -363,6 +365,7 @@ class AppWithUsers(AppResponse):
             is_active=app.is_active,
             requires_auth=app.requires_auth,
             is_shared_service=app.is_shared_service,
+            is_system_app=bool(getattr(app, 'is_system_app', False)),
             is_remote=getattr(app, 'is_remote', False) or False,
             registered_from_ip=getattr(app, 'registered_from_ip', None),
             frontend_https_port=getattr(app, 'frontend_https_port', None),
@@ -404,6 +407,7 @@ class AppWithUsersAndDocker(AppWithUsers):
             is_active=app.is_active,
             requires_auth=app.requires_auth,
             is_shared_service=app.is_shared_service,
+            is_system_app=bool(getattr(app, 'is_system_app', False)),
             is_remote=getattr(app, 'is_remote', False) or False,
             registered_from_ip=getattr(app, 'registered_from_ip', None),
             frontend_https_port=getattr(app, 'frontend_https_port', None),
@@ -1059,6 +1063,8 @@ class AppBackupStatusResponse(BaseModel):
     """Statut de backup d'une application"""
     app_slug: str
     app_name: str
+    app_id: Optional[int] = None
+    is_system_app: bool = False
     backup_mode: BackupModeEnum
     backup_cron: Optional[str] = None
     backup_retention: int = 5
@@ -1084,6 +1090,60 @@ class AllBackupsResponse(BaseModel):
     total_backups: int = 0
     total_size_bytes: int = 0
     total_size_human: str = "0 B"
+
+
+class BackupClusterAppResponse(BaseModel):
+    """Application rattachee a un cluster de sauvegarde."""
+    app_id: int
+    app_slug: str
+    app_name: str
+    is_system_app: bool = False
+    backup_mode: BackupModeEnum = BackupModeEnum.manual
+    backup_cron: Optional[str] = None
+    backup_retention: int = 5
+    last_backup_at: Optional[datetime] = None
+    last_backup_status: Optional[str] = None
+    next_backup_at: Optional[datetime] = None
+    backups_count: int = 0
+    total_size_bytes: int = 0
+    total_size_human: str = "0 B"
+
+
+class BackupClusterCreate(BaseModel):
+    name: str = Field(..., min_length=2, max_length=100)
+    slug: str = Field(..., min_length=2, max_length=50, pattern=r'^[a-z0-9-]+$')
+    description: Optional[str] = None
+    color: str = "#0d6efd"
+    app_ids: List[int] = []
+
+
+class BackupClusterUpdate(BaseModel):
+    name: Optional[str] = Field(None, min_length=2, max_length=100)
+    slug: Optional[str] = Field(None, min_length=2, max_length=50, pattern=r'^[a-z0-9-]+$')
+    description: Optional[str] = None
+    color: Optional[str] = None
+    app_ids: Optional[List[int]] = None
+
+
+class BackupClusterResponse(BaseModel):
+    id: int
+    name: str
+    slug: str
+    description: Optional[str] = None
+    color: str = "#0d6efd"
+    apps: List[BackupClusterAppResponse] = []
+    apps_count: int = 0
+    total_backups: int = 0
+    total_size_bytes: int = 0
+    total_size_human: str = "0 B"
+    scheduled_apps: int = 0
+    created_at: datetime
+    updated_at: datetime
+
+
+class BackupClusterListResponse(BaseModel):
+    clusters: List[BackupClusterResponse] = []
+    total: int = 0
 
 
 class BackupTriggerResponse(BaseModel):

@@ -44,7 +44,7 @@ from cryptography.hazmat.primitives.asymmetric import padding
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 from app.database import get_db
-from app.models import Application, AppBackup, ServiceAccount, User, utcnow
+from app.models import Application, AppBackup, ServiceAccount, User, ApprovalStatus, utcnow
 from app.auth import get_current_admin, get_current_entity
 from app.config import get_settings
 from app.routes.audit import log_action
@@ -65,6 +65,27 @@ SECRETS_DIR = Path("/code/secrets")
 JWT_PRIVATE_KEY_PATH = SECRETS_DIR / "jwt_private_key.pem"
 
 router = APIRouter(tags=["App Backups"])
+
+
+def get_backup_file_path_or_404(backup: AppBackup, *, encrypted: bool = False) -> Path:
+    path_value = backup.encrypted_path if encrypted else backup.storage_path
+    if not path_value:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Fichier de backup non trouvé sur le serveur",
+        )
+    return STORAGE_BASE_DIR / path_value
+
+
+def delete_backup_file_if_present(path_value: Optional[str]) -> int:
+    if not path_value:
+        return 0
+    file_path = STORAGE_BASE_DIR / path_value
+    if not file_path.exists():
+        return 0
+    file_size = file_path.stat().st_size
+    file_path.unlink()
+    return file_size
 
 
 def _naive_utc(dt: Optional[datetime]) -> Optional[datetime]:
@@ -460,6 +481,9 @@ def decrypt_encrypted_package(encrypted_package: bytes) -> tuple[bytes, dict]:
 
 async def get_app_or_404(db: AsyncSession, slug: str) -> Application:
     """Récupère une application par son slug ou lève une 404"""
+    if slug == "hub":
+        return await ensure_hub_system_application(db)
+
     result = await db.execute(
         select(Application).where(Application.slug == slug)
     )
@@ -469,6 +493,53 @@ async def get_app_or_404(db: AsyncSession, slug: str) -> Application:
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Application '{slug}' non trouvée"
         )
+    return app
+
+
+async def ensure_hub_system_application(db: AsyncSession) -> Application:
+    """Garantit l'existence de l'application système utilisée pour sauvegarder le Hub."""
+    result = await db.execute(select(Application).where(Application.slug == "hub"))
+    app = result.scalar_one_or_none()
+    if app is None:
+        app = Application(
+            name="Hub",
+            slug="hub",
+            description="Application système représentant la configuration du Hub pour les sauvegardes planifiées.",
+            icon="bi-grid-3x3-gap-fill",
+            color="#495057",
+            category="Système",
+            api_url="http://hub-api:8000",
+            frontend_url="/",
+            is_active=True,
+            requires_auth=True,
+            is_shared_service=False,
+            is_system_app=True,
+            approval_status=ApprovalStatus.approved,
+            backup_mode="manual",
+            backup_retention=5,
+            backup_quiesce=False,
+        )
+        db.add(app)
+        await db.commit()
+        await db.refresh(app)
+        return app
+
+    changed = False
+    if not getattr(app, "is_system_app", False):
+        app.is_system_app = True
+        changed = True
+    if not app.category:
+        app.category = "Système"
+        changed = True
+    if not app.backup_mode:
+        app.backup_mode = "manual"
+        changed = True
+    if not app.backup_retention:
+        app.backup_retention = 5
+        changed = True
+    if changed:
+        await db.commit()
+        await db.refresh(app)
     return app
 
 
@@ -829,7 +900,7 @@ async def export_encrypted_backup(
         )
     
     # Lire le fichier original
-    file_path = STORAGE_BASE_DIR / backup.storage_path
+    file_path = get_backup_file_path_or_404(backup)
     if not file_path.exists():
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -936,14 +1007,8 @@ async def delete_backup(
         )
     
     # Supprimer les fichiers physiques
-    storage_path = STORAGE_BASE_DIR / backup.storage_path
-    if storage_path.exists():
-        storage_path.unlink()
-    
-    if backup.encrypted_path:
-        encrypted_path = STORAGE_BASE_DIR / backup.encrypted_path
-        if encrypted_path.exists():
-            encrypted_path.unlink()
+    delete_backup_file_if_present(backup.storage_path)
+    delete_backup_file_if_present(backup.encrypted_path)
     
     await db.delete(backup)
     await db.commit()
@@ -1240,6 +1305,80 @@ async def perform_app_backup(
     try:
         if app.backup_mode == "disabled":
             await _fail("Les sauvegardes sont désactivées pour cette application", status_code=400)
+
+        if bool(getattr(app, "is_system_app", False)) and slug == "hub":
+            await _update_backup_progress(db, backup, "create")
+            from app.routes.backup import create_hub_backup_archive
+
+            try:
+                archive_info = await create_hub_backup_archive(
+                    db,
+                    backup_id=backup.backup_id,
+                    created_by=created_by,
+                    include_jwt_keys=False,
+                    include_sa_secrets=True,
+                    include_app_backups=False,
+                )
+            except Exception as archive_error:
+                await _fail(f"Impossible de créer l'archive de configuration Hub: {archive_error}")
+
+            file_size = archive_info["total_size_bytes"]
+            await _update_backup_progress(db, backup, "download_complete", extra_payload={
+                "total_size_bytes": file_size,
+            })
+            await _update_backup_progress(db, backup, "storing")
+
+            backup.app_version = "hub"
+            backup.format_version = archive_info.get("format_version")
+            backup.total_items = archive_info.get("total_items", 0)
+            backup.total_preferences = 0
+            backup.total_files = archive_info.get("total_files", 1)
+            backup.total_tables = archive_info.get("total_tables", 0)
+            backup.total_rows = archive_info.get("total_rows", 0)
+            backup.includes_vaultwarden_snapshot = False
+            backup.includes_secret_bundle = False
+            backup.restore_requires_offline = False
+            backup.total_size_bytes = file_size
+            backup.checksum = archive_info.get("checksum")
+            backup.storage_path = archive_info.get("storage_path")
+            backup.description = (
+                f"{description_prefix} par {created_by}" if description_prefix
+                else archive_info.get("description") or f"Backup déclenché par {created_by}"
+            )
+            backup.status = "success"
+            backup.completed_at = utcnow()
+            backup.progress_step = "done"
+            backup.progress_percent = 100
+            backup.error_message = None
+            started = _naive_utc(backup.started_at)
+            completed = _naive_utc(backup.completed_at)
+            if started and completed:
+                backup.duration_seconds = int((completed - started).total_seconds())
+
+            app.last_backup_at = utcnow()
+            app.last_backup_id = backup.backup_id
+            app.last_backup_status = "success"
+
+            await db.commit()
+            await db.refresh(backup)
+
+            await apply_retention_policy(db, slug, app.backup_retention)
+
+            logger.info(
+                f"✅ Backup {backup.backup_id} stocké pour {slug} "
+                f"({human_readable_size(file_size)}, {backup.duration_seconds}s)"
+            )
+
+            await _emit_backup_event("backup_completed", {
+                "backup_id": backup.backup_id,
+                "app_slug": slug,
+                "duration_seconds": backup.duration_seconds,
+                "total_size_bytes": file_size,
+                "status": "success",
+            })
+            await _emit_backup_event("apps_updated", {"reason": "backup_completed", "slug": slug})
+
+            return backup
 
         if not app.api_url:
             await _fail("L'application n'a pas d'URL d'API configurée", status_code=400)
@@ -1834,7 +1973,7 @@ async def restore_backup_to_app(
         )
     
     # Vérifier que le fichier existe
-    file_path = STORAGE_BASE_DIR / backup.storage_path
+    file_path = get_backup_file_path_or_404(backup)
     if not file_path.exists():
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -2147,6 +2286,8 @@ async def get_all_backups_overview(
     
     Retourne le statut de sauvegarde de chaque application.
     """
+    await ensure_hub_system_application(db)
+
     # Récupérer toutes les applications avec leurs stats de backup
     apps_result = await db.execute(
         select(Application)
@@ -2188,8 +2329,10 @@ async def get_all_backups_overview(
         )
 
         app_statuses.append(AppBackupStatusResponse(
+            app_id=app.id,
             app_slug=app.slug,
             app_name=app.name,
+            is_system_app=bool(getattr(app, "is_system_app", False)),
             backup_mode=BackupModeEnum(app.backup_mode or "manual"),
             backup_cron=app.backup_cron,
             backup_retention=app.backup_retention or 5,
@@ -2495,15 +2638,8 @@ async def delete_orphan_backups_by_slug(
     
     for backup in orphan_backups:
         # Supprimer les fichiers physiques
-        storage_path = STORAGE_BASE_DIR / backup.storage_path
-        if storage_path.exists():
-            total_size_freed += storage_path.stat().st_size
-            storage_path.unlink()
-        
-        if backup.encrypted_path:
-            encrypted_path = STORAGE_BASE_DIR / backup.encrypted_path
-            if encrypted_path.exists():
-                encrypted_path.unlink()
+        total_size_freed += delete_backup_file_if_present(backup.storage_path)
+        delete_backup_file_if_present(backup.encrypted_path)
         
         await db.delete(backup)
         deleted_count += 1

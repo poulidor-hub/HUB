@@ -11,8 +11,12 @@
 
 let appBackupConfigModal = null;
 let appBackupsListModal = null;
+let backupClusterModal = null;
 let appBackupsById = {};
 let selectedRestoreBackup = null;
+let backupOverviewApps = [];
+let backupClusters = [];
+let backupMigrationMounted = false;
 
 // Map<app_slug, {backup_id, app_name, status, progress_step, progress_percent, started_at, avg_duration_seconds}>
 const runningBackups = new Map();
@@ -26,6 +30,111 @@ const BACKUP_STEP_LABELS = {
     storing: 'Enregistrement…',
     done: 'Terminé'
 };
+
+function switchBackupWorkspace(tab) {
+    const tabs = ['apps', 'clusters', 'migration'];
+    tabs.forEach(name => {
+        document.getElementById(`backupWorkspace${capitalizeBackupTab(name)}Tab`)?.classList.toggle('btn-primary', name === tab);
+        document.getElementById(`backupWorkspace${capitalizeBackupTab(name)}Tab`)?.classList.toggle('btn-outline-primary', name !== tab);
+        document.getElementById(`backupWorkspace${capitalizeBackupTab(name)}`)?.classList.toggle('d-none', name !== tab);
+    });
+
+    if (tab === 'apps') {
+        loadAppBackupsOverview();
+        hydrateRunningBackups();
+    } else if (tab === 'clusters') {
+        loadBackupClusters();
+    } else if (tab === 'migration') {
+        mountCloneMigrateIntoBackups();
+        loadBackupInfo();
+    }
+}
+
+function capitalizeBackupTab(tab) {
+    return tab.charAt(0).toUpperCase() + tab.slice(1);
+}
+
+function mountCloneMigrateIntoBackups() {
+    if (backupMigrationMounted) return;
+    const mount = document.getElementById('backupMigrationMount');
+    const source = document.querySelector('#cloneMigrateSection > .container');
+    if (!mount || !source) return;
+    source.classList.remove('container');
+    source.classList.add('px-0');
+    mount.appendChild(source);
+    backupMigrationMounted = true;
+}
+
+function parseCronToBuilder(cron) {
+    const raw = (cron || '').trim();
+    const parts = raw.split(/\s+/);
+    if (parts.length !== 5) {
+        return { preset: 'daily', time: '02:00', weekday: '1', monthday: '1', cron: raw || '0 2 * * *' };
+    }
+    const [minute, hour, day, month, weekday] = parts;
+    const time = `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+    if (day === '*' && month === '*' && weekday === '*') {
+        return { preset: 'daily', time, weekday: '1', monthday: '1', cron: raw };
+    }
+    if (day === '*' && month === '*' && /^\d$/.test(weekday)) {
+        return { preset: 'weekly', time, weekday, monthday: '1', cron: raw };
+    }
+    if (/^\d{1,2}$/.test(day) && month === '*' && weekday === '*') {
+        return { preset: 'monthly', time, weekday: '1', monthday: day, cron: raw };
+    }
+    return { preset: 'custom', time, weekday: '1', monthday: '1', cron: raw };
+}
+
+function updateCronBuilderVisibility() {
+    const preset = document.getElementById('backupCronPreset')?.value || 'daily';
+    document.getElementById('backupCronWeekdayGroup')?.classList.toggle('d-none', preset !== 'weekly');
+    document.getElementById('backupCronMonthdayGroup')?.classList.toggle('d-none', preset !== 'monthly');
+    document.getElementById('backupCronAdvancedGroup')?.classList.toggle('d-none', preset !== 'custom');
+}
+
+function updateCronFromBuilder() {
+    const preset = document.getElementById('backupCronPreset')?.value || 'daily';
+    if (preset === 'custom') {
+        updateCronPreview();
+        return;
+    }
+    const [hour = '2', minute = '0'] = (document.getElementById('backupCronTime')?.value || '02:00').split(':');
+    const weekday = document.getElementById('backupCronWeekday')?.value || '1';
+    const monthday = Math.max(1, Math.min(28, parseInt(document.getElementById('backupCronMonthday')?.value || '1', 10)));
+    let cron = `${parseInt(minute, 10)} ${parseInt(hour, 10)} * * *`;
+    if (preset === 'weekly') {
+        cron = `${parseInt(minute, 10)} ${parseInt(hour, 10)} * * ${weekday}`;
+    } else if (preset === 'monthly') {
+        cron = `${parseInt(minute, 10)} ${parseInt(hour, 10)} ${monthday} * *`;
+    }
+    const input = document.getElementById('backupConfigCron');
+    if (input) input.value = cron;
+    updateCronPreview();
+}
+
+function updateCronPreview() {
+    const value = document.getElementById('backupConfigCron')?.value || '0 2 * * *';
+    const preview = document.getElementById('backupCronPreview');
+    if (preview) preview.textContent = value;
+}
+
+function initializeCronBuilder(cron) {
+    const parsed = parseCronToBuilder(cron);
+    document.getElementById('backupCronPreset').value = parsed.preset;
+    document.getElementById('backupCronTime').value = parsed.time;
+    document.getElementById('backupCronWeekday').value = parsed.weekday;
+    document.getElementById('backupCronMonthday').value = parsed.monthday;
+    document.getElementById('backupConfigCron').value = parsed.cron;
+    updateCronBuilderVisibility();
+    updateCronFromBuilder();
+}
+
+function getBackupConfigCronValue() {
+    const mode = document.getElementById('backupConfigMode').value;
+    if (mode !== 'scheduled') return null;
+    updateCronFromBuilder();
+    return document.getElementById('backupConfigCron').value || null;
+}
 
 /**
  * Démarre/arrête le timer 1s qui rafraîchit les durées écoulées des backups en cours.
@@ -180,6 +289,7 @@ async function cancelRunningBackup(backupId, appName) {
 async function loadAppBackupsOverview() {
     try {
         const data = await api.request('/admin/backups');
+        backupOverviewApps = data.apps || [];
         
         // Mettre à jour les stats globales
         document.getElementById('statsAppsCount').textContent = data.total_apps || 0;
@@ -193,7 +303,7 @@ async function loadAppBackupsOverview() {
         // Générer le tableau
         const tbody = document.getElementById('appBackupsTableBody');
         
-        if (!data.apps || data.apps.length === 0) {
+        if (!backupOverviewApps || backupOverviewApps.length === 0) {
             tbody.innerHTML = `
                 <tr>
                     <td colspan="7" class="text-center text-muted py-4">
@@ -204,7 +314,7 @@ async function loadAppBackupsOverview() {
             return;
         }
         
-        tbody.innerHTML = data.apps.map(app => {
+        tbody.innerHTML = backupOverviewApps.map(app => {
             // Badge du mode
             let modeBadge;
             switch (app.backup_mode) {
@@ -243,6 +353,9 @@ async function loadAppBackupsOverview() {
             }
 
             const isRunning = runningBackups.has(app.app_slug);
+            const systemBadge = app.is_system_app
+                ? '<span class="badge bg-dark ms-2"><i class="bi bi-grid-3x3-gap-fill me-1"></i>Hub</span>'
+                : '';
             const triggerCell = isRunning
                 ? `<button class="btn btn-outline-secondary" disabled title="Sauvegarde en cours">
                        <span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>
@@ -256,7 +369,7 @@ async function loadAppBackupsOverview() {
             return `
                 <tr>
                     <td>
-                        <strong>${escapeHtml(app.app_name)}</strong>
+                        <strong>${escapeHtml(app.app_name)}</strong>${systemBadge}
                         <br><small class="text-muted">${escapeHtml(app.app_slug)}</small>
                     </td>
                     <td>${modeBadge}</td>
@@ -305,8 +418,9 @@ async function showAppBackupConfig(slug, name) {
         const config = await api.request(`/apps/${slug}/backup/config`);
         
         document.getElementById('backupConfigMode').value = config.backup_mode || 'manual';
-        document.getElementById('backupConfigCron').value = config.backup_cron || '';
+        initializeCronBuilder(config.backup_cron || '0 2 * * *');
         document.getElementById('backupConfigRetention').value = config.backup_retention ?? 5;
+        document.getElementById('backupConfigQuiesce').checked = Boolean(config.backup_quiesce);
         
         toggleCronInput();
         appBackupConfigModal.show();
@@ -336,6 +450,10 @@ function toggleCronInput() {
     const mode = document.getElementById('backupConfigMode').value;
     const cronGroup = document.getElementById('cronInputGroup');
     cronGroup.style.display = mode === 'scheduled' ? 'block' : 'none';
+    if (mode === 'scheduled') {
+        updateCronBuilderVisibility();
+        updateCronFromBuilder();
+    }
 }
 
 /**
@@ -347,8 +465,9 @@ async function saveAppBackupConfig(event) {
     const slug = document.getElementById('backupConfigAppSlug').value;
     const config = {
         backup_mode: document.getElementById('backupConfigMode').value,
-        backup_cron: document.getElementById('backupConfigCron').value || null,
-        backup_retention: parseInt(document.getElementById('backupConfigRetention').value) || 5
+        backup_cron: getBackupConfigCronValue(),
+        backup_retention: parseInt(document.getElementById('backupConfigRetention').value) || 5,
+        backup_quiesce: document.getElementById('backupConfigQuiesce').checked
     };
     
     try {
@@ -364,6 +483,239 @@ async function saveAppBackupConfig(event) {
     } catch (error) {
         console.error('Erreur sauvegarde config:', error);
         showToast('Erreur', error.message || 'Impossible de sauvegarder', 'danger');
+    }
+}
+
+async function loadBackupClusters() {
+    const tbody = document.getElementById('backupClustersTableBody');
+    if (tbody) {
+        tbody.innerHTML = `
+            <tr>
+                <td colspan="6" class="text-center text-muted py-4">
+                    <span class="spinner-border spinner-border-sm me-2"></span>Chargement...
+                </td>
+            </tr>
+        `;
+    }
+
+    try {
+        const [clustersData, backupsData] = await Promise.all([
+            api.listBackupClusters(),
+            api.request('/admin/backups')
+        ]);
+        backupClusters = clustersData.clusters || [];
+        backupOverviewApps = backupsData.apps || [];
+        renderBackupClustersTable();
+    } catch (error) {
+        console.error('Erreur chargement clusters backup:', error);
+        showToast('Erreur', error.message || 'Impossible de charger les clusters', 'danger');
+        if (tbody) {
+            tbody.innerHTML = `
+                <tr><td colspan="6" class="text-center text-danger py-4">Chargement impossible</td></tr>
+            `;
+        }
+    }
+}
+
+function renderBackupClustersTable() {
+    const tbody = document.getElementById('backupClustersTableBody');
+    if (!tbody) return;
+
+    if (!backupClusters.length) {
+        tbody.innerHTML = `
+            <tr>
+                <td colspan="6" class="text-center text-muted py-4">
+                    <i class="bi bi-diagram-3 me-2"></i>Aucun cluster configuré
+                </td>
+            </tr>
+        `;
+        return;
+    }
+
+    tbody.innerHTML = backupClusters.map(cluster => {
+        const apps = cluster.apps || [];
+        const appBadges = apps.length
+            ? apps.map(app => `<span class="badge bg-light text-dark border me-1 mb-1">${escapeHtml(app.app_name)}${app.is_system_app ? ' · Hub' : ''}</span>`).join('')
+            : '<span class="text-muted small">Aucune application</span>';
+        return `
+            <tr>
+                <td>
+                    <div class="d-flex align-items-center gap-2">
+                        <span class="rounded-circle d-inline-block" style="width: 14px; height: 14px; background: ${escapeHtml(cluster.color || '#0d6efd')};"></span>
+                        <div>
+                            <strong>${escapeHtml(cluster.name)}</strong>
+                            <br><small class="text-muted">${escapeHtml(cluster.slug)}</small>
+                        </div>
+                    </div>
+                </td>
+                <td>${appBadges}</td>
+                <td><span class="badge bg-success">${cluster.scheduled_apps || 0}</span></td>
+                <td><span class="badge bg-light text-dark">${cluster.total_backups || 0}</span></td>
+                <td>${escapeHtml(cluster.total_size_human || '0 B')}</td>
+                <td class="text-end">
+                    <div class="btn-group btn-group-sm">
+                        <button class="btn btn-outline-success" onclick="triggerBackupCluster(${cluster.id})" title="Déclencher les sauvegardes du cluster">
+                            <i class="bi bi-play-circle"></i>
+                        </button>
+                        <button class="btn btn-outline-primary" onclick="showBackupClusterModal(${cluster.id})" title="Modifier">
+                            <i class="bi bi-pencil"></i>
+                        </button>
+                        <button class="btn btn-outline-danger" onclick="deleteBackupCluster(${cluster.id})" title="Supprimer">
+                            <i class="bi bi-trash"></i>
+                        </button>
+                    </div>
+                </td>
+            </tr>
+        `;
+    }).join('');
+}
+
+async function ensureBackupAppsForClusterModal() {
+    if (backupOverviewApps.length) return;
+    const data = await api.request('/admin/backups');
+    backupOverviewApps = data.apps || [];
+}
+
+async function showBackupClusterModal(clusterId = null) {
+    if (!backupClusterModal) {
+        backupClusterModal = new bootstrap.Modal(document.getElementById('backupClusterModal'));
+    }
+
+    try {
+        await ensureBackupAppsForClusterModal();
+    } catch (error) {
+        showToast('Erreur', 'Impossible de charger les applications', 'danger');
+        return;
+    }
+
+    const cluster = clusterId ? backupClusters.find(item => item.id === clusterId) : null;
+    document.getElementById('backupClusterModalTitle').textContent = cluster ? 'Modifier le cluster' : 'Nouveau cluster';
+    document.getElementById('backupClusterId').value = cluster?.id || '';
+    document.getElementById('backupClusterName').value = cluster?.name || '';
+    document.getElementById('backupClusterSlug').value = cluster?.slug || '';
+    document.getElementById('backupClusterDescription').value = cluster?.description || '';
+    document.getElementById('backupClusterColor').value = cluster?.color || '#0d6efd';
+    document.getElementById('backupClusterConfigMode').value = '';
+    document.getElementById('backupClusterConfigCron').value = '';
+    document.getElementById('backupClusterConfigRetention').value = '';
+    document.getElementById('backupClusterConfigQuiesce').checked = false;
+
+    const selectedIds = new Set((cluster?.apps || []).map(app => Number(app.app_id)));
+    renderBackupClusterAppChoices(selectedIds);
+    backupClusterModal.show();
+}
+
+function renderBackupClusterAppChoices(selectedIds = new Set()) {
+    const list = document.getElementById('backupClusterAppsList');
+    if (!list) return;
+    if (!backupOverviewApps.length) {
+        list.innerHTML = '<div class="text-center text-muted py-3">Aucune application disponible</div>';
+        updateBackupClusterSelectedCount();
+        return;
+    }
+    list.innerHTML = backupOverviewApps.map(app => {
+        const appId = Number(app.app_id);
+        const checked = selectedIds.has(appId) ? 'checked' : '';
+        const systemBadge = app.is_system_app ? '<span class="badge bg-dark ms-2">Hub</span>' : '';
+        return `
+            <label class="d-flex align-items-center justify-content-between border-bottom py-2 mb-0">
+                <span>
+                    <input class="form-check-input me-2 backup-cluster-app-choice" type="checkbox" value="${appId}" ${checked} onchange="updateBackupClusterSelectedCount()">
+                    <strong>${escapeHtml(app.app_name)}</strong>${systemBadge}
+                    <small class="text-muted ms-2">${escapeHtml(app.app_slug)}</small>
+                </span>
+                <small class="text-muted">${escapeHtml(app.backup_mode || 'manual')}</small>
+            </label>
+        `;
+    }).join('');
+    updateBackupClusterSelectedCount();
+}
+
+function updateBackupClusterSelectedCount() {
+    const count = document.querySelectorAll('.backup-cluster-app-choice:checked').length;
+    const el = document.getElementById('backupClusterSelectedCount');
+    if (el) el.textContent = String(count);
+}
+
+function suggestBackupClusterSlug() {
+    const id = document.getElementById('backupClusterId')?.value;
+    const slugInput = document.getElementById('backupClusterSlug');
+    if (id || !slugInput || slugInput.value.trim()) return;
+    const name = document.getElementById('backupClusterName')?.value || '';
+    slugInput.value = name
+        .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '')
+        .slice(0, 50);
+}
+
+async function saveBackupCluster(event) {
+    event.preventDefault();
+    const id = document.getElementById('backupClusterId').value;
+    const payload = {
+        name: document.getElementById('backupClusterName').value.trim(),
+        slug: document.getElementById('backupClusterSlug').value.trim(),
+        description: document.getElementById('backupClusterDescription').value.trim() || null,
+        color: document.getElementById('backupClusterColor').value || '#0d6efd',
+        app_ids: Array.from(document.querySelectorAll('.backup-cluster-app-choice:checked')).map(input => Number(input.value))
+    };
+
+    const config = {};
+    const mode = document.getElementById('backupClusterConfigMode').value;
+    const cron = document.getElementById('backupClusterConfigCron').value.trim();
+    const retention = document.getElementById('backupClusterConfigRetention').value;
+    if (mode) config.backup_mode = mode;
+    if (cron) config.backup_cron = cron;
+    if (retention !== '') config.backup_retention = parseInt(retention, 10);
+    if (document.getElementById('backupClusterConfigQuiesce').checked) config.backup_quiesce = true;
+
+    try {
+        let saved = id
+            ? await api.updateBackupCluster(id, payload)
+            : await api.createBackupCluster(payload);
+        if (Object.keys(config).length) {
+            saved = await api.updateBackupClusterConfig(saved.id, config);
+        }
+        showToast('Succès', `Cluster ${saved.name} enregistré`, 'success');
+        backupClusterModal.hide();
+        await loadBackupClusters();
+        loadAppBackupsOverview();
+    } catch (error) {
+        console.error('Erreur sauvegarde cluster:', error);
+        showToast('Erreur', error.message || 'Impossible d\'enregistrer le cluster', 'danger');
+    }
+}
+
+async function deleteBackupCluster(clusterId) {
+    const cluster = backupClusters.find(item => item.id === clusterId);
+    if (!cluster) return;
+    if (!confirm(`Supprimer le cluster ${cluster.name} ?\n\nLes sauvegardes existantes ne seront pas supprimées.`)) {
+        return;
+    }
+    try {
+        await api.deleteBackupCluster(clusterId);
+        showToast('Succès', 'Cluster supprimé', 'success');
+        loadBackupClusters();
+    } catch (error) {
+        console.error('Erreur suppression cluster:', error);
+        showToast('Erreur', error.message || 'Impossible de supprimer le cluster', 'danger');
+    }
+}
+
+async function triggerBackupCluster(clusterId) {
+    const cluster = backupClusters.find(item => item.id === clusterId);
+    if (!cluster || !cluster.apps?.length) return;
+    const candidates = cluster.apps.filter(app => app.backup_mode !== 'disabled' && !runningBackups.has(app.app_slug));
+    if (!candidates.length) {
+        showToast('Cluster', 'Aucune application disponible à sauvegarder', 'warning');
+        return;
+    }
+    if (!confirm(`Déclencher ${candidates.length} sauvegarde(s) pour le cluster ${cluster.name} ?`)) {
+        return;
+    }
+    for (const app of candidates) {
+        await doTriggerBackup(app.app_slug, app.app_name);
     }
 }
 
