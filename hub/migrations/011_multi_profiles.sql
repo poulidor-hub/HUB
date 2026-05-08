@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS user_profiles (
 
 CREATE INDEX IF NOT EXISTS idx_user_profiles_user_id ON user_profiles(user_id);
 CREATE INDEX IF NOT EXISTS idx_user_profiles_profile_id ON user_profiles(profile_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_user_profiles_unique_user_profile ON user_profiles(user_id, profile_id);
 
 COMMENT ON TABLE user_profiles IS 'Association N:N entre utilisateurs et profils (multi-profils)';
 COMMENT ON COLUMN user_profiles.assigned_by IS 'Admin ayant assigné ce profil';

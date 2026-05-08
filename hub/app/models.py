@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, BigInteger, String, Boolean, DateTime, ForeignKey, Text, Table, Enum as SQLEnum, JSON
+from sqlalchemy import Column, Integer, BigInteger, String, Boolean, DateTime, ForeignKey, Text, Table, Enum as SQLEnum, JSON, UniqueConstraint
 from sqlalchemy.orm import relationship
 from datetime import datetime, timezone
 from typing import Optional
@@ -54,6 +54,7 @@ user_profiles = Table(
     Column('profile_id', Integer, ForeignKey('profiles.id', ondelete='CASCADE'), nullable=False),
     Column('assigned_at', DateTime, default=utcnow),
     Column('assigned_by', Integer, ForeignKey('users.id', ondelete='SET NULL'), nullable=True),
+    UniqueConstraint('user_id', 'profile_id', name='uq_user_profiles_user_profile'),
 )
 
 

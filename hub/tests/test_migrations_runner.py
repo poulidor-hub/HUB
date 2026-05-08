@@ -16,11 +16,12 @@ import logging
 from pathlib import Path
 
 import pytest
-from sqlalchemy import text
+from sqlalchemy import UniqueConstraint, text
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from app import database as db_module
 from app.database import MigrationError, apply_migrations
+from app.models import user_profiles
 
 
 @pytest.fixture
@@ -41,15 +42,12 @@ def _patch_migrations_dir(monkeypatch: pytest.MonkeyPatch, directory: Path) -> N
     """Force apply_migrations à utiliser un dossier de migrations donné."""
     real_path = Path
 
-    class _Path(real_path):  # type: ignore[misc]
-        _flavour = real_path("/")._flavour  # type: ignore[attr-defined]
+    def patched_path(*args, **kwargs):
+        if args and args[0] == "/code/migrations":
+            return real_path(directory)
+        return real_path(*args, **kwargs)
 
-        def __new__(cls, *args, **kwargs):
-            if args and args[0] == "/code/migrations":
-                return real_path(directory)
-            return real_path(*args, **kwargs)
-
-    monkeypatch.setattr(db_module, "Path", _Path)
+    monkeypatch.setattr(db_module, "Path", patched_path)
 
 
 @pytest.mark.asyncio
@@ -356,3 +354,30 @@ def test_critical_migrations_001_002_use_if_not_exists():
     assert "ADD COLUMN IF NOT EXISTS approved_by_id" in sql_002
     assert "ADD COLUMN IF NOT EXISTS approved_at" in sql_002
     assert "ADD COLUMN IF NOT EXISTS rejection_reason" in sql_002
+
+
+def test_user_profiles_model_exposes_on_conflict_target():
+    """`create_all()` doit matérialiser l'unicité attendue par la 011."""
+    unique_column_sets = {
+        tuple(column.name for column in constraint.columns)
+        for constraint in user_profiles.constraints
+        if isinstance(constraint, UniqueConstraint)
+    }
+
+    assert ("user_id", "profile_id") in unique_column_sets
+
+
+def test_migration_011_adds_unique_index_before_on_conflict():
+    """La 011 doit être sûre si `user_profiles` existe déjà via `create_all`."""
+    sql = _strip_sql_text(
+        (_REPO_MIGRATIONS_DIR / "011_multi_profiles.sql").read_text()
+    ).upper()
+    unique_index_pos = sql.find(
+        "CREATE UNIQUE INDEX IF NOT EXISTS "
+        "IDX_USER_PROFILES_UNIQUE_USER_PROFILE ON USER_PROFILES(USER_ID, PROFILE_ID)"
+    )
+    on_conflict_pos = sql.find("ON CONFLICT (USER_ID, PROFILE_ID) DO NOTHING")
+
+    assert unique_index_pos != -1
+    assert on_conflict_pos != -1
+    assert unique_index_pos < on_conflict_pos
