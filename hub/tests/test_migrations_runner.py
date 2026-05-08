@@ -264,3 +264,95 @@ async def test_apply_migrations_runs_message_migration_after_reserved_020(
             result.scalar_one()
             == "021_add_message_lifecycle_and_engagement.sql"
         )
+
+
+# ---------------------------------------------------------------------------
+# Non-régression : sur une install fraîche, `init_db()` exécute
+# `Base.metadata.create_all` AVANT `apply_migrations()` (cf. lifespan dans
+# app/main.py). Toutes les colonnes des modèles actuels existent donc déjà
+# quand le runner exécute les migrations historiques. Toute migration qui
+# fait `ALTER TABLE ... ADD COLUMN` (ou `CREATE TABLE/INDEX`) sans garde
+# `IF NOT EXISTS` provoquera un crash de boot (DuplicateColumnError sous
+# PostgreSQL). Ce test garde-fou inspecte les fichiers .sql livrés et refuse
+# toute régression de cette classe de bug.
+# ---------------------------------------------------------------------------
+
+
+_REPO_MIGRATIONS_DIR = Path(__file__).resolve().parent.parent / "migrations"
+
+
+def _iter_real_migration_files() -> list[Path]:
+    return sorted(_REPO_MIGRATIONS_DIR.glob("*.sql"))
+
+
+def _strip_sql_text(sql: str) -> str:
+    """Retire commentaires de ligne et normalise les espaces."""
+    lines = [ln for ln in sql.splitlines() if not ln.strip().startswith("--")]
+    return " ".join(" ".join(lines).split())
+
+
+@pytest.mark.parametrize(
+    "migration_path",
+    _iter_real_migration_files(),
+    ids=lambda p: p.name,
+)
+def test_real_migration_is_idempotent_against_create_all(migration_path: Path):
+    """Chaque migration livrée doit être rejouable après `create_all`.
+
+    Sur une install fraîche, `init_db()` matérialise déjà toutes les colonnes
+    et tables des modèles SQLAlchemy actuels. Les migrations historiques
+    doivent donc utiliser `IF NOT EXISTS` (ou un équivalent comme
+    `DROP CONSTRAINT IF EXISTS` avant `ADD CONSTRAINT`) sous peine de casser
+    le démarrage avec une DuplicateColumnError / DuplicateTable.
+    """
+    sql_normalized = _strip_sql_text(migration_path.read_text()).upper()
+
+    # `ALTER TABLE ... ADD COLUMN` doit être idempotent.
+    import re
+
+    add_column_pattern = re.compile(
+        r"ALTER\s+TABLE\s+\S+\s+ADD\s+COLUMN(?!\s+IF\s+NOT\s+EXISTS\b)",
+        re.IGNORECASE,
+    )
+    matches = add_column_pattern.findall(sql_normalized)
+    assert not matches, (
+        f"{migration_path.name} contient un `ALTER TABLE ... ADD COLUMN` "
+        f"sans `IF NOT EXISTS` ; cela casse le boot fresh install après "
+        f"`Base.metadata.create_all`. Occurrences: {matches}"
+    )
+
+    # `CREATE TABLE` non temporaire doit être idempotent.
+    create_table_pattern = re.compile(
+        r"CREATE\s+TABLE(?!\s+IF\s+NOT\s+EXISTS\b)(?!\s+TEMP)",
+        re.IGNORECASE,
+    )
+    matches = create_table_pattern.findall(sql_normalized)
+    assert not matches, (
+        f"{migration_path.name} contient un `CREATE TABLE` sans "
+        f"`IF NOT EXISTS`. Occurrences: {matches}"
+    )
+
+    # `CREATE INDEX` non unique-anonyme doit être idempotent.
+    create_index_pattern = re.compile(
+        r"CREATE\s+(?:UNIQUE\s+)?INDEX(?!\s+IF\s+NOT\s+EXISTS\b)",
+        re.IGNORECASE,
+    )
+    matches = create_index_pattern.findall(sql_normalized)
+    assert not matches, (
+        f"{migration_path.name} contient un `CREATE INDEX` sans "
+        f"`IF NOT EXISTS`. Occurrences: {matches}"
+    )
+
+
+def test_critical_migrations_001_002_use_if_not_exists():
+    """Garde-fou explicite sur les deux migrations qui ont historiquement
+    cassé le boot fresh install (cf. DuplicateColumnError sur
+    `users.must_change_password` et `applications.approval_status`)."""
+    sql_001 = (_REPO_MIGRATIONS_DIR / "001_add_must_change_password.sql").read_text()
+    sql_002 = (_REPO_MIGRATIONS_DIR / "002_add_app_approval_status.sql").read_text()
+
+    assert "ADD COLUMN IF NOT EXISTS must_change_password" in sql_001
+    assert "ADD COLUMN IF NOT EXISTS approval_status" in sql_002
+    assert "ADD COLUMN IF NOT EXISTS approved_by_id" in sql_002
+    assert "ADD COLUMN IF NOT EXISTS approved_at" in sql_002
+    assert "ADD COLUMN IF NOT EXISTS rejection_reason" in sql_002
