@@ -482,7 +482,7 @@ function renderAppsTable(apps) {
                             <button class="btn btn-sm btn-success me-1" onclick="approveApp('${escapeHtml(app.slug)}')" title="Approuver">
                                 <i class="bi bi-check-lg"></i>
                             </button>
-                            <button class="btn btn-sm btn-outline-danger me-1" onclick="showRejectAppModal('${escapeHtml(app.slug)}', '${escapeHtml(app.name)}')" title="Rejeter">
+                            <button class="btn btn-sm btn-outline-danger me-1" data-app-name="${escapeHtml(app.name)}" onclick="showRejectAppModal('${escapeHtml(app.slug)}', this.dataset.appName)" title="Rejeter">
                                 <i class="bi bi-x-lg"></i>
                             </button>
                         `;
@@ -545,7 +545,7 @@ function renderAppsTable(apps) {
                                 <button class="btn btn-sm btn-outline-primary me-1" onclick="editApp(${app.id})">
                                     <i class="bi bi-pencil"></i>
                                 </button>
-                                <button class="btn btn-sm btn-outline-danger" onclick="deleteApp(${app.id}, '${escapeHtml(app.name)}')">
+                                <button class="btn btn-sm btn-outline-danger" data-app-name="${escapeHtml(app.name)}" onclick="deleteApp(${app.id}, this.dataset.appName)">
                                     <i class="bi bi-trash"></i>
                                 </button>
                             ` : ''}

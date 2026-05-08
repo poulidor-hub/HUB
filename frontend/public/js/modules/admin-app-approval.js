@@ -87,7 +87,7 @@ async function loadPendingApps() {
                                     <button class="btn btn-success" onclick="approveApp('${escapeHtml(app.slug)}')" title="Approuver">
                                         <i class="bi bi-check-lg"></i> Approuver
                                     </button>
-                                    <button class="btn btn-outline-danger" onclick="showRejectAppModal('${escapeHtml(app.slug)}', '${escapeHtml(app.name)}')" title="Rejeter">
+                                    <button class="btn btn-outline-danger" data-app-name="${escapeHtml(app.name)}" onclick="showRejectAppModal('${escapeHtml(app.slug)}', this.dataset.appName)" title="Rejeter">
                                         <i class="bi bi-x-lg"></i>
                                     </button>
                                     <button class="btn btn-outline-secondary" onclick="deletePendingApp('${escapeHtml(app.slug)}')" title="Supprimer">
