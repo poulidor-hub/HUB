@@ -1,54 +1,11 @@
 /**
  * Hub Application - Main JavaScript
+ *
+ * État global partagé déclaré dans `frontend/public/js/modules/app-state.js`
+ * (chargé avant ce fichier). Bus d'événements dans `modules/hub-events.js`.
  */
-
-let currentUser = null;
-let allApps = [];
-let allServiceAccounts = [];
-let adminAppsSearchQuery = '';
-let adminAppsStatusFilter = 'all';
-let adminAppsCategoryFilter = 'all';
-let hubHost = null;  // IP/hostname du Hub (chargé depuis l'API)
-let beaconToken = null;  // Token HMAC éphémère pour sécuriser beacon-logout
-let dashboardFilter = 'all'; // 'all' | 'favorites' | catégorie
-let dashboardApps = []; // apps affichées sur le dashboard (après loadApps)
-
-// Tracking des fenêtres d'applications ouvertes pour fermeture automatique au logout
-const openedAppWindows = new Map();
-
-// Timestamp du dernier acquittement des erreurs (pour le badge de notifications)
-let errorsLastAcknowledgedAt = localStorage.getItem('errorsLastAcknowledgedAt') || null;
-
-// Bootstrap instances
-let appFormModal, userFormModal, serviceAccountFormModal, saCredentialsModal, toast;
-
-// Debounce pour les événements SSE apps_updated (évite les cascades de requêtes)
-let _sseAppsUpdateTimer = null;
-const SSE_DEBOUNCE_DELAY = 800; // ms
-
-// Debounce pour les événements SSE user_permissions_changed (modifications en lot)
-let _ssePermissionsUpdateTimer = null;
-
-// Tracking des tooltips Bootstrap pour éviter les fuites mémoire
-let _activeTooltips = [];
-
-/**
- * Parse une date ISO renvoyée par l'API (stockée en UTC sans suffixe Z).
- * Si la chaîne n'a pas d'indicateur de timezone, on ajoute 'Z' pour que
- * le navigateur l'interprète correctement comme UTC avant conversion en heure locale.
- */
-function parseUTCDate(isoString) {
-    if (!isoString) return null;
-    if (typeof isoString === 'string' && !isoString.endsWith('Z') && !isoString.includes('+') && !/[-]\d{2}:\d{2}$/.test(isoString)) {
-        return new Date(isoString + 'Z');
-    }
-    return new Date(isoString);
-}
 
 // ===== Server-Sent Events (SSE) pour mises à jour temps réel =====
-let eventSource = null;
-let sseWasConnected = false; // Indique si on a déjà été connecté (pour détecter les reconnexions)
-let _sseInitializing = false; // Guard contre les initialisations SSE concurrentes
 
 /**
  * Initialise la connexion SSE pour recevoir les mises à jour en temps réel
@@ -567,43 +524,6 @@ function getPendingCallback() {
     return sessionStorage.getItem('sso_pending_callback');
 }
 
-/**
- * Valide qu'une URL de callback est sûre (même origine ou app connue).
- * Bloque les redirections vers des domaines externes.
- */
-function isValidCallbackUrl(url) {
-    try {
-        const parsed = new URL(url, window.location.origin);
-        // Autoriser les callbacks same-origin
-        if (parsed.origin === window.location.origin) {
-            return true;
-        }
-        // Autoriser les callbacks vers des IP privées (réseau local)
-        const hostname = parsed.hostname;
-        if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1') {
-            return true;
-        }
-        // Réseaux privés (10.x, 172.16-31.x, 192.168.x)
-        const parts = hostname.split('.');
-        if (parts.length === 4 && parts.every(p => !isNaN(p))) {
-            const first = parseInt(parts[0]);
-            const second = parseInt(parts[1]);
-            if (first === 10) return true;
-            if (first === 172 && second >= 16 && second <= 31) return true;
-            if (first === 192 && second === 168) return true;
-        }
-        // Autoriser les hostnames sans point (noms Docker/internes, ex: "mon-app")
-        if (!hostname.includes('.') || hostname.endsWith('.local') || hostname.endsWith('.lan')) {
-            return true;
-        }
-        console.warn('SSO callback bloqué — origine non autorisée:', parsed.origin);
-        return false;
-    } catch (e) {
-        console.warn('SSO callback invalide:', url, e);
-        return false;
-    }
-}
-
 function setPendingCallback(url) {
     if (url && isValidCallbackUrl(url)) {
         sessionStorage.setItem('sso_pending_callback', url);
@@ -912,8 +832,6 @@ function showDashboard() {
 }
 
 // ===== Page Navigation =====
-
-let currentPage = 'dashboard';
 
 function showPage(page) {
     // Fermer le menu mobile si ouvert
@@ -3133,14 +3051,6 @@ function loadUserAppsCheckboxes(selectedIds) {
     loadUserAppsWithRoles(appRoles);
 }
 
-function normalizeUserProfileIds(profileIds) {
-    return [...new Set(
-        (profileIds || [])
-            .map(profileId => parseInt(profileId, 10))
-            .filter(profileId => Number.isInteger(profileId))
-    )].sort((leftId, rightId) => leftId - rightId);
-}
-
 function getSelectedUserProfileIds() {
     return normalizeUserProfileIds(
         Array.from(document.querySelectorAll('.user-profile-cb:checked'))
@@ -3329,23 +3239,6 @@ function showToast(title, message, type = 'info') {
     toast.show();
 }
 
-function escapeHtml(text) {
-    if (!text) return '';
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
-}
-
-function formatAppVersionLabel(version) {
-    if (version === null || version === undefined) return '';
-    const raw = String(version).trim();
-    if (!raw) return '';
-
-    // Uniformise l'affichage pour éviter les doublons de préfixe (ex: "vv1.2.3").
-    const normalized = raw.replace(/^[vV]\s*/, '');
-    return normalized ? `v${normalized}` : '';
-}
-
 // ===== Approbation des Applications =====
 
 let pendingApps = [];
@@ -3519,21 +3412,6 @@ async function deletePendingApp(slug) {
         console.error('Erreur suppression:', error);
         showToast('Erreur', `Impossible de supprimer: ${error.message}`, 'danger');
     }
-}
-
-/**
- * Formate une date ISO en format lisible
- */
-function formatDate(isoDate) {
-    if (!isoDate) return '-';
-    const date = parseUTCDate(isoDate);
-    return date.toLocaleDateString('fr-FR', { 
-        day: '2-digit', 
-        month: '2-digit', 
-        year: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit'
-    });
 }
 
 // ===== Service Accounts CRUD =====
@@ -5916,13 +5794,6 @@ function loadProfileAppsCheckboxes(existingRoles) {
     filterProfileApps();
 }
 
-function normalizeProfileAppSearchText(value) {
-    return String(value || '')
-        .normalize('NFD')
-        .replace(/[\u0300-\u036f]/g, '')
-        .toLowerCase();
-}
-
 function filterProfileApps() {
     const search = normalizeProfileAppSearchText(document.getElementById('profileAppsSearchInput')?.value).trim();
     document.querySelectorAll('#profileAppsCheckboxes .app-role-row').forEach(row => {
@@ -7913,20 +7784,6 @@ let selectedRestoreBackup = null;
 const runningBackups = new Map();
 let _runningBackupsTimer = null;
 
-/**
- * Formate une durée en secondes en chaîne courte (ex: "1m 23s", "45s", "2h 5m").
- */
-function formatBackupDuration(seconds) {
-    if (seconds === null || seconds === undefined || isNaN(seconds)) return '-';
-    const total = Math.max(0, Math.floor(Number(seconds)));
-    if (total < 60) return `${total}s`;
-    const h = Math.floor(total / 3600);
-    const m = Math.floor((total % 3600) / 60);
-    const s = total % 60;
-    if (h > 0) return s > 0 ? `${h}h ${m}m ${s}s` : `${h}h ${m}m`;
-    return s > 0 ? `${m}m ${s}s` : `${m}m`;
-}
-
 const BACKUP_STEP_LABELS = {
     queued: 'En attente…',
     create: 'Création sur l\'app…',
@@ -8596,17 +8453,6 @@ function previewImportRestoreFile() {
     document.getElementById('importRestoreFilesize').textContent = formatFileSize(file.size);
     document.getElementById('importRestorePreview').classList.remove('d-none');
     updateImportVaultwardenConfirmation();
-}
-
-/**
- * Formate une taille de fichier
- */
-function formatFileSize(bytes) {
-    if (bytes === 0) return '0 B';
-    const k = 1024;
-    const sizes = ['B', 'KB', 'MB', 'GB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
 }
 
 /**
@@ -9710,31 +9556,6 @@ function resetCsvImport() {
     if (analyzeBtn) analyzeBtn.disabled = true;
     
     document.getElementById('bulkResultSection')?.classList.add('d-none');
-}
-
-/**
- * Parse un CSV côté client pour extraire les mots de passe
- */
-function parseCsvLocally(text) {
-    const lines = text.split(/\r?\n/);
-    if (lines.length < 2) return [];
-    
-    // Détecter le séparateur
-    const sep = lines[0].includes(';') ? ';' : ',';
-    
-    const results = [];
-    for (let i = 1; i < lines.length; i++) {
-        const line = lines[i].trim();
-        if (!line || line.startsWith('#')) continue;
-        
-        const parts = line.split(sep);
-        results.push({
-            username: (parts[0] || '').trim(),
-            password: (parts[1] || '').trim(),
-            profile: (parts[2] || '').trim()
-        });
-    }
-    return results;
 }
 
 /**
