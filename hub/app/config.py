@@ -197,7 +197,15 @@ class Settings(BaseSettings):
     # Par défaut : réseaux Docker (172.17-31.*)
     # Format : préfixes IP séparés par des virgules (ex: "172.17.,172.18.,192.168.50.")
     app_whitelist_networks: str = ""
-    
+
+    # === Pool d'allocation dynamique des ports d'applications ===
+    # Plages utilisées par POST /api/apps/allocate-ports.
+    # Le frontend est alloué par pas de 2 (frontend_port + 1 réservé pour le HTTPS).
+    app_port_api_start: int = 9000
+    app_port_api_end: int = 9499
+    app_port_frontend_start: int = 4200
+    app_port_frontend_end: int = 4699
+
     # Host du Hub (IP ou hostname accessible par les clients)
     # Si non défini, sera détecté automatiquement
     hub_host: str = ""
