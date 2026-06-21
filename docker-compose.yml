@@ -50,6 +50,7 @@ services:
       - ERROR_RETENTION_DAYS=${ERROR_RETENTION_DAYS:-30}
       - LOG_PURGE_INTERVAL_HOURS=${LOG_PURGE_INTERVAL_HOURS:-24}
       - DOCKER_SYNC_INTERVAL=${DOCKER_SYNC_INTERVAL:-300}
+      - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-}
       # Clé de chiffrement des secrets des service accounts
       # Générer avec: python -c "import secrets; print(secrets.token_hex(32))"
       - SECRETS_ENCRYPTION_KEY=${SECRETS_ENCRYPTION_KEY:?Définir SECRETS_ENCRYPTION_KEY dans .env (python -c "import secrets; print(secrets.token_hex(32))")}
