@@ -846,6 +846,41 @@ class AppRegisterResponse(BaseModel):
     pending_approval: bool = False  # True si l'app est en attente d'approbation admin
 
 
+# ===== Allocation dynamique des ports =====
+class AllocatePortsRequest(BaseModel):
+    """Requête d'allocation de ports (pré-vol, avant docker compose up)."""
+    slug: str = Field(..., min_length=2, max_length=50, pattern=r'^[a-z0-9-]+$', description="Slug unique de l'application")
+    host: Optional[str] = Field(None, description="Host/IP de l'app (collision scopée par host). Si absent, le host du Hub est utilisé.")
+
+
+class AllocatePortsResponse(BaseModel):
+    """Réponse contenant les ports attribués."""
+    api_port: int
+    frontend_port: int
+    frontend_https_port: int
+    host: str
+    reused: bool = Field(False, description="True si une allocation existante a été renvoyée (idempotence)")
+
+
+class PortAllocationItem(BaseModel):
+    app_slug: str
+    host: str
+    api_port: int
+    frontend_port: int
+    frontend_https_port: int
+
+
+class PortsStatusResponse(BaseModel):
+    """État du pool de ports (admin)."""
+    api_range: list[int]
+    frontend_range: list[int]
+    used_api_ports: list[int]
+    used_frontend_ports: list[int]
+    free_api_count: int
+    free_frontend_count: int
+    allocations: list[PortAllocationItem]
+
+
 class AppOpenApiPush(BaseModel):
     """Requête pour pousser la spécification OpenAPI d'une application"""
     openapi_spec: Dict[str, Any] = Field(..., description="Spécification OpenAPI complète (JSON)")
