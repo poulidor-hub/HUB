@@ -101,3 +101,28 @@ async def test_allocate_ports_distinct_apps_get_distinct_ports(client: AsyncClie
         p1, p2 = r1.json(), r2.json()
         assert p1["api_port"] != p2["api_port"]
         assert p1["frontend_port"] != p2["frontend_port"]
+
+
+from app.auth import create_access_token
+from tests.conftest import get_auth_header
+
+
+@pytest.mark.asyncio
+async def test_ports_status_requires_admin(client: AsyncClient):
+    response = await client.get("/api/apps/admin/ports/status")
+    assert response.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_ports_status_returns_pool_state(client: AsyncClient, admin_user):
+    with patch('app.routes.apps.is_docker_network_ip', return_value=True):
+        await client.post("/api/apps/allocate-ports", json={"slug": "demo-app", "host": "192.0.2.12"})
+
+    token, _, _ = create_access_token(username=admin_user.username, apps={})
+    response = await client.get("/api/apps/admin/ports/status", headers=get_auth_header(token))
+    assert response.status_code == 200
+    body = response.json()
+    assert body["api_range"] == [9000, 9499]
+    assert body["frontend_range"] == [4200, 4699]
+    assert 9000 in body["used_api_ports"]
+    assert any(a["app_slug"] == "demo-app" for a in body["allocations"])

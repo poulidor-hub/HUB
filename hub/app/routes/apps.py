@@ -960,6 +960,43 @@ async def allocate_ports(
     )
 
 
+@router.get("/admin/ports/status", response_model=PortsStatusResponse)
+async def ports_status(
+    db: AsyncSession = Depends(get_db),
+    current_admin: User = Depends(get_current_admin),
+):
+    """État du pool de ports d'applications (admin)."""
+    from app.models import PortAllocation as _PA
+
+    allocs = (await db.execute(select(_PA))).scalars().all()
+    used_api = sorted({a.api_port for a in allocs})
+    used_frontend = sorted(
+        {a.frontend_port for a in allocs} | {a.frontend_https_port for a in allocs}
+    )
+
+    api_total = settings.app_port_api_end - settings.app_port_api_start + 1
+    frontend_slots = len(range(settings.app_port_frontend_start, settings.app_port_frontend_end, 2))
+
+    return PortsStatusResponse(
+        api_range=[settings.app_port_api_start, settings.app_port_api_end],
+        frontend_range=[settings.app_port_frontend_start, settings.app_port_frontend_end],
+        used_api_ports=used_api,
+        used_frontend_ports=used_frontend,
+        free_api_count=api_total - len(used_api),
+        free_frontend_count=frontend_slots - len([a for a in allocs]),
+        allocations=[
+            PortAllocationItem(
+                app_slug=a.app_slug,
+                host=a.host,
+                api_port=a.api_port,
+                frontend_port=a.frontend_port,
+                frontend_https_port=a.frontend_https_port,
+            )
+            for a in allocs
+        ],
+    )
+
+
 @router.post("/register", response_model=AppRegisterResponse)
 async def register_app(
     app_data: AppRegisterRequest,
