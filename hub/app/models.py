@@ -653,3 +653,24 @@ class AccountRequest(Base):
     
     def __repr__(self):
         return f"<AccountRequest {self.username} [{self.status}]>"
+
+
+class PortAllocation(Base):
+    """Allocation de ports attribuée par le Hub à une application (pré-vol).
+
+    Clé d'idempotence : (app_slug, host). La détection de collision est scopée
+    par host car deux apps sur des machines différentes peuvent réutiliser le
+    même port.
+    """
+    __tablename__ = "port_allocations"
+    __table_args__ = (
+        UniqueConstraint('app_slug', 'host', name='uq_port_allocations_slug_host'),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    app_slug = Column(String(50), index=True, nullable=False)
+    host = Column(String(255), nullable=False, default="")
+    api_port = Column(Integer, nullable=False)
+    frontend_port = Column(Integer, nullable=False)
+    frontend_https_port = Column(Integer, nullable=False)
+    allocated_at = Column(DateTime, default=utcnow)
