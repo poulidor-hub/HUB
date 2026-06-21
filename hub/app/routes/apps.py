@@ -26,11 +26,14 @@ from app.schemas import (
     AppApprovalRequest, AppApprovalResponse, PendingAppsResponse,
     BatchImportRequest, BatchImportResponse, BatchAppResult,
     AppOpenApiPush, AppOpenApiResponse,
+    AllocatePortsRequest, AllocatePortsResponse,
+    PortsStatusResponse, PortAllocationItem,
 )
 from app.auth import get_current_admin, get_current_user, get_password_hash, get_settings, verify_token_not_revoked, oauth2_scheme
 from app.routes.service_accounts import save_service_account_credentials, delete_service_account_credentials
 from app.routes.audit import log_action
 from app.docker_scanner import docker_scanner
+from app.port_allocator import allocate_ports_for_app, PortPoolExhausted
 
 router = APIRouter(prefix="/api/apps", tags=["Applications"])
 settings = get_settings()
@@ -921,6 +924,41 @@ async def create_app(
 
 
 # ===== Auto-Registration Endpoints =====
+
+@router.post("/allocate-ports", response_model=AllocatePortsResponse)
+async def allocate_ports(
+    request: Request,
+    payload: AllocatePortsRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Attribue dynamiquement les ports d'une application (pré-vol).
+
+    ⚠️ Accessible UNIQUEMENT depuis les réseaux Docker / whitelist (IP).
+    Idempotent : un même (slug, host) reçoit toujours les mêmes ports.
+    """
+    client_ip = request.client.host if request.client else None
+    if not is_docker_network_ip(client_ip):
+        logger.warning(f"🚫 allocate-ports refusé depuis IP non autorisée: {client_ip}")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Allocation autorisée uniquement depuis le réseau Docker (IP: {client_ip})",
+        )
+
+    host = payload.host or settings.get_hub_host()
+    try:
+        alloc, reused = await allocate_ports_for_app(db, payload.slug, host, settings)
+    except PortPoolExhausted as e:
+        logger.error(f"❌ Pool de ports saturé pour '{payload.slug}': {e}")
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
+
+    return AllocatePortsResponse(
+        api_port=alloc.api_port,
+        frontend_port=alloc.frontend_port,
+        frontend_https_port=alloc.frontend_https_port,
+        host=host,
+        reused=reused,
+    )
+
 
 @router.post("/register", response_model=AppRegisterResponse)
 async def register_app(
