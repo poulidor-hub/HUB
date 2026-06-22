@@ -14,6 +14,7 @@ let approveRequestModal = null;
 let rejectRequestModal = null;
 let accountRequestModal = null;
 let accountRequestNotificationAdminsModal = null;
+let _approveRequestContext = { firstName: '', lastName: '' };
 
 /**
  * Ouvre la modale de demande de compte depuis la page de login.
@@ -89,6 +90,7 @@ function showAccountRequestWaiting() {
     document.getElementById('accountRequestWaiting').classList.remove('d-none');
     document.getElementById('accountRequestWaitingPending').classList.remove('d-none');
     document.getElementById('accountRequestWaitingRejected').classList.add('d-none');
+    document.getElementById('accountRequestWaitingApproved').classList.add('d-none');
 }
 
 /**
@@ -109,32 +111,11 @@ function startAccountRequestPolling(requestId, pollingToken) {
                 stopAccountRequestPolling();
                 sessionStorage.removeItem('accountRequest');
 
-                // Auto-login via jeton à usage unique
-                if (data.auto_login_token) {
-                    try {
-                        const loginResp = await fetch(`${API_BASE}/account-requests/auto-login`, {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ auto_login_token: data.auto_login_token })
-                        });
-                        if (loginResp.ok) {
-                            const loginData = await loginResp.json();
-                            api.setToken(loginData.access_token);
-                            if (loginData.refresh_token) api.setRefreshToken(loginData.refresh_token);
-                            await loadCurrentUser();
-                            showToast('Compte validé', 'Bienvenue !', 'success');
-                        } else {
-                            backToLoginFromRequest();
-                            showToast('Compte créé', 'Votre compte a été validé. Connectez-vous.', 'success');
-                        }
-                    } catch (e) {
-                        backToLoginFromRequest();
-                        showToast('Compte créé', 'Votre compte a été validé. Connectez-vous.', 'success');
-                    }
-                } else {
-                    backToLoginFromRequest();
-                    showToast('Compte créé', 'Votre compte a été validé. Connectez-vous.', 'success');
-                }
+                // Plus d'auto-login : l'administrateur prévient l'utilisateur par
+                // email avec l'identifiant à utiliser. On affiche une confirmation.
+                document.getElementById('accountRequestWaitingPending').classList.add('d-none');
+                document.getElementById('accountRequestWaitingRejected').classList.add('d-none');
+                document.getElementById('accountRequestWaitingApproved').classList.remove('d-none');
             } else if (data.status === 'rejected') {
                 stopAccountRequestPolling();
                 sessionStorage.removeItem('accountRequest');
@@ -410,6 +391,9 @@ async function showApproveRequestModal(requestId, firstName, lastName, username)
     document.getElementById('approveRequestId').value = requestId;
     document.getElementById('approveRequestName').textContent = `${firstName} ${lastName}`;
     document.getElementById('approveRequestUsername').textContent = username;
+    document.getElementById('approveRequestUsernameInput').value = username;
+    document.getElementById('approveRequestEmail').value = '';
+    _approveRequestContext = { firstName, lastName };
 
     // Charger les profils disponibles
     const profilesContainer = document.getElementById('approveRequestProfiles');
@@ -444,15 +428,54 @@ async function handleApproveRequest(event) {
     event.preventDefault();
     const requestId = document.getElementById('approveRequestId').value;
     const profileIds = Array.from(document.querySelectorAll('.approve-profile-cb:checked')).map(cb => parseInt(cb.value));
+    const username = document.getElementById('approveRequestUsernameInput').value.trim().toLowerCase();
+    const email = document.getElementById('approveRequestEmail').value.trim();
+
+    if (!username || username.length < 3) {
+        showToast('Erreur', "L'identifiant doit contenir au moins 3 caractères", 'warning');
+        return;
+    }
 
     try {
-        await api.approveAccountRequest(requestId, { profile_ids: profileIds });
+        const result = await api.approveAccountRequest(requestId, { profile_ids: profileIds, username });
         approveRequestModal.hide();
-        showToast('Demande approuvée', 'Le compte a été créé avec succès', 'success');
+
+        const finalUsername = (result && result.username) || username;
+        openAccountReadyMailto(email, _approveRequestContext.firstName, finalUsername);
+
+        showToast('Demande approuvée', "Compte créé. L'email d'information est prêt à être envoyé.", 'success');
         loadAccountRequestsTab();
     } catch (err) {
         showToast('Erreur', err.message || "Impossible d'approuver la demande", 'danger');
     }
+}
+
+/**
+ * Ouvre le client mail de l'admin avec un message pré-rempli indiquant à
+ * l'utilisateur que son compte est prêt et l'identifiant à utiliser.
+ */
+function openAccountReadyMailto(email, firstName, username) {
+    const origin = window.location.origin;
+    const greeting = firstName ? `Bonjour ${firstName},` : 'Bonjour,';
+    const subject = 'Votre compte HUB est prêt';
+    const body =
+        `${greeting}\n\n` +
+        `Votre demande de compte a été acceptée et votre compte est désormais prêt à être utilisé.\n\n` +
+        `Identifiant de connexion : ${username}\n` +
+        `Mot de passe : celui que vous avez choisi lors de votre demande.\n\n` +
+        `Vous pouvez vous connecter dès maintenant : ${origin}\n\n` +
+        `Cordialement,\nL'équipe d'administration`;
+
+    const mailto = `mailto:${email || ''}` +
+        `?subject=${encodeURIComponent(subject)}` +
+        `&body=${encodeURIComponent(body)}`;
+
+    const a = document.createElement('a');
+    a.href = mailto;
+    a.style.display = 'none';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
 }
 
 /**

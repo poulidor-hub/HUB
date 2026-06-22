@@ -396,6 +396,79 @@ class TestApproveRequest:
         assert r.status_code == 400
         assert "existe déjà" in r.json()["detail"]
 
+    async def test_approve_with_corrected_username(
+        self,
+        client: AsyncClient,
+        admin_user: User,
+        admin_token: str,
+        async_session: AsyncSession,
+    ):
+        """L'admin peut corriger l'identifiant ; le mot de passe est conservé."""
+        resp = await submit_request(client, username="mauvais.id", password="userpass123")
+        rid = resp.json()["request_id"]
+
+        # Récupérer le hash de la demande (mot de passe choisi par l'utilisateur)
+        result = await async_session.execute(
+            select(AccountRequest).where(AccountRequest.id == rid)
+        )
+        original_hash = result.scalar_one().hashed_password
+
+        approve = await client.post(
+            f"/api/account-requests/{rid}/approve",
+            json={"username": "Bon.ID"},
+            headers=get_auth_header(admin_token),
+        )
+        assert approve.status_code == 200
+        assert approve.json()["username"] == "bon.id"
+
+        # Le User est créé avec l'identifiant corrigé et le mot de passe d'origine
+        result = await async_session.execute(
+            select(User).where(User.username == "bon.id")
+        )
+        user = result.scalar_one()
+        assert user.hashed_password == original_hash
+
+        # L'ancien identifiant ne doit pas exister
+        result = await async_session.execute(
+            select(User).where(User.username == "mauvais.id")
+        )
+        assert result.scalar_one_or_none() is None
+
+        # La demande reflète l'identifiant réellement créé
+        result = await async_session.execute(
+            select(AccountRequest).where(AccountRequest.id == rid)
+        )
+        req = result.scalar_one()
+        assert req.username == "bon.id"
+        assert req.status == "approved"
+
+    async def test_approve_corrected_username_already_taken(
+        self,
+        client: AsyncClient,
+        admin_user: User,
+        admin_token: str,
+        async_session: AsyncSession,
+    ):
+        """Une correction vers un identifiant déjà utilisé est refusée."""
+        existing = User(
+            username="deja.pris",
+            hashed_password=get_password_hash("password123"),
+            is_active=True,
+        )
+        async_session.add(existing)
+        await async_session.commit()
+
+        resp = await submit_request(client, username="demande.libre")
+        rid = resp.json()["request_id"]
+
+        r = await client.post(
+            f"/api/account-requests/{rid}/approve",
+            json={"username": "deja.pris"},
+            headers=get_auth_header(admin_token),
+        )
+        assert r.status_code == 400
+        assert "existe déjà" in r.json()["detail"]
+
 
 # =============================================================================
 # Rejet par admin

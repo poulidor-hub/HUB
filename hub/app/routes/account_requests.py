@@ -409,9 +409,13 @@ async def approve_account_request(
     if request.status != "pending":
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cette demande a déjà été traitée")
 
+    # L'admin peut corriger l'identifiant tout en conservant le mot de passe
+    # choisi par l'utilisateur (hash de la demande, jamais réinitialisé).
+    final_username = payload.username or request.username
+
     # Vérifier que le username n'a pas été pris entre-temps
     existing_user = await db.execute(
-        select(User).where(User.username == request.username)
+        select(User).where(User.username == final_username)
     )
     if existing_user.scalar_one_or_none():
         raise HTTPException(
@@ -419,9 +423,25 @@ async def approve_account_request(
             detail="Un utilisateur avec cet identifiant existe déjà"
         )
 
+    # Si l'identifiant a été corrigé, vérifier qu'aucune autre demande en
+    # attente ne l'utilise déjà.
+    if final_username != request.username:
+        other_pending = await db.execute(
+            select(AccountRequest).where(
+                AccountRequest.username == final_username,
+                AccountRequest.status == "pending",
+                AccountRequest.id != request_id,
+            )
+        )
+        if other_pending.scalar_one_or_none():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Une autre demande en attente utilise déjà cet identifiant"
+            )
+
     # Créer le User avec le mot de passe hashé de la demande
     user = User(
-        username=request.username,
+        username=final_username,
         hashed_password=request.hashed_password,
         is_admin=False,
         must_change_password=False,
@@ -439,7 +459,8 @@ async def approve_account_request(
             )
         await _sync_user_profile_roles(db, user.id)
 
-    # Mettre à jour la demande
+    # Mettre à jour la demande (refléter l'identifiant réellement créé)
+    request.username = final_username
     request.status = "approved"
     request.reviewed_by_id = current_admin.id
     request.reviewed_at = utcnow()

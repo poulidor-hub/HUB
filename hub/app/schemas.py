@@ -1719,6 +1719,15 @@ class AccountRequestReview(BaseModel):
     """Validation ou rejet d'une demande par un admin"""
     rejection_reason: Optional[str] = Field(None, max_length=500)
     profile_ids: Optional[List[int]] = None
+    username: Optional[str] = Field(None, min_length=3, max_length=50)
+
+    @field_validator('username')
+    @classmethod
+    def normalize_username(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        v = v.strip().lower()
+        return v or None
 
 
 class AccountRequestNotificationAdmin(BaseModel):

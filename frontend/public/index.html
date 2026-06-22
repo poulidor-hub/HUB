@@ -131,13 +131,22 @@
         <div class="card shadow-lg login-card">
             <div class="card-body p-5 text-center">
                 <div id="accountRequestWaitingPending">
-                    <div class="spinner-border text-primary mb-3" role="status" style="width: 3rem; height: 3rem;">
-                        <span class="visually-hidden">Chargement...</span>
-                    </div>
-                    <h4 class="mb-3">Demande en cours de traitement</h4>
-                    <p class="text-muted">Votre demande de compte a été envoyée aux administrateurs.<br>
-                    Veuillez patienter quelques minutes, vous serez connecté automatiquement une fois votre compte validé.</p>
-                    <small class="text-muted"><i class="bi bi-clock me-1"></i>Vérification automatique en cours...</small>
+                    <i class="bi bi-envelope-check display-1 text-primary mb-3"></i>
+                    <h4 class="mb-3">Demande envoyée</h4>
+                    <p class="text-muted">Votre demande de compte a bien été transmise aux administrateurs.<br>
+                    Un administrateur la traitera prochainement et <strong>vous préviendra par email</strong> dès que votre compte sera créé et prêt à être utilisé.</p>
+                    <p class="text-muted small">L'email contiendra l'identifiant de connexion à utiliser. Le mot de passe restera celui que vous avez choisi lors de votre demande.</p>
+                    <button class="btn btn-primary mt-2" onclick="backToLoginFromRequest()">
+                        <i class="bi bi-arrow-left me-1"></i>Retour à la connexion
+                    </button>
+                </div>
+                <div id="accountRequestWaitingApproved" class="d-none">
+                    <i class="bi bi-check-circle display-1 text-success"></i>
+                    <h4 class="mt-3 mb-3">Compte créé</h4>
+                    <div class="alert alert-success">Votre compte a été créé. Un email vous a été envoyé avec l'identifiant de connexion à utiliser.</div>
+                    <button class="btn btn-primary" onclick="backToLoginFromRequest()">
+                        <i class="bi bi-arrow-left me-1"></i>Aller à la connexion
+                    </button>
                 </div>
                 <div id="accountRequestWaitingRejected" class="d-none">
                     <i class="bi bi-x-circle display-1 text-danger"></i>
@@ -2053,8 +2062,22 @@
                         <div class="card bg-light mb-3">
                             <div class="card-body py-2">
                                 <strong id="approveRequestName"></strong><br>
-                                <small class="text-muted">Identifiant : <code id="approveRequestUsername"></code></small>
+                                <small class="text-muted">Identifiant demandé : <code id="approveRequestUsername"></code></small>
                             </div>
+                        </div>
+                        <div class="alert alert-info py-2 small">
+                            <i class="bi bi-info-circle me-1"></i>
+                            Vous pouvez corriger l'identifiant ci-dessous. Le mot de passe choisi par l'utilisateur est conservé.
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label" for="approveRequestUsernameInput">Identifiant du compte *</label>
+                            <input type="text" class="form-control" id="approveRequestUsernameInput" required minlength="3" maxlength="50" autocomplete="off">
+                            <div class="form-text">Identifiant qui sera créé puis communiqué à l'utilisateur par email.</div>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label" for="approveRequestEmail">Email de l'utilisateur <small class="text-muted">(pour la notification)</small></label>
+                            <input type="email" class="form-control" id="approveRequestEmail" placeholder="prenom.nom@exemple.com" autocomplete="off">
+                            <div class="form-text">Pré-remplit l'email indiquant que le compte est prêt à être utilisé.</div>
                         </div>
                         <div class="mb-3">
                             <label class="form-label">Profils à assigner <small class="text-muted">(optionnel)</small></label>
@@ -2066,7 +2089,7 @@
                     <div class="modal-footer">
                         <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuler</button>
                         <button type="submit" class="btn btn-success">
-                            <i class="bi bi-check-circle me-1"></i>Approuver
+                            <i class="bi bi-envelope-check me-1"></i>Approuver et préparer l'email
                         </button>
                     </div>
                 </form>
