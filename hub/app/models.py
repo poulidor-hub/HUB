@@ -639,6 +639,7 @@ class AccountRequest(Base):
     first_name = Column(String(100), nullable=False)
     last_name = Column(String(100), nullable=False)
     username = Column(String(50), nullable=False, index=True)
+    email = Column(String(100), nullable=True)
     hashed_password = Column(String(255), nullable=False)
     status = Column(String(20), nullable=False, default="pending", index=True)  # pending, approved, rejected
     rejection_reason = Column(String(500), nullable=True)

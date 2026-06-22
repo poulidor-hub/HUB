@@ -14,6 +14,7 @@ let approveRequestModal = null;
 let rejectRequestModal = null;
 let accountRequestModal = null;
 let accountRequestNotificationAdminsModal = null;
+let accountRequestFormConfigModal = null;
 let _approveRequestContext = { firstName: '', lastName: '' };
 
 /**
@@ -25,7 +26,53 @@ function showAccountRequestModal() {
     }
     document.getElementById('accountRequestForm').reset();
     document.getElementById('accountRequestError').classList.add('d-none');
-    accountRequestModal.show();
+    applyAccountRequestFormConfig().finally(() => accountRequestModal.show());
+}
+
+/**
+ * Récupère la configuration du formulaire (message + champs visibles) et
+ * l'applique à la modale de demande de compte.
+ */
+async function applyAccountRequestFormConfig() {
+    let config = { important_message: '', show_first_name: true, show_last_name: true, show_email: false };
+    try {
+        config = await api.getAccountRequestFormConfig();
+    } catch (e) {
+        console.warn('Configuration du formulaire indisponible, valeurs par défaut:', e);
+    }
+
+    const box = document.getElementById('accountRequestImportantBox');
+    const msgSpan = document.getElementById('accountRequestImportantMessage');
+    const message = (config.important_message || '').trim();
+    if (message) {
+        msgSpan.textContent = message;
+        box.classList.remove('d-none');
+    } else {
+        msgSpan.textContent = '';
+        box.classList.add('d-none');
+    }
+
+    toggleRequestField('accountRequestLastNameGroup', 'accountRequestLastName', config.show_last_name !== false, true);
+    toggleRequestField('accountRequestFirstNameGroup', 'accountRequestFirstName', config.show_first_name !== false, true);
+    toggleRequestField('accountRequestEmailGroup', 'accountRequestEmail', config.show_email === true, false);
+}
+
+/**
+ * Affiche/masque un champ du formulaire et ajuste l'attribut required.
+ * Un champ masqué requis bloquerait la soumission : on retire donc required.
+ */
+function toggleRequestField(groupId, inputId, visible, requiredWhenVisible) {
+    const group = document.getElementById(groupId);
+    const input = document.getElementById(inputId);
+    if (!group || !input) return;
+    if (visible) {
+        group.classList.remove('d-none');
+        input.required = !!requiredWhenVisible;
+    } else {
+        group.classList.add('d-none');
+        input.required = false;
+        input.value = '';
+    }
 }
 
 /**
@@ -38,6 +85,7 @@ async function handleAccountRequest(event) {
 
     const firstName = document.getElementById('accountRequestFirstName').value.trim();
     const lastName = document.getElementById('accountRequestLastName').value.trim();
+    const email = document.getElementById('accountRequestEmail').value.trim();
     const username = document.getElementById('accountRequestUsername').value.trim();
     const password = document.getElementById('accountRequestPassword').value;
     const confirmPassword = document.getElementById('accountRequestPasswordConfirm').value;
@@ -53,11 +101,18 @@ async function handleAccountRequest(event) {
         return;
     }
 
+    // N'envoyer que les champs renseignés (les champs masqués/optionnels
+    // peuvent être renseignés par l'admin lors de l'approbation).
+    const payload = { username, password };
+    if (firstName) payload.first_name = firstName;
+    if (lastName) payload.last_name = lastName;
+    if (email) payload.email = email;
+
     try {
         const response = await fetch(`${API_BASE}/account-requests/`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ first_name: firstName, last_name: lastName, username, password })
+            body: JSON.stringify(payload)
         });
         const data = await response.json();
 
@@ -254,6 +309,7 @@ async function loadAccountRequestsTab() {
             const safeFN = escapeHtml(req.first_name).replace(/'/g, "\\'");
             const safeLN = escapeHtml(req.last_name).replace(/'/g, "\\'");
             const safeUN = escapeHtml(req.username).replace(/'/g, "\\'");
+            const safeEmail = escapeHtml(req.email || '').replace(/'/g, "\\'");
 
             html += `<tr>
                 <td>${escapeHtml(req.last_name)}</td>
@@ -265,7 +321,7 @@ async function loadAccountRequestsTab() {
 
             if (req.status === 'pending') {
                 html += `
-                    <button class="btn btn-success btn-sm me-1" onclick="showApproveRequestModal(${req.id}, '${safeFN}', '${safeLN}', '${safeUN}')" title="Approuver">
+                    <button class="btn btn-success btn-sm me-1" onclick="showApproveRequestModal(${req.id}, '${safeFN}', '${safeLN}', '${safeUN}', '${safeEmail}')" title="Approuver">
                         <i class="bi bi-check-lg"></i>
                     </button>
                     <button class="btn btn-danger btn-sm" onclick="showRejectRequestModal(${req.id}, '${safeFN}', '${safeLN}')" title="Refuser">
@@ -382,18 +438,79 @@ async function handleSaveAccountRequestNotificationAdmins(event) {
 }
 
 /**
+ * Ouvre la modale de configuration du formulaire de demande de compte.
+ */
+async function showAccountRequestFormConfigModal() {
+    if (!accountRequestFormConfigModal) {
+        accountRequestFormConfigModal = new bootstrap.Modal(document.getElementById('accountRequestFormConfigModal'));
+    }
+
+    const error = document.getElementById('accountRequestFormConfigError');
+    const saveBtn = document.getElementById('saveAccountRequestFormConfigBtn');
+    error.classList.add('d-none');
+    error.textContent = '';
+    saveBtn.disabled = true;
+    accountRequestFormConfigModal.show();
+
+    try {
+        const config = await api.getAccountRequestFormConfig();
+        document.getElementById('accountRequestFormConfigMessage').value = config.important_message || '';
+        document.getElementById('accountRequestFormConfigShowLastName').checked = config.show_last_name !== false;
+        document.getElementById('accountRequestFormConfigShowFirstName').checked = config.show_first_name !== false;
+        document.getElementById('accountRequestFormConfigShowEmail').checked = config.show_email === true;
+        saveBtn.disabled = false;
+    } catch (err) {
+        error.textContent = err.message || 'Impossible de charger la configuration';
+        error.classList.remove('d-none');
+    }
+}
+
+/**
+ * Enregistre la configuration du formulaire de demande de compte.
+ */
+async function handleSaveAccountRequestFormConfig(event) {
+    event.preventDefault();
+    const saveBtn = document.getElementById('saveAccountRequestFormConfigBtn');
+    const error = document.getElementById('accountRequestFormConfigError');
+    error.classList.add('d-none');
+    error.textContent = '';
+    saveBtn.disabled = true;
+
+    const config = {
+        important_message: document.getElementById('accountRequestFormConfigMessage').value.trim(),
+        show_last_name: document.getElementById('accountRequestFormConfigShowLastName').checked,
+        show_first_name: document.getElementById('accountRequestFormConfigShowFirstName').checked,
+        show_email: document.getElementById('accountRequestFormConfigShowEmail').checked,
+    };
+
+    try {
+        await api.updateAccountRequestFormConfig(config);
+        accountRequestFormConfigModal.hide();
+        showToast('Formulaire', 'Configuration enregistrée', 'success');
+    } catch (err) {
+        error.textContent = err.message || "Impossible d'enregistrer la configuration";
+        error.classList.remove('d-none');
+    } finally {
+        saveBtn.disabled = false;
+    }
+}
+
+/**
  * Ouvre la modale d'approbation avec la liste des profils.
  */
-async function showApproveRequestModal(requestId, firstName, lastName, username) {
+async function showApproveRequestModal(requestId, firstName, lastName, username, email) {
     if (!approveRequestModal) {
         approveRequestModal = new bootstrap.Modal(document.getElementById('approveRequestModal'));
     }
     document.getElementById('approveRequestId').value = requestId;
-    document.getElementById('approveRequestName').textContent = `${firstName} ${lastName}`;
+    const displayName = `${firstName || ''} ${lastName || ''}`.trim();
+    document.getElementById('approveRequestName').textContent = displayName || '(nom non renseigné)';
     document.getElementById('approveRequestUsername').textContent = username;
     document.getElementById('approveRequestUsernameInput').value = username;
-    document.getElementById('approveRequestEmail').value = '';
-    _approveRequestContext = { firstName, lastName };
+    document.getElementById('approveRequestLastNameInput').value = lastName || '';
+    document.getElementById('approveRequestFirstNameInput').value = firstName || '';
+    document.getElementById('approveRequestEmail').value = email || '';
+    _approveRequestContext = { firstName: firstName || '', lastName: lastName || '' };
 
     // Charger les profils disponibles
     const profilesContainer = document.getElementById('approveRequestProfiles');
@@ -429,6 +546,8 @@ async function handleApproveRequest(event) {
     const requestId = document.getElementById('approveRequestId').value;
     const profileIds = Array.from(document.querySelectorAll('.approve-profile-cb:checked')).map(cb => parseInt(cb.value));
     const username = document.getElementById('approveRequestUsernameInput').value.trim().toLowerCase();
+    const firstName = document.getElementById('approveRequestFirstNameInput').value.trim();
+    const lastName = document.getElementById('approveRequestLastNameInput').value.trim();
     const email = document.getElementById('approveRequestEmail').value.trim();
 
     if (!username || username.length < 3) {
@@ -436,12 +555,20 @@ async function handleApproveRequest(event) {
         return;
     }
 
+    const payload = {
+        profile_ids: profileIds,
+        username,
+        first_name: firstName,
+        last_name: lastName,
+    };
+    if (email) payload.email = email;
+
     try {
-        const result = await api.approveAccountRequest(requestId, { profile_ids: profileIds, username });
+        const result = await api.approveAccountRequest(requestId, payload);
         approveRequestModal.hide();
 
         const finalUsername = (result && result.username) || username;
-        openAccountReadyMailto(email, _approveRequestContext.firstName, finalUsername);
+        openAccountReadyMailto(email, firstName, finalUsername);
 
         showToast('Demande approuvée', "Compte créé. L'email d'information est prêt à être envoyé.", 'success');
         loadAccountRequestsTab();

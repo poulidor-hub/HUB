@@ -135,7 +135,7 @@
                     <h4 class="mb-3">Demande envoyée</h4>
                     <p class="text-muted">Votre demande de compte a bien été transmise aux administrateurs.<br>
                     Un administrateur la traitera prochainement et <strong>vous préviendra par email</strong> dès que votre compte sera créé et prêt à être utilisé.</p>
-                    <p class="text-muted small">L'email contiendra l'identifiant de connexion à utiliser. Le mot de passe restera celui que vous avez choisi lors de votre demande.</p>
+                    <p class="text-muted small">L'email contiendra l'identifiant de connexion à utiliser s'il a été modifié. Le mot de passe restera celui que vous avez choisi lors de votre demande.</p>
                     <button class="btn btn-primary mt-2" onclick="backToLoginFromRequest()">
                         <i class="bi bi-arrow-left me-1"></i>Retour à la connexion
                     </button>
@@ -170,18 +170,25 @@
                 </div>
                 <form id="accountRequestForm" onsubmit="handleAccountRequest(event)">
                     <div class="modal-body">
-                        <div class="alert alert-info py-2">
+                        <div class="alert alert-info py-2 d-none" id="accountRequestImportantBox">
                             <i class="bi bi-info-circle me-1"></i>
-                            <strong>Important :</strong> Utilisez le même identifiant que votre session Windows/réseau, sinon votre demande ne sera pas acceptée.
+                            <strong>Important :</strong> <span id="accountRequestImportantMessage"></span>
                         </div>
                         <div class="row g-3">
-                            <div class="col-md-6">
+                            <div class="col-md-6" id="accountRequestLastNameGroup">
                                 <label for="accountRequestLastName" class="form-label">Nom *</label>
                                 <input type="text" class="form-control" id="accountRequestLastName" required maxlength="100">
                             </div>
-                            <div class="col-md-6">
+                            <div class="col-md-6" id="accountRequestFirstNameGroup">
                                 <label for="accountRequestFirstName" class="form-label">Prénom *</label>
                                 <input type="text" class="form-control" id="accountRequestFirstName" required maxlength="100">
+                            </div>
+                        </div>
+                        <div class="mb-3 mt-3 d-none" id="accountRequestEmailGroup">
+                            <label for="accountRequestEmail" class="form-label">Email</label>
+                            <div class="input-group">
+                                <span class="input-group-text"><i class="bi bi-envelope"></i></span>
+                                <input type="email" class="form-control" id="accountRequestEmail" maxlength="100" placeholder="prenom.nom@exemple.com">
                             </div>
                         </div>
                         <div class="mb-3 mt-3">
@@ -1072,6 +1079,9 @@
                             </div>
                             <button class="btn btn-outline-primary btn-sm" onclick="showAccountRequestNotificationAdminsModal()" title="Administrateurs notifiés">
                                 <i class="bi bi-bell me-1"></i>Notifications
+                            </button>
+                            <button class="btn btn-outline-primary btn-sm" onclick="showAccountRequestFormConfigModal()" title="Configurer le formulaire de demande">
+                                <i class="bi bi-sliders me-1"></i>Formulaire
                             </button>
                             <select class="form-select form-select-sm" id="accountRequestsFilterStatus" onchange="loadAccountRequestsTab()" style="width: auto;">
                                 <option value="">Tous les statuts</option>
@@ -2047,6 +2057,48 @@
         </div>
     </div>
 
+    <!-- Account Request Form Config Modal -->
+    <div class="modal fade" id="accountRequestFormConfigModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="bi bi-sliders me-2"></i>Formulaire de demande</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <form id="accountRequestFormConfigForm" onsubmit="handleSaveAccountRequestFormConfig(event)">
+                    <div class="modal-body">
+                        <div id="accountRequestFormConfigError" class="alert alert-danger d-none" role="alert"></div>
+                        <div class="mb-3">
+                            <label class="form-label" for="accountRequestFormConfigMessage">Message « Important »</label>
+                            <textarea class="form-control" id="accountRequestFormConfigMessage" rows="3" maxlength="2000" placeholder="Laissez vide pour ne rien afficher"></textarea>
+                            <div class="form-text">Affiché en haut de la modale de demande de compte.</div>
+                        </div>
+                        <label class="form-label">Champs demandés à l'utilisateur</label>
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="accountRequestFormConfigShowLastName">
+                            <label class="form-check-label" for="accountRequestFormConfigShowLastName">Nom</label>
+                        </div>
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="accountRequestFormConfigShowFirstName">
+                            <label class="form-check-label" for="accountRequestFormConfigShowFirstName">Prénom</label>
+                        </div>
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="accountRequestFormConfigShowEmail">
+                            <label class="form-check-label" for="accountRequestFormConfigShowEmail">Email</label>
+                        </div>
+                        <div class="form-text mt-2">Les champs désactivés ne sont pas demandés à l'utilisateur ; l'administrateur pourra les renseigner lors de l'approbation. L'identifiant et le mot de passe restent toujours demandés.</div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuler</button>
+                        <button type="submit" class="btn btn-primary" id="saveAccountRequestFormConfigBtn">
+                            <i class="bi bi-check-lg me-1"></i>Enregistrer
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
     <!-- Approve Account Request Modal -->
     <div class="modal fade" id="approveRequestModal" tabindex="-1">
         <div class="modal-dialog">
@@ -2068,6 +2120,16 @@
                         <div class="alert alert-info py-2 small">
                             <i class="bi bi-info-circle me-1"></i>
                             Vous pouvez corriger l'identifiant ci-dessous. Le mot de passe choisi par l'utilisateur est conservé.
+                        </div>
+                        <div class="row g-2 mb-3">
+                            <div class="col-md-6">
+                                <label class="form-label" for="approveRequestLastNameInput">Nom</label>
+                                <input type="text" class="form-control" id="approveRequestLastNameInput" maxlength="100">
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label" for="approveRequestFirstNameInput">Prénom</label>
+                                <input type="text" class="form-control" id="approveRequestFirstNameInput" maxlength="100">
+                            </div>
                         </div>
                         <div class="mb-3">
                             <label class="form-label" for="approveRequestUsernameInput">Identifiant du compte *</label>

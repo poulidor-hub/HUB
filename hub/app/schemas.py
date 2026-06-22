@@ -1682,9 +1682,10 @@ class MessageDetailSyncResponse(BaseModel):
 
 class AccountRequestCreate(BaseModel):
     """Demande de création de compte par un utilisateur non inscrit"""
-    first_name: str = Field(..., min_length=1, max_length=100)
-    last_name: str = Field(..., min_length=1, max_length=100)
+    first_name: Optional[str] = Field(None, max_length=100)
+    last_name: Optional[str] = Field(None, max_length=100)
     username: str = Field(..., min_length=3, max_length=50)
+    email: Optional[EmailStr] = None
     password: str = Field(..., min_length=8)
 
     @field_validator('username')
@@ -1699,6 +1700,7 @@ class AccountRequestResponse(BaseModel):
     first_name: str
     last_name: str
     username: str
+    email: Optional[str] = None
     status: str
     rejection_reason: Optional[str] = None
     reviewed_by: Optional[str] = None
@@ -1720,6 +1722,9 @@ class AccountRequestReview(BaseModel):
     rejection_reason: Optional[str] = Field(None, max_length=500)
     profile_ids: Optional[List[int]] = None
     username: Optional[str] = Field(None, min_length=3, max_length=50)
+    first_name: Optional[str] = Field(None, max_length=100)
+    last_name: Optional[str] = Field(None, max_length=100)
+    email: Optional[EmailStr] = None
 
     @field_validator('username')
     @classmethod
@@ -1728,6 +1733,14 @@ class AccountRequestReview(BaseModel):
             return None
         v = v.strip().lower()
         return v or None
+
+
+class AccountRequestFormConfig(BaseModel):
+    """Configuration de la modale de demande de compte (message + champs)"""
+    important_message: str = Field(default="", max_length=2000)
+    show_first_name: bool = True
+    show_last_name: bool = True
+    show_email: bool = False
 
 
 class AccountRequestNotificationAdmin(BaseModel):

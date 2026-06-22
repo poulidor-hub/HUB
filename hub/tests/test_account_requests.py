@@ -966,3 +966,156 @@ class TestSubmitWithSettingDisabled:
         await self._set_account_requests_enabled(async_session, "true")
         resp2 = await submit_request(client, username="toggle.user")
         assert resp2.status_code == 201
+
+
+# =============================================================================
+# Configuration du formulaire (message + champs)
+# =============================================================================
+
+class TestFormConfig:
+    """Tests des endpoints /api/account-requests/form-config."""
+
+    async def test_get_form_config_public_defaults(self, client: AsyncClient):
+        """La config est lisible sans auth et renvoie des valeurs par défaut."""
+        r = await client.get("/api/account-requests/form-config")
+        assert r.status_code == 200
+        data = r.json()
+        assert data["show_first_name"] is True
+        assert data["show_last_name"] is True
+        assert data["show_email"] is False
+        assert isinstance(data["important_message"], str)
+        assert data["important_message"]  # message par défaut non vide
+
+    async def test_update_form_config_admin(
+        self, client: AsyncClient, admin_user: User, admin_token: str
+    ):
+        """Un admin met à jour la config ; la lecture publique la reflète."""
+        r = await client.put(
+            "/api/account-requests/form-config",
+            json={
+                "important_message": "Bonjour les amis",
+                "show_first_name": False,
+                "show_last_name": True,
+                "show_email": True,
+            },
+            headers=get_auth_header(admin_token),
+        )
+        assert r.status_code == 200
+
+        g = await client.get("/api/account-requests/form-config")
+        d = g.json()
+        assert d["important_message"] == "Bonjour les amis"
+        assert d["show_first_name"] is False
+        assert d["show_last_name"] is True
+        assert d["show_email"] is True
+
+    async def test_update_form_config_requires_admin(
+        self, client: AsyncClient, test_user: User, user_token: str
+    ):
+        """Un non-admin ne peut pas modifier la config."""
+        r = await client.put(
+            "/api/account-requests/form-config",
+            json={"important_message": "x"},
+            headers=get_auth_header(user_token),
+        )
+        assert r.status_code == 403
+
+
+# =============================================================================
+# Email optionnel et noms optionnels
+# =============================================================================
+
+class TestRequestEmailAndOptionalNames:
+    """Tests des champs optionnels (nom, prénom, email)."""
+
+    async def test_submit_without_names_ok(self, client: AsyncClient):
+        """La demande sans nom/prénom est acceptée (champs optionnels)."""
+        r = await client.post(
+            "/api/account-requests/",
+            json={"username": "noname.user", "password": "securepass123"},
+        )
+        assert r.status_code == 201
+
+    async def test_submit_with_email_stored(
+        self, client: AsyncClient, async_session: AsyncSession
+    ):
+        """L'email fourni est stocké sur la demande."""
+        r = await client.post(
+            "/api/account-requests/",
+            json={
+                "username": "mail.user",
+                "password": "securepass123",
+                "email": "mail.user@example.com",
+            },
+        )
+        assert r.status_code == 201
+        rid = r.json()["request_id"]
+        result = await async_session.execute(
+            select(AccountRequest).where(AccountRequest.id == rid)
+        )
+        assert result.scalar_one().email == "mail.user@example.com"
+
+    async def test_approve_sets_user_email(
+        self,
+        client: AsyncClient,
+        admin_user: User,
+        admin_token: str,
+        async_session: AsyncSession,
+    ):
+        """L'email de la demande est rattaché au compte créé."""
+        r = await client.post(
+            "/api/account-requests/",
+            json={
+                "username": "ue.user",
+                "password": "securepass123",
+                "email": "ue.user@example.com",
+            },
+        )
+        rid = r.json()["request_id"]
+        ap = await client.post(
+            f"/api/account-requests/{rid}/approve",
+            json={},
+            headers=get_auth_header(admin_token),
+        )
+        assert ap.status_code == 200
+        result = await async_session.execute(
+            select(User).where(User.username == "ue.user")
+        )
+        assert result.scalar_one().email == "ue.user@example.com"
+
+    async def test_approve_email_and_names_override(
+        self,
+        client: AsyncClient,
+        admin_user: User,
+        admin_token: str,
+        async_session: AsyncSession,
+    ):
+        """L'admin peut renseigner email/nom/prénom à l'approbation."""
+        r = await client.post(
+            "/api/account-requests/",
+            json={"username": "ov.user", "password": "securepass123"},
+        )
+        rid = r.json()["request_id"]
+        ap = await client.post(
+            f"/api/account-requests/{rid}/approve",
+            json={
+                "email": "override@example.com",
+                "first_name": "Jean",
+                "last_name": "Test",
+            },
+            headers=get_auth_header(admin_token),
+        )
+        assert ap.status_code == 200
+
+        result = await async_session.execute(
+            select(User).where(User.username == "ov.user")
+        )
+        assert result.scalar_one().email == "override@example.com"
+
+        result = await async_session.execute(
+            select(AccountRequest).where(AccountRequest.id == rid)
+        )
+        req = result.scalar_one()
+        assert req.first_name == "Jean"
+        assert req.last_name == "Test"
+        assert req.email == "override@example.com"

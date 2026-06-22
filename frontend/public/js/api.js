@@ -1407,6 +1407,19 @@ class HubAPI {
         });
     }
 
+    async getAccountRequestFormConfig() {
+        const resp = await fetch(`${API_BASE}/account-requests/form-config`);
+        if (!resp.ok) throw new Error('Impossible de charger la configuration du formulaire');
+        return resp.json();
+    }
+
+    async updateAccountRequestFormConfig(config) {
+        return this.request('/account-requests/form-config', {
+            method: 'PUT',
+            body: JSON.stringify(config)
+        });
+    }
+
     async approveAccountRequest(id, data = {}) {
         return this.request(`/account-requests/${id}/approve`, {
             method: 'POST',

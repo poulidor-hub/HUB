@@ -33,12 +33,18 @@ from app.schemas import (
     AccountRequestNotificationAdmin,
     AccountRequestNotificationAdminsResponse,
     AccountRequestNotificationAdminsUpdate,
+    AccountRequestFormConfig,
 )
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/account-requests", tags=["Account Requests"])
 ACCOUNT_REQUEST_NOTIFICATION_ADMINS_KEY = "account_request_notification_admin_ids"
+ACCOUNT_REQUEST_FORM_CONFIG_KEY = "account_request_form_config"
+DEFAULT_IMPORTANT_MESSAGE = (
+    "Utilisez le même identifiant que votre session Windows/réseau, "
+    "sinon votre demande ne sera pas acceptée."
+)
 
 
 # =============================================================================
@@ -94,9 +100,10 @@ async def submit_account_request(
     # Créer la demande
     polling_token = secrets.token_hex(32)
     request = AccountRequest(
-        first_name=payload.first_name.strip(),
-        last_name=payload.last_name.strip(),
+        first_name=(payload.first_name or "").strip(),
+        last_name=(payload.last_name or "").strip(),
         username=clean_username,
+        email=(payload.email or None),
         hashed_password=get_password_hash(payload.password),
         polling_token=polling_token,
     )
@@ -114,6 +121,17 @@ async def submit_account_request(
     await _notify_admins_new_request(db, request_id, first_name, last_name, username)
 
     return {"request_id": request_id, "polling_token": polling_token}
+
+
+@router.get("/form-config", response_model=AccountRequestFormConfig)
+async def get_account_request_form_config(
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Retourne la configuration de la modale de demande de compte (endpoint public).
+    Permet d'afficher le message personnalisable et de masquer les champs désactivés.
+    """
+    return await _load_form_config(db)
 
 
 @router.get("/{request_id}/status")
@@ -336,6 +354,35 @@ async def update_notification_admins(
     )
 
 
+@router.put("/form-config", response_model=AccountRequestFormConfig)
+async def update_account_request_form_config(
+    payload: AccountRequestFormConfig,
+    current_admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """Met à jour la configuration de la modale de demande de compte (admin)."""
+    result = await db.execute(
+        select(AppSetting).where(AppSetting.key == ACCOUNT_REQUEST_FORM_CONFIG_KEY)
+    )
+    setting = result.scalar_one_or_none()
+    if not setting:
+        setting = AppSetting(key=ACCOUNT_REQUEST_FORM_CONFIG_KEY, value="{}")
+        db.add(setting)
+
+    setting.value = json.dumps(payload.model_dump())
+    setting.updated_at = utcnow()
+    setting.updated_by_id = current_admin.id
+    await db.commit()
+
+    try:
+        from app.routes.events import broadcast_event
+        await broadcast_event("account_request_form_config_updated", {"action": "updated"})
+    except ImportError:
+        pass
+
+    return payload
+
+
 @router.get("/")
 async def list_account_requests(
     status_filter: Optional[str] = Query(None, alias="status"),
@@ -380,6 +427,7 @@ async def list_account_requests(
             first_name=req.first_name,
             last_name=req.last_name,
             username=req.username,
+            email=req.email,
             status=req.status,
             rejection_reason=req.rejection_reason,
             reviewed_by=reviewed_by_name,
@@ -412,6 +460,15 @@ async def approve_account_request(
     # L'admin peut corriger l'identifiant tout en conservant le mot de passe
     # choisi par l'utilisateur (hash de la demande, jamais réinitialisé).
     final_username = payload.username or request.username
+    final_email = payload.email or request.email
+    final_first_name = (
+        payload.first_name.strip() if payload.first_name is not None
+        else request.first_name
+    )
+    final_last_name = (
+        payload.last_name.strip() if payload.last_name is not None
+        else request.last_name
+    )
 
     # Vérifier que le username n'a pas été pris entre-temps
     existing_user = await db.execute(
@@ -439,9 +496,20 @@ async def approve_account_request(
                 detail="Une autre demande en attente utilise déjà cet identifiant"
             )
 
+    # L'email n'est rattaché au compte que s'il est libre (best-effort, ne
+    # bloque pas l'approbation en cas de conflit).
+    user_email = None
+    if final_email:
+        email_taken = await db.execute(
+            select(User).where(User.email == final_email)
+        )
+        if not email_taken.scalar_one_or_none():
+            user_email = final_email
+
     # Créer le User avec le mot de passe hashé de la demande
     user = User(
         username=final_username,
+        email=user_email,
         hashed_password=request.hashed_password,
         is_admin=False,
         must_change_password=False,
@@ -461,6 +529,9 @@ async def approve_account_request(
 
     # Mettre à jour la demande (refléter l'identifiant réellement créé)
     request.username = final_username
+    request.email = final_email
+    request.first_name = final_first_name
+    request.last_name = final_last_name
     request.status = "approved"
     request.reviewed_by_id = current_admin.id
     request.reviewed_at = utcnow()
@@ -593,6 +664,29 @@ async def _get_selected_notification_admin_ids(db: AsyncSession) -> set[int]:
     return _parse_notification_admin_ids(result.scalar_one_or_none())
 
 
+async def _load_form_config(db: AsyncSession) -> AccountRequestFormConfig:
+    """Charge la configuration de la modale (message + champs) avec valeurs par défaut."""
+    result = await db.execute(
+        select(AppSetting.value).where(AppSetting.key == ACCOUNT_REQUEST_FORM_CONFIG_KEY)
+    )
+    raw = result.scalar_one_or_none()
+    data = {}
+    if raw:
+        try:
+            parsed = json.loads(raw)
+            if isinstance(parsed, dict):
+                data = parsed
+        except (TypeError, json.JSONDecodeError):
+            data = {}
+
+    return AccountRequestFormConfig(
+        important_message=data.get("important_message", DEFAULT_IMPORTANT_MESSAGE),
+        show_first_name=bool(data.get("show_first_name", True)),
+        show_last_name=bool(data.get("show_last_name", True)),
+        show_email=bool(data.get("show_email", False)),
+    )
+
+
 async def _get_active_admins(db: AsyncSession):
     result = await db.execute(
         select(User)
@@ -649,6 +743,13 @@ async def _notify_admins_new_request(
         if not admins:
             return
 
+        display_name = f"{first_name or ''} {last_name or ''}".strip()
+        body = (
+            f"{display_name} demande la création d'un compte (identifiant : {username})."
+            if display_name
+            else f"Nouvelle demande de compte pour l'identifiant : {username}."
+        )
+
         for admin in admins:
             msg = UserMessage(
                 sender_type="system",
@@ -657,7 +758,7 @@ async def _notify_admins_new_request(
                 target_username=admin.username,
                 priority="warning",
                 title="Nouvelle demande de compte",
-                body=f"{first_name} {last_name} ({username}) demande la création d'un compte.",
+                body=body,
                 action_url="/users#requests",
                 action_label="Voir les demandes",
             )
