@@ -206,6 +206,10 @@ class Settings(BaseSettings):
     app_port_frontend_start: int = 4200
     app_port_frontend_end: int = 4699
 
+    # Exclure de l'attribution les ports déjà liés sur l'hôte local par des
+    # conteneurs Docker (scan best-effort via le socket Docker, à l'allocation).
+    port_scan_docker_enabled: bool = True
+
     # Host du Hub (IP ou hostname accessible par les clients)
     # Si non défini, sera détecté automatiquement
     hub_host: str = ""

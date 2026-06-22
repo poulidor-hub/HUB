@@ -1152,6 +1152,9 @@
                     <div class="d-flex justify-content-between align-items-center mb-3">
                         <h5 class="mb-0">Gestion des Applications</h5>
                         <div class="btn-group">
+                            <button class="btn btn-outline-secondary btn-sm" onclick="showPortsPoolModal()">
+                                <i class="bi bi-hdd-network me-1"></i>Pool de ports
+                            </button>
                             <button class="btn btn-outline-secondary btn-sm" onclick="showDockerScanModal()">
                                 <i class="bi bi-box-seam me-1"></i>Scanner Docker
                             </button>
@@ -2526,6 +2529,95 @@
     </div>
 
     <!-- Docker Scan Modal -->
+    <div class="modal fade" id="portsPoolModal" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header bg-info text-white">
+                    <h5 class="modal-title"><i class="bi bi-hdd-network me-2"></i>Pool d'allocation des ports</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <!-- Loading -->
+                    <div id="portsPoolStatus" class="mb-3">
+                        <div class="d-flex align-items-center text-muted">
+                            <div class="spinner-border spinner-border-sm me-2" role="status"></div>
+                            Chargement du pool de ports...
+                        </div>
+                    </div>
+
+                    <!-- Error -->
+                    <div id="portsPoolError" class="alert alert-danger d-none">
+                        <i class="bi bi-exclamation-triangle me-2"></i>
+                        <span id="portsPoolErrorMessage"></span>
+                    </div>
+
+                    <!-- Content -->
+                    <div id="portsPoolContent" class="d-none">
+                        <div class="row g-3 mb-3">
+                            <div class="col-md-6">
+                                <div class="card border-0 shadow-sm h-100">
+                                    <div class="card-body py-3">
+                                        <div class="d-flex justify-content-between align-items-center">
+                                            <span class="badge bg-danger">API</span>
+                                            <code id="portsApiRange" class="text-muted">—</code>
+                                        </div>
+                                        <div class="mt-2 small text-muted">
+                                            <i class="bi bi-unlock me-1"></i><span id="portsApiFree">—</span> port(s) libre(s)
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="card border-0 shadow-sm h-100">
+                                    <div class="card-body py-3">
+                                        <div class="d-flex justify-content-between align-items-center">
+                                            <span class="badge bg-success">Frontend</span>
+                                            <code id="portsFeRange" class="text-muted">—</code>
+                                        </div>
+                                        <div class="mt-2 small text-muted">
+                                            <i class="bi bi-unlock me-1"></i><span id="portsFeFree">—</span> paire(s) libre(s)
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="mb-3">
+                            <h6 class="mb-2"><i class="bi bi-box-seam me-1"></i>Ports occupés par Docker (exclus de l'attribution)</h6>
+                            <div id="portsOccupied"></div>
+                        </div>
+
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <h6 class="mb-0"><i class="bi bi-list-ol me-1"></i>Allocations</h6>
+                            <span id="portsAllocationsCount" class="badge bg-info">0 allocation(s)</span>
+                        </div>
+                        <div style="max-height: 380px; overflow-y: auto;">
+                            <table class="table table-sm align-middle mb-0">
+                                <thead>
+                                    <tr>
+                                        <th>App</th>
+                                        <th>Host</th>
+                                        <th>API</th>
+                                        <th>Front</th>
+                                        <th>HTTPS</th>
+                                        <th class="text-end">Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="portsAllocationsBody"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline-secondary" onclick="refreshPortsPool()">
+                        <i class="bi bi-arrow-clockwise me-1"></i>Rafraîchir
+                    </button>
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Fermer</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <div class="modal fade" id="dockerScanModal" tabindex="-1">
         <div class="modal-dialog modal-lg">
             <div class="modal-content">
@@ -3380,6 +3472,7 @@
     <script src="js/modules/admin-service-accounts.js?v=3.7.1"></script>
     <script src="js/modules/audit.js?v=3.7.1"></script>
     <script src="js/modules/admin-docker-scanner.js?v=3.7.1"></script>
+    <script src="js/modules/admin-ports.js?v=3.7.1"></script>
     <script src="js/modules/audit-page.js?v=3.7.1"></script>
     <script src="js/modules/admin-users-profiles.js?v=3.7.1"></script>
     <script src="js/modules/audit-errors.js?v=3.7.1"></script>

@@ -126,3 +126,140 @@ async def test_ports_status_returns_pool_state(client: AsyncClient, admin_user):
     assert body["frontend_range"] == [4200, 4699]
     assert 9000 in body["used_api_ports"]
     assert any(a["app_slug"] == "demo-app" for a in body["allocations"])
+
+
+# ===== Exclusion des ports Docker occupés (scan hôte local) =====
+
+from app.port_allocator import allocate_ports_for_app
+from app.docker_scanner import DockerScanner
+from app.config import get_settings
+
+settings = get_settings()
+
+
+def test_get_used_host_ports_empty_when_unavailable():
+    """get_used_host_ports est best-effort : set() si Docker indisponible."""
+    s = DockerScanner()
+    s._available = False
+    s._client = False
+    assert s.get_used_host_ports() == set()
+
+
+@pytest.mark.asyncio
+async def test_allocate_ports_excludes_docker_occupied(async_session):
+    """Les host_port Docker occupés sont exclus de la plage d'attribution."""
+    hub_host = settings.get_hub_host()
+    with patch('app.port_allocator.docker_scanner.get_used_host_ports', return_value={9000, 4200, 4201}):
+        alloc, reused = await allocate_ports_for_app(async_session, "scan-app", hub_host, settings)
+    assert reused is False
+    assert alloc.api_port == 9001          # 9000 occupé par Docker -> sauté
+    assert alloc.frontend_port == 4202     # 4200/4201 occupés -> pair suivante
+
+
+@pytest.mark.asyncio
+async def test_allocate_ports_scan_not_applied_for_remote_host(async_session):
+    """Le scan ne reflète que l'hôte local : ignoré pour un host distant."""
+    remote = "10.20.30.40"
+    assert remote != settings.get_hub_host()
+    with patch('app.port_allocator.docker_scanner.get_used_host_ports', return_value={9000}):
+        alloc, _ = await allocate_ports_for_app(async_session, "remote-app", remote, settings)
+    assert alloc.api_port == 9000
+
+
+@pytest.mark.asyncio
+async def test_allocate_ports_scan_disabled_by_flag(async_session, monkeypatch):
+    """Feature flag désactivé : aucun scan n'est déclenché."""
+    hub_host = settings.get_hub_host()
+    monkeypatch.setattr(settings, "port_scan_docker_enabled", False, raising=False)
+    with patch('app.port_allocator.docker_scanner.get_used_host_ports', return_value={9000}) as mocked:
+        alloc, _ = await allocate_ports_for_app(async_session, "flag-app", hub_host, settings)
+    assert alloc.api_port == 9000
+    mocked.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_allocate_ports_scan_failure_falls_back(async_session):
+    """Échec du scan : on retombe sur le comportement DB seul (gracieux)."""
+    hub_host = settings.get_hub_host()
+    with patch('app.port_allocator.docker_scanner.get_used_host_ports', side_effect=RuntimeError("docker down")):
+        alloc, _ = await allocate_ports_for_app(async_session, "fail-app", hub_host, settings)
+    assert alloc.api_port == 9000
+
+
+@pytest.mark.asyncio
+async def test_ports_status_exposes_host_occupied_ports(client: AsyncClient, admin_user):
+    """Le statut admin expose les ports Docker occupés dans les plages."""
+    token, _, _ = create_access_token(username=admin_user.username, apps={})
+    with patch('app.port_allocator.docker_scanner.get_used_host_ports', return_value={9100, 4300, 22}):
+        response = await client.get("/api/apps/admin/ports/status", headers=get_auth_header(token))
+    assert response.status_code == 200
+    body = response.json()
+    assert 9100 in body["host_occupied_ports"]
+    assert 4300 in body["host_occupied_ports"]
+    assert 22 not in body["host_occupied_ports"]   # hors plages -> ignoré
+
+
+# ===== Libération des allocations (apps supprimées / nettoyage) =====
+
+from app.port_allocator import release_ports_for_app
+
+
+@pytest.mark.asyncio
+async def test_release_ports_for_app_deletes_rows(async_session):
+    """release_ports_for_app supprime les allocations d'un slug, pas des autres."""
+    async_session.add(PortAllocation(app_slug="gone", host="h1", api_port=9000, frontend_port=4200, frontend_https_port=4201))
+    async_session.add(PortAllocation(app_slug="gone", host="h2", api_port=9001, frontend_port=4202, frontend_https_port=4203))
+    async_session.add(PortAllocation(app_slug="stay", host="h1", api_port=9002, frontend_port=4204, frontend_https_port=4205))
+    await async_session.commit()
+
+    removed = await release_ports_for_app(async_session, "gone")
+    await async_session.commit()
+
+    assert removed == 2
+    remaining = (await async_session.execute(select(PortAllocation))).scalars().all()
+    assert {r.app_slug for r in remaining} == {"stay"}
+
+
+@pytest.mark.asyncio
+async def test_deleting_app_releases_its_ports(client: AsyncClient, admin_user, test_app, async_session):
+    """Supprimer une application libère ses ports dans le pool."""
+    async_session.add(PortAllocation(
+        app_slug=test_app.slug, host="172.23.0.3",
+        api_port=9000, frontend_port=4200, frontend_https_port=4201,
+    ))
+    await async_session.commit()
+
+    token, _, _ = create_access_token(username=admin_user.username, apps={})
+    resp = await client.delete(f"/api/apps/{test_app.id}", headers=get_auth_header(token))
+    assert resp.status_code == 204
+
+    rows = (await async_session.execute(
+        select(PortAllocation).where(PortAllocation.app_slug == test_app.slug)
+    )).scalars().all()
+    assert rows == []
+
+
+@pytest.mark.asyncio
+async def test_delete_allocation_requires_admin(client: AsyncClient):
+    response = await client.delete("/api/apps/admin/ports/allocations/1")
+    assert response.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_delete_allocation_endpoint(client: AsyncClient, admin_user, async_session):
+    """Un admin peut supprimer manuellement une allocation orpheline."""
+    alloc = PortAllocation(app_slug="orphan", host="172.23.0.3", api_port=9000, frontend_port=4200, frontend_https_port=4201)
+    async_session.add(alloc)
+    await async_session.commit()
+    await async_session.refresh(alloc)
+
+    token, _, _ = create_access_token(username=admin_user.username, apps={})
+    resp = await client.delete(f"/api/apps/admin/ports/allocations/{alloc.id}", headers=get_auth_header(token))
+    assert resp.status_code == 204
+
+    rows = (await async_session.execute(select(PortAllocation))).scalars().all()
+    assert rows == []
+
+    # Suppression d'un id inexistant -> 404
+    missing = await client.delete("/api/apps/admin/ports/allocations/99999", headers=get_auth_header(token))
+    assert missing.status_code == 404

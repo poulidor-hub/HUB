@@ -863,6 +863,7 @@ class AllocatePortsResponse(BaseModel):
 
 
 class PortAllocationItem(BaseModel):
+    id: int
     app_slug: str
     host: str
     api_port: int
@@ -878,6 +879,10 @@ class PortsStatusResponse(BaseModel):
     used_frontend_ports: list[int]
     free_api_count: int
     free_frontend_count: int
+    host_occupied_ports: list[int] = Field(
+        default_factory=list,
+        description="Ports liés sur l'hôte local par des conteneurs Docker (exclus de l'attribution)",
+    )
     allocations: list[PortAllocationItem]
 
 

@@ -495,6 +495,30 @@ class DockerScanner:
         
         return ports
     
+    def get_used_host_ports(self) -> set:
+        """Retourne tous les host_port TCP liés par les conteneurs en cours.
+
+        Best-effort : contrairement à scan_containers (qui ne renvoie que les
+        conteneurs « app-like »), on prend ici TOUS les conteneurs running
+        (postgres, redis, etc.) car n'importe quel port lié peut entrer en
+        conflit avec une allocation. Ne lève jamais : renvoie set() en cas
+        d'erreur ou si Docker est indisponible.
+        """
+        if not self.is_available:
+            logger.warning("Docker indisponible : scan des ports occupés ignoré")
+            return set()
+
+        used: set = set()
+        try:
+            for container in self.client.containers.list(all=False):
+                for cp in self._extract_ports(container):
+                    if cp.host_port:
+                        used.add(cp.host_port)
+        except Exception as e:
+            logger.warning(f"Scan des ports Docker occupés échoué: {e}")
+            return set()
+        return used
+
     def get_docker_info(self) -> Dict[str, Any]:
         """Retourne des informations sur l'environnement Docker"""
         if not self.is_available:

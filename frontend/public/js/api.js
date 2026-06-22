@@ -693,6 +693,17 @@ class HubAPI {
         return this.request(`/apps/docker/scan?include_stopped=${includeStopped}&show_all=${showAll}`);
     }
 
+    // Pool d'allocation des ports (admin)
+    async getPortsStatus() {
+        return this.request('/apps/admin/ports/status');
+    }
+
+    async deletePortAllocation(allocId) {
+        return this.request(`/apps/admin/ports/allocations/${encodeURIComponent(allocId)}`, {
+            method: 'DELETE'
+        });
+    }
+
     // Auto-register d'une application (crée app + service account automatiquement)
     async autoRegisterApp(slug, name, apiPort, frontendPort = null, isShared = false, description = null) {
         return this.request('/apps/auto-register', {

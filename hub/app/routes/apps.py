@@ -33,7 +33,7 @@ from app.auth import get_current_admin, get_current_user, get_password_hash, get
 from app.routes.service_accounts import save_service_account_credentials, delete_service_account_credentials
 from app.routes.audit import log_action
 from app.docker_scanner import docker_scanner
-from app.port_allocator import allocate_ports_for_app, PortPoolExhausted
+from app.port_allocator import allocate_ports_for_app, docker_occupied_ports, release_ports_for_app, PortPoolExhausted
 
 router = APIRouter(prefix="/api/apps", tags=["Applications"])
 settings = get_settings()
@@ -297,16 +297,20 @@ async def delete_app_cascade(
     
     # Vider les associations restantes (pour les SA non supprimés)
     app.service_accounts.clear()
-    
+
+    # Libérer les ports alloués (rendre au pool)
+    released_ports = await release_ports_for_app(db, app_slug)
+
     # Supprimer l'application (cascade ORM sur user_roles et available_roles)
     await db.delete(app)
-    
+
     logger.info(f"✅ Application '{app_name}' (slug: {app_slug}) supprimée avec {len(deleted_service_accounts)} SA(s)")
-    
+
     return {
         "app_slug": app_slug,
         "app_name": app_name,
-        "deleted_service_accounts": deleted_service_accounts
+        "deleted_service_accounts": deleted_service_accounts,
+        "released_port_allocations": released_ports,
     }
 
 
@@ -974,18 +978,33 @@ async def ports_status(
         {a.frontend_port for a in allocs} | {a.frontend_https_port for a in allocs}
     )
 
-    api_total = settings.app_port_api_end - settings.app_port_api_start + 1
-    frontend_slots = len(range(settings.app_port_frontend_start, settings.app_port_frontend_end, 2))
+    api_lo, api_hi = settings.app_port_api_start, settings.app_port_api_end
+    fe_lo, fe_hi = settings.app_port_frontend_start, settings.app_port_frontend_end
+
+    occupied = await docker_occupied_ports(settings, settings.get_hub_host())
+    occupied_api = {p for p in occupied if api_lo <= p <= api_hi}
+    occupied_fe = {p for p in occupied if fe_lo <= p <= fe_hi}
+    host_occupied_ports = sorted(occupied_api | occupied_fe)
+
+    api_total = api_hi - api_lo + 1
+    frontend_slots = len(range(fe_lo, fe_hi, 2))
+
+    fe_used = set(used_frontend) | occupied_fe
+    blocked_slots = sum(
+        1 for p in range(fe_lo, fe_hi, 2) if p in fe_used or (p + 1) in fe_used
+    )
 
     return PortsStatusResponse(
-        api_range=[settings.app_port_api_start, settings.app_port_api_end],
-        frontend_range=[settings.app_port_frontend_start, settings.app_port_frontend_end],
+        api_range=[api_lo, api_hi],
+        frontend_range=[fe_lo, fe_hi],
         used_api_ports=used_api,
         used_frontend_ports=used_frontend,
-        free_api_count=api_total - len(used_api),
-        free_frontend_count=frontend_slots - len([a for a in allocs]),
+        free_api_count=api_total - len(set(used_api) | occupied_api),
+        free_frontend_count=frontend_slots - blocked_slots,
+        host_occupied_ports=host_occupied_ports,
         allocations=[
             PortAllocationItem(
+                id=a.id,
                 app_slug=a.app_slug,
                 host=a.host,
                 api_port=a.api_port,
@@ -995,6 +1014,30 @@ async def ports_status(
             for a in allocs
         ],
     )
+
+
+@router.delete("/admin/ports/allocations/{alloc_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_port_allocation(
+    alloc_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_admin: User = Depends(get_current_admin),
+):
+    """Supprime manuellement une allocation de ports (admin).
+
+    Utile pour nettoyer une allocation orpheline (app supprimée hors HUB,
+    ancien test, etc.) et rendre les ports au pool.
+    """
+    from app.models import PortAllocation as _PA
+
+    alloc = (
+        await db.execute(select(_PA).where(_PA.id == alloc_id))
+    ).scalar_one_or_none()
+    if not alloc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Allocation non trouvée")
+
+    await db.delete(alloc)
+    await db.commit()
+    logger.info("🧹 Allocation de ports #%d (%s) supprimée par %s", alloc_id, alloc.app_slug, current_admin.username)
 
 
 @router.post("/register", response_model=AppRegisterResponse)
