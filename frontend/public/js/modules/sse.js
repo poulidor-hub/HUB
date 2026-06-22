@@ -140,14 +140,32 @@ async function refreshAfterReconnect() {
                 break;
         }
         
-        // Rafraîchir le compteur d'apps en attente si admin
-        if (currentUser?.is_admin) {
-            loadPendingAppsCount();
-        }
+        // Resynchroniser tous les badges de notification (cloche, messages, audit,
+        // apps en attente, demandes de compte) — des événements ont pu être ratés
+        // pendant la déconnexion.
+        refreshAllBadges();
         
         console.log('✅ Données rafraîchies après reconnexion SSE');
     } catch (e) {
         console.error('Erreur lors du rafraîchissement après reconnexion:', e);
+    }
+}
+
+/**
+ * Resynchronise tous les badges de notification depuis le serveur.
+ * Appelé à la connexion, après une reconnexion SSE et au retour sur l'onglet,
+ * afin que les notifications soient à jour sans avoir à ouvrir le menu concerné.
+ */
+function refreshAllBadges() {
+    // Cloche de notifications utilisateur (tous les utilisateurs)
+    loadUnreadMessageCount();
+    
+    // Badges réservés aux administrateurs
+    if (currentUser?.is_admin) {
+        updateNavMessagesBadge();
+        updateErrorNotificationBadge();
+        loadPendingAppsCount();
+        loadPendingRequestsCount();
     }
 }
 
@@ -186,6 +204,7 @@ function handleSSEEvent(data) {
             switch (data.data?.action) {
                 case 'created':
                     appAction = 'ajoutée';
+                    if (currentUser?.is_admin) loadPendingAppsCount();  // Nouvelle app en attente d'approbation
                     break;
                 case 'deleted':
                     appAction = 'supprimée';
@@ -431,9 +450,16 @@ function handleSSEEvent(data) {
             break;
 
         case 'messages_updated':
-            // Rafraîchir la page messages admin si elle est ouverte
-            if (currentPage === 'messages' && currentUser?.is_admin) {
-                loadMessagesPage();
+            // Toujours resynchroniser la cloche utilisateur (un message peut avoir
+            // été supprimé/archivé/expiré côté serveur).
+            loadUnreadMessageCount();
+            // Mettre à jour le badge nav admin même hors de la page Messages.
+            if (currentUser?.is_admin) {
+                updateNavMessagesBadge();
+                // Rafraîchir la liste complète seulement si la page est ouverte.
+                if (currentPage === 'messages') {
+                    loadMessagesPage();
+                }
             }
             break;
 

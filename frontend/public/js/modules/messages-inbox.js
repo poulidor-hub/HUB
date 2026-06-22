@@ -500,6 +500,26 @@ function updateMessageBellBadge(count) {
     }
 }
 
+// Met à jour le badge "Messages" de la navigation admin sans recharger toute la
+// page Messages. Permet d'afficher la notification en temps réel même quand
+// l'admin n'est pas sur la page Messages.
+async function updateNavMessagesBadge() {
+    const navBadge = document.getElementById('navMessagesBadge');
+    if (!navBadge) return;
+    try {
+        const stats = await api.getMessageStats(null, undefined);
+        const total = stats.total || 0;
+        if (total > 0) {
+            navBadge.textContent = total > 99 ? '99+' : total;
+            navBadge.style.display = 'inline';
+        } else {
+            navBadge.style.display = 'none';
+        }
+    } catch (e) {
+        // Silencieux — ne pas bloquer le reste de l'UI
+    }
+}
+
 // ===== User Inbox (3 volets : sidebar / liste / détail) =====
 
 let _inboxMessages = [];

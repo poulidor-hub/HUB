@@ -136,16 +136,18 @@ function showDashboard() {
     if (currentUser.is_admin) {
         document.getElementById('adminBtn').classList.remove('d-none');
         document.getElementById('adminNavigation').classList.remove('d-none');
-        // Mettre à jour le badge de notification d'erreurs
-        updateErrorNotificationBadge();
     }
 
-    // Afficher la cloche de messages et charger le compteur non-lus
+    // Afficher la cloche de messages
     document.getElementById('messageBellContainer').classList.remove('d-none');
-    loadUnreadMessageCount();
 
     // Initialiser les mises à jour temps réel via SSE
     initEventSource();
+
+    // Charger tous les badges de notification dès la connexion (cloche, messages,
+    // audit, apps en attente, demandes de compte) pour qu'ils soient visibles
+    // sans avoir à ouvrir le menu correspondant.
+    refreshAllBadges();
 
     loadApps();
 }

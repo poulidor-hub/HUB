@@ -71,7 +71,11 @@ document.addEventListener('DOMContentLoaded', () => {
             // Vérifier si la connexion SSE est toujours active
             if (!eventSource || eventSource.readyState !== EventSource.OPEN) {
                 console.log('👁️ Page redevenue visible - reconnexion SSE...');
-                initEventSource(true);  // Reconnexion avec rafraîchissement
+                initEventSource(true);  // Reconnexion avec rafraîchissement (badges inclus)
+            } else {
+                // SSE déjà connecté : resynchroniser les badges au cas où des
+                // événements auraient été throttlés pendant l'arrière-plan.
+                refreshAllBadges();
             }
         }
     });
