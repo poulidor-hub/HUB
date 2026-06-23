@@ -325,6 +325,7 @@ function confirmRestoreSnapshot(snapshotId) {
         progressEl.className = 'modal fade';
         progressEl.setAttribute('tabindex', '-1');
         progressEl.setAttribute('data-bs-backdrop', 'static');
+        progressEl.setAttribute('data-bs-keyboard', 'false');
         progressEl.innerHTML = `<div class="modal-dialog modal-dialog-centered modal-sm">
             <div class="modal-content text-center">
                 <div class="modal-body py-4">
@@ -332,7 +333,7 @@ function confirmRestoreSnapshot(snapshotId) {
                         <span class="visually-hidden">Restauration...</span>
                     </div>
                     <h6>Restauration en cours...</h6>
-                    <p class="text-muted small mb-0">Cette operation peut prendre plusieurs minutes.</p>
+                    <p class="text-muted small mb-0" id="restoreStatusText">Envoi de la demande...</p>
                 </div>
             </div>
         </div>`;
@@ -340,24 +341,54 @@ function confirmRestoreSnapshot(snapshotId) {
         const progressModal = new bootstrap.Modal(progressEl);
         progressModal.show();
 
+        const updateStatus = (msg) => {
+            const el = document.getElementById('restoreStatusText');
+            if (el) el.textContent = msg;
+        };
+
         try {
             await api.request(`/admin/snapshots/${snapshotId}/restore`, {
                 method: 'POST',
                 body: JSON.stringify({ confirm_full_restore: true }),
             });
-
-            progressEl.querySelector('.modal-body').innerHTML = `
-                <i class="bi bi-check-circle-fill text-success mb-3" style="font-size:3rem;"></i>
-                <h6>Restauration declenchee</h6>
-                <p class="text-muted small mb-0">Les donnees seront restaurees en arriere-plan.</p>
-            `;
-            setTimeout(() => progressModal.hide(), 3000);
         } catch (e) {
-            progressModal.hide();
-            showToast('Erreur', e.message || 'Echec restauration', 'danger');
+            // L'API peut s'arreter avant de repondre → ignorer
+            console.log('Restore API call ended:', e.message);
         }
 
-        progressEl.addEventListener('hidden.bs.modal', () => progressEl.remove());
+        updateStatus('API en cours de redemarrage...');
+
+        const pollStart = Date.now();
+        const MAX_WAIT = 300000; // 5 minutes
+        const poll = setInterval(async () => {
+            try {
+                const resp = await fetch('/health', { signal: AbortSignal.timeout(3000) });
+                if (resp.ok) {
+                    clearInterval(poll);
+                    progressEl.querySelector('.modal-body').innerHTML = `
+                        <i class="bi bi-check-circle-fill text-success mb-3" style="font-size:3rem;"></i>
+                        <h6>Hub operationnel</h6>
+                        <p class="text-muted small mb-0">Rechargement de la page...</p>
+                    `;
+                    setTimeout(() => location.reload(), 1500);
+                    return;
+                }
+            } catch (_) {}
+
+            if (Date.now() - pollStart > MAX_WAIT) {
+                clearInterval(poll);
+                progressEl.querySelector('.modal-body').innerHTML = `
+                    <i class="bi bi-exclamation-triangle-fill text-warning mb-3" style="font-size:3rem;"></i>
+                    <h6>Delai depasse</h6>
+                    <p class="text-muted small mb-0">L'API ne repond pas. Verifiez les logs Docker.</p>
+                `;
+            }
+        }, 2000);
+
+        progressEl.addEventListener('hidden.bs.modal', () => {
+            clearInterval(poll);
+            progressEl.remove();
+        });
     });
 
     modalEl.addEventListener('hidden.bs.modal', () => modalEl.remove());

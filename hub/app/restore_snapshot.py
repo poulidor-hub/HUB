@@ -140,6 +140,23 @@ async def run_restore(snapshot_id: str):
                 storage_target = Path("/code/storage")
                 shutil.unpack_archive(str(files_dir / "storage_backups.tar"), str(storage_target))
 
+            admin_user = os.environ.get("ADMIN_USERNAME", "admin")
+            admin_pass = os.environ.get("ADMIN_PASSWORD", "")
+            if admin_pass:
+                logger.info(f"Reinitialisation du mot de passe admin ({admin_user})...")
+                from app.auth import get_password_hash
+                from app.models import User
+                from sqlalchemy import update as sql_update
+
+                hashed = get_password_hash(admin_pass)
+                await db.execute(
+                    sql_update(User)
+                    .where(User.username == admin_user)
+                    .values(hashed_password=hashed, is_admin=True, is_active=True)
+                )
+                await db.commit()
+                logger.info("Mot de passe admin reinitialise")
+
             logger.info(f"Restauration snapshot {snapshot_id} terminee avec succes")
             return True
 
