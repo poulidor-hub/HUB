@@ -366,3 +366,25 @@ class TestRetention:
             select(HubSnapshot).where(HubSnapshot.snapshot_id == "recent-001")
         )
         assert recent_check.scalar_one_or_none() is not None
+
+    @pytest.mark.asyncio
+    async def test_download_returns_streaming_for_success_snapshot(
+        self, client: AsyncClient, async_session: AsyncSession,
+        admin_token, snapshot_settings,
+    ):
+        snap = HubSnapshot(
+            snapshot_id="test-dl-stream-001",
+            status="success",
+            s3_bucket="test-bucket",
+            s3_key="test/stream.tar.zst.enc",
+            created_by="test",
+        )
+        async_session.add(snap)
+        await async_session.commit()
+
+        response = await client.get(
+            "/api/admin/snapshots/test-dl-stream-001/download",
+            headers=get_auth_header(admin_token),
+        )
+        assert response.status_code == 400
+        assert "pas de stockage S3" in response.json()["detail"]
