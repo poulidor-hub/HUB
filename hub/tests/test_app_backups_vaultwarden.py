@@ -72,11 +72,11 @@ def service_account_token(service_account: ServiceAccount) -> str:
 @pytest.fixture
 def backup_storage(tmp_path, monkeypatch):
     import app.routes.app_backups as app_backups_route
-    import app.routes.backup as backup_route
+    import app.hub_self_backup as hub_backup_module
 
     storage_path = tmp_path / "backups"
     monkeypatch.setattr(app_backups_route, "STORAGE_BASE_DIR", storage_path)
-    monkeypatch.setattr(backup_route, "STORAGE_BASE_DIR", storage_path)
+    monkeypatch.setattr(hub_backup_module, "STORAGE_BASE_DIR", storage_path)
     return storage_path
 
 

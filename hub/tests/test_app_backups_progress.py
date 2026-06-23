@@ -41,11 +41,11 @@ def _make_zip() -> bytes:
 @pytest.fixture
 def backup_storage(tmp_path, monkeypatch):
     import app.routes.app_backups as app_backups_route
-    import app.routes.backup as backup_route
+    import app.hub_self_backup as hub_backup_module
 
     storage = tmp_path / "backups"
     monkeypatch.setattr(app_backups_route, "STORAGE_BASE_DIR", storage)
-    monkeypatch.setattr(backup_route, "STORAGE_BASE_DIR", storage)
+    monkeypatch.setattr(hub_backup_module, "STORAGE_BASE_DIR", storage)
     return storage
 
 
