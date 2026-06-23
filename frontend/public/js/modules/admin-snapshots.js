@@ -148,13 +148,31 @@ function confirmRestoreSnapshot(snapshotId) {
     });
 }
 
-function downloadSnapshot(snapshotId) {
-    const token = localStorage.getItem('hub_token');
-    const a = document.createElement('a');
-    a.href = `/api/admin/snapshots/${snapshotId}/download`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
+async function downloadSnapshot(snapshotId) {
+    showToast('Telechargement', 'Telechargement en cours...', 'info');
+    try {
+        const response = await fetch(`/api/admin/snapshots/${snapshotId}/download`, {
+            headers: {
+                'Authorization': `Bearer ${api.token}`
+            }
+        });
+        if (!response.ok) {
+            const err = await response.json().catch(() => ({ detail: 'Erreur serveur' }));
+            throw new Error(err.detail || 'Erreur telechargement');
+        }
+        const blob = await response.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `snapshot_${snapshotId}.tar.zst.enc`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        showToast('Telechargement', 'Telechargement termine', 'success');
+    } catch (e) {
+        showToast('Erreur', e.message || 'Echec du telechargement', 'danger');
+    }
 }
 
 async function loadSnapshotConfig() {
