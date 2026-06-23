@@ -237,16 +237,18 @@ function formatDate(dateStr) {
 function showToast(title, msg, type) {
     if (typeof window.showToast === 'function') {
         window.showToast(title, msg, type);
-    } else {
-        const container = document.getElementById('toastContainer');
-        if (container) {
-            const toast = document.createElement('div');
-            toast.className = `toast align-items-center text-bg-${type} border-0`;
-            toast.innerHTML = `<div class="d-flex"><div class="toast-body"><strong>${title}:</strong> ${msg}</div><button type="button" class="btn-close me-2 m-auto" data-bs-dismiss="toast"></button></div>`;
-            container.appendChild(toast);
-            new bootstrap.Toast(toast).show();
-        }
+        return;
     }
+    const container = document.getElementById('toastContainer');
+    if (!container) {
+        console.warn(`[${type}] ${title}: ${msg}`);
+        return;
+    }
+    const toast = document.createElement('div');
+    toast.className = `toast align-items-center text-bg-${type} border-0`;
+    toast.innerHTML = `<div class="d-flex"><div class="toast-body"><strong>${title}:</strong> ${msg}</div><button type="button" class="btn-close me-2 m-auto" data-bs-dismiss="toast"></button></div>`;
+    container.appendChild(toast);
+    new bootstrap.Toast(toast).show();
 }
 
 // Initialisation au chargement de la page snapshots

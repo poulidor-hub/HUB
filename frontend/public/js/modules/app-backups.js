@@ -489,31 +489,7 @@ async function saveAppBackupConfig(event) {
 async function loadBackupClusters() {
     const tbody = document.getElementById('backupClustersTableBody');
     if (tbody) {
-        tbody.innerHTML = `
-            <tr>
-                <td colspan="6" class="text-center text-muted py-4">
-                    <span class="spinner-border spinner-border-sm me-2"></span>Chargement...
-                </td>
-            </tr>
-        `;
-    }
-
-    try {
-        const [clustersData, backupsData] = await Promise.all([
-            api.listBackupClusters(),
-            api.request('/admin/backups')
-        ]);
-        backupClusters = clustersData.clusters || [];
-        backupOverviewApps = backupsData.apps || [];
-        renderBackupClustersTable();
-    } catch (error) {
-        console.error('Erreur chargement clusters backup:', error);
-        showToast('Erreur', error.message || 'Impossible de charger les clusters', 'danger');
-        if (tbody) {
-            tbody.innerHTML = `
-                <tr><td colspan="6" class="text-center text-danger py-4">Chargement impossible</td></tr>
-            `;
-        }
+        tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted py-4">Clusters remplaces par les <a href="#" onclick="showPage(\'snapshots\')">Snapshots</a></td></tr>';
     }
 }
 
