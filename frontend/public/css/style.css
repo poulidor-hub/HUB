@@ -1727,3 +1727,5 @@ body {
 .audit-tbl{margin:0;font-size:.85rem;}
 .audit-tbl thead th{background:#f8f9fa;color:#6c757d;font-weight:600;font-size:.75rem;text-transform:uppercase;letter-spacing:.02em;white-space:nowrap;}
 .audit-tbl tbody tr:hover{background:#f8fafc;}
+.snapshot-spin{animation:snapshot-spin-anim 1s linear infinite;display:inline-block;}
+@keyframes snapshot-spin-anim{from{transform:rotate(0deg);}to{transform:rotate(360deg);}}

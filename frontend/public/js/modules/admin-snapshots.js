@@ -17,46 +17,116 @@ const SNAPSHOT_STEP_LABELS = {
     done: 'Termine',
 };
 
+function formatBytes(bytes) {
+    if (bytes == null || bytes === 0) return '-';
+    const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+    let i = 0;
+    let size = bytes;
+    while (size >= 1024 && i < units.length - 1) {
+        size /= 1024;
+        i++;
+    }
+    return `${size.toFixed(1)} ${units[i]}`;
+}
+
+function formatRelativeTime(dateStr) {
+    if (!dateStr) return '-';
+    try {
+        const now = new Date();
+        const date = new Date(dateStr);
+        const diffSec = Math.floor((now - date) / 1000);
+        const diffMin = Math.floor(diffSec / 60);
+        const diffH = Math.floor(diffMin / 60);
+        const diffD = Math.floor(diffH / 24);
+
+        if (diffSec < 60) return "A l'instant";
+        if (diffMin < 60) return `Il y a ${diffMin} min`;
+        if (diffH < 24) return `Il y a ${diffH} h`;
+        if (diffD < 7) return `Il y a ${diffD} j`;
+        return date.toLocaleDateString('fr-FR');
+    } catch (e) {
+        return dateStr;
+    }
+}
+
+function toggleSnapshotEmpty(visible) {
+    const empty = document.getElementById('snapshotEmptyState');
+    const table = document.getElementById('snapshotTableCard');
+    if (empty) empty.classList.toggle('d-none', !visible);
+    if (table) table.classList.toggle('d-none', visible);
+}
+
 async function loadSnapshots() {
     try {
         const data = await api.request('/admin/snapshots/');
         renderSnapshotTable(data.snapshots || []);
     } catch (e) {
         console.error('Erreur chargement snapshots', e);
+        toggleSnapshotEmpty(true);
+        const countLabel = document.getElementById('snapshotCountLabel');
+        if (countLabel) countLabel.textContent = 'Erreur de chargement';
     }
 }
 
 function renderSnapshotTable(snapshots) {
     const container = document.getElementById('snapshotsTableBody');
+    const countLabel = document.getElementById('snapshotCountLabel');
     if (!container) return;
 
     if (!snapshots.length) {
-        container.innerHTML = '<tr><td colspan="5" class="text-center text-muted">Aucun snapshot</td></tr>';
+        toggleSnapshotEmpty(true);
+        if (countLabel) countLabel.textContent = 'Aucun snapshot';
         return;
     }
 
+    toggleSnapshotEmpty(false);
+    if (countLabel) {
+        countLabel.textContent = `${snapshots.length} snapshot(s)`;
+    }
+
     container.innerHTML = snapshots.map(s => {
-        const badgeClass = s.status === 'success' ? 'bg-success' :
-            s.status === 'running' ? 'bg-warning text-dark' :
-            s.status === 'failed' ? 'bg-danger' : 'bg-secondary';
-        const statusText = s.status === 'running' ?
-            `${SNAPSHOT_STEP_LABELS[s.progress_step] || s.progress_step} (${s.progress_percent}%)` :
-            s.status;
+        let statusIcon, badgeClass;
+        if (s.status === 'success') {
+            statusIcon = 'bi-check-circle-fill';
+            badgeClass = 'bg-success';
+        } else if (s.status === 'running') {
+            statusIcon = 'bi-arrow-repeat';
+            badgeClass = 'bg-warning text-dark';
+        } else if (s.status === 'failed') {
+            statusIcon = 'bi-x-circle-fill';
+            badgeClass = 'bg-danger';
+        } else {
+            statusIcon = 'bi-clock';
+            badgeClass = 'bg-secondary';
+        }
+
+        const statusAnim = s.status === 'running' ? 'snapshot-spin' : '';
+        const statusText = s.status === 'running'
+            ? `${SNAPSHOT_STEP_LABELS[s.progress_step] || s.progress_step} (${s.progress_percent}%)`
+            : s.status;
 
         return `<tr>
-            <td><code>${escapeHtml(s.snapshot_id).substring(0, 8)}...</code></td>
-            <td><span class="badge ${badgeClass}">${escapeHtml(statusText)}</span></td>
-            <td>${escapeHtml(s.total_size_human || '-')}</td>
-            <td>${escapeHtml(formatDate(s.created_at))}</td>
             <td>
+                <span class="badge ${badgeClass}">
+                    <i class="bi ${statusIcon} ${statusAnim} me-1"></i>${escapeHtml(statusText)}
+                </span>
+            </td>
+            <td><code class="text-muted">${escapeHtml(s.snapshot_id).substring(0, 12)}...</code></td>
+            <td>${escapeHtml(s.total_size_human || formatBytes(s.total_size_bytes))}</td>
+            <td>
+                <span title="${escapeHtml(formatDate(s.created_at))}">${escapeHtml(formatRelativeTime(s.created_at))}</span>
+            </td>
+            <td class="text-end">
                 <div class="dropdown">
-                    <button class="btn btn-sm btn-outline-secondary dropdown-toggle" data-bs-toggle="dropdown">...</button>
-                    <ul class="dropdown-menu">
-                        <li><a class="dropdown-item" href="#" onclick="showSnapshotDetail('${escapeHtml(s.snapshot_id)}')">Details</a></li>
-                        ${s.status === 'success' ? `<li><a class="dropdown-item" href="#" onclick="downloadSnapshot('${escapeHtml(s.snapshot_id)}')">Telecharger</a></li>` : ''}
-                        ${s.status === 'success' ? `<li><a class="dropdown-item text-danger" href="#" onclick="confirmRestoreSnapshot('${escapeHtml(s.snapshot_id)}')">Restaurer</a></li>` : ''}
+                    <button class="btn btn-sm btn-outline-secondary" data-bs-toggle="dropdown" title="Actions">
+                        <i class="bi bi-three-dots"></i>
+                    </button>
+                    <ul class="dropdown-menu dropdown-menu-end">
+                        <li><a class="dropdown-item" href="#" onclick="showSnapshotDetail('${escapeHtml(s.snapshot_id)}')"><i class="bi bi-eye me-2"></i>Details</a></li>
+                        ${s.status === 'success' ? `<li><a class="dropdown-item" href="#" onclick="downloadSnapshot('${escapeHtml(s.snapshot_id)}')"><i class="bi bi-download me-2"></i>Telecharger</a></li>` : ''}
+                        ${s.status === 'success' ? `<li><a class="dropdown-item text-warning" href="#" onclick="showSnapshotDetail('${escapeHtml(s.snapshot_id)}', 'restore')"><i class="bi bi-arrow-counterclockwise me-2"></i>Restaurer</a></li>` : ''}
                         <li><hr class="dropdown-divider"></li>
-                        ${s.status !== 'running' ? `<li><a class="dropdown-item text-danger" href="#" onclick="deleteSnapshot('${escapeHtml(s.snapshot_id)}')">Supprimer</a></li>` : ''}
+                        ${s.status !== 'running' ? `<li><a class="dropdown-item text-danger" href="#" onclick="deleteSnapshot('${escapeHtml(s.snapshot_id)}')"><i class="bi bi-trash me-2"></i>Supprimer</a></li>` : ''}
                     </ul>
                 </div>
             </td>
