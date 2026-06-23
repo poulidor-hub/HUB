@@ -426,6 +426,42 @@ async def get_active_sessions(
     }
 
 
+@router.post("/sessions/{session_id}/revoke")
+async def revoke_session(
+    session_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Force la déconnexion d'UNE session précise (admin uniquement).
+    Ferme la session avec la raison 'forced'.
+    """
+    if not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="Accès admin requis")
+
+    result = await db.execute(
+        select(UserSession).where(UserSession.id == session_id)
+    )
+    session = result.scalar_one_or_none()
+    if session is None:
+        raise HTTPException(status_code=404, detail="Session introuvable")
+    if session.logout_at is not None:
+        raise HTTPException(status_code=400, detail="Session déjà fermée")
+
+    session.logout_at = utcnow()
+    session.logout_reason = "forced"
+    session.current_app_slug = None
+    await db.commit()
+
+    _notify_audit()
+
+    return {
+        "message": "Session révoquée",
+        "session_id": session.id,
+        "user_id": session.user_id,
+    }
+
+
 @router.get("/sessions/history")
 async def get_session_history(
     user_id: Optional[int] = Query(None, description="Filtrer par utilisateur (ID)"),
