@@ -172,6 +172,13 @@ async def create_snapshot(
 
         checksum = hashlib.sha256(encrypted_path.read_bytes()).hexdigest()
 
+        # Sauvegarde locale
+        storage_dir = Path("/code/storage/snapshots")
+        storage_dir.mkdir(parents=True, exist_ok=True)
+        local_dest = storage_dir / f"snapshot_{snapshot_id}.tar.zst.enc"
+        shutil.copy2(encrypted_path, local_dest)
+        snapshot.local_path = str(local_dest)
+
         # Upload S3
         s3_endpoint = config.get("s3_endpoint", "")
         if s3_endpoint and config.get("s3_access_key"):

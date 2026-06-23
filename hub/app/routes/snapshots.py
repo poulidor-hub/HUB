@@ -218,6 +218,9 @@ async def delete_snapshot(
     if snap.status == "running":
         raise HTTPException(status_code=409, detail="Impossible de supprimer un snapshot en cours")
 
+    if snap.local_path and Path(snap.local_path).exists():
+        Path(snap.local_path).unlink(missing_ok=True)
+
     config = await get_snapshot_config(db)
     if snap.s3_key and config.get("s3_endpoint"):
         s3_delete(
@@ -276,14 +279,16 @@ async def restore_snapshot(
         tmp = Path(tempfile.mkdtemp(prefix="hub_restore_"))
         try:
             enc_path = tmp / "snapshot.tar.zst.enc"
-            if snap.s3_key and config.get("s3_endpoint"):
+            if snap.local_path and Path(snap.local_path).exists():
+                shutil.copy2(snap.local_path, enc_path)
+            elif snap.s3_key and config.get("s3_endpoint"):
                 await s3_download(
                     snap.s3_bucket or "", snap.s3_key, enc_path,
                     config["s3_endpoint"], config["s3_access_key"], config["s3_secret_key"],
                     config.get("s3_region", "eu-west-1"),
                 )
             else:
-                logger.error("Snapshot non disponible (pas de stockage S3)")
+                logger.error("Snapshot non disponible (ni stockage local ni S3)")
                 return
 
             data = enc_path.read_bytes()
@@ -375,6 +380,22 @@ async def download_snapshot(
     snap = await _get_snapshot_or_404(db, snapshot_id)
     if snap.status != "success":
         raise HTTPException(status_code=400, detail="Snapshot non disponible au telechargement")
+
+    if snap.local_path and Path(snap.local_path).exists():
+        local_path = Path(snap.local_path)
+
+        def _iter_local():
+            with open(local_path, "rb") as f:
+                while chunk := f.read(64 * 1024):
+                    yield chunk
+
+        return StreamingResponse(
+            _iter_local(),
+            media_type="application/octet-stream",
+            headers={
+                "Content-Disposition": f'attachment; filename="snapshot_{snapshot_id}.tar.zst.enc"',
+            },
+        )
 
     config = await get_snapshot_config(db)
     if not snap.s3_key or not config.get("s3_endpoint"):

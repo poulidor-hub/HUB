@@ -1722,6 +1722,7 @@ class HubSnapshotResponse(BaseModel):
     progress_step: Optional[str] = "queued"
     s3_bucket: Optional[str] = None
     s3_key: Optional[str] = None
+    local_path: Optional[str] = None
     total_size_bytes: int = 0
     total_size_human: str = ""
     checksum_sha256: Optional[str] = None
@@ -1772,6 +1773,7 @@ class HubSnapshotResponse(BaseModel):
             progress_step=getattr(snapshot, "progress_step", "queued"),
             s3_bucket=getattr(snapshot, "s3_bucket", None),
             s3_key=getattr(snapshot, "s3_key", None),
+            local_path=getattr(snapshot, "local_path", None),
             total_size_bytes=snapshot.total_size_bytes or 0,
             total_size_human=size_human,
             checksum_sha256=getattr(snapshot, "checksum_sha256", None),

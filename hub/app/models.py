@@ -516,6 +516,7 @@ class HubSnapshot(Base):
     progress_step = Column(String(40), default="queued")
     s3_bucket = Column(String(255))
     s3_key = Column(String(500))
+    local_path = Column(String(1000))
     total_size_bytes = Column(BigInteger, default=0)
     checksum_sha256 = Column(String(64))
     manifest = Column(JSON, default={})

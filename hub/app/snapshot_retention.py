@@ -5,6 +5,7 @@ import logging
 from datetime import datetime, timezone
 from sqlalchemy import select, desc
 from sqlalchemy.ext.asyncio import AsyncSession
+from pathlib import Path
 from app.models import HubSnapshot
 from app.snapshot_config import get_snapshot_config
 
@@ -39,6 +40,8 @@ async def apply_retention(db: AsyncSession, max_count=7, min_age_hours=24) -> in
             kept += 1
             continue
         if kept >= max_count:
+            if s.local_path and Path(s.local_path).exists():
+                Path(s.local_path).unlink(missing_ok=True)
             if s.s3_key and s3_endpoint and s3_access_key:
                 from app.snapshot_s3 import delete_from_s3
                 delete_from_s3(s.s3_bucket or "", s.s3_key, s3_endpoint, s3_access_key, s3_secret_key, s3_region)

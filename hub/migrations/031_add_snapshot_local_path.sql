@@ -1,0 +1,1 @@
+ALTER TABLE hub_snapshots ADD COLUMN IF NOT EXISTS local_path VARCHAR(1000);
