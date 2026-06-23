@@ -1308,7 +1308,7 @@ async def perform_app_backup(
 
         if bool(getattr(app, "is_system_app", False)) and slug == "hub":
             await _update_backup_progress(db, backup, "create")
-            from app.routes.backup import create_hub_backup_archive
+            from app.hub_self_backup import create_hub_backup_archive
 
             try:
                 archive_info = await create_hub_backup_archive(
