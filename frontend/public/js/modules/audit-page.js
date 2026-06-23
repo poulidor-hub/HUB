@@ -11,39 +11,182 @@ let pageAuditLogsPage = 1;
 let pageAuditCurrentAppSlug = null;
 let pageAuditAppLogsPage = 1;
 let allUsersPage = [];
+let pageAuditDays = 7;
+
+function setAuditPeriod(days) {
+    pageAuditDays = days;
+    const hidden = document.getElementById('auditPeriodPage');
+    if (hidden) hidden.value = days;
+    document.querySelectorAll('#auditPageSeg button').forEach(b => {
+        b.classList.toggle('active', parseInt(b.dataset.days) === days);
+    });
+    loadAuditPageData();
+}
+
+function openAuditTab(tab) {
+    const map = { overview: '#auditPageOverview', apps: '#auditPageApps', logs: '#auditPageLogs', sessions: '#auditPageSessions', errors: '#auditPageErrors' };
+    const btn = document.querySelector(`#auditPageTabs [data-bs-target="${map[tab]}"]`);
+    if (btn) btn.click();
+}
 
 async function loadAuditPageData() {
     await loadAuditPageOverview();
 }
 
 async function loadAuditPageOverview() {
-    const days = parseInt(document.getElementById('auditPeriodPage')?.value || 30);
-    
+    const days = pageAuditDays;
     try {
-        const [stats, activeSessions, history, appSummary] = await Promise.all([
-            api.getConnectionStats(days),
-            api.getActiveSessions(),
-            api.getSessionHistory(days),
-            api.getAppAuditSummary(days).catch(() => ({ apps: [] }))
+        const [kpis, alerts, active] = await Promise.all([
+            api.getAuditKpis(days),
+            api.getAuditAlerts(days),
+            api.getActiveSessions()
         ]);
-        
-        // Stats
-        document.getElementById('pageStatActiveNow').textContent = stats.active_now || 0;
-        document.getElementById('pageStatTotalSessions').textContent = stats.total_sessions || 0;
-        document.getElementById('pageStatUniqueUsers').textContent = stats.unique_users || 0;
-        document.getElementById('pageStatAvgDuration').textContent = stats.avg_session_duration_display || 'N/A';
-        
-        // Sessions actives
-        renderPageActiveSessions(activeSessions);
-        
-        // Top users
-        renderPageTopUsers(stats.top_users || []);
-        
-        // Top apps
-        renderPageTopApps(appSummary.apps || []);
+        renderAuditKpis(kpis);
+        renderAuditAlerts(alerts.alerts || []);
+        renderAuditLiveSessions(active);
     } catch (error) {
         console.error('Erreur chargement audit:', error);
-        showToast('Erreur', 'Impossible de charger les données d\'audit', 'danger');
+        showToast('Erreur', "Impossible de charger les données d'audit", 'danger');
+    }
+}
+
+function auditTrend(cur, prev, goodDirection) {
+    const d = cur - prev;
+    if (d === 0) return '<span class="audit-trend flat">0</span>';
+    const sign = d > 0 ? '+' : '';
+    const improving = goodDirection === 'down' ? d < 0 : d > 0;
+    return `<span class="audit-trend ${improving ? 'down' : 'up'}">${sign}${d}</span>`;
+}
+
+function auditKpiCard(tile, color, icon, value, label, trendHtml) {
+    return `
+        <div class="col-6 col-lg-3">
+            <div class="card h-100"><div class="card-body">
+                <div class="d-flex justify-content-between align-items-start mb-3">
+                    <div class="audit-icon-tile" style="background:${tile};color:${color};"><i class="bi ${icon}"></i></div>
+                    ${trendHtml}
+                </div>
+                <div class="audit-kpi-value">${value}</div>
+                <div class="small text-muted mt-1">${label}</div>
+            </div></div>
+        </div>`;
+}
+
+function renderAuditKpis(k) {
+    const live = '<span class="audit-trend flat"><span class="audit-pulse"></span></span>';
+    document.getElementById('auditKpiRow').innerHTML =
+        auditKpiCard('#e7f1ff', '#0d6efd', 'bi-people', k.active_now, 'Sessions actives', live) +
+        auditKpiCard('#fde8e8', '#dc3545', 'bi-exclamation-triangle', k.errors_critical.current, 'Erreurs critiques',
+            auditTrend(k.errors_critical.current, k.errors_critical.previous, 'down')) +
+        auditKpiCard('#e6f4ea', '#28a745', 'bi-hdd-stack', k.apps_active.current, 'Apps actives',
+            auditTrend(k.apps_active.current, k.apps_active.previous, 'up')) +
+        auditKpiCard('#fff1e6', '#fd7e14', 'bi-shield-exclamation', k.auth_failures.current, "Échecs d'auth.",
+            auditTrend(k.auth_failures.current, k.auth_failures.previous, 'down'));
+}
+
+function renderAuditAlerts(alerts) {
+    const c = document.getElementById('auditAlertsList');
+    if (!alerts.length) {
+        c.innerHTML = '<div class="text-center text-muted py-4"><i class="bi bi-check-circle text-success me-1"></i>Aucune alerte à traiter</div>';
+        return;
+    }
+    c.innerHTML = alerts.map(a => {
+        const isErr = a.type === 'http_error';
+        const tile = isErr ? '#fde8e8' : '#fff1e6';
+        const col = isErr ? '#dc3545' : '#fd7e14';
+        const icon = isErr ? 'bi-exclamation-triangle' : 'bi-shield-exclamation';
+        const title = isErr
+            ? `Erreur ${a.request_path}`
+            : `Multiples échecs de connexion (IP : ${a.ip_address})`;
+        const src = a.source_app_slug ? `<span class="badge text-bg-light border">${escapeHtml(a.source_app_slug)}</span>` : '';
+        return `
+        <div class="audit-alert-row">
+            <div class="audit-alert-ic" style="background:${tile};color:${col};"><i class="bi ${icon}"></i></div>
+            <div class="flex-grow-1">
+                <div class="fw-semibold small">${escapeHtml(title)}</div>
+                <div class="d-flex align-items-center gap-2 mt-2" style="font-size:.75rem;">
+                    ${src}<span class="text-danger fw-semibold">${a.occurrences} occurrences</span>
+                    <span class="text-muted">${formatDateTime(a.last_seen)}</span>
+                </div>
+            </div>
+            <button class="btn btn-sm btn-outline-secondary" onclick='auditAlertDetails(${JSON.stringify(a.deeplink)})'>Détails</button>
+        </div>`;
+    }).join('');
+}
+
+function auditAlertDetails(deeplink) {
+    if (deeplink.tab === 'errors') {
+        const el = document.getElementById('errorsFilterPath');
+        if (el) el.value = deeplink.filters.path || '';
+        openAuditTab('errors');
+        loadAuditPageErrors();
+    } else {
+        const el = document.getElementById('pageLogsFilterIp');
+        if (el) el.value = deeplink.filters.ip || '';
+        openAuditTab('logs');
+        pageAuditLogsPage = 1;
+        loadAuditPageLogsTab();
+    }
+}
+
+function renderAuditLiveSessions(data) {
+    document.getElementById('auditLiveCount').textContent = data.active_count || 0;
+    const c = document.getElementById('auditLiveSessions');
+    if (!data.sessions || !data.sessions.length) {
+        c.innerHTML = '<div class="text-center text-muted py-4"><i class="bi bi-person-x me-1"></i>Aucun utilisateur connecté</div>';
+        return;
+    }
+    c.innerHTML = data.sessions.map(s => `
+        <div class="p-3 border-bottom">
+            <div class="d-flex justify-content-between">
+                <span class="fw-semibold small">${escapeHtml(s.username || 'Unknown')}</span>
+                <small class="text-muted"><i class="bi bi-clock me-1"></i>${s.duration_minutes} min</small>
+            </div>
+            <div class="d-flex justify-content-between align-items-end mt-2">
+                <div class="d-flex flex-column gap-1">
+                    <span class="badge text-bg-light border">${escapeHtml(s.current_app_name || 'Hub')}</span>
+                    <code class="small text-muted">${s.ip_address || '-'}</code>
+                </div>
+                <a href="#" class="small text-danger fw-semibold text-decoration-none" onclick="auditForceLogout(${s.id}); return false;">Forcer déco.</a>
+            </div>
+        </div>`).join('');
+}
+
+async function auditForceLogout(sessionId) {
+    if (!confirm('Forcer la déconnexion de cette session ?')) return;
+    try {
+        await api.revokeSession(sessionId);
+        showToast('Succès', 'Session révoquée', 'success');
+        loadAuditPageOverview();
+    } catch (e) {
+        showToast('Erreur', e.message || 'Révocation impossible', 'danger');
+    }
+}
+
+function auditQuickSearch() {
+    const q = document.getElementById('auditQuickSearchInput')?.value?.trim();
+    if (!q) { openAuditTab('logs'); return; }
+    const looksIp = /^\d{1,3}(\.\d{1,3}){3}$/.test(q);
+    if (looksIp) {
+        const el = document.getElementById('pageLogsFilterIp'); if (el) el.value = q;
+    } else {
+        const el = document.getElementById('pageLogsFilterUser'); if (el) el.value = q;
+    }
+    openAuditTab('logs');
+    pageAuditLogsPage = 1;
+    loadAuditPageLogsTab();
+}
+
+function auditChip(kind, value) {
+    if (kind === 'status') {
+        const el = document.getElementById('errorsFilterCode'); if (el) el.value = value;
+        openAuditTab('errors'); loadAuditPageErrors();
+    } else if (kind === 'action') {
+        const el = document.getElementById('pageLogsFilterAction'); if (el) el.value = value;
+        openAuditTab('logs'); pageAuditLogsPage = 1; loadAuditPageLogsTab();
+    } else if (kind === 'app') {
+        const el = document.getElementById('pageLogsFilterApp'); if (el) el.value = value;
+        openAuditTab('logs'); pageAuditLogsPage = 1; loadAuditPageLogsTab();
     }
 }
 
@@ -370,6 +513,7 @@ async function loadAuditPageLogsTab() {
     const action = document.getElementById('pageLogsFilterAction')?.value || null;
     const target = document.getElementById('pageLogsFilterApp')?.value || null;
     const username = document.getElementById('pageLogsFilterUser')?.value?.trim() || null;
+    const ip = document.getElementById('pageLogsFilterIp')?.value?.trim() || null;
     
     try {
         await loadPageLogsFilters();
@@ -379,6 +523,7 @@ async function loadAuditPageLogsTab() {
             action: action || null,
             target: target || null,
             username: username || null,
+            ip: ip || null,
             page: pageAuditLogsPage,
             pageSize: 50
         });
@@ -443,6 +588,8 @@ function resetPageLogsFilters() {
     document.getElementById('pageLogsFilterAction').value = '';
     document.getElementById('pageLogsFilterApp').value = '';
     document.getElementById('pageLogsFilterUser').value = '';
+    const ipEl = document.getElementById('pageLogsFilterIp');
+    if (ipEl) ipEl.value = '';
     pageAuditLogsPage = 1;
     loadAuditPageLogsTab();
 }
