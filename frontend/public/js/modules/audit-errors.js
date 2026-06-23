@@ -188,7 +188,7 @@ function renderErrorsTable(data) {
     }
     
     container.innerHTML = `
-        <table class="table table-sm table-hover mb-0">
+        <table class="table audit-tbl table-hover mb-0">
             <thead class="sticky-top bg-white">
                 <tr>
                     <th>Date/Heure</th>

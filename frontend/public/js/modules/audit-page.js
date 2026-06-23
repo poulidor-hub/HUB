@@ -207,7 +207,7 @@ function renderPageActiveSessions(data) {
     }
     
     container.innerHTML = `
-        <table class="table table-sm table-hover mb-0">
+        <table class="table audit-tbl table-hover mb-0">
             <thead>
                 <tr>
                     <th>Utilisateur</th>
@@ -247,7 +247,7 @@ function renderPageTopUsers(topUsers) {
     }
     
     container.innerHTML = `
-        <table class="table table-sm table-hover mb-0">
+        <table class="table audit-tbl table-hover mb-0">
             <thead>
                 <tr>
                     <th>#</th>
@@ -289,7 +289,7 @@ function renderPageTopApps(apps) {
     }
     
     container.innerHTML = `
-        <table class="table table-sm table-hover mb-0">
+        <table class="table audit-tbl table-hover mb-0">
             <thead>
                 <tr>
                     <th>#</th>
@@ -473,7 +473,7 @@ function renderPageAppDetailLogs(data) {
     }
     
     container.innerHTML = `
-        <table class="table table-sm table-hover mb-0">
+        <table class="table audit-tbl table-hover mb-0">
             <thead class="sticky-top bg-white">
                 <tr>
                     <th>Date/Heure</th>
@@ -613,7 +613,7 @@ function renderPageAuditLogs(data) {
     }
     
     container.innerHTML = `
-        <table class="table table-sm table-hover mb-0">
+        <table class="table audit-tbl table-hover mb-0">
             <thead class="sticky-top bg-white">
                 <tr>
                     <th>Date/Heure</th>
