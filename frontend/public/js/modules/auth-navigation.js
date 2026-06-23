@@ -169,6 +169,7 @@ function showPage(page) {
     document.getElementById('adminSection').classList.add('d-none');
     document.getElementById('cloneMigrateSection').classList.add('d-none');
     document.getElementById('messagesSection').classList.add('d-none');
+    if (document.getElementById('snapshotsSection')) document.getElementById('snapshotsSection').classList.add('d-none');
     document.getElementById('userInboxSection')?.classList.add('d-none');
     _clearInboxMarkReadTimer();
     _resetInboxDetailView();
@@ -250,6 +251,17 @@ function showPage(page) {
             document.getElementById('messagesSection').classList.remove('d-none');
             document.getElementById('navMessages')?.classList.add('active');
             loadMessagesPage();
+            break;
+        case 'snapshots':
+            if (!currentUser?.is_admin) {
+                showToast('Accès refusé', 'Vous devez être administrateur', 'danger');
+                return;
+            }
+            document.getElementById('snapshotsSection').classList.remove('d-none');
+            document.getElementById('navSnapshots')?.classList.add('active');
+            if (typeof loadSnapshots === 'function') loadSnapshots();
+            if (typeof loadSnapshotConfig === 'function') loadSnapshotConfig();
+            if (typeof startProgressPolling === 'function') startProgressPolling();
             break;
         case 'inbox':
             document.getElementById('userInboxSection').classList.remove('d-none');

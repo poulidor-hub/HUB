@@ -204,15 +204,18 @@ function startProgressPolling() {
     _progressPollTimer = setInterval(async () => {
         try {
             const data = await api.request('/admin/snapshots/in-progress');
+            const container = document.getElementById('snapshotProgressContainer');
             const bar = document.getElementById('snapshotProgressBar');
             const label = document.getElementById('snapshotProgressLabel');
             if (data.status === 'idle') {
+                if (container) container.classList.add('d-none');
                 if (bar) bar.style.width = '0%';
                 if (label) label.textContent = '';
                 clearInterval(_progressPollTimer);
                 _progressPollTimer = null;
-                loadSnapshots();
+                if (typeof loadSnapshots === 'function') loadSnapshots();
             } else {
+                if (container) container.classList.remove('d-none');
                 if (bar) bar.style.width = `${data.progress_percent}%`;
                 if (label) label.textContent = `${SNAPSHOT_STEP_LABELS[data.progress_step] || data.progress_step} (${data.progress_percent}%)`;
             }
@@ -251,12 +254,6 @@ function showToast(title, msg, type) {
     new bootstrap.Toast(toast).show();
 }
 
-// Initialisation au chargement de la page snapshots
-document.addEventListener('DOMContentLoaded', () => {
-    const snapshotsPage = document.getElementById('pageSnapshots');
-    if (snapshotsPage) {
-        loadSnapshots();
-        loadSnapshotConfig();
-        startProgressPolling();
-    }
-});
+// Ne pas utiliser DOMContentLoaded — le chargement est gere par showPage()
+// Les fonctions loadSnapshots(), loadSnapshotConfig(), startProgressPolling()
+// sont globales et appelees par auth-navigation.js au moment du showPage('snapshots')

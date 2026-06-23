@@ -370,6 +370,7 @@
                 
                 <!-- Par Application -->
                 <div class="tab-pane fade" id="auditPageApps">
+                    <div class="row g-3 mb-4" id="auditAppsKpiRow"></div>
                     <div class="row" id="auditPageAppsGrid">
                         <!-- Cards des apps chargées dynamiquement -->
                     </div>
@@ -442,6 +443,8 @@
                 
                 <!-- Logs détaillés -->
                 <div class="tab-pane fade" id="auditPageLogs">
+                    <!-- KPIs logs -->
+                    <div class="row g-3 mb-4" id="auditLogsKpiRow"></div>
                     <!-- Filtres -->
                     <div class="card mb-4">
                         <div class="card-body">
@@ -497,55 +500,23 @@
                 
                 <!-- Sessions -->
                 <div class="tab-pane fade" id="auditPageSessions">
+                    <!-- KPIs sessions -->
+                    <div class="row g-3 mb-4" id="auditSessionKpiRow"></div>
                     <div class="card">
-                        <div class="card-header d-flex justify-content-between align-items-center">
-                            <span><i class="bi bi-clock-history me-2"></i>Historique des sessions</span>
+                        <div class="audit-card-head">
+                            <h2 class="h6 mb-0"><i class="bi bi-clock-history me-2"></i>Historique des sessions</h2>
                             <span class="text-muted small" id="pageSessionsCount">0 sessions</span>
                         </div>
                         <div class="card-body p-0">
                             <div id="pageSessionHistoryTable" style="max-height: 500px; overflow: auto;"></div>
                         </div>
-                        <div class="card-footer bg-light" id="pageSessionsSummary"></div>
                     </div>
                 </div>
                 
                 <!-- Erreurs HTTP -->
                 <div class="tab-pane fade" id="auditPageErrors">
-                    <!-- Stats erreurs -->
-                    <div class="row g-3 mb-4">
-                        <div class="col-md-3">
-                            <div class="card border-danger">
-                                <div class="card-body text-center">
-                                    <h3 id="errorStatTotal" class="text-danger">-</h3>
-                                    <small class="text-muted">Erreurs totales</small>
-                                </div>
-                            </div>
-                        </div>
-                        <div class="col-md-3">
-                            <div class="card border-warning">
-                                <div class="card-body text-center">
-                                    <h3 id="errorStat4xx" class="text-warning">-</h3>
-                                    <small class="text-muted">Erreurs 4xx</small>
-                                </div>
-                            </div>
-                        </div>
-                        <div class="col-md-3">
-                            <div class="card border-danger">
-                                <div class="card-body text-center">
-                                    <h3 id="errorStat5xx" class="text-danger">-</h3>
-                                    <small class="text-muted">Erreurs 5xx</small>
-                                </div>
-                            </div>
-                        </div>
-                        <div class="col-md-3">
-                            <div class="card border-info">
-                                <div class="card-body text-center">
-                                    <h3 id="errorStatAuth" class="text-info">-</h3>
-                                    <small class="text-muted">Auth (401/403)</small>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
+                    <!-- KPIs erreurs -->
+                    <div class="row g-3 mb-4" id="auditErrorKpiRow"></div>
                     
                     <!-- Filtres erreurs -->
                     <div class="card mb-4">
@@ -3515,6 +3486,83 @@
                 <button type="button" class="btn-close" data-bs-dismiss="toast"></button>
             </div>
             <div class="toast-body" id="toastBody"></div>
+        </div>
+    </div>
+
+    <!-- ============================================================ -->
+    <!-- Page Snapshots -->
+    <!-- ============================================================ -->
+    <div id="snapshotsSection" class="container-fluid py-4 d-none" style="margin-top: 70px;">
+        <div class="container">
+            <div class="d-flex justify-content-between align-items-center mb-4">
+                <h2><i class="bi bi-camera me-2"></i>Snapshots</h2>
+                <div>
+                    <button class="btn btn-primary" onclick="createSnapshot()">
+                        <i class="bi bi-plus-lg me-1"></i>Creer maintenant
+                    </button>
+                </div>
+            </div>
+
+            <!-- Barre de progression -->
+            <div id="snapshotProgressContainer" class="mb-3 d-none">
+                <div class="d-flex justify-content-between mb-1">
+                    <small id="snapshotProgressLabel" class="text-muted">En attente...</small>
+                </div>
+                <div class="progress" style="height: 6px;">
+                    <div id="snapshotProgressBar" class="progress-bar progress-bar-striped progress-bar-animated" style="width: 0%"></div>
+                </div>
+            </div>
+
+            <!-- Tableau des snapshots -->
+            <div class="card">
+                <div class="card-body p-0">
+                    <table class="table table-hover mb-0">
+                        <thead class="table-light">
+                            <tr>
+                                <th>ID</th>
+                                <th>Statut</th>
+                                <th>Taille</th>
+                                <th>Date</th>
+                                <th class="text-end">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="snapshotsTableBody">
+                            <tr><td colspan="5" class="text-center text-muted py-4">Chargement...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Configuration -->
+            <div class="card mt-4">
+                <div class="card-header">
+                    <h5 class="mb-0">Configuration</h5>
+                </div>
+                <div class="card-body">
+                    <div class="row g-3">
+                        <div class="col-md-4">
+                            <label class="form-label">Cron</label>
+                            <input id="snapshotCron" class="form-control" placeholder="0 2 * * *">
+                            <small class="text-muted">Laisser vide pour desactiver</small>
+                        </div>
+                        <div class="col-md-2">
+                            <label class="form-label">Retention max</label>
+                            <input id="snapshotRetentionMax" type="number" class="form-control" min="1" value="7">
+                        </div>
+                        <div class="col-md-2">
+                            <label class="form-label">Age min (h)</label>
+                            <input id="snapshotRetentionMinAge" type="number" class="form-control" min="0" value="24">
+                        </div>
+                        <div class="col-md-2">
+                            <label class="form-label">S3</label>
+                            <div><span id="snapshotS3Status" class="badge bg-warning text-dark">-</span></div>
+                        </div>
+                        <div class="col-md-2 d-flex align-items-end">
+                            <button class="btn btn-outline-primary w-100" onclick="saveSnapshotConfig()">Enregistrer</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
         </div>
     </div>
 
