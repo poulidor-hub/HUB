@@ -127,11 +127,14 @@ async def run_app_backups(db: AsyncSession, temp_dir: Path, snapshot: HubSnapsho
     async def _backup_one(app: Application) -> dict:
         nonlocal succeeded, failed
         try:
-            await perform_app_backup(
-                db, app,
-                created_by="snapshot",
-                created_by_type="snapshot",
-                description_prefix=f"Snapshot {snapshot.snapshot_id}",
+            await asyncio.wait_for(
+                perform_app_backup(
+                    db, app,
+                    created_by="snapshot",
+                    created_by_type="snapshot",
+                    description_prefix=f"Snapshot {snapshot.snapshot_id}",
+                ),
+                timeout=120,
             )
             await db.refresh(app, ["last_backup_id"])
 

@@ -302,6 +302,14 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         logger.warning(f"⚠️ Kill-switch backups au démarrage a échoué: {exc}")
 
+    # Kill-switch snapshots
+    try:
+        from app.snapshot_engine import cleanup_stale_snapshots
+        async with async_session_maker() as kill_db:
+            await cleanup_stale_snapshots(kill_db)
+    except Exception as exc:
+        logger.warning(f"⚠️ Kill-switch snapshots au démarrage a échoué: {exc}")
+
     # Initialiser le Service Account Discovery
     from app.routes.discovery import init_discovery_service_account
     await init_discovery_service_account()

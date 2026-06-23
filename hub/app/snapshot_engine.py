@@ -260,3 +260,14 @@ def _encrypt_file(input_path: Path, output_path: Path):
 
     key_length_bytes = len(encrypted_key).to_bytes(4, "big")
     output_path.write_bytes(key_length_bytes + encrypted_key + nonce + ciphertext)
+
+
+async def cleanup_stale_snapshots(db: AsyncSession):
+    """Kill-switch au demarrage: marque les snapshots 'running' comme 'failed'."""
+    from sqlalchemy import update
+    await db.execute(
+        update(HubSnapshot)
+        .where(HubSnapshot.status == "running")
+        .values(status="failed", error_message="Snapshot interrompu (redemarrage du Hub)")
+    )
+    await db.commit()
