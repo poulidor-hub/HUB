@@ -602,18 +602,31 @@ class HubAPI {
         return this.request(`/audit/stats?days=${days}`);
     }
 
+    async getAuditKpis(days = 7) {
+        return this.request(`/audit/overview/kpis?days=${days}`);
+    }
+
+    async getAuditAlerts(days = 7) {
+        return this.request(`/audit/overview/alerts?days=${days}`);
+    }
+
+    async revokeSession(sessionId) {
+        return this.request(`/audit/sessions/${sessionId}/revoke`, { method: 'POST' });
+    }
+
     async getUserStats(userId, days = 30) {
         return this.request(`/audit/stats/user/${userId}?days=${days}`);
     }
 
     // Audit Logs détaillés
     async getAuditLogs(params = {}) {
-        const { days = 30, action = null, target = null, userId = null, username = null, page = 1, pageSize = 50 } = params;
+        const { days = 30, action = null, target = null, userId = null, username = null, ip = null, page = 1, pageSize = 50 } = params;
         let url = `/audit/logs?days=${days}&page=${page}&page_size=${pageSize}`;
         if (action) url += `&action=${encodeURIComponent(action)}`;
         if (target) url += `&target=${encodeURIComponent(target)}`;
         if (userId) url += `&user_id=${userId}`;
         if (username) url += `&username=${encodeURIComponent(username)}`;
+        if (ip) url += `&ip=${encodeURIComponent(ip)}`;
         return this.request(url);
     }
 
