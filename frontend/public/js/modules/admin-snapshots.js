@@ -319,15 +319,45 @@ function confirmRestoreSnapshot(snapshotId) {
 
     document.getElementById('snapshotRestoreConfirmBtn').addEventListener('click', async () => {
         modal.hide();
+
+        const progressEl = document.createElement('div');
+        progressEl.id = 'snapshotRestoreProgressModal';
+        progressEl.className = 'modal fade';
+        progressEl.setAttribute('tabindex', '-1');
+        progressEl.setAttribute('data-bs-backdrop', 'static');
+        progressEl.innerHTML = `<div class="modal-dialog modal-dialog-centered modal-sm">
+            <div class="modal-content text-center">
+                <div class="modal-body py-4">
+                    <div class="spinner-border text-primary mb-3" role="status" style="width:3rem;height:3rem;">
+                        <span class="visually-hidden">Restauration...</span>
+                    </div>
+                    <h6>Restauration en cours...</h6>
+                    <p class="text-muted small mb-0">Cette operation peut prendre plusieurs minutes.</p>
+                </div>
+            </div>
+        </div>`;
+        document.body.appendChild(progressEl);
+        const progressModal = new bootstrap.Modal(progressEl);
+        progressModal.show();
+
         try {
             await api.request(`/admin/snapshots/${snapshotId}/restore`, {
                 method: 'POST',
                 body: JSON.stringify({ confirm_full_restore: true }),
             });
-            showToast('Restauration', 'Restauration en cours...', 'info');
+
+            progressEl.querySelector('.modal-body').innerHTML = `
+                <i class="bi bi-check-circle-fill text-success mb-3" style="font-size:3rem;"></i>
+                <h6>Restauration declenchee</h6>
+                <p class="text-muted small mb-0">Les donnees seront restaurees en arriere-plan.</p>
+            `;
+            setTimeout(() => progressModal.hide(), 3000);
         } catch (e) {
+            progressModal.hide();
             showToast('Erreur', e.message || 'Echec restauration', 'danger');
         }
+
+        progressEl.addEventListener('hidden.bs.modal', () => progressEl.remove());
     });
 
     modalEl.addEventListener('hidden.bs.modal', () => modalEl.remove());
