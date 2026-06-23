@@ -388,18 +388,20 @@ async def download_snapshot(
         config.get("s3_region", "eu-west-1"),
     )
 
-    content = dest.read_bytes()
-
-    def _cleanup():
-        shutil.rmtree(tmp, ignore_errors=True)
+    def _iter_and_cleanup():
+        try:
+            with open(dest, "rb") as f:
+                while chunk := f.read(64 * 1024):
+                    yield chunk
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
 
     return StreamingResponse(
-        io.BytesIO(content),
+        _iter_and_cleanup(),
         media_type="application/octet-stream",
         headers={
             "Content-Disposition": f'attachment; filename="snapshot_{snapshot_id}.tar.zst.enc"',
         },
-        background=_cleanup,
     )
 
 
