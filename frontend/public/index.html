@@ -267,12 +267,13 @@
                     <p class="text-muted mb-0">Suivi des connexions et accès aux applications</p>
                 </div>
                 <div class="d-flex gap-2">
-                    <select class="form-select form-select-sm" id="auditPeriodPage" onchange="loadAuditPageData()" style="width: auto;">
-                        <option value="7">7 derniers jours</option>
-                        <option value="30" selected>30 derniers jours</option>
-                        <option value="90">90 derniers jours</option>
-                        <option value="365">1 an</option>
-                    </select>
+                    <input type="hidden" id="auditPeriodPage" value="7">
+                    <div class="audit-seg" id="auditPageSeg">
+                        <button data-days="1" onclick="setAuditPeriod(1)">24h</button>
+                        <button data-days="7" class="active" onclick="setAuditPeriod(7)">7j</button>
+                        <button data-days="30" onclick="setAuditPeriod(30)">30j</button>
+                        <button data-days="90" onclick="setAuditPeriod(90)">90j</button>
+                    </div>
                     <div class="btn-group btn-group-sm">
                         <button class="btn btn-outline-secondary dropdown-toggle" data-bs-toggle="dropdown">
                             <i class="bi bi-download me-1"></i>Export
@@ -289,7 +290,7 @@
             </div>
             
             <!-- Sous-navigation audit -->
-            <ul class="nav nav-tabs mb-4" id="auditPageTabs">
+            <ul class="nav audit-subnav" id="auditPageTabs">
                 <li class="nav-item">
                     <button class="nav-link active" data-bs-toggle="tab" data-bs-target="#auditPageOverview" onclick="loadAuditPageOverview()">
                         <i class="bi bi-speedometer2 me-1"></i>Vue d'ensemble
@@ -321,75 +322,43 @@
             <div class="tab-content">
                 <!-- Vue d'ensemble -->
                 <div class="tab-pane fade show active" id="auditPageOverview">
-                    <!-- Stats Cards -->
-                    <div class="row g-3 mb-4" id="auditPageStatsCards">
-                        <div class="col-md-3">
-                            <div class="card border">
-                                <div class="card-body text-center">
-                                    <h3 id="pageStatActiveNow" class="text-primary">-</h3>
-                                    <small class="text-muted">Connectés maintenant</small>
-                                </div>
-                            </div>
-                        </div>
-                        <div class="col-md-3">
-                            <div class="card border">
-                                <div class="card-body text-center">
-                                    <h3 id="pageStatTotalSessions">-</h3>
-                                    <small class="text-muted">Sessions totales</small>
-                                </div>
-                            </div>
-                        </div>
-                        <div class="col-md-3">
-                            <div class="card border">
-                                <div class="card-body text-center">
-                                    <h3 id="pageStatUniqueUsers">-</h3>
-                                    <small class="text-muted">Utilisateurs uniques</small>
-                                </div>
-                            </div>
-                        </div>
-                        <div class="col-md-3">
-                            <div class="card border">
-                                <div class="card-body text-center">
-                                    <h3 id="pageStatAvgDuration">-</h3>
-                                    <small class="text-muted">Durée moyenne</small>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                    
-                    <div class="row">
-                        <!-- Sessions actives -->
-                        <div class="col-md-6">
+                    <!-- KPI -->
+                    <div class="row g-3 mb-4" id="auditKpiRow"></div>
+                    <div class="row g-4">
+                        <div class="col-lg-8">
                             <div class="card mb-4">
-                                <div class="card-header d-flex justify-content-between align-items-center">
-                                    <span><i class="bi bi-person-check me-2"></i>Sessions actives</span>
-                                    <span class="badge bg-secondary" id="pageActiveSessionCount">0</span>
+                                <div class="audit-card-head">
+                                    <h2 class="h6 mb-0"><i class="bi bi-exclamation-triangle text-danger me-2"></i>Alertes à traiter</h2>
+                                    <a href="#" class="small text-primary text-decoration-none" onclick="openAuditTab('errors'); return false;">Voir toutes les erreurs <i class="bi bi-arrow-right"></i></a>
                                 </div>
-                                <div class="card-body p-0">
-                                    <div id="pageActiveSessionsTable" class="table-responsive" style="max-height: 300px; overflow-y: auto;"></div>
+                                <div id="auditAlertsList"></div>
+                            </div>
+                            <div class="card">
+                                <div class="card-body">
+                                    <h2 class="h6 mb-3"><i class="bi bi-search text-muted me-2"></i>Recherche rapide dans les logs</h2>
+                                    <div class="d-flex flex-column flex-sm-row gap-2">
+                                        <input id="auditQuickSearchInput" class="form-control" placeholder="Rechercher IP ou utilisateur…" onkeydown="if(event.key==='Enter')auditQuickSearch()">
+                                        <button class="btn btn-secondary" onclick="openAuditTab('logs')"><i class="bi bi-funnel me-1"></i>Filtres avancés</button>
+                                    </div>
+                                    <div class="d-flex flex-wrap align-items-center gap-2 mt-3">
+                                        <small class="text-muted">Recherches fréquentes :</small>
+                                        <button class="audit-chip" onclick="auditChip('action','logout')">action:déconnexion</button>
+                                        <button class="audit-chip" onclick="auditChip('status','500')">status:500</button>
+                                        <button class="audit-chip" onclick="auditChip('app','demande-acces')">app:demande-acces</button>
+                                    </div>
                                 </div>
                             </div>
                         </div>
-                        <!-- Top utilisateurs -->
-                        <div class="col-md-6">
-                            <div class="card mb-4">
-                                <div class="card-header">
-                                    <i class="bi bi-trophy me-2"></i>Top utilisateurs (par connexions)
+                        <div class="col-lg-4">
+                            <div class="card h-100">
+                                <div class="audit-card-head">
+                                    <h2 class="h6 mb-0"><span class="audit-pulse me-2"></span>En ce moment (<span id="auditLiveCount">0</span>)</h2>
                                 </div>
-                                <div class="card-body p-0">
-                                    <div id="pageTopUsersTable" class="table-responsive" style="max-height: 300px; overflow-y: auto;"></div>
+                                <div id="auditLiveSessions"></div>
+                                <div class="border-top p-3 text-center bg-light">
+                                    <a href="#" class="small text-primary text-decoration-none" onclick="openAuditTab('sessions'); return false;">Gérer toutes les sessions</a>
                                 </div>
                             </div>
-                        </div>
-                    </div>
-                    
-                    <!-- Apps les plus consultées -->
-                    <div class="card">
-                        <div class="card-header">
-                            <i class="bi bi-bar-chart me-2"></i>Applications les plus consultées
-                        </div>
-                        <div class="card-body p-0">
-                            <div id="pageTopAppsTable" class="table-responsive"></div>
                         </div>
                     </div>
                 </div>
@@ -491,6 +460,12 @@
                                            placeholder="Nom d'utilisateur" autocomplete="off"
                                            onchange="loadAuditPageLogsTab()">
                                     <datalist id="auditUsersDatalist"></datalist>
+                                </div>
+                                <div class="col-md-3">
+                                    <label class="form-label small">IP</label>
+                                    <input type="text" class="form-control form-control-sm" id="pageLogsFilterIp"
+                                           placeholder="Adresse IP" autocomplete="off"
+                                           onchange="loadAuditPageLogsTab()">
                                 </div>
                                 <div class="col-md-3">
                                     <button class="btn btn-sm btn-outline-secondary w-100" onclick="resetPageLogsFilters()">
