@@ -13,6 +13,9 @@ certs/server/**/*.key
 certs/server/**/*.crt
 certs/registry.json
 
+# Superpowers (brainstorm visual companion artifacts)
+.superpowers/
+
 # Python
 __pycache__/
 *.py[cod]
