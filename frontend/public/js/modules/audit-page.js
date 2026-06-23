@@ -44,6 +44,7 @@ async function loadAuditPageOverview() {
         renderAuditKpis(kpis);
         renderAuditAlerts(alerts.alerts || []);
         renderAuditLiveSessions(active);
+        updateErrorTabBadge();
     } catch (error) {
         console.error('Erreur chargement audit:', error);
         showToast('Erreur', "Impossible de charger les données d'audit", 'danger');
@@ -158,6 +159,9 @@ async function auditForceLogout(sessionId) {
         await api.revokeSession(sessionId);
         showToast('Succès', 'Session révoquée', 'success');
         loadAuditPageOverview();
+        if (document.getElementById('auditPageSessions')?.classList.contains('active')) {
+            loadAuditPageSessions();
+        }
     } catch (e) {
         showToast('Erreur', e.message || 'Révocation impossible', 'danger');
     }
@@ -346,36 +350,48 @@ function renderPageAuditAppsGrid(apps) {
     document.getElementById('auditPageAppDetail').classList.add('d-none');
     container.classList.remove('d-none');
     
+    // KPI row
+    const kpiRow = document.getElementById('auditAppsKpiRow');
+    if (kpiRow) {
+        const totalAccess = apps.reduce((s, a) => s + (a.access_count || 0), 0);
+        const totalUsers = apps.reduce((s, a) => s + (a.unique_users || 0), 0);
+        kpiRow.innerHTML =
+            auditKpiCard('#e7f1ff', '#0d6efd', 'bi-grid', apps.length, 'Applications', '<span class="audit-trend flat">suivies</span>') +
+            auditKpiCard('#e6f4ea', '#198754', 'bi-graph-up', totalAccess, 'Accès totaux', '<span class="audit-trend flat">cumulés</span>') +
+            auditKpiCard('#fff1e6', '#fd7e14', 'bi-people', totalUsers, 'Utilisateurs', '<span class="audit-trend flat">uniques</span>') +
+            auditKpiCard('#f1f3f5', '#6c757d', 'bi-calendar-range', '', 'Période', '<span class="audit-trend flat">' + (parseInt(document.getElementById('auditPeriodPage')?.value) || 30) + 'j</span>');
+    }
+    
     if (!apps || apps.length === 0) {
+        if (kpiRow) kpiRow.innerHTML = '';
         container.innerHTML = `
             <div class="col-12 text-center py-5 text-muted">
                 <i class="bi bi-grid display-1"></i>
                 <h4 class="mt-3">Aucun accès enregistré</h4>
                 <p>Les accès aux applications apparaîtront ici</p>
-            </div>
-        `;
+            </div>`;
         return;
     }
     
     container.innerHTML = apps.map(app => `
         <div class="col-sm-6 col-md-4 col-lg-3 mb-3">
-            <div class="card h-100 cursor-pointer" onclick="showPageAppAuditDetail('${app.slug}')" style="cursor: pointer;">
+            <div class="card h-100 cursor-pointer" onclick="showPageAppAuditDetail('${app.slug}')" style="cursor: pointer; transition: transform .15s, box-shadow .15s;">
                 <div class="card-body text-center">
                     <div class="mb-2">
                         <span class="rounded-circle d-inline-flex align-items-center justify-content-center" 
-                              style="width: 60px; height: 60px; background-color: ${app.color}; color: white; font-size: 1.5rem;">
+                              style="width: 56px; height: 56px; background-color: ${app.color}; color: white; font-size: 1.4rem;">
                             <i class="${app.icon}"></i>
                         </span>
                     </div>
-                    <h6 class="card-title mb-1">${escapeHtml(app.name)}</h6>
+                    <h6 class="card-title mb-1 fw-semibold">${escapeHtml(app.name)}</h6>
                     <p class="card-text small text-muted mb-2">${app.slug}</p>
                     <div class="d-flex justify-content-center gap-3">
                         <div class="text-center">
-                            <div class="h5 mb-0">${app.access_count}</div>
+                            <div class="h5 mb-0 fw-bold">${app.access_count}</div>
                             <small class="text-muted">Accès</small>
                         </div>
                         <div class="text-center">
-                            <div class="h5 mb-0">${app.unique_users}</div>
+                            <div class="h5 mb-0 fw-bold">${app.unique_users}</div>
                             <small class="text-muted">Users</small>
                         </div>
                     </div>
@@ -602,13 +618,24 @@ function renderPageAuditLogs(data) {
     countSpan.textContent = `${data.total_count} résultats`;
     pagination.innerHTML = renderPagination(data.page, data.total_pages, 'changePageLogsPage');
     
+    // KPI mini cards
+    const kpiRow = document.getElementById('auditLogsKpiRow');
+    if (kpiRow) {
+        const uniqueUsers = data.logs ? new Set(data.logs.map(l => l.username).filter(Boolean)).size : 0;
+        const uniqueIps = data.logs ? new Set(data.logs.map(l => l.ip_address).filter(Boolean)).size : 0;
+        kpiRow.innerHTML =
+            auditKpiCard('#e7f1ff', '#0d6efd', 'bi-list-ul', data.total_count, 'Logs trouvés', `<span class="audit-trend flat">page ${data.page || 1}</span>`) +
+            auditKpiCard('#e6f4ea', '#198754', 'bi-people', uniqueUsers, 'Utilisateurs', '<span class="audit-trend flat">uniques</span>') +
+            auditKpiCard('#f1f3f5', '#6c757d', 'bi-hdd-network', uniqueIps, 'IPs uniques', '<span class="audit-trend flat">adresses</span>') +
+            auditKpiCard('#f1f3f5', '#6c757d', 'bi-files', `${data.logs?.length || 0}`, 'Sur cette page', '<span class="audit-trend flat">' + (parseInt(document.getElementById('auditPeriodPage')?.value) || 7) + 'j</span>');
+    }
+    
     if (!data.logs || data.logs.length === 0) {
         container.innerHTML = `
             <div class="text-center py-5 text-muted">
                 <i class="bi bi-list-ul display-4"></i>
                 <p class="mt-2">Aucun log trouvé</p>
-            </div>
-        `;
+            </div>`;
         return;
     }
     
@@ -661,20 +688,30 @@ async function loadAuditPageSessions() {
 function renderPageSessionHistory(data) {
     const container = document.getElementById('pageSessionHistoryTable');
     
+    const activeSessions = data.sessions?.filter(s => !s.logout_at) || [];
+    const closedSessions = data.sessions?.filter(s => s.logout_at) || [];
+    
     if (!data.sessions || data.sessions.length === 0) {
         container.innerHTML = `
             <div class="text-center py-5 text-muted">
                 <i class="bi bi-clock-history display-4 mb-3"></i>
                 <p class="mb-0">Aucune session dans cette période</p>
                 <small class="text-muted">Les sessions apparaîtront ici une fois que des utilisateurs se connecteront</small>
-            </div>
-        `;
+            </div>`;
+        document.getElementById('auditSessionKpiRow').innerHTML = '';
         return;
     }
     
-    // Séparer sessions actives et terminées
-    const activeSessions = data.sessions.filter(s => !s.logout_at);
-    const closedSessions = data.sessions.filter(s => s.logout_at);
+    
+    const avgSec = closedSessions.length > 0
+        ? closedSessions.reduce((s, x) => s + (x.duration_seconds || 0), 0) / closedSessions.length
+        : 0;
+    const avgMin = Math.round(avgSec / 60);
+    document.getElementById('auditSessionKpiRow').innerHTML =
+        auditKpiCard('#e7f1ff', '#0d6efd', 'bi-people-fill', data.total_sessions, 'Total sessions', `<span class="audit-trend flat">${data.period_days}j</span>`) +
+        auditKpiCard('#e6f4ea', '#28a745', 'bi-broadcast', activeSessions.length, 'Actives', '<span class="audit-trend flat"><span class="audit-pulse"></span></span>') +
+        auditKpiCard('#f1f3f5', '#6c757d', 'bi-stop-circle', closedSessions.length, 'Terminées', '') +
+        auditKpiCard('#fff1e6', '#fd7e14', 'bi-hourglass-split', `${avgMin} min`, 'Durée moy.', '<span class="audit-trend flat">ferm.</span>');
     
     container.innerHTML = `
         <!-- Sessions actives -->
@@ -684,15 +721,16 @@ function renderPageSessionHistory(data) {
                 <span class="badge bg-success me-2">${activeSessions.length}</span>
                 <h6 class="mb-0 text-success"><i class="bi bi-broadcast me-1"></i>Sessions actives</h6>
             </div>
-            <table class="table table-sm table-hover align-middle mb-0 border rounded">
+            <table class="table audit-tbl table-hover align-middle mb-0 border rounded">
                 <thead class="table-light">
                     <tr>
-                        <th style="min-width: 150px">Utilisateur</th>
-                        <th style="min-width: 120px">Application</th>
-                        <th style="min-width: 150px">Connecté depuis</th>
-                        <th style="min-width: 100px">Durée</th>
-                        <th style="min-width: 80px">Activité</th>
-                        <th style="min-width: 120px">IP</th>
+                        <th>Utilisateur</th>
+                        <th>Application</th>
+                        <th>Connecté depuis</th>
+                        <th>Durée</th>
+                        <th>Activité</th>
+                        <th>IP</th>
+                        <th class="text-end">Action</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -714,22 +752,17 @@ function renderPageSessionHistory(data) {
                                     ? `<span class="badge bg-primary bg-gradient"><i class="bi bi-app me-1"></i>${escapeHtml(s.current_app_name)}</span>` 
                                     : '<span class="badge bg-secondary bg-gradient"><i class="bi bi-house me-1"></i>Hub</span>'}
                             </td>
-                            <td>
-                                <small class="text-muted">${formatDateTime(s.login_at)}</small>
-                            </td>
-                            <td>
-                                <span class="badge bg-light text-dark border">
-                                    <i class="bi bi-clock me-1"></i>${s.duration_display || 'en cours'}
-                                </span>
-                            </td>
+                            <td><small class="text-muted">${formatDateTime(s.login_at)}</small></td>
+                            <td><span class="badge bg-light text-dark border"><i class="bi bi-clock me-1"></i>${s.duration_display || 'en cours'}</span></td>
                             <td>
                                 ${s.idle_minutes !== undefined && s.idle_minutes > 5 
-                                    ? `<span class="badge bg-warning text-dark" title="Inactif depuis ${s.idle_minutes} min">
-                                        <i class="bi bi-hourglass-split me-1"></i>${s.idle_minutes}m
-                                       </span>`
+                                    ? `<span class="badge bg-warning text-dark" title="Inactif depuis ${s.idle_minutes} min"><i class="bi bi-hourglass-split me-1"></i>${s.idle_minutes}m</span>`
                                     : '<span class="badge bg-success"><i class="bi bi-activity"></i></span>'}
                             </td>
                             <td><code class="small bg-light px-2 py-1 rounded">${s.ip_address || '-'}</code></td>
+                            <td class="text-end">
+                                <a href="#" class="small text-danger fw-semibold text-decoration-none" onclick="auditForceLogout(${s.id}); return false;"><i class="bi bi-box-arrow-right me-1"></i>Forcer déco.</a>
+                            </td>
                         </tr>
                     `).join('')}
                 </tbody>
@@ -744,16 +777,16 @@ function renderPageSessionHistory(data) {
                 <span class="badge bg-secondary me-2">${closedSessions.length}</span>
                 <h6 class="mb-0 text-muted"><i class="bi bi-clock-history me-1"></i>Sessions terminées</h6>
             </div>
-            <table class="table table-sm table-hover align-middle mb-0 border rounded">
+            <table class="table audit-tbl table-hover align-middle mb-0 border rounded">
                 <thead class="table-light">
                     <tr>
-                        <th style="min-width: 140px">Utilisateur</th>
-                        <th style="min-width: 120px">Application</th>
-                        <th style="min-width: 140px">Connexion</th>
-                        <th style="min-width: 140px">Déconnexion</th>
-                        <th style="min-width: 80px">Durée</th>
-                        <th style="min-width: 100px">Raison</th>
-                        <th style="min-width: 100px">IP</th>
+                        <th>Utilisateur</th>
+                        <th>Application</th>
+                        <th>Connexion</th>
+                        <th>Déconnexion</th>
+                        <th>Durée</th>
+                        <th>Raison</th>
+                        <th>IP</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -786,29 +819,4 @@ function renderPageSessionHistory(data) {
         </div>
         ` : ''}
     `;
-    
-    // Résumé dans le footer (hors zone scrollable)
-    const summaryContainer = document.getElementById('pageSessionsSummary');
-    if (summaryContainer) {
-        summaryContainer.innerHTML = `
-            <div class="row text-center">
-                <div class="col">
-                    <div class="text-muted small">Total sessions</div>
-                    <strong class="fs-5">${data.total_sessions}</strong>
-                </div>
-                <div class="col">
-                    <div class="text-muted small">Actives</div>
-                    <strong class="fs-5 text-success">${activeSessions.length}</strong>
-                </div>
-                <div class="col">
-                    <div class="text-muted small">Terminées</div>
-                    <strong class="fs-5 text-secondary">${closedSessions.length}</strong>
-                </div>
-                <div class="col">
-                    <div class="text-muted small">Période</div>
-                    <strong class="fs-5">${data.period_days}j</strong>
-                </div>
-            </div>
-        `;
-    }
 }

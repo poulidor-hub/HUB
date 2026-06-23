@@ -73,6 +73,26 @@ async function purgeAllErrors() {
     }
 }
 
+/**
+ * Met à jour le badge de l'onglet Erreurs (proactivement, sans attendre le clic).
+ */
+async function updateErrorTabBadge() {
+    try {
+        const stats = await api.getErrorStats(24);
+        const badge = document.getElementById('errorCountBadge');
+        if (badge) {
+            if (stats.total > 0) {
+                badge.textContent = stats.total > 99 ? '99+' : stats.total;
+                badge.style.display = 'inline';
+            } else {
+                badge.style.display = 'none';
+            }
+        }
+    } catch (e) {
+        // Silencieux
+    }
+}
+
 async function loadAuditPageErrors() {
     const hours = parseInt(document.getElementById('errorsFilterHours')?.value || 24);
     const errorCode = document.getElementById('errorsFilterCode')?.value || null;
@@ -98,10 +118,6 @@ async function loadAuditPageErrors() {
             })
         ]);
         
-        // Mettre à jour les stats
-        document.getElementById('errorStatTotal').textContent = stats.total || 0;
-        
-        // Calculer 4xx et 5xx
         const count4xx = stats.by_code?.filter(c => c.code >= 400 && c.code < 500)
             .reduce((sum, c) => sum + c.count, 0) || 0;
         const count5xx = stats.by_code?.filter(c => c.code >= 500)
@@ -109,9 +125,19 @@ async function loadAuditPageErrors() {
         const countAuth = stats.by_code?.filter(c => c.code === 401 || c.code === 403)
             .reduce((sum, c) => sum + c.count, 0) || 0;
         
-        document.getElementById('errorStat4xx').textContent = count4xx;
-        document.getElementById('errorStat5xx').textContent = count5xx;
-        document.getElementById('errorStatAuth').textContent = countAuth;
+        // Mettre à jour les KPIs avec le style dashboard
+        const kpiRow = document.getElementById('auditErrorKpiRow');
+        if (kpiRow) {
+            kpiRow.innerHTML =
+                auditKpiCard('#fde8e8', '#dc3545', 'bi-exclamation-triangle-fill', stats.total, 'Erreurs totales',
+                    '<span class="audit-trend flat">' + (parseInt(document.getElementById('errorsFilterHours')?.value) || 24) + 'h</span>') +
+                auditKpiCard('#fff1e6', '#fd7e14', 'bi-exclamation-diamond', count4xx, 'Erreurs client (4xx)',
+                    '<span class="audit-trend flat">Client</span>') +
+                auditKpiCard('#fde8e8', '#dc3545', 'bi-exclamation-triangle', count5xx, 'Erreurs serveur (5xx)',
+                    '<span class="audit-trend flat">Serveur</span>') +
+                auditKpiCard('#e6f4ea', '#198754', 'bi-lock', countAuth, 'Auth (401/403)',
+                    '<span class="audit-trend flat">Accès</span>');
+        }
         
         // Mettre à jour le badge dans l'onglet
         const badge = document.getElementById('errorCountBadge');
