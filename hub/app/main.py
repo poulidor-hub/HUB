@@ -14,7 +14,7 @@ from app.database import init_db, async_session_maker, apply_migrations
 from app.models import User, ErrorLog, utcnow
 from app.auth import get_password_hash, cleanup_expired_tokens
 from app.config import get_settings
-from app.routes import auth, users, apps, service_accounts, backup, audit, docs, events, app_backups, backup_clusters, profiles, discovery, messages, account_requests
+from app.routes import auth, users, apps, service_accounts, audit, docs, events, app_backups, profiles, discovery, messages, account_requests, snapshots
 from app.routes import settings as settings_routes
 
 import logging
@@ -28,6 +28,7 @@ _cleanup_task = None
 _docker_sync_task = None
 _log_purge_task = None
 _backup_scheduler_task = None
+_snapshot_scheduler_task = None
 
 
 async def create_default_admin():
@@ -259,7 +260,7 @@ async def periodic_backup_scheduler():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _cleanup_task, _docker_sync_task, _log_purge_task, _backup_scheduler_task
+    global _cleanup_task, _docker_sync_task, _log_purge_task, _backup_scheduler_task, _snapshot_scheduler_task
     
     # Startup
     logger.info("🚀 Démarrage du Hub d'Authentification...")
@@ -289,6 +290,10 @@ async def lifespan(app: FastAPI):
     
     # Démarrer le scheduler de backups
     _backup_scheduler_task = asyncio.create_task(periodic_backup_scheduler())
+
+    # Démarrer le scheduler de snapshots
+    from app.routes.snapshots import _snapshot_cron_scheduler
+    _snapshot_scheduler_task = asyncio.create_task(_snapshot_cron_scheduler())
 
     # Kill-switch backups : requalifier les backups restés "running" (cas crash)
     try:
@@ -343,6 +348,12 @@ async def lifespan(app: FastAPI):
         _backup_scheduler_task.cancel()
         try:
             await _backup_scheduler_task
+        except asyncio.CancelledError:
+            pass
+    if _snapshot_scheduler_task:
+        _snapshot_scheduler_task.cancel()
+        try:
+            await _snapshot_scheduler_task
         except asyncio.CancelledError:
             pass
     
@@ -587,12 +598,11 @@ app.include_router(auth.router)
 app.include_router(users.router)
 app.include_router(apps.router)
 app.include_router(service_accounts.router)
-app.include_router(backup.router)
 app.include_router(audit.router)
 app.include_router(docs.router)
 app.include_router(events.router)
 app.include_router(app_backups.router)
-app.include_router(backup_clusters.router)
+app.include_router(snapshots.router)
 app.include_router(profiles.router)
 app.include_router(discovery.router)
 app.include_router(messages.router)
