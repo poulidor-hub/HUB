@@ -5,7 +5,7 @@
 
 ---
 
-## [3.7.1] - 30 avril 2026
+## [3.7.1] - 23 juin 2026
 
 ### ⚡ Sauvegardes d'applications asynchrones avec progression temps réel
 

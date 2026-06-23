@@ -5,7 +5,8 @@ Script de synchronisation de version pour le Hub
 
 Ce script permet de :
 1. Lire la version depuis le fichier VERSION (source de vérité)
-2. Synchroniser cette version dans INTEGRATION.md et CHANGELOG.md
+2. Synchroniser cette version dans INTEGRATION.md, CHANGELOG.md et
+   frontend/public/index.html (cache-busting ?v= des assets JS/CSS)
 3. Optionnellement incrémenter la version (patch, minor, major)
 
 Usage:
@@ -34,6 +35,10 @@ ROOT_DIR = Path(__file__).parent
 VERSION_FILE = ROOT_DIR / "VERSION"
 INTEGRATION_FILE = ROOT_DIR / "INTEGRATION.md"
 CHANGELOG_FILE = ROOT_DIR / "CHANGELOG.md"
+INDEX_HTML_FILE = ROOT_DIR / "frontend" / "public" / "index.html"
+
+# Pattern de cache-busting des assets : href/src "...?v=X.Y.Z"
+ASSET_VERSION_RE = re.compile(r"(\?v=)\d+\.\d+\.\d+")
 
 # Format de date français
 MOIS_FR = {
@@ -109,6 +114,35 @@ def get_version_from_changelog() -> str | None:
     content = CHANGELOG_FILE.read_text()
     match = re.search(r"## \[(\d+\.\d+\.\d+)\]", content)
     return match.group(1) if match else None
+
+
+def get_versions_from_index() -> set[str]:
+    """Retourne l'ensemble des versions ?v= présentes dans index.html"""
+    if not INDEX_HTML_FILE.exists():
+        return set()
+    content = INDEX_HTML_FILE.read_text()
+    return set(re.findall(r"\?v=(\d+\.\d+\.\d+)", content))
+
+
+def sync_index_html(version: str) -> bool:
+    """
+    Réécrit tous les paramètres de cache-busting ?v=X.Y.Z des assets
+    (JS/CSS/favicon) dans index.html pour qu'ils correspondent à la version.
+    """
+    if not INDEX_HTML_FILE.exists():
+        print(f"⚠️  {INDEX_HTML_FILE} non trouvé, ignoré")
+        return False
+
+    content = INDEX_HTML_FILE.read_text()
+    new_content, count = ASSET_VERSION_RE.subn(f"\\g<1>{version}", content)
+
+    if new_content != content:
+        INDEX_HTML_FILE.write_text(new_content)
+        print(f"✅ index.html mis à jour: {count} asset(s) → ?v={version}")
+        return True
+    else:
+        print(f"ℹ️  index.html déjà à jour ({count} asset(s))")
+        return False
 
 
 def sync_integration(version: str, date: str) -> bool:
@@ -207,18 +241,30 @@ def check_versions() -> bool:
     version = read_version()
     integration_version = get_version_from_integration()
     changelog_version = get_version_from_changelog()
-    
+    index_versions = get_versions_from_index()
+
+    if not index_versions:
+        index_display = "❌ Non trouvée"
+    elif index_versions == {version}:
+        index_display = version
+    else:
+        index_display = ", ".join(sorted(index_versions)) + " (incohérent)"
+
     print(f"\n📋 Vérification des versions:")
     print(f"   VERSION:        {version}")
     print(f"   INTEGRATION.md: {integration_version or '❌ Non trouvée'}")
     print(f"   CHANGELOG.md:   {changelog_version or '❌ Non trouvée'}")
-    
+    print(f"   index.html:     {index_display}")
+
     all_match = True
     if integration_version and integration_version != version:
         print(f"\n⚠️  INTEGRATION.md ({integration_version}) != VERSION ({version})")
         all_match = False
     if changelog_version and changelog_version != version:
         print(f"\n⚠️  CHANGELOG.md ({changelog_version}) != VERSION ({version})")
+        all_match = False
+    if index_versions and index_versions != {version}:
+        print(f"\n⚠️  index.html ({', '.join(sorted(index_versions))}) != VERSION ({version})")
         all_match = False
     
     if all_match:
@@ -242,6 +288,7 @@ def sync_all(version: str = None) -> None:
     
     sync_integration(version, date)
     sync_changelog(version, date)
+    sync_index_html(version)
     
     print("-" * 50)
     print(f"✅ Synchronisation terminée")
