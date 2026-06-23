@@ -1132,60 +1132,6 @@ class AllBackupsResponse(BaseModel):
     total_size_human: str = "0 B"
 
 
-class BackupClusterAppResponse(BaseModel):
-    """Application rattachee a un cluster de sauvegarde."""
-    app_id: int
-    app_slug: str
-    app_name: str
-    is_system_app: bool = False
-    backup_mode: BackupModeEnum = BackupModeEnum.manual
-    backup_cron: Optional[str] = None
-    backup_retention: int = 5
-    last_backup_at: Optional[datetime] = None
-    last_backup_status: Optional[str] = None
-    next_backup_at: Optional[datetime] = None
-    backups_count: int = 0
-    total_size_bytes: int = 0
-    total_size_human: str = "0 B"
-
-
-class BackupClusterCreate(BaseModel):
-    name: str = Field(..., min_length=2, max_length=100)
-    slug: str = Field(..., min_length=2, max_length=50, pattern=r'^[a-z0-9-]+$')
-    description: Optional[str] = None
-    color: str = "#0d6efd"
-    app_ids: List[int] = []
-
-
-class BackupClusterUpdate(BaseModel):
-    name: Optional[str] = Field(None, min_length=2, max_length=100)
-    slug: Optional[str] = Field(None, min_length=2, max_length=50, pattern=r'^[a-z0-9-]+$')
-    description: Optional[str] = None
-    color: Optional[str] = None
-    app_ids: Optional[List[int]] = None
-
-
-class BackupClusterResponse(BaseModel):
-    id: int
-    name: str
-    slug: str
-    description: Optional[str] = None
-    color: str = "#0d6efd"
-    apps: List[BackupClusterAppResponse] = []
-    apps_count: int = 0
-    total_backups: int = 0
-    total_size_bytes: int = 0
-    total_size_human: str = "0 B"
-    scheduled_apps: int = 0
-    created_at: datetime
-    updated_at: datetime
-
-
-class BackupClusterListResponse(BaseModel):
-    clusters: List[BackupClusterResponse] = []
-    total: int = 0
-
-
 class BackupTriggerResponse(BaseModel):
     """Réponse après déclenchement d'un backup"""
     success: bool
@@ -1761,3 +1707,139 @@ class AccountRequestNotificationAdminsResponse(BaseModel):
 class AccountRequestNotificationAdminsUpdate(BaseModel):
     """Mise a jour des admins notifies pour les demandes de compte"""
     admin_ids: List[int] = []
+
+
+# =============================================================================
+# Schemas de snapshots complets
+# =============================================================================
+
+
+class HubSnapshotResponse(BaseModel):
+    id: int
+    snapshot_id: str
+    status: str
+    progress_percent: int = 0
+    progress_step: Optional[str] = "queued"
+    s3_bucket: Optional[str] = None
+    s3_key: Optional[str] = None
+    total_size_bytes: int = 0
+    total_size_human: str = ""
+    checksum_sha256: Optional[str] = None
+    manifest: Optional[Dict[str, Any]] = None
+    include_pg_dump: bool = True
+    include_files: bool = True
+    include_app_backups: bool = True
+    include_docker_config: bool = True
+    pg_dump_size_bytes: int = 0
+    apps_count: int = 0
+    apps_succeeded: int = 0
+    apps_failed: int = 0
+    error_message: Optional[str] = None
+    created_by: Optional[str] = None
+    created_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+    duration_human: str = ""
+    expires_at: Optional[datetime] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+    @classmethod
+    def from_orm_model(cls, snapshot) -> "HubSnapshotResponse":
+        size = snapshot.total_size_bytes or 0
+        for unit in ["B", "KB", "MB", "GB"]:
+            if size < 1024:
+                size_human = f"{size:.1f} {unit}"
+                break
+            size /= 1024
+        else:
+            size_human = f"{size:.1f} TB"
+
+        duration_human = ""
+        if getattr(snapshot, "created_at", None) and getattr(snapshot, "completed_at", None):
+            secs = int((snapshot.completed_at - snapshot.created_at).total_seconds())
+            if secs < 60:
+                duration_human = f"{secs}s"
+            elif secs < 3600:
+                duration_human = f"{secs // 60}m {secs % 60}s"
+            else:
+                duration_human = f"{secs // 3600}h {(secs % 3600) // 60}m"
+
+        return cls(
+            id=snapshot.id,
+            snapshot_id=snapshot.snapshot_id,
+            status=getattr(snapshot, "status", "pending"),
+            progress_percent=getattr(snapshot, "progress_percent", 0),
+            progress_step=getattr(snapshot, "progress_step", "queued"),
+            s3_bucket=getattr(snapshot, "s3_bucket", None),
+            s3_key=getattr(snapshot, "s3_key", None),
+            total_size_bytes=snapshot.total_size_bytes or 0,
+            total_size_human=size_human,
+            checksum_sha256=getattr(snapshot, "checksum_sha256", None),
+            manifest=getattr(snapshot, "manifest", None),
+            include_pg_dump=bool(getattr(snapshot, "include_pg_dump", True)),
+            include_files=bool(getattr(snapshot, "include_files", True)),
+            include_app_backups=bool(getattr(snapshot, "include_app_backups", True)),
+            include_docker_config=bool(getattr(snapshot, "include_docker_config", True)),
+            pg_dump_size_bytes=snapshot.pg_dump_size_bytes or 0,
+            apps_count=getattr(snapshot, "apps_count", 0),
+            apps_succeeded=getattr(snapshot, "apps_succeeded", 0),
+            apps_failed=getattr(snapshot, "apps_failed", 0),
+            error_message=getattr(snapshot, "error_message", None),
+            created_by=getattr(snapshot, "created_by", None),
+            created_at=getattr(snapshot, "created_at", None),
+            completed_at=getattr(snapshot, "completed_at", None),
+            duration_human=duration_human,
+            expires_at=getattr(snapshot, "expires_at", None),
+        )
+
+
+class HubSnapshotListResponse(BaseModel):
+    snapshots: List[HubSnapshotResponse] = []
+    total: int = 0
+
+
+class HubSnapshotProgressResponse(BaseModel):
+    snapshot_id: str
+    status: str
+    progress_percent: int
+    progress_step: Optional[str] = None
+    error_message: Optional[str] = None
+
+
+class HubSnapshotConfigResponse(BaseModel):
+    snapshot_cron: str = ""
+    snapshot_retention_max: int = 7
+    snapshot_retention_min_age_hours: int = 24
+    s3_endpoint: str = ""
+    s3_bucket: str = "hub-snapshots"
+    s3_region: str = "eu-west-1"
+    s3_prefix: str = "prod/"
+    s3_configured: bool = False
+
+
+class HubSnapshotConfigUpdate(BaseModel):
+    snapshot_cron: Optional[str] = None
+    snapshot_retention_max: Optional[int] = Field(None, ge=1)
+    snapshot_retention_min_age_hours: Optional[int] = Field(None, ge=0)
+    s3_endpoint: Optional[str] = None
+    s3_bucket: Optional[str] = None
+    s3_region: Optional[str] = None
+    s3_access_key: Optional[str] = None
+    s3_secret_key: Optional[str] = None
+    s3_prefix: Optional[str] = None
+
+
+class HubSnapshotRestoreRequest(BaseModel):
+    confirm_full_restore: bool = Field(False, description="Confirmation explicite de restauration complete")
+
+
+class HubSnapshotRestoreResponse(BaseModel):
+    snapshot_id: str
+    status: str
+    message: str
+
+
+class HubSnapshotCreateResponse(BaseModel):
+    snapshot_id: str
+    status: str
+    message: str
