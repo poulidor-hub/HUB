@@ -57,42 +57,6 @@ user_profiles = Table(
     UniqueConstraint('user_id', 'profile_id', name='uq_user_profiles_user_profile'),
 )
 
-# Table d'association BackupCluster <-> Application
-backup_cluster_apps = Table(
-    'backup_cluster_apps',
-    Base.metadata,
-    Column('cluster_id', Integer, ForeignKey('backup_clusters.id', ondelete='CASCADE'), nullable=False),
-    Column('app_id', Integer, ForeignKey('applications.id', ondelete='CASCADE'), nullable=False),
-    Column('created_at', DateTime, default=utcnow),
-    UniqueConstraint('cluster_id', 'app_id', name='uq_backup_cluster_apps_cluster_app'),
-)
-
-
-class BackupCluster(Base):
-    """Groupe d'applications dont les sauvegardes sont pilotees ensemble."""
-    __tablename__ = "backup_clusters"
-
-    id = Column(Integer, primary_key=True, index=True)
-    name = Column(String(100), unique=True, nullable=False)
-    slug = Column(String(50), unique=True, index=True, nullable=False)
-    description = Column(Text)
-    color = Column(String(7), default="#0d6efd")
-    created_at = Column(DateTime, default=utcnow)
-    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
-    created_by_id = Column(Integer, ForeignKey('users.id', ondelete='SET NULL'), nullable=True)
-
-    applications = relationship(
-        "Application",
-        secondary=backup_cluster_apps,
-        back_populates="backup_clusters",
-        lazy="raise",
-    )
-    created_by = relationship("User", foreign_keys=[created_by_id], lazy="raise")
-
-    def __repr__(self):
-        return f"<BackupCluster {self.slug}>"
-
-
 class ProfileAppRole(Base):
     """Apps + rôles inclus dans un profil"""
     __tablename__ = "profile_app_roles"
@@ -262,7 +226,6 @@ class Application(Base):
     service_accounts = relationship("ServiceAccount", secondary=service_account_app_access, back_populates="applications", lazy="raise")
     # Note: pas de cascade delete-orphan pour conserver les backups même si l'app est supprimée
     backups = relationship("AppBackup", back_populates="application", lazy="raise")
-    backup_clusters = relationship("BackupCluster", secondary=backup_cluster_apps, back_populates="applications", lazy="raise")
     
     @property
     def users(self):
@@ -540,6 +503,39 @@ class AppBackup(Base):
     
     def __repr__(self):
         return f"<AppBackup {self.backup_id} for {self.app_slug}>"
+
+
+class HubSnapshot(Base):
+    """Snapshot complet du Hub (PostgreSQL + fichiers + backups apps + config Docker)"""
+    __tablename__ = "hub_snapshots"
+
+    id = Column(Integer, primary_key=True, index=True)
+    snapshot_id = Column(String(36), unique=True, index=True, nullable=False)
+    status = Column(String(20), nullable=False, default="pending")
+    progress_percent = Column(Integer, default=0)
+    progress_step = Column(String(40), default="queued")
+    s3_bucket = Column(String(255))
+    s3_key = Column(String(500))
+    total_size_bytes = Column(BigInteger, default=0)
+    checksum_sha256 = Column(String(64))
+    manifest = Column(JSON, default={})
+    include_pg_dump = Column(Boolean, default=True)
+    include_files = Column(Boolean, default=True)
+    include_app_backups = Column(Boolean, default=True)
+    include_docker_config = Column(Boolean, default=True)
+    pg_dump_size_bytes = Column(BigInteger, default=0)
+    apps_count = Column(Integer, default=0)
+    apps_succeeded = Column(Integer, default=0)
+    apps_failed = Column(Integer, default=0)
+    error_message = Column(Text)
+    retention_policy = Column(JSON, default={})
+    created_by = Column(String(100))
+    created_at = Column(DateTime, default=utcnow, index=True)
+    completed_at = Column(DateTime)
+    expires_at = Column(DateTime)
+
+    def __repr__(self):
+        return f"<HubSnapshot {self.snapshot_id}>"
 
 
 class UserMessage(Base):
