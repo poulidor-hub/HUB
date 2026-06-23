@@ -712,6 +712,7 @@ async def get_audit_logs(
     target: Optional[str] = Query(None, description="Filtrer par cible (app_slug)"),
     user_id: Optional[int] = Query(None, description="Filtrer par utilisateur (ID)"),
     username: Optional[str] = Query(None, description="Filtrer par nom d'utilisateur (recherche partielle, insensible à la casse)"),
+    ip: Optional[str] = Query(None, description="Filtrer par adresse IP exacte"),
     page: int = Query(1, ge=1, description="Numéro de page"),
     page_size: int = Query(50, ge=10, le=200, description="Éléments par page"),
     current_user: User = Depends(get_current_user),
@@ -747,6 +748,10 @@ async def get_audit_logs(
     if user_id:
         query = query.where(AuditLog.user_id == user_id)
         count_query = count_query.where(AuditLog.user_id == user_id)
+
+    if ip:
+        query = query.where(AuditLog.ip_address == ip)
+        count_query = count_query.where(AuditLog.ip_address == ip)
 
     # Filtre par username (recherche partielle ILIKE) — résolu en liste d'IDs
     if username:
