@@ -702,6 +702,75 @@ async def get_overview_kpis(
     }
 
 
+@router.get("/overview/alerts")
+async def get_overview_alerts(
+    days: int = Query(7, ge=1, le=365),
+    limit: int = Query(5, ge=1, le=20),
+    auth_threshold: int = Query(5, ge=1, le=100),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Alertes calculées à la volée depuis les erreurs HTTP et les échecs d'auth."""
+    if not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="Accès admin requis")
+
+    from app.models import ErrorLog
+
+    since = utcnow() - timedelta(days=days)
+    alerts = []
+
+    http_rows = (await db.execute(
+        select(
+            ErrorLog.request_path,
+            func.count(ErrorLog.id).label("occ"),
+            func.max(ErrorLog.created_at).label("last_seen"),
+            func.max(ErrorLog.source_app_slug).label("app"),
+        )
+        .where(ErrorLog.error_code >= 500, ErrorLog.created_at >= since)
+        .group_by(ErrorLog.request_path)
+        .order_by(desc("occ"))
+        .limit(limit)
+    )).all()
+    for path, occ, last_seen, app in http_rows:
+        alerts.append({
+            "type": "http_error",
+            "severity": "danger",
+            "occurrences": occ,
+            "last_seen": last_seen.isoformat() if last_seen else None,
+            "source_app_slug": app,
+            "request_path": path,
+            "deeplink": {"tab": "errors", "filters": {"path": path}},
+        })
+
+    auth_rows = (await db.execute(
+        select(
+            ErrorLog.ip_address,
+            func.count(ErrorLog.id).label("occ"),
+            func.max(ErrorLog.created_at).label("last_seen"),
+        )
+        .where(
+            ErrorLog.error_code.in_([401, 403]),
+            ErrorLog.created_at >= since,
+            ErrorLog.ip_address != None,
+        )
+        .group_by(ErrorLog.ip_address)
+        .having(func.count(ErrorLog.id) >= auth_threshold)
+        .order_by(desc("occ"))
+        .limit(limit)
+    )).all()
+    for ip, occ, last_seen in auth_rows:
+        alerts.append({
+            "type": "auth_failures",
+            "severity": "warning",
+            "occurrences": occ,
+            "last_seen": last_seen.isoformat() if last_seen else None,
+            "ip_address": ip,
+            "deeplink": {"tab": "logs", "filters": {"ip": ip}},
+        })
+
+    return {"alerts": alerts}
+
+
 @router.get("/stats/user/{user_id}")
 async def get_user_stats(
     user_id: int,
