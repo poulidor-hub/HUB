@@ -11,6 +11,7 @@ ARG HOST_UID=1000
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     libpq-dev \
+    postgresql-client \
     gosu \
     && rm -rf /var/lib/apt/lists/*
 
@@ -19,10 +20,8 @@ RUN pip install --no-cache-dir --upgrade -r requirements.txt
 
 COPY ./app /code/app
 COPY ./migrations /code/migrations
-COPY ./export_env.py /code/export_env.py
-COPY ./import_env.py /code/import_env.py
 
-# Créer l'utilisateur appuser avec le même UID que l'utilisateur hôte
+# Creer l'utilisateur appuser avec le même UID que l'utilisateur hôte
 # Cela permet d'accéder aux fichiers des volumes montés (ex: certs/ca/ca.key)
 RUN adduser --disabled-password --gecos '' --uid ${HOST_UID} appuser
 
