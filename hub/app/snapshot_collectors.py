@@ -107,6 +107,7 @@ async def run_files_tar(temp_dir: Path) -> dict:
 
 async def run_app_backups(db: AsyncSession, temp_dir: Path, snapshot: HubSnapshot) -> dict:
     from app.routes.app_backups import perform_app_backup, BackupExecutionError
+    from app.database import async_session_maker
 
     start = time.monotonic()
     apps_dir = temp_dir / "apps"
@@ -127,40 +128,46 @@ async def run_app_backups(db: AsyncSession, temp_dir: Path, snapshot: HubSnapsho
     async def _backup_one(app: Application) -> dict:
         nonlocal succeeded, failed
         try:
-            await asyncio.wait_for(
-                perform_app_backup(
-                    db, app,
-                    created_by="snapshot",
-                    created_by_type="snapshot",
-                    description_prefix=f"Snapshot {snapshot.snapshot_id}",
-                ),
-                timeout=120,
-            )
-            await db.refresh(app, ["last_backup_id"])
+            async with async_session_maker() as bg_db:
+                # Re-attach app to the bg session
+                bg_app = await bg_db.get(Application, app.id)
+                if not bg_app:
+                    failed += 1
+                    return {"slug": app.slug, "backup_id": None, "version": "", "size_bytes": 0, "status": "failed"}
 
-            if app.last_backup_id:
-                backup_result = await db.execute(
-                    select(AppBackup).where(AppBackup.backup_id == app.last_backup_id)
+                await asyncio.wait_for(
+                    perform_app_backup(
+                        bg_db, bg_app,
+                        created_by="snapshot",
+                        created_by_type="snapshot",
+                        description_prefix=f"Snapshot {snapshot.snapshot_id}",
+                    ),
+                    timeout=120,
                 )
-                backup = backup_result.scalar_one_or_none()
-                if backup and backup.storage_path:
-                    src = STORAGE_BASE_DIR / backup.storage_path
-                    if src.exists():
-                        dst = apps_dir / app.slug
-                        dst.mkdir(parents=True, exist_ok=True)
-                        dst_file = dst / f"backup_{backup.backup_id}.zip"
-                        dst_file.write_bytes(src.read_bytes())
-                        succeeded += 1
-                        return {
-                            "slug": app.slug,
-                            "backup_id": backup.backup_id,
-                            "version": app.name or "",
-                            "size_bytes": backup.total_size_bytes or 0,
-                            "status": "success",
-                        }
+
+                if bg_app.last_backup_id:
+                    backup_result = await bg_db.execute(
+                        select(AppBackup).where(AppBackup.backup_id == bg_app.last_backup_id)
+                    )
+                    backup = backup_result.scalar_one_or_none()
+                    if backup and backup.storage_path:
+                        src = STORAGE_BASE_DIR / backup.storage_path
+                        if src.exists():
+                            dst = apps_dir / app.slug
+                            dst.mkdir(parents=True, exist_ok=True)
+                            dst_file = dst / f"backup_{backup.backup_id}.zip"
+                            dst_file.write_bytes(src.read_bytes())
+                            succeeded += 1
+                            return {
+                                "slug": app.slug,
+                                "backup_id": backup.backup_id,
+                                "version": app.name or "",
+                                "size_bytes": backup.total_size_bytes or 0,
+                                "status": "success",
+                            }
             failed += 1
             return {"slug": app.slug, "backup_id": None, "version": "", "size_bytes": 0, "status": "failed"}
-        except (BackupExecutionError, Exception) as e:
+        except (BackupExecutionError, asyncio.TimeoutError, Exception) as e:
             failed += 1
             logger.error(f"Backup echoue pour {app.slug}: {e}")
             return {"slug": app.slug, "backup_id": None, "version": "", "size_bytes": 0, "status": "failed"}
