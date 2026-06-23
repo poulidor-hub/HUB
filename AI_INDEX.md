@@ -31,25 +31,6 @@
   - [Ligne 70] Classe : class TestSuite
   - [Ligne 98] Classe : class AppTester
 
-### 📄 `hub/import_env.py`
-  - [Ligne 35] Classe : class ImportMode
-  - [Ligne 46] Fonction : def get_secrets_dir()
-  - [Ligne 55] Fonction : def write_sa_secret()
-  - [Ligne 459] Fonction : def main()
-
-### 📄 `hub/export_env.py`
-  - [Ligne 43] Fonction : def get_secrets_dir()
-  - [Ligne 52] Fonction : def read_sa_secret()
-  - [Ligne 222] Fonction : def main()
-
-### 📄 `hub/update_backup_metadata.py`
-  - [Ligne 33] Fonction : def extract_metadata_from_zip()
-
-### 📄 `hub/tests/test_backup.py`
-  - [Ligne 15] Classe : class TestBackupExport
-  - [Ligne 150] Classe : class TestBackupImport
-  - [Ligne 364] Classe : class TestBackupRoundTrip
-
 ### 📄 `hub/tests/conftest.py`
   - [Ligne 25] Fonction : def reset_rate_limiter()
   - [Ligne 39] Fonction : def event_loop()
@@ -321,12 +302,19 @@
 ### 📄 `hub/app/routes/profiles.py`
   - [Ligne 117] Fonction : def _build_profile_response()
 
-### 📄 `hub/app/routes/backup.py`
-  - [Ligne 723] Fonction : def _build_zip_archive()
-  - [Ligne 919] Fonction : def _read_sa_secret()
-  - [Ligne 939] Fonction : def _write_sa_secret()
+### 📄 `hub/app/hub_self_backup.py`
+  - [Ligne 140] Fonction : def create_hub_backup_archive()
 
-### 📄 `hub/app/routes/users.py`
+### 📄 `hub/app/routes/snapshots.py`
+  - [Ligne 55] Fonction : async def list_snapshots()
+  - [Ligne 73] Fonction : async def create_snapshot_endpoint()
+  - [Ligne 107] Fonction : async def get_in_progress_snapshot()
+
+### 📄 `hub/app/routes/backup.py`
+
+(obsolète — supprimé, remplacé par le système de snapshots)
+
+### 📄 `hub/app/routes/app_backups.py`
   - [Ligne 33] Classe : class UserAppRoleAssignment
   - [Ligne 39] Classe : class UserAppsUpdate
 

@@ -1,279 +1,124 @@
-# 🔄 Système de Backup/Restauration HUB
+# 🔄 Système de Snapshot/Sauvegarde HUB
 
-Ce document décrit comment sauvegarder et restaurer un environnement HUB complet pour le cloner ou migrer vers un autre serveur.
+Ce document décrit le système de snapshots complets du Hub : sauvegarde intégrale (PostgreSQL + fichiers + backups apps + config Docker), chiffrée et stockée sur S3/MinIO.
 
-## 📦 Ce qui est inclus dans un backup
+## 📦 Ce qui est inclus dans un snapshot
 
-| Élément | Inclus | Sensible |
-|---------|--------|----------|
-| **Utilisateurs** | ✅ Username, email, hash mot de passe, flags admin/active, `must_change_password`, `can_change_password` | 🔐 Hash bcrypt |
-| **Applications** | ✅ Toute la configuration (URLs, icône, couleur, rôles), statut d'approbation | - |
-| **Associations User↔App** | ✅ Quel user a accès à quelle app avec quel rôle | - |
-| **Service Accounts** | ✅ Nom, client_id, hash secret, apps autorisées | 🔐 Secret en clair (optionnel) |
-| **Clés JWT RSA** | ✅ (optionnel) Clés privée et publique | 🔐 Clé privée |
+| Élément | Inclus | Collecteur |
+|---------|--------|------------|
+| **Toute la base PostgreSQL** | Toutes les tables (users, apps, rôles, profils, messages, audit, etc.) | `pg_dump --format=custom` |
+| **Fichiers secrets** | Clés JWT, `.env` des service accounts, clés de chiffrement | `secrets.tar` |
+| **Backups applicatifs** | Tous les ZIP de backup stockés dans `storage/backups/` | `storage_backups.tar` |
+| **Config Docker** | `docker-compose.yml`, `VERSION`, `env.template` | copie directe |
+| **Derniers backups d'apps** | Backup le plus récent de chaque app active | déclenchement via `perform_app_backup()` |
 
-## 🖥️ Interface Web (Nouveau)
+## 🖥️ Interface Web
 
-L'interface d'administration du Hub dispose maintenant d'un onglet **Backup** permettant :
+Menu Admin → **Snapshots** permet de :
+- **Créer** un snapshot manuel (bouton "Créer maintenant")
+- **Suivre** la progression en temps réel (pg_dump → archivage → apps → chiffrement → upload S3)
+- **Lister** les snapshots existants (statut, taille, date)
+- **Configurer** le cron, la rétention, et le stockage S3
+- **Restaurer** un snapshot sur le Hub existant
+- **Télécharger** un snapshot (pour restauration bare-metal)
 
-1. **Export** : Télécharger un backup JSON avec options (clés JWT, secrets M2M)
-2. **Import** : Uploader un fichier de backup avec preview et choix du mode d'import
-3. **Visualisation** : Voir le résultat de l'import (créations, mises à jour, erreurs)
+## 🚀 API REST
 
-Accès : Menu Admin → Onglet "Backup"
+| Méthode | Endpoint | Rôle |
+|---------|----------|------|
+| `GET` | `/api/admin/snapshots` | Liste des snapshots |
+| `POST` | `/api/admin/snapshots` | Déclencher un snapshot manuel |
+| `GET` | `/api/admin/snapshots/in-progress` | Progression du snapshot en cours |
+| `GET` | `/api/admin/snapshots/config` | Lire la configuration |
+| `PUT` | `/api/admin/snapshots/config` | Modifier la configuration |
+| `GET` | `/api/admin/snapshots/{id}` | Détail d'un snapshot |
+| `DELETE` | `/api/admin/snapshots/{id}` | Supprimer un snapshot |
+| `POST` | `/api/admin/snapshots/{id}/restore` | Restaurer (hub existant) |
+| `POST` | `/api/admin/snapshots/{id}/restore/preview` | Prévisualiser le contenu |
+| `GET` | `/api/admin/snapshots/{id}/download` | Télécharger le snapshot |
 
-## 🚀 Utilisation rapide
-
-### Export via CLI (recommandé)
-
-```bash
-# Export complet vers un fichier
-docker compose exec hub-api python export_env.py -o /code/secrets/service_accounts/hub_backup.json
-
-# Export sans clés JWT (si vous voulez régénérer de nouvelles clés)
-docker compose exec hub-api python export_env.py -o /code/secrets/service_accounts/hub_backup.json --no-jwt-keys
-
-# Export sans secrets des service accounts
-docker compose exec hub-api python export_env.py -o /code/secrets/service_accounts/hub_backup.json --no-sa-secrets
-
-# Export vers stdout (pour rediriger vers fichier local)
-docker compose exec hub-api python export_env.py > ./secrets/hub_backup.json
-```
-
-### Import via CLI
+## ⚙️ Configuration
 
 ```bash
-# Import basique (ignore les conflits)
-docker compose exec hub-api python import_env.py /code/secrets/service_accounts/hub_backup.json
-
-# Import avec mise à jour des existants
-docker compose exec hub-api python import_env.py /code/secrets/service_accounts/hub_backup.json --mode update
-
-# Import avec restauration des clés JWT
-docker compose exec hub-api python import_env.py /code/secrets/service_accounts/hub_backup.json --restore-jwt
-
-# Simulation (dry-run) pour voir ce qui serait fait
-docker compose exec hub-api python import_env.py /code/secrets/service_accounts/hub_backup.json --dry-run
-```
-
-### Export via API
-
-```bash
-# Récupérer un token admin
-TOKEN=$(curl -s -X POST "http://localhost:8000/api/auth/token" \
-  -H "Content-Type: application/x-www-form-urlencoded" \
-  -d "grant_type=password&username=admin&password=admin123" | jq -r '.access_token')
-
-# Export complet
-curl -s -H "Authorization: Bearer $TOKEN" \
-  "http://localhost:8000/api/admin/backup/export" | jq . > hub_backup.json
-
-# Export sans clés JWT
-curl -s -H "Authorization: Bearer $TOKEN" \
-  "http://localhost:8000/api/admin/backup/export?include_jwt_keys=false" | jq . > hub_backup.json
-```
-
-### Import via API
-
-```bash
-curl -X POST "http://localhost:8000/api/admin/backup/import" \
+# Définir le cron (ex: quotidien à 2h du matin)
+curl -X PUT "http://localhost:8000/api/admin/snapshots/config" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d @hub_backup.json
+  -d '{"snapshot_cron": "0 2 * * *"}'
+
+# Définir la rétention (max 10 snapshots, âge minimum 48h)
+curl -X PUT "http://localhost:8000/api/admin/snapshots/config" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"snapshot_retention_max": 10, "snapshot_retention_min_age_hours": 48}'
+
+# Configurer S3/MinIO
+curl -X PUT "http://localhost:8000/api/admin/snapshots/config" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "s3_endpoint": "https://s3.example.com",
+    "s3_bucket": "hub-snapshots",
+    "s3_region": "eu-west-1",
+    "s3_access_key": "xxx",
+    "s3_secret_key": "xxx"
+  }'
 ```
 
-## 📋 Modes d'import
-
-| Mode | Description |
-|------|-------------|
-| `skip` | Ignore les entités déjà existantes (défaut, le plus sûr) |
-| `update` | Met à jour les entités existantes avec les données du backup |
-| `error` | Échoue immédiatement si une entité existe déjà |
-
-## 🔐 Considérations de sécurité
-
-### ⚠️ Le fichier de backup contient des données sensibles !
-
-1. **Mots de passe** : Hashés en bcrypt, mais permettent de se connecter si restaurés
-2. **Secrets Service Accounts** : En clair si `--no-sa-secrets` n'est pas utilisé
-3. **Clé privée JWT** : Permet de signer des tokens valides
-
-### Recommandations
+## 🔄 Restauration bare-metal
 
 ```bash
-# Chiffrer le backup après export
-gpg -c hub_backup.json  # Crée hub_backup.json.gpg
+# 1. Récupérer le snapshot
+# Depuis l'UI admin : télécharger le snapshot
+# Ou depuis S3 : aws s3 cp s3://bucket/prod/snapshot_xxx.tar.zst.enc .
 
-# Déchiffrer avant import
-gpg -d hub_backup.json.gpg > hub_backup.json
+# 2. Déchiffrer (nécessite la clé privée RSA du Hub)
+# Le déchiffrement est intégré dans le flux de restauration API
 
-# Supprimer le fichier non chiffré
-rm hub_backup.json
+# 3. Déployer un Hub vierge avec le docker-compose.yml extrait du snapshot
+# Le snapshot contient docker-compose.yml + env.template
+
+# 4. Restaurer la base PostgreSQL
+pg_restore --clean --if-exists --host=db --username=hub --dbname=hub --no-owner --no-acl full_dump.pgdump
+
+# 5. Extraire les secrets et les backups
+tar -xf secrets.tar -C /code/secrets/
+tar -xf storage_backups.tar -C /code/storage/
 ```
 
-## 📁 Structure du fichier JSON
+## 📋 Rétention
 
-```json
-{
-  "version": "1.0",
-  "exported_at": "2025-12-31T10:30:00",
-  "exported_by": "admin",
-  
-  "users": [
-    {
-      "username": "admin",
-      "email": "admin@local.lan",
-      "hashed_password": "$2b$12$...",
-      "is_active": true,
-      "is_admin": true,
-      "must_change_password": false,
-      "can_change_password": true,
-      "created_at": "2025-12-01T08:00:00"
-    }
-  ],
-  
-  "applications": [
-    {
-      "name": "API Salariés",
-      "slug": "salarie",
-      "description": "Gestion des salariés",
-      "icon": "bi-people-fill",
-      "color": "#198754",
-      "api_url": "http://host.docker.internal:18087",
-      "frontend_url": "http://localhost:4178",
-      "callback_url": "http://localhost:4178/callback",
-      "is_active": true,
-      "requires_auth": true,
-      "is_shared_service": false,
-      "approval_status": "approved",
-      "approved_by_username": "admin",
-      "approved_at": "2025-12-01T08:00:00",
-      "rejection_reason": null,
-      "available_roles": [
-        {"name": "admin", "description": "Administrateur"},
-        {"name": "user", "description": "Utilisateur"}
-      ]
-    }
-  ],
-  
-  "user_app_roles": [
-    {
-      "username": "admin",
-      "app_slug": "salarie",
-      "role": "admin"
-    }
-  ],
-  
-  "service_accounts": [
-    {
-      "name": "SA API Salariés",
-      "client_id": "sa_abc123...",
-      "client_secret_hash": "$2b$12$...",
-      "client_secret_plain": "secret_en_clair_si_disponible",
-      "description": "Service account pour M2M",
-      "is_active": true,
-      "app_slugs": ["salarie"]
-    }
-  ],
-  
-  "jwt_private_key_b64": "base64_encoded_private_key...",
-  "jwt_public_key_b64": "base64_encoded_public_key..."
-}
+La rétention est appliquée après chaque snapshot réussi :
+- **Nombre max** (`snapshot_retention_max`, défaut: 7) : garder les N derniers
+- **Âge minimum** (`snapshot_retention_min_age_hours`, défaut: 24) : ne jamais supprimer ceux de moins de X heures
+- La suppression supprime le fichier S3 et la ligne en base
+
+## 🔐 Sécurité
+
+- Le snapshot est chiffré **avant** upload S3 (AES-256-GCM + enveloppe RSA)
+- S3 ne voit que des données opaques
+- La clé privée RSA est nécessaire pour déchiffrer
+- Les secrets service accounts (.env) sont préservés dans `secrets.tar`
+- Les clés JWT sont incluses dans `secrets.tar`
+
+## 📁 Format de l'archive
+
+```
+snapshot_{uuid}.tar.zst.enc
+  ├── manifest.json
+  ├── postgres/
+  │   └── full_dump.pgdump
+  ├── files/
+  │   ├── storage_backups.tar
+  │   └── secrets.tar
+  ├── docker/
+  │   ├── docker-compose.yml
+  │   └── env.template
+  └── apps/
+      └── {slug}/
+          └── backup_{uuid}.zip
 ```
 
-### Nouveaux champs (v1.1)
+## 🆚 Ancien système (obsolète)
 
-| Champ | Type | Description |
-|-------|------|-------------|
-| `users[].must_change_password` | bool | Force le changement de mdp à la prochaine connexion |
-| `users[].can_change_password` | bool | Autorise l'utilisateur à changer son mdp (False pour comptes partagés) |
-| `applications[].is_shared_service` | bool | App accessible par tous les service accounts M2M |
-| `applications[].approval_status` | string | "pending", "approved", "rejected" |
-| `applications[].approved_by_username` | string | Username de l'admin ayant approuvé |
-| `applications[].approved_at` | datetime | Date d'approbation |
-| `applications[].rejection_reason` | string | Raison du rejet si applicable |
-
-## 🔄 Scénarios d'utilisation
-
-### 1. Cloner un environnement de dev vers staging
-
-```bash
-# Sur le serveur source (dev)
-docker compose exec hub-api python export_env.py -o /app/secrets/backup_dev.json
-
-# Copier le fichier vers staging
-scp secrets/backup_dev.json staging-server:/path/to/hub/secrets/
-
-# Sur staging
-docker compose exec hub-api python import_env.py /app/secrets/backup_dev.json --restore-jwt
-docker compose restart hub-api
-```
-
-### 2. Migration vers un nouveau serveur
-
-```bash
-# Export complet
-docker compose exec hub-api python export_env.py -o /app/secrets/migration.json
-
-# Sur le nouveau serveur (après avoir déployé le Hub)
-docker compose exec hub-api python import_env.py /app/secrets/migration.json --mode update --restore-jwt
-docker compose restart hub-api
-```
-
-### 3. Backup régulier (cron)
-
-```bash
-#!/bin/bash
-# /etc/cron.daily/hub-backup
-
-BACKUP_DIR="/backups/hub"
-DATE=$(date +%Y%m%d)
-
-cd /path/to/hub
-docker compose exec -T hub-api python export_env.py -o /app/secrets/backup_${DATE}.json
-
-# Garder les 7 derniers backups
-ls -t ${BACKUP_DIR}/backup_*.json | tail -n +8 | xargs rm -f
-```
-
-### 4. Restauration après incident
-
-```bash
-# Arrêter le Hub
-docker compose down
-
-# Supprimer la base de données (⚠️ destructif)
-docker volume rm hub_postgres_data
-
-# Relancer et importer
-docker compose up -d db
-sleep 10  # Attendre que PostgreSQL démarre
-docker compose up -d hub-api
-sleep 5
-docker compose exec hub-api python import_env.py /app/secrets/backup.json --restore-jwt
-docker compose restart hub-api
-```
-
-## ❓ FAQ
-
-### Les utilisateurs devront-ils se reconnecter ?
-
-- **Si les clés JWT sont restaurées** : Non, les tokens existants restent valides
-- **Si les clés JWT sont régénérées** : Oui, tous les tokens seront invalides
-
-### Les secrets des Service Accounts sont-ils préservés ?
-
-- **Avec `--no-sa-secrets`** : Non, il faudra régénérer de nouveaux secrets
-- **Sans cette option** : Oui, les secrets en clair sont inclus et restaurés
-
-### Puis-je modifier le fichier JSON avant import ?
-
-Oui ! Vous pouvez :
-- Changer les URLs des applications
-- Modifier les rôles
-- Supprimer des utilisateurs
-- Adapter la configuration pour le nouvel environnement
-
-### Comment exclure certains utilisateurs ?
-
-Éditez le fichier JSON et supprimez les entrées non désirées des tableaux `users` et `user_app_roles`.
+L'export/import d'environnement JSON (`backup.py`, `export_env.py`, `import_env.py`) et les backup clusters ont été supprimés et remplacés par le système de snapshots. Les backups applicatifs individuels (`app_backups.py`) restent inchangés.
