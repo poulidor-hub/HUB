@@ -410,6 +410,7 @@ async def get_active_sessions(
         "active_count": len(active_sessions),
         "sessions": [
             {
+                "id": s.id,
                 "user_id": s.user_id,
                 "username": s.user.username if s.user else None,
                 "login_at": s.login_at.isoformat(),
