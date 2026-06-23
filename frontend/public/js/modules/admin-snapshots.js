@@ -108,18 +108,18 @@ async function showSnapshotDetail(snapshotId) {
         modal.show();
     } catch (e) {
         console.error('Erreur detail snapshot', e);
-        showToast('Erreur', 'Impossible de charger les details du snapshot', 'danger');
+        snapshotToast('Erreur', 'Impossible de charger les details du snapshot', 'danger');
     }
 }
 
 async function createSnapshot() {
     try {
         const data = await api.request('/admin/snapshots/', { method: 'POST' });
-        showToast('Snapshot', 'Snapshot declenche !', 'success');
+        snapshotToast('Snapshot', 'Snapshot declenche !', 'success');
         loadSnapshots();
         startProgressPolling();
     } catch (e) {
-        showToast('Erreur', e.message || 'Echec creation snapshot', 'danger');
+        snapshotToast('Erreur', e.message || 'Echec creation snapshot', 'danger');
     }
 }
 
@@ -127,10 +127,10 @@ async function deleteSnapshot(snapshotId) {
     if (!confirm('Supprimer ce snapshot definitivement ?')) return;
     try {
         await api.request(`/admin/snapshots/${snapshotId}`, { method: 'DELETE' });
-        showToast('Supprime', 'Snapshot supprime', 'success');
+        snapshotToast('Supprime', 'Snapshot supprime', 'success');
         loadSnapshots();
     } catch (e) {
-        showToast('Erreur', e.message || 'Echec suppression', 'danger');
+        snapshotToast('Erreur', e.message || 'Echec suppression', 'danger');
     }
 }
 
@@ -142,9 +142,9 @@ function confirmRestoreSnapshot(snapshotId) {
         method: 'POST',
         body: JSON.stringify({ confirm_full_restore: true }),
     }).then(() => {
-        showToast('Restauration', 'Restauration en cours...', 'info');
+        snapshotToast('Restauration', 'Restauration en cours...', 'info');
     }).catch(e => {
-        showToast('Erreur', e.message || 'Echec restauration', 'danger');
+        snapshotToast('Erreur', e.message || 'Echec restauration', 'danger');
     });
 }
 
@@ -191,9 +191,9 @@ async function saveSnapshotConfig() {
             method: 'PUT',
             body: JSON.stringify(payload),
         });
-        showToast('Config', 'Configuration enregistree', 'success');
+        snapshotToast('Config', 'Configuration enregistree', 'success');
     } catch (e) {
-        showToast('Erreur', e.message || 'Echec enregistrement', 'danger');
+        snapshotToast('Erreur', e.message || 'Echec enregistrement', 'danger');
     }
 }
 
@@ -237,7 +237,7 @@ function formatDate(dateStr) {
     }
 }
 
-function showToast(title, msg, type) {
+function snapshotToast(title, msg, type) {
     if (typeof window.showToast === 'function') {
         window.showToast(title, msg, type);
         return;
