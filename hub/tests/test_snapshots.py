@@ -388,3 +388,31 @@ class TestRetention:
         )
         assert response.status_code == 400
         assert "pas de stockage S3" in response.json()["detail"]
+
+    @pytest.mark.asyncio
+    async def test_download_from_local_path(
+        self, client: AsyncClient, async_session: AsyncSession,
+        admin_token, snapshot_settings, tmp_path,
+    ):
+        local_file = tmp_path / "snapshot_test-local.tar.zst.enc"
+        local_file.write_bytes(b"FAKE_ENCRYPTED_SNAPSHOT_DATA")
+
+        snap = HubSnapshot(
+            snapshot_id="test-dl-local-001",
+            status="success",
+            local_path=str(local_file),
+            created_by="test",
+        )
+        async_session.add(snap)
+        await async_session.commit()
+
+        response = await client.get(
+            "/api/admin/snapshots/test-dl-local-001/download",
+            headers=get_auth_header(admin_token),
+        )
+        assert response.status_code == 200
+        assert response.headers["content-disposition"] == 'attachment; filename="snapshot_test-dl-local-001.tar.zst.enc"'
+        data = b""
+        async for chunk in response.aiter_bytes():
+            data += chunk
+        assert data == b"FAKE_ENCRYPTED_SNAPSHOT_DATA"
