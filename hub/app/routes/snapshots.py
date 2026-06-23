@@ -273,102 +273,29 @@ async def restore_snapshot(
     if snap.status != "success":
         raise HTTPException(status_code=400, detail="Seuls les snapshots reussis peuvent etre restaures")
 
-    config = await get_snapshot_config(db)
+    if not (snap.local_path and Path(snap.local_path).exists()):
+        config = await get_snapshot_config(db)
+        if not (snap.s3_key and config.get("s3_endpoint")):
+            raise HTTPException(status_code=400, detail="Snapshot non disponible (ni stockage local ni S3)")
 
-    async def _do_restore():
-        tmp = Path(tempfile.mkdtemp(prefix="hub_restore_"))
-        try:
-            enc_path = tmp / "snapshot.tar.zst.enc"
-            if snap.local_path and Path(snap.local_path).exists():
-                shutil.copy2(snap.local_path, enc_path)
-            elif snap.s3_key and config.get("s3_endpoint"):
-                await s3_download(
-                    snap.s3_bucket or "", snap.s3_key, enc_path,
-                    config["s3_endpoint"], config["s3_access_key"], config["s3_secret_key"],
-                    config.get("s3_region", "eu-west-1"),
-                )
-            else:
-                logger.error("Snapshot non disponible (ni stockage local ni S3)")
-                return
+    pending_file = Path("/code/storage/pending_restore.txt")
+    pending_file.write_text(snapshot_id)
 
-            data = enc_path.read_bytes()
-            key_len = int.from_bytes(data[:4], "big")
-            enc_key = data[4:4 + key_len]
-            nonce = data[4 + key_len:4 + key_len + 12]
-            ciphertext = data[4 + key_len + 12:]
+    logger.info(f"Restauration snapshot {snapshot_id}: fichier pending ecrit, arret de l'API...")
 
-            secrets_dir = Path("/code/secrets")
-            with open(secrets_dir / "jwt_private_key.pem", "rb") as f:
-                priv_key = serialization.load_pem_private_key(f.read(), password=None)
-
-            aes_key = priv_key.decrypt(
-                enc_key,
-                padding.OAEP(
-                    mgf=padding.MGF1(algorithm=hashes.SHA256()),
-                    algorithm=hashes.SHA256(),
-                    label=None,
-                ),
-            )
-            aesgcm = AESGCM(aes_key)
-            plaintext = aesgcm.decrypt(nonce, ciphertext, None)
-
-            tar_zst_path = tmp / "snapshot.tar.zst"
-            tar_zst_path.write_bytes(plaintext)
-
-            dctx = zstd.ZstdDecompressor()
-            tar_path_data = tmp / "snapshot.tar"
-            tar_path_data.write_bytes(dctx.decompress(tar_zst_path.read_bytes()))
-
-            extract_dir = tmp / "extract"
-            extract_dir.mkdir()
-            shutil.unpack_archive(str(tar_path_data), str(extract_dir), "tar")
-
-            dump_path = extract_dir / "postgres" / "full_dump.pgdump"
-            if dump_path.exists():
-                db_url = os.environ.get("DATABASE_URL", "")
-                if db_url:
-                    parsed = urlparse(db_url.replace("+asyncpg", ""))
-                    env = os.environ.copy()
-                    if parsed.password:
-                        env["PGPASSWORD"] = parsed.password
-                    proc = await asyncio.create_subprocess_exec(
-                        "pg_restore", "--clean", "--if-exists",
-                        "--host", parsed.hostname or "db",
-                        "--port", str(parsed.port or 5432),
-                        "--username", parsed.username or "hub",
-                        "--dbname", parsed.path.lstrip("/") or "hub",
-                        "--no-owner", "--no-acl",
-                        str(dump_path),
-                        env=env,
-                        stdout=asyncio.subprocess.PIPE,
-                        stderr=asyncio.subprocess.PIPE,
-                    )
-                    stdout, stderr = await proc.communicate()
-                    if proc.returncode != 0:
-                        logger.error(f"pg_restore echec: {stderr.decode()[:500]}")
-
-            files_dir = extract_dir / "files"
-            if (files_dir / "secrets.tar").exists():
-                secrets_target = Path("/code/secrets")
-                shutil.unpack_archive(str(files_dir / "secrets.tar"), str(secrets_target))
-            if (files_dir / "storage_backups.tar").exists():
-                storage_target = Path("/code/storage")
-                shutil.unpack_archive(str(files_dir / "storage_backups.tar"), str(storage_target))
-
-            logger.info(f"Snapshot {snapshot_id} restaure avec succes")
-
-        except Exception as e:
-            logger.error(f"Restauration snapshot echouee: {e}", exc_info=True)
-        finally:
-            shutil.rmtree(tmp, ignore_errors=True)
-
-    background_tasks.add_task(_do_restore)
+    background_tasks.add_task(_shutdown_api)
 
     return HubSnapshotRestoreResponse(
         snapshot_id=snapshot_id,
         status="restoring",
-        message="Restauration du snapshot en cours...",
+        message="API en cours de redemarrage pour restauration...",
     )
+
+
+async def _shutdown_api():
+    await asyncio.sleep(1)
+    logger.warning("Arret de l'API pour restauration snapshot.")
+    os._exit(0)
 
 
 @router.get("/{snapshot_id}/download")

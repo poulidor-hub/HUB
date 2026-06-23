@@ -3,13 +3,13 @@ set -e
 
 # =============================================================================
 # Script d'entrypoint pour le Hub API
-# Gère les permissions et lance l'application
+# Gère les permissions, la restauration snapshot, et lance l'application
 # =============================================================================
 
 echo "🚀 Initialisation du Hub API..."
 
 # Créer les dossiers nécessaires s'ils n'existent pas
-mkdir -p /code/secrets/service_accounts /code/storage/backups
+mkdir -p /code/secrets/service_accounts /code/storage/backups /code/storage/snapshots
 
 # Ajuster les permissions du dossier secrets
 if [ -d "/code/secrets" ]; then
@@ -18,7 +18,7 @@ if [ -d "/code/secrets" ]; then
     chmod -R u+rw /code/secrets 2>/dev/null || true
 fi
 
-# Ajuster les permissions du dossier storage/backups
+# Ajuster les permissions du dossier storage
 if [ -d "/code/storage" ]; then
     echo "💾 Ajustement des permissions du stockage..."
     chown -R appuser:appuser /code/storage 2>/dev/null || true
@@ -36,6 +36,13 @@ if [ -S "/var/run/docker.sock" ]; then
     fi
     # Ajouter appuser au groupe docker
     usermod -aG "$DOCKER_GID" appuser 2>/dev/null || true
+fi
+
+# Restauration snapshot en attente (apres restart declenche par restore)
+if [ -f "/code/storage/pending_restore.txt" ]; then
+    echo "📦 Restauration snapshot detectee, lancement de la restauration..."
+    gosu appuser python app/restore_snapshot.py || echo "⚠️ Restauration terminee avec des erreurs"
+    echo "✅ Restauration terminee, demarrage de l'API..."
 fi
 
 echo "✅ Initialisation terminée, lancement de l'application..."
