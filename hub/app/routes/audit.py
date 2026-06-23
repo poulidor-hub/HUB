@@ -646,6 +646,62 @@ async def get_connection_stats(
     }
 
 
+@router.get("/overview/kpis")
+async def get_overview_kpis(
+    days: int = Query(7, ge=1, le=365, description="Période en jours"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """KPI de la vue d'ensemble + deltas vs période précédente équivalente."""
+    if not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="Accès admin requis")
+
+    from app.models import ErrorLog
+
+    now = utcnow()
+    cur_start = now - timedelta(days=days)
+    prev_start = now - timedelta(days=days * 2)
+
+    async def count_errors(low, start, end):
+        stmt = select(func.count(ErrorLog.id)).where(
+            ErrorLog.created_at >= start, ErrorLog.created_at < end
+        )
+        if low == 5:
+            stmt = stmt.where(ErrorLog.error_code >= 500)
+        else:
+            stmt = stmt.where(ErrorLog.error_code.in_([401, 403]))
+        return (await db.execute(stmt)).scalar() or 0
+
+    async def count_apps(start, end):
+        stmt = select(func.count(func.distinct(AuditLog.target))).where(
+            AuditLog.action == "access_app",
+            AuditLog.created_at >= start,
+            AuditLog.created_at < end,
+        )
+        return (await db.execute(stmt)).scalar() or 0
+
+    active_now = (await db.execute(
+        select(func.count(UserSession.id)).where(UserSession.logout_at == None)
+    )).scalar() or 0
+
+    return {
+        "period_days": days,
+        "active_now": active_now,
+        "errors_critical": {
+            "current": await count_errors(5, cur_start, now),
+            "previous": await count_errors(5, prev_start, cur_start),
+        },
+        "auth_failures": {
+            "current": await count_errors(4, cur_start, now),
+            "previous": await count_errors(4, prev_start, cur_start),
+        },
+        "apps_active": {
+            "current": await count_apps(cur_start, now),
+            "previous": await count_apps(prev_start, cur_start),
+        },
+    }
+
+
 @router.get("/stats/user/{user_id}")
 async def get_user_stats(
     user_id: int,
