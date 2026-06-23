@@ -3,8 +3,6 @@
  * Page admin de gestion des snapshots systeme.
  */
 
-let snapshotConfigModal;
-
 const SNAPSHOT_STEP_LABELS = {
     queued: 'En attente...',
     pg_dump: 'Dump PostgreSQL',
@@ -269,11 +267,11 @@ async function showSnapshotDetail(snapshotId, openTab) {
 async function createSnapshot() {
     try {
         const data = await api.request('/admin/snapshots/', { method: 'POST' });
-        snapshotToast('Snapshot', 'Snapshot declenche !', 'success');
+        showToast('Snapshot', 'Snapshot declenche !', 'success');
         loadSnapshots();
         startProgressPolling();
     } catch (e) {
-        snapshotToast('Erreur', e.message || 'Echec creation snapshot', 'danger');
+        showToast('Erreur', e.message || 'Echec creation snapshot', 'danger');
     }
 }
 
@@ -281,10 +279,10 @@ async function deleteSnapshot(snapshotId) {
     if (!confirm('Supprimer ce snapshot definitivement ?')) return;
     try {
         await api.request(`/admin/snapshots/${snapshotId}`, { method: 'DELETE' });
-        snapshotToast('Supprime', 'Snapshot supprime', 'success');
+        showToast('Supprime', 'Snapshot supprime', 'success');
         loadSnapshots();
     } catch (e) {
-        snapshotToast('Erreur', e.message || 'Echec suppression', 'danger');
+        showToast('Erreur', e.message || 'Echec suppression', 'danger');
     }
 }
 
@@ -371,10 +369,25 @@ async function loadSnapshotConfig() {
         if (el2) el2.value = config.snapshot_retention_max;
         const el3 = document.getElementById('snapshotRetentionMinAge');
         if (el3) el3.value = config.snapshot_retention_min_age_hours;
+
         const s3Status = document.getElementById('snapshotS3Status');
         if (s3Status) {
-            s3Status.textContent = config.s3_configured ? 'Configure' : 'Non configure';
-            s3Status.className = config.s3_configured ? 'badge bg-success' : 'badge bg-warning text-dark';
+            if (config.s3_configured) {
+                s3Status.innerHTML = '<i class="bi bi-check-circle-fill me-1"></i>Configure';
+                s3Status.className = 'badge bg-success';
+            } else {
+                s3Status.innerHTML = '<i class="bi bi-x-circle me-1"></i>Non configure';
+                s3Status.className = 'badge bg-warning text-dark';
+            }
+        }
+
+        const cronHelp = document.getElementById('snapshotCronHelp');
+        if (cronHelp) {
+            if (config.snapshot_cron) {
+                cronHelp.textContent = `Planification : ${config.snapshot_cron}`;
+            } else {
+                cronHelp.textContent = 'Laisser vide pour desactiver la planification';
+            }
         }
     } catch (e) {
         console.error('Erreur chargement config snapshot', e);
@@ -396,9 +409,10 @@ async function saveSnapshotConfig() {
             method: 'PUT',
             body: JSON.stringify(payload),
         });
-        snapshotToast('Config', 'Configuration enregistree', 'success');
+        showToast('Config', 'Configuration enregistree', 'success');
+        loadSnapshotConfig();
     } catch (e) {
-        snapshotToast('Erreur', e.message || 'Echec enregistrement', 'danger');
+        showToast('Erreur', e.message || 'Echec enregistrement', 'danger');
     }
 }
 
@@ -442,22 +456,6 @@ function formatDate(dateStr) {
     }
 }
 
-function snapshotToast(title, msg, type) {
-    if (typeof window.showToast === 'function') {
-        window.showToast(title, msg, type);
-        return;
-    }
-    const container = document.getElementById('toastContainer');
-    if (!container) {
-        console.warn(`[${type}] ${title}: ${msg}`);
-        return;
-    }
-    const toast = document.createElement('div');
-    toast.className = `toast align-items-center text-bg-${type} border-0`;
-    toast.innerHTML = `<div class="d-flex"><div class="toast-body"><strong>${title}:</strong> ${msg}</div><button type="button" class="btn-close me-2 m-auto" data-bs-dismiss="toast"></button></div>`;
-    container.appendChild(toast);
-    new bootstrap.Toast(toast).show();
-}
 
 // Ne pas utiliser DOMContentLoaded — le chargement est gere par showPage()
 // Les fonctions loadSnapshots(), loadSnapshotConfig(), startProgressPolling()
