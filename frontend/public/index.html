@@ -3494,12 +3494,21 @@
     <!-- ============================================================ -->
     <div id="snapshotsSection" class="container-fluid py-4 d-none" style="margin-top: 70px;">
         <div class="container">
-            <div class="d-flex justify-content-between align-items-center mb-4">
-                <h2><i class="bi bi-camera me-2"></i>Snapshots</h2>
-                <div>
-                    <button class="btn btn-primary" onclick="createSnapshot()">
-                        <i class="bi bi-plus-lg me-1"></i>Creer maintenant
-                    </button>
+            <!-- Toolbar Card -->
+            <div class="card border-0 shadow-sm mb-3">
+                <div class="card-body d-flex justify-content-between align-items-center py-3">
+                    <div>
+                        <h4 class="mb-0"><i class="bi bi-camera me-2"></i>Snapshots</h4>
+                        <small id="snapshotCountLabel" class="text-muted">Chargement...</small>
+                    </div>
+                    <div class="d-flex gap-2">
+                        <button class="btn btn-outline-secondary btn-sm" onclick="loadSnapshots()" title="Actualiser">
+                            <i class="bi bi-arrow-clockwise"></i>
+                        </button>
+                        <button class="btn btn-primary" onclick="createSnapshot()">
+                            <i class="bi bi-plus-lg me-1"></i>Creer maintenant
+                        </button>
+                    </div>
                 </div>
             </div>
 
@@ -3513,37 +3522,45 @@
                 </div>
             </div>
 
+            <!-- Empty state -->
+            <div id="snapshotEmptyState" class="text-center py-5 d-none">
+                <i class="bi bi-camera display-1 text-muted"></i>
+                <h5 class="mt-3 text-muted">Aucun snapshot pour le moment</h5>
+                <p class="text-muted">Creez votre premier snapshot pour sauvegarder la configuration du Hub.</p>
+                <button class="btn btn-primary" onclick="createSnapshot()">
+                    <i class="bi bi-plus-lg me-1"></i>Creer maintenant
+                </button>
+            </div>
+
             <!-- Tableau des snapshots -->
-            <div class="card">
+            <div id="snapshotTableCard" class="card border-0 shadow-sm d-none">
                 <div class="card-body p-0">
-                    <table class="table table-hover mb-0">
+                    <table class="table table-hover align-middle mb-0">
                         <thead class="table-light">
                             <tr>
+                                <th style="width: 130px;">Statut</th>
                                 <th>ID</th>
-                                <th>Statut</th>
                                 <th>Taille</th>
-                                <th>Date</th>
-                                <th class="text-end">Actions</th>
+                                <th>Cree le</th>
+                                <th class="text-end" style="width: 60px;"></th>
                             </tr>
                         </thead>
-                        <tbody id="snapshotsTableBody">
-                            <tr><td colspan="5" class="text-center text-muted py-4">Chargement...</td></tr>
-                        </tbody>
+                        <tbody id="snapshotsTableBody"></tbody>
                     </table>
                 </div>
             </div>
 
             <!-- Configuration -->
-            <div class="card mt-4">
-                <div class="card-header">
-                    <h5 class="mb-0">Configuration</h5>
+            <div class="card border-0 shadow-sm mt-3">
+                <div class="card-header bg-transparent">
+                    <h5 class="mb-0"><i class="bi bi-gear me-2"></i>Configuration</h5>
                 </div>
                 <div class="card-body">
-                    <div class="row g-3">
-                        <div class="col-md-4">
-                            <label class="form-label">Cron</label>
+                    <div class="row g-3 align-items-end">
+                        <div class="col-md-3">
+                            <label class="form-label">Planification (cron)</label>
                             <input id="snapshotCron" class="form-control" placeholder="0 2 * * *">
-                            <small class="text-muted">Laisser vide pour desactiver</small>
+                            <small id="snapshotCronHelp" class="text-muted"></small>
                         </div>
                         <div class="col-md-2">
                             <label class="form-label">Retention max</label>
@@ -3554,11 +3571,13 @@
                             <input id="snapshotRetentionMinAge" type="number" class="form-control" min="0" value="24">
                         </div>
                         <div class="col-md-2">
-                            <label class="form-label">S3</label>
-                            <div><span id="snapshotS3Status" class="badge bg-warning text-dark">-</span></div>
+                            <label class="form-label">Stockage S3</label>
+                            <div><span id="snapshotS3Status" class="badge">-</span></div>
                         </div>
-                        <div class="col-md-2 d-flex align-items-end">
-                            <button class="btn btn-outline-primary w-100" onclick="saveSnapshotConfig()">Enregistrer</button>
+                        <div class="col-md-3 d-flex align-items-end">
+                            <button class="btn btn-outline-primary w-100" onclick="saveSnapshotConfig()">
+                                <i class="bi bi-check-lg me-1"></i>Enregistrer
+                            </button>
                         </div>
                     </div>
                 </div>
