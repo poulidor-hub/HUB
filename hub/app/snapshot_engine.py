@@ -72,6 +72,7 @@ async def create_snapshot(
         await db.refresh(snapshot)
 
     temp_dir = Path(tempfile.mkdtemp(prefix=f"hub_snapshot_{snapshot_id}_"))
+    logger.info(f"[SNAPSHOT] {snapshot_id}: demarrage (createur={created_by})")
 
     try:
         config = await get_snapshot_config(db)
@@ -91,11 +92,13 @@ async def create_snapshot(
             _update_progress(snapshot, "pg_dump", 10)
             await db.commit()
             pg_stats = await run_pg_dump(temp_dir, SETTINGS.database_url)
+            logger.info(f"[SNAPSHOT] {snapshot_id}: pg_dump OK ({pg_stats.get('size_bytes', 0)} bytes)")
 
         if snapshot.include_files:
             _update_progress(snapshot, "files_tar", 25)
             await db.commit()
             files_stats = await run_files_tar(temp_dir)
+            logger.info(f"[SNAPSHOT] {snapshot_id}: files_tar OK ({files_stats.get('files_count', 0)} fichiers, {files_stats.get('size_bytes', 0)} bytes)")
 
         if snapshot.include_app_backups:
             _update_progress(snapshot, "app_backups", 35)
@@ -105,11 +108,13 @@ async def create_snapshot(
                 snapshot.apps_count = apps_stats.get("total", 0)
                 snapshot.apps_succeeded = apps_stats.get("succeeded", 0)
                 snapshot.apps_failed = apps_stats.get("failed", 0)
+                logger.info(f"[SNAPSHOT] {snapshot_id}: app_backups OK ({apps_stats.get('succeeded', 0)}/{apps_stats.get('total', 0)})")
 
         if snapshot.include_docker_config:
             _update_progress(snapshot, "docker_config", 70)
             await db.commit()
             docker_stats = await run_docker_config(temp_dir)
+            logger.info(f"[SNAPSHOT] {snapshot_id}: docker_config OK ({docker_stats.get('size_bytes', 0)} bytes)")
 
         _update_progress(snapshot, "assembling", 80)
         await db.commit()
@@ -161,6 +166,7 @@ async def create_snapshot(
         tar_path.unlink()
 
         archive_size = archive_path.stat().st_size
+        logger.info(f"[SNAPSHOT] {snapshot_id}: archive .tar.zst = {archive_size} bytes")
 
         # Encrypt
         _update_progress(snapshot, "encrypt", 90)
@@ -178,6 +184,7 @@ async def create_snapshot(
         local_dest = storage_dir / f"snapshot_{snapshot_id}.tar.zst.enc"
         shutil.copy2(encrypted_path, local_dest)
         snapshot.local_path = str(local_dest)
+        logger.info(f"[SNAPSHOT] {snapshot_id}: sauvegarde locale -> {local_dest}")
 
         # Upload S3
         s3_endpoint = config.get("s3_endpoint", "")

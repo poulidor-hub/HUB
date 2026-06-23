@@ -32,7 +32,7 @@ const BACKUP_STEP_LABELS = {
 };
 
 function switchBackupWorkspace(tab) {
-    const tabs = ['apps', 'clusters', 'migration'];
+    const tabs = ['apps', 'snapshots', 'migration'];
     tabs.forEach(name => {
         document.getElementById(`backupWorkspace${capitalizeBackupTab(name)}Tab`)?.classList.toggle('btn-primary', name === tab);
         document.getElementById(`backupWorkspace${capitalizeBackupTab(name)}Tab`)?.classList.toggle('btn-outline-primary', name !== tab);
@@ -42,8 +42,10 @@ function switchBackupWorkspace(tab) {
     if (tab === 'apps') {
         loadAppBackupsOverview();
         hydrateRunningBackups();
-    } else if (tab === 'clusters') {
-        loadBackupClusters();
+    } else if (tab === 'snapshots') {
+        if (typeof loadSnapshots === 'function') loadSnapshots();
+        if (typeof loadSnapshotConfig === 'function') loadSnapshotConfig();
+        if (typeof startProgressPolling === 'function') startProgressPolling();
     } else if (tab === 'migration') {
         mountCloneMigrateIntoBackups();
         loadBackupInfo();

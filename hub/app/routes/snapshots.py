@@ -124,6 +124,8 @@ async def create_snapshot_endpoint(
 
     await _broadcast("snapshot_created", {"snapshot_id": sid, "status": "pending"})
 
+    logger.info(f"[SNAPSHOT] {sid}: cree par {current_admin.username}")
+
     return HubSnapshotCreateResponse(
         snapshot_id=sid,
         status="pending",
@@ -233,6 +235,7 @@ async def delete_snapshot(
     await db.commit()
 
     await _broadcast("snapshot_deleted", {"snapshot_id": snapshot_id})
+    logger.info(f"[SNAPSHOT] {snapshot_id}: supprime")
     return {"detail": "Snapshot supprime"}
 
 
@@ -281,7 +284,7 @@ async def restore_snapshot(
     pending_file = Path("/code/storage/pending_restore.txt")
     pending_file.write_text(snapshot_id)
 
-    logger.info(f"Restauration snapshot {snapshot_id}: fichier pending ecrit, arret de l'API...")
+    logger.warning(f"[SNAPSHOT] {snapshot_id}: restauration declenchee par {current_admin.username} -> arret API")
 
     background_tasks.add_task(_shutdown_api)
 
@@ -316,6 +319,7 @@ async def download_snapshot(
                 while chunk := f.read(64 * 1024):
                     yield chunk
 
+        logger.info(f"[SNAPSHOT] {snapshot_id}: telechargement local ({local_path.stat().st_size} bytes)")
         return StreamingResponse(
             _iter_local(),
             media_type="application/octet-stream",
