@@ -149,7 +149,7 @@ async def run_restore(snapshot_id: str):
         files_dir = extract_dir / "files"
         if (files_dir / "secrets.tar").exists():
             logger.info("Extraction secrets.tar...")
-            shutil.unpack_archive(str(files_dir / "secrets.tar"), str(SECRETS_DIR))
+            shutil.unpack_archive(str(files_dir / "secrets.tar"), str(SECRETS_DIR.parent))
         if (files_dir / "storage_backups.tar").exists():
             logger.info("Extraction storage_backups.tar...")
             storage_target = Path("/code/storage")

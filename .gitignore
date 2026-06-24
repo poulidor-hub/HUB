@@ -5,6 +5,13 @@ secrets/sa_*.env
 secrets/service_accounts/*.env
 .env.prod
 *.pem
+# Exports/backups sensibles (hashes, topologie) - toutes profondeurs
+secrets/**/*.json
+# Secrets service accounts a toute profondeur (defense en profondeur)
+secrets/**/sa_*.env
+secrets/**/service_accounts/*.env
+# Dossiers secrets imbriques (anti-regression bug restore snapshot)
+secrets/secrets/
 
 # PKI / Certificats - Clés privées et certificats générés
 certs/ca/*.key
