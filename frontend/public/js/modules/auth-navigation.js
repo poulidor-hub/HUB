@@ -167,7 +167,6 @@ function showPage(page) {
     document.getElementById('usersSection').classList.add('d-none');
     document.getElementById('discoverySection').classList.add('d-none');
     document.getElementById('adminSection').classList.add('d-none');
-    document.getElementById('cloneMigrateSection').classList.add('d-none');
     document.getElementById('messagesSection').classList.add('d-none');
     document.getElementById('userInboxSection')?.classList.add('d-none');
     _clearInboxMarkReadTimer();
@@ -228,19 +227,6 @@ function showPage(page) {
             loadPendingAppsCount();
             refreshAppsStatus();
             startConnectivityRefresh();
-            break;
-        case 'clone-migrate':
-            if (!currentUser?.is_admin) {
-                showToast('Accès refusé', 'Vous devez être administrateur', 'danger');
-                return;
-            }
-            document.getElementById('adminSection').classList.remove('d-none');
-            currentPage = 'app-backups';
-            const backupTabButton = document.querySelector('[data-bs-target="#tabAppBackups"]');
-            if (backupTabButton) {
-                bootstrap.Tab.getOrCreateInstance(backupTabButton).show();
-            }
-            switchBackupWorkspace('migration');
             break;
         case 'messages':
             if (!currentUser?.is_admin) {
@@ -303,7 +289,6 @@ function showLoginScreen() {
     document.getElementById('usersSection').classList.add('d-none');
     document.getElementById('discoverySection').classList.add('d-none');
     document.getElementById('adminSection').classList.add('d-none');
-    document.getElementById('cloneMigrateSection').classList.add('d-none');
     document.getElementById('userInfo').classList.add('d-none');
     document.getElementById('logoutBtn').classList.add('d-none');
     document.getElementById('changePasswordBtn').classList.add('d-none');

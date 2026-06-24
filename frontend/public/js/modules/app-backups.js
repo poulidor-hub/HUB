@@ -16,7 +16,8 @@ let appBackupsById = {};
 let selectedRestoreBackup = null;
 let backupOverviewApps = [];
 let backupClusters = [];
-let backupMigrationMounted = false;
+
+
 
 // Map<app_slug, {backup_id, app_name, status, progress_step, progress_percent, started_at, avg_duration_seconds}>
 const runningBackups = new Map();
@@ -32,7 +33,7 @@ const BACKUP_STEP_LABELS = {
 };
 
 function switchBackupWorkspace(tab) {
-    const tabs = ['apps', 'snapshots', 'migration'];
+    const tabs = ['apps', 'snapshots'];
     tabs.forEach(name => {
         document.getElementById(`backupWorkspace${capitalizeBackupTab(name)}Tab`)?.classList.toggle('btn-primary', name === tab);
         document.getElementById(`backupWorkspace${capitalizeBackupTab(name)}Tab`)?.classList.toggle('btn-outline-primary', name !== tab);
@@ -46,25 +47,11 @@ function switchBackupWorkspace(tab) {
         if (typeof loadSnapshots === 'function') loadSnapshots();
         if (typeof loadSnapshotConfig === 'function') loadSnapshotConfig();
         if (typeof startProgressPolling === 'function') startProgressPolling();
-    } else if (tab === 'migration') {
-        mountCloneMigrateIntoBackups();
-        loadBackupInfo();
     }
 }
 
 function capitalizeBackupTab(tab) {
     return tab.charAt(0).toUpperCase() + tab.slice(1);
-}
-
-function mountCloneMigrateIntoBackups() {
-    if (backupMigrationMounted) return;
-    const mount = document.getElementById('backupMigrationMount');
-    const source = document.querySelector('#cloneMigrateSection > .container');
-    if (!mount || !source) return;
-    source.classList.remove('container');
-    source.classList.add('px-0');
-    mount.appendChild(source);
-    backupMigrationMounted = true;
 }
 
 function parseCronToBuilder(cron) {
