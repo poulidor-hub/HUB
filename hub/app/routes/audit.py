@@ -1047,11 +1047,9 @@ async def get_app_audit_detail(
     if not current_user.is_admin:
         raise HTTPException(status_code=403, detail="Accès admin requis")
     
-    # Vérifier que l'app existe
+    # Récupérer les infos de l'app (peut avoir été supprimée — logs persistent)
     result = await db.execute(select(Application).where(Application.slug == app_slug))
     app = result.scalar_one_or_none()
-    if not app:
-        raise HTTPException(status_code=404, detail="Application non trouvée")
     
     since = utcnow() - timedelta(days=days)
     
@@ -1125,10 +1123,10 @@ async def get_app_audit_detail(
     
     return {
         "app": {
-            "slug": app.slug,
-            "name": app.name,
-            "icon": app.icon,
-            "color": app.color
+            "slug": app_slug,
+            "name": app.name if app else app_slug,
+            "icon": app.icon if app else "bi-app",
+            "color": app.color if app else "#6c757d"
         },
         "period_days": days,
         "stats": {

@@ -971,6 +971,10 @@ class HubAPI {
         return this.request('/admin/backups/in-progress');
     }
 
+    async getAllBackups() {
+        return this.request('/admin/backups');
+    }
+
     /**
      * Annule (kill-switch manuel) un backup bloqué en pending/running.
      * @param {string} backupId - identifiant du backup à annuler

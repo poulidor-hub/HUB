@@ -333,16 +333,105 @@ function renderPageTopApps(apps) {
     `;
 }
 
+let appGridSortKey = 'name';
+let appGridSortDir = 'asc';
+let _lastConnectedBySlug = {};
+let _lastBackupBySlug = {};
+
 async function loadAuditPageApps() {
     const days = parseInt(document.getElementById('auditPeriodPage')?.value || 30);
     
     try {
-        const summary = await api.getAppAuditSummary(days);
-        renderPageAuditAppsGrid(summary.apps || []);
+        const [summary, active, backups] = await Promise.all([
+            api.getAppAuditSummary(days),
+            api.getActiveSessions(),
+            api.getAllBackups().catch(() => ({ apps: [] }))
+        ]);
+        
+        const connectedBySlug = {};
+        if (active.sessions) {
+            active.sessions.forEach(s => {
+                const slug = s.current_app_slug;
+                if (slug) connectedBySlug[slug] = (connectedBySlug[slug] || 0) + 1;
+            });
+        }
+        _lastConnectedBySlug = connectedBySlug;
+        
+        const backupBySlug = {};
+        if (backups.apps) {
+            backups.apps.forEach(b => {
+                backupBySlug[b.app_slug] = {
+                    size: b.total_size_human || '0 B',
+                    count: b.backups_count || 0,
+                    lastAt: b.last_backup_at || null
+                };
+            });
+        }
+        _lastBackupBySlug = backupBySlug;
+        
+        const enriched = (summary.apps || []).map(app => ({
+            ...app,
+            connected: connectedBySlug[app.slug] || 0,
+            backupSize: backupBySlug[app.slug]?.size || '-',
+            backupCount: backupBySlug[app.slug]?.count || 0,
+            lastBackup: backupBySlug[app.slug]?.lastAt || null
+        }));
+        
+        renderPageAuditAppsGrid(enriched);
     } catch (error) {
         console.error('Erreur chargement apps audit:', error);
         showToast('Erreur', 'Impossible de charger les données', 'danger');
     }
+}
+
+function sortApps(apps, key, dir) {
+    if (!dir) return apps;
+    const sorted = [...apps].sort((a, b) => {
+        let va, vb;
+        switch (key) {
+            case 'name': va = (a.name || '').toLowerCase(); vb = (b.name || '').toLowerCase(); break;
+            case 'access': va = a.access_count || 0; vb = b.access_count || 0; break;
+            case 'connected': va = a.connected || 0; vb = b.connected || 0; break;
+            case 'users': va = a.unique_users || 0; vb = b.unique_users || 0; break;
+            case 'backup': va = a.backupCount || 0; vb = b.backupCount || 0; break;
+            default: return 0;
+        }
+        if (typeof va === 'string') return dir === 'asc' ? va.localeCompare(vb) : vb.localeCompare(va);
+        return dir === 'asc' ? va - vb : vb - va;
+    });
+    return sorted;
+}
+
+function renderAppGridSortBar() {
+    const keys = [
+        { key: 'name', label: 'Nom', icon: 'bi-sort-alpha-down' },
+        { key: 'access', label: 'Accès', icon: 'bi-graph-up' },
+        { key: 'connected', label: 'Connectés', icon: 'bi-broadcast' },
+        { key: 'users', label: 'Users', icon: 'bi-people' },
+        { key: 'backup', label: 'Taille', icon: 'bi-hdd' }
+    ];
+    return `
+        <div class="d-flex align-items-center gap-1 mb-3 flex-wrap">
+            <small class="text-muted me-2"><i class="bi bi-arrow-down-up me-1"></i>Trier :</small>
+            ${keys.map(k => {
+                const active = appGridSortKey === k.key;
+                const dirIcon = active ? (appGridSortDir === 'asc' ? 'bi-sort-up' : 'bi-sort-down') : k.icon;
+                const cls = active ? 'btn-primary' : 'btn-outline-secondary';
+                return `<button class="btn btn-sm ${cls} app-sort-btn" onclick="setAppGridSort('${k.key}')">
+                    <i class="bi ${dirIcon} me-1"></i>${k.label}
+                </button>`;
+            }).join('')}
+        </div>`;
+}
+
+function setAppGridSort(key) {
+    if (appGridSortKey === key) {
+        appGridSortDir = appGridSortDir === 'asc' ? 'desc' : (appGridSortDir === 'desc' ? '' : 'asc');
+    } else {
+        appGridSortKey = key;
+        appGridSortDir = 'asc';
+    }
+    loadAuditPageApps();
 }
 
 function renderPageAuditAppsGrid(apps) {
@@ -350,17 +439,7 @@ function renderPageAuditAppsGrid(apps) {
     document.getElementById('auditPageAppDetail').classList.add('d-none');
     container.classList.remove('d-none');
     
-    // KPI row
     const kpiRow = document.getElementById('auditAppsKpiRow');
-    if (kpiRow) {
-        const totalAccess = apps.reduce((s, a) => s + (a.access_count || 0), 0);
-        const totalUsers = apps.reduce((s, a) => s + (a.unique_users || 0), 0);
-        kpiRow.innerHTML =
-            auditKpiCard('#e7f1ff', '#0d6efd', 'bi-grid', apps.length, 'Applications', '<span class="audit-trend flat">suivies</span>') +
-            auditKpiCard('#e6f4ea', '#198754', 'bi-graph-up', totalAccess, 'Accès totaux', '<span class="audit-trend flat">cumulés</span>') +
-            auditKpiCard('#fff1e6', '#fd7e14', 'bi-people', totalUsers, 'Utilisateurs', '<span class="audit-trend flat">uniques</span>') +
-            auditKpiCard('#f1f3f5', '#6c757d', 'bi-calendar-range', '', 'Période', '<span class="audit-trend flat">' + (parseInt(document.getElementById('auditPeriodPage')?.value) || 30) + 'j</span>');
-    }
     
     if (!apps || apps.length === 0) {
         if (kpiRow) kpiRow.innerHTML = '';
@@ -373,32 +452,61 @@ function renderPageAuditAppsGrid(apps) {
         return;
     }
     
-    container.innerHTML = apps.map(app => `
+    if (kpiRow) {
+        const totalAccess = apps.reduce((s, a) => s + (a.access_count || 0), 0);
+        const totalConnected = apps.reduce((s, a) => s + (a.connected || 0), 0);
+        const totalSize = apps.reduce((s, a) => s + (a.backupCount > 0 ? 1 : 0), 0);
+        kpiRow.innerHTML =
+            auditKpiCard('#e7f1ff', '#0d6efd', 'bi-grid', apps.length, 'Applications', '<span class="audit-trend flat">suivies</span>') +
+            auditKpiCard('#e6f4ea', '#28a745', 'bi-broadcast', totalConnected, 'Connectés now', '<span class="audit-trend flat"><span class="audit-pulse"></span></span>') +
+            auditKpiCard('#fff1e6', '#fd7e14', 'bi-hdd-stack', totalSize, 'Avec backup', '<span class="audit-trend flat">actif</span>') +
+            auditKpiCard('#f1f3f5', '#6c757d', 'bi-calendar-range', '', 'Période', '<span class="audit-trend flat">' + (parseInt(document.getElementById('auditPeriodPage')?.value) || 30) + 'j</span>');
+    }
+    
+    const sorted = sortApps(apps, appGridSortKey, appGridSortDir);
+    
+    container.innerHTML = renderAppGridSortBar() + sorted.map(app => {
+        const connBadge = app.connected > 0
+            ? `<span class="badge bg-success ms-1" title="${app.connected} connecté(s)"><span class="audit-pulse me-1" style="vertical-align:middle;"></span>${app.connected}</span>`
+            : '';
+        const backupInfo = app.backupSize !== '-' && app.backupSize !== '0 B'
+            ? `<small class="text-muted" title="${app.backupCount} backup(s)">${app.backupSize}</small>`
+            : '<small class="text-muted">-</small>';
+        const backupColor = app.backupSize !== '-' && app.backupSize !== '0 B' ? '' : 'text-muted';
+        return `
         <div class="col-sm-6 col-md-4 col-lg-3 mb-3">
-            <div class="card h-100 cursor-pointer" onclick="showPageAppAuditDetail('${app.slug}')" style="cursor: pointer; transition: transform .15s, box-shadow .15s;">
-                <div class="card-body text-center">
+            <div class="card h-100 cursor-pointer" onclick="showPageAppAuditDetail('${app.slug}')" style="cursor:pointer;transition:transform .15s,box-shadow .15s;">
+                <div class="card-body text-center p-3">
                     <div class="mb-2">
-                        <span class="rounded-circle d-inline-flex align-items-center justify-content-center" 
-                              style="width: 56px; height: 56px; background-color: ${app.color}; color: white; font-size: 1.4rem;">
+                        <span class="rounded-circle d-inline-flex align-items-center justify-content-center"
+                              style="width:48px;height:48px;background-color:${app.color};color:white;font-size:1.3rem;">
                             <i class="${app.icon}"></i>
                         </span>
                     </div>
-                    <h6 class="card-title mb-1 fw-semibold">${escapeHtml(app.name)}</h6>
-                    <p class="card-text small text-muted mb-2">${app.slug}</p>
-                    <div class="d-flex justify-content-center gap-3">
-                        <div class="text-center">
-                            <div class="h5 mb-0 fw-bold">${app.access_count}</div>
+                    <h6 class="card-title mb-1 fw-semibold small">${escapeHtml(app.name)}${connBadge}</h6>
+                    <p class="card-text small text-muted mb-2" style="font-size:.7rem;">${app.slug}</p>
+                    <div class="row g-1 text-center" style="font-size:.75rem;">
+                        <div class="col-6">
+                            <div class="fw-bold" style="font-size:.95rem;">${app.access_count}</div>
                             <small class="text-muted">Accès</small>
                         </div>
-                        <div class="text-center">
-                            <div class="h5 mb-0 fw-bold">${app.unique_users}</div>
+                        <div class="col-6">
+                            <div class="fw-bold" style="font-size:.95rem;color:${app.connected > 0 ? '#28a745' : '#6c757d'}">${app.connected}</div>
+                            <small class="text-muted">Actifs</small>
+                        </div>
+                        <div class="col-6 mt-2">
+                            <div class="fw-bold" style="font-size:.95rem;">${app.unique_users}</div>
                             <small class="text-muted">Users</small>
+                        </div>
+                        <div class="col-6 mt-2 ${backupColor}">
+                            <div class="fw-bold" style="font-size:.95rem;">${app.backupSize}</div>
+                            <small class="text-muted">Backup</small>
                         </div>
                     </div>
                 </div>
             </div>
-        </div>
-    `).join('');
+        </div>`;
+    }).join('');
 }
 
 async function showPageAppAuditDetail(appSlug) {
@@ -427,8 +535,12 @@ async function showPageAppAuditDetail(appSlug) {
         document.getElementById('pageAppDetailSlug').textContent = data.app.slug;
         
         // Stats
+        const connected = _lastConnectedBySlug[appSlug] || 0;
+        const backup = _lastBackupBySlug[appSlug];
         document.getElementById('pageAppDetailAccess').textContent = data.stats.total_access;
         document.getElementById('pageAppDetailUsers').textContent = data.stats.unique_users;
+        document.getElementById('pageAppDetailConnected').textContent = connected;
+        document.getElementById('pageAppDetailBackup').textContent = backup?.size || '-';
         document.getElementById('pageAppDetailPeriod').textContent = `${days} jours`;
         
         // Top users
@@ -672,6 +784,9 @@ async function changePageLogsPage(page) {
     await loadAuditPageLogsTab();
 }
 
+let sessionSortKey = '';
+let sessionSortDir = 'asc';
+
 async function loadAuditPageSessions() {
     const days = parseInt(document.getElementById('auditPeriodPage')?.value || 30);
     
@@ -683,6 +798,45 @@ async function loadAuditPageSessions() {
         console.error('Erreur chargement sessions:', error);
         showToast('Erreur', 'Impossible de charger les sessions', 'danger');
     }
+}
+
+function sessionSortIcon(key) {
+    if (sessionSortKey !== key) return '';
+    return sessionSortDir === 'asc' ? ' <i class="bi bi-sort-up small"></i>' : ' <i class="bi bi-sort-down small"></i>';
+}
+
+function setSessionSort(key) {
+    if (sessionSortKey === key) {
+        sessionSortDir = sessionSortDir === 'asc' ? 'desc' : 'asc';
+    } else {
+        sessionSortKey = key;
+        sessionSortDir = 'asc';
+    }
+    loadAuditPageSessions();
+}
+
+function sortSessions(sessions, key, dir) {
+    if (!sessions || !key || !dir) return sessions;
+    return [...sessions].sort((a, b) => {
+        let va, vb;
+        switch (key) {
+            case 'user': va = (a.username || '').toLowerCase(); vb = (b.username || '').toLowerCase(); break;
+            case 'app': va = (a.current_app_name || 'Hub').toLowerCase(); vb = (b.current_app_name || 'Hub').toLowerCase(); break;
+            case 'login': va = a.login_at || ''; vb = b.login_at || ''; break;
+            case 'logout': va = a.logout_at || ''; vb = b.logout_at || ''; break;
+            case 'duration': va = a.logout_at ? (a.duration_seconds || 0) : 999999999; vb = b.logout_at ? (b.duration_seconds || 0) : 999999999; break;
+            case 'idle': va = a.idle_minutes || 0; vb = b.idle_minutes || 0; break;
+            case 'ip': va = (a.ip_address || '').toLowerCase(); vb = (b.ip_address || '').toLowerCase(); break;
+            case 'reason': va = (a.logout_reason || '').toLowerCase(); vb = (b.logout_reason || '').toLowerCase(); break;
+            default: return 0;
+        }
+        if (typeof va === 'string') return dir === 'asc' ? va.localeCompare(vb) : vb.localeCompare(va);
+        return dir === 'asc' ? va - vb : vb - va;
+    });
+}
+
+function makeSortTh(key, label) {
+    return `<th class="cursor-pointer" onclick="setSessionSort('${key}')" style="cursor:pointer;user-select:none;">${label}${sessionSortIcon(key)}</th>`;
 }
 
 function renderPageSessionHistory(data) {
@@ -713,28 +867,32 @@ function renderPageSessionHistory(data) {
         auditKpiCard('#f1f3f5', '#6c757d', 'bi-stop-circle', closedSessions.length, 'Terminées', '') +
         auditKpiCard('#fff1e6', '#fd7e14', 'bi-hourglass-split', `${avgMin} min`, 'Durée moy.', '<span class="audit-trend flat">ferm.</span>');
     
+    const sortedActive = sortSessions(activeSessions, sessionSortKey, sessionSortDir);
+    const sortedClosed = sortSessions(closedSessions, sessionSortKey, sessionSortDir);
+    
     container.innerHTML = `
         <!-- Sessions actives -->
-        ${activeSessions.length > 0 ? `
+        ${sortedActive.length > 0 ? `
         <div class="mb-4 px-3 pt-3">
             <div class="d-flex align-items-center mb-2">
-                <span class="badge bg-success me-2">${activeSessions.length}</span>
+                <span class="badge bg-success me-2">${sortedActive.length}</span>
                 <h6 class="mb-0 text-success"><i class="bi bi-broadcast me-1"></i>Sessions actives</h6>
+                ${sessionSortKey ? `<small class="text-muted ms-2"><i class="bi bi-arrow-down-up me-1"></i>Tri actif — re-clic pour inverser</small>` : ''}
             </div>
             <table class="table audit-tbl table-hover align-middle mb-0 border rounded">
                 <thead class="table-light">
                     <tr>
-                        <th>Utilisateur</th>
-                        <th>Application</th>
-                        <th>Connecté depuis</th>
-                        <th>Durée</th>
-                        <th>Activité</th>
-                        <th>IP</th>
+                        ${makeSortTh('user', 'Utilisateur')}
+                        ${makeSortTh('app', 'Application')}
+                        ${makeSortTh('login', 'Connecté depuis')}
+                        ${makeSortTh('duration', 'Durée')}
+                        ${makeSortTh('idle', 'Activité')}
+                        ${makeSortTh('ip', 'IP')}
                         <th class="text-end">Action</th>
                     </tr>
                 </thead>
                 <tbody>
-                    ${activeSessions.map(s => `
+                    ${sortedActive.map(s => `
                         <tr class="table-success table-active">
                             <td>
                                 <div class="d-flex align-items-center">
@@ -771,26 +929,26 @@ function renderPageSessionHistory(data) {
         ` : ''}
         
         <!-- Sessions terminées -->
-        ${closedSessions.length > 0 ? `
+        ${sortedClosed.length > 0 ? `
         <div class="px-3 pb-3">
             <div class="d-flex align-items-center mb-2">
-                <span class="badge bg-secondary me-2">${closedSessions.length}</span>
+                <span class="badge bg-secondary me-2">${sortedClosed.length}</span>
                 <h6 class="mb-0 text-muted"><i class="bi bi-clock-history me-1"></i>Sessions terminées</h6>
             </div>
             <table class="table audit-tbl table-hover align-middle mb-0 border rounded">
                 <thead class="table-light">
                     <tr>
-                        <th>Utilisateur</th>
-                        <th>Application</th>
-                        <th>Connexion</th>
-                        <th>Déconnexion</th>
-                        <th>Durée</th>
-                        <th>Raison</th>
-                        <th>IP</th>
+                        ${makeSortTh('user', 'Utilisateur')}
+                        ${makeSortTh('app', 'Application')}
+                        ${makeSortTh('login', 'Connexion')}
+                        ${makeSortTh('logout', 'Déconnexion')}
+                        ${makeSortTh('duration', 'Durée')}
+                        ${makeSortTh('reason', 'Raison')}
+                        ${makeSortTh('ip', 'IP')}
                     </tr>
                 </thead>
                 <tbody>
-                    ${closedSessions.map(s => `
+                    ${sortedClosed.map(s => `
                         <tr>
                             <td>
                                 <div class="d-flex align-items-center">
