@@ -165,7 +165,7 @@ function showPage(page) {
     document.getElementById('dashboardSection').classList.add('d-none');
     document.getElementById('auditSection').classList.add('d-none');
     document.getElementById('usersSection').classList.add('d-none');
-    document.getElementById('discoverySection').classList.add('d-none');
+    document.getElementById('appsHealthSection').classList.add('d-none');
     document.getElementById('adminSection').classList.add('d-none');
     document.getElementById('messagesSection').classList.add('d-none');
     document.getElementById('userInboxSection')?.classList.add('d-none');
@@ -207,14 +207,14 @@ function showPage(page) {
             loadProfilesTab();
             loadPendingRequestsCount();
             break;
-        case 'discovery':
+        case 'appsHealth':
             if (!currentUser?.is_admin) {
                 showToast('Accès refusé', 'Vous devez être administrateur', 'danger');
                 return;
             }
-            document.getElementById('discoverySection').classList.remove('d-none');
-            document.getElementById('navDiscovery')?.classList.add('active');
-            loadDiscoveryPage();
+            document.getElementById('appsHealthSection').classList.remove('d-none');
+            document.getElementById('navAppsHealth')?.classList.add('active');
+            loadAppsHealth();
             break;
         case 'admin':
             if (!currentUser?.is_admin) {
@@ -287,7 +287,7 @@ function showLoginScreen() {
     document.getElementById('dashboardSection').classList.add('d-none');
     document.getElementById('auditSection').classList.add('d-none');
     document.getElementById('usersSection').classList.add('d-none');
-    document.getElementById('discoverySection').classList.add('d-none');
+    document.getElementById('appsHealthSection').classList.add('d-none');
     document.getElementById('adminSection').classList.add('d-none');
     document.getElementById('userInfo').classList.add('d-none');
     document.getElementById('logoutBtn').classList.add('d-none');
