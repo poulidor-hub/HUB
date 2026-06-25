@@ -58,6 +58,11 @@ function renderAppCard(app) {
         ? '<div style="font-size:11px;color:#dc2626;margin-top:4px;">' + escapeHtml(app.error.substring(0, 100)) + '</div>'
         : '';
 
+    var degradedInfo = '';
+    if (app.status === 'degraded' && app.error) {
+        degradedInfo = ' <i class="bi bi-info-circle" title="' + escapeHtml(app.error) + '" style="cursor:help;font-size:11px;"></i>';
+    }
+
     return (
         '<div class="col-12 col-md-6 col-lg-4">' +
         '<div style="background:' + statusStyle.cardBg + ';border:1px solid ' + statusStyle.border + ';border-radius:8px;padding:16px;display:flex;flex-direction:column;gap:10px;height:100%;">' +
@@ -69,7 +74,7 @@ function renderAppCard(app) {
                     '<div style="font-weight:600;font-size:14px;color:#1e293b;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + name + '</div>' +
                     '<div style="font-size:12px;color:#94a3b8;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + slug + '</div>' +
                 '</div>' +
-                '<span style="background:' + statusStyle.bg + ';color:white;font-size:11px;padding:3px 8px;border-radius:12px;font-weight:500;flex-shrink:0;">' + statusStyle.text + '</span>' +
+                '<span style="background:' + statusStyle.bg + ';color:white;font-size:11px;padding:3px 8px;border-radius:12px;font-weight:500;flex-shrink:0;">' + statusStyle.text + degradedInfo + '</span>' +
             '</div>' +
             '<div style="display:flex;gap:20px;font-size:12px;color:#64748b;border-top:1px solid #f1f5f9;padding-top:10px;">' +
                 '<span>' + '📡 ' + latency + '</span>' +

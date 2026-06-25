@@ -131,6 +131,7 @@ async def get_apps_health(
                             pass
                     elif resp.status_code >= 400:
                         status = "degraded"
+                        error = f"HTTP {resp.status_code} {resp.reason_phrase or ''}".strip()
                     break
                 except Exception as e:
                     error = str(e)[:200]
