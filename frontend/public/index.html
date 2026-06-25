@@ -48,8 +48,8 @@
                             </a>
                         </li>
                         <li class="nav-item">
-                            <a class="nav-link" href="#" onclick="showPage('discovery')" id="navDiscovery">
-                                <i class="bi bi-diagram-3 me-1"></i>Discovery
+                            <a class="nav-link" href="#" onclick="showPage('appsHealth')" id="navAppsHealth">
+                                <i class="bi bi-heart-pulse me-1"></i>Apps
                             </a>
                         </li>
                         <li class="nav-item">
@@ -613,199 +613,24 @@
         </div>
     </div>
 
-    <!-- Section Discovery — Explorateur d'APIs (page dédiée) -->
-    <div id="discoverySection" class="d-none" style="margin-top: 70px;">
-        <div class="discovery-layout">
-            <!-- ── Sidebar : liste des apps ── -->
-            <aside class="discovery-sidebar" id="discoverySidebar">
-                <div class="discovery-sidebar-header">
-                    <h6 class="mb-0"><i class="bi bi-collection me-2"></i>Applications</h6>
-                    <span class="badge bg-primary" id="discoveryAppCount">0</span>
+    <!-- Section Apps Health (Dashboard sante des apps) -->
+    <div id="appsHealthSection" class="container-fluid py-4 d-none" style="margin-top: 70px;">
+        <div class="container">
+            <div class="d-flex justify-content-between align-items-center mb-4">
+                <div>
+                    <h1 class="h3 mb-1"><i class="bi bi-heart-pulse me-2"></i>Sante des Applications</h1>
+                    <p class="text-muted mb-0" id="appsHealthSummary">Chargement…</p>
                 </div>
-                <div class="px-2 py-2">
-                    <input type="text" class="form-control form-control-sm" id="discoveryAppSearch"
-                           placeholder="Rechercher une app…" oninput="filterDiscoveryApps()">
+                <button class="btn btn-primary" onclick="loadAppsHealth()" id="appsHealthRefreshBtn">
+                    <i class="bi bi-arrow-clockwise me-1"></i>Rafraichir
+                </button>
+            </div>
+            <div class="row g-3" id="appsHealthGrid">
+                <div class="col-12 text-center text-muted py-5">
+                    <div class="spinner-border spinner-border-sm"></div>
+                    <p class="mt-2">Chargement des applications…</p>
                 </div>
-                <div class="discovery-app-list" id="discoveryAppList">
-                    <div class="text-center text-muted py-4">
-                        <div class="spinner-border spinner-border-sm"></div>
-                        <p class="mt-2 small">Chargement…</p>
-                    </div>
-                </div>
-            </aside>
-
-            <!-- ── Zone principale ── -->
-            <main class="discovery-main">
-                <!-- En-tête -->
-                <div class="discovery-topbar">
-                    <div class="d-flex align-items-center gap-2">
-                        <i class="bi bi-terminal fs-5"></i>
-                        <h5 class="mb-0" id="discoveryAppTitle">Explorateur API</h5>
-                        <small class="text-muted" id="discoveryAppDesc"></small>
-                    </div>
-                    <div class="d-flex align-items-center gap-2">
-                        <div class="btn-group btn-group-sm" id="discoveryModeToggle" style="display: none;">
-                            <button class="btn btn-outline-primary active" id="discoveryModeRequester" onclick="switchDiscoveryMode('requester')">
-                                <i class="bi bi-terminal me-1"></i>Requêteur
-                            </button>
-                            <button class="btn btn-outline-primary" id="discoveryModeM2M" onclick="switchDiscoveryMode('m2m')">
-                                <i class="bi bi-clipboard-data me-1"></i>M2M Setup
-                            </button>
-                        </div>
-                        <button class="btn btn-outline-secondary btn-sm" onclick="loadDiscoveryPage()" title="Actualiser">
-                            <i class="bi bi-arrow-clockwise"></i>
-                        </button>
-                    </div>
-                </div>
-
-                <!-- Barre requêteur -->
-                <div class="discovery-requester" id="discoveryRequester">
-                    <!-- Sélecteur endpoint (si OpenAPI dispo) -->
-                    <div class="mb-3" id="discoveryEndpointRow">
-                        <label class="form-label fw-semibold"><i class="bi bi-signpost-split me-1"></i>Endpoint</label>
-                        <select class="form-select" id="discoveryEndpointSelect" onchange="onDiscoveryEndpointChange()" disabled>
-                            <option value="">— Sélectionnez une application —</option>
-                        </select>
-                    </div>
-
-                    <!-- Info endpoint sélectionné -->
-                    <div id="discoveryEndpointInfo" class="alert alert-light border mb-3 d-none py-2">
-                        <div class="d-flex align-items-center gap-2 flex-wrap">
-                            <span class="badge" id="discoveryEndpointMethod">GET</span>
-                            <code class="small" id="discoveryEndpointPath">/api/…</code>
-                            <span class="text-muted small" id="discoveryEndpointDescription"></span>
-                        </div>
-                    </div>
-
-                    <!-- Ligne méthode + path + exécuter (mode manuel / override) -->
-                    <div class="row g-2 align-items-end mb-3">
-                        <div class="col-auto" style="width: 110px;">
-                            <label class="form-label small mb-1">Méthode</label>
-                            <select class="form-select form-select-sm" id="discoveryMethod">
-                                <option value="GET" selected>GET</option>
-                                <option value="POST">POST</option>
-                                <option value="PUT">PUT</option>
-                                <option value="PATCH">PATCH</option>
-                                <option value="DELETE">DELETE</option>
-                            </select>
-                        </div>
-                        <div class="col">
-                            <label class="form-label small mb-1">Path</label>
-                            <input type="text" class="form-control form-control-sm font-monospace" id="discoveryPath"
-                                   placeholder="/api/endpoint" oninput="onDiscoveryPathInput()">
-                        </div>
-                        <div class="col-auto">
-                            <button class="btn btn-success btn-sm px-3" onclick="executeDiscoveryRequest()" id="discoveryExecBtn">
-                                <i class="bi bi-play-fill me-1"></i>Exécuter
-                            </button>
-                        </div>
-                    </div>
-
-                    <!-- Paramètres auto-générés -->
-                    <div id="discoveryParamsSection" class="mb-3 d-none">
-                        <label class="form-label small fw-semibold mb-1"><i class="bi bi-sliders me-1"></i>Paramètres</label>
-                        <div id="discoveryParams" class="border rounded p-2 bg-light"></div>
-                    </div>
-
-                    <!-- Query params manuels (mode fallback) -->
-                    <div id="discoveryQuerySection" class="mb-3 d-none">
-                        <div class="d-flex justify-content-between align-items-center mb-1">
-                            <label class="form-label small fw-semibold mb-0">Query params</label>
-                            <button class="btn btn-outline-secondary btn-sm py-0 px-1" onclick="addDiscoveryQueryParam()">
-                                <i class="bi bi-plus"></i>
-                            </button>
-                        </div>
-                        <div id="discoveryQueryParams"></div>
-                    </div>
-
-                    <!-- Body JSON -->
-                    <div id="discoveryBodySection" class="mb-3 d-none">
-                        <label class="form-label small fw-semibold mb-1">Body (JSON)</label>
-                        <textarea class="form-control form-control-sm font-monospace" id="discoveryBody" rows="3"
-                                  placeholder='{"key": "value"}'></textarea>
-                    </div>
-                </div>
-
-                <!-- ── Panneau M2M Setup ── -->
-                <div class="discovery-m2m-panel d-none" id="discoveryM2MPanel">
-                    <div class="d-flex justify-content-between align-items-center mb-2">
-                        <div class="d-flex align-items-center gap-2">
-                            <i class="bi bi-clipboard-data text-primary"></i>
-                            <span class="fw-semibold">Bloc M2M — copier-coller pour votre IA coder</span>
-                        </div>
-                        <button class="btn btn-primary btn-sm" onclick="copyM2MSetup()" id="discoveryM2MCopyBtn">
-                            <i class="bi bi-clipboard me-1"></i>Copier tout
-                        </button>
-                    </div>
-                    <div class="discovery-m2m-content" id="discoveryM2MContent">
-                        <div class="text-center text-muted py-5">
-                            <i class="bi bi-arrow-left-circle fs-3 d-block mb-2"></i>
-                            Sélectionnez une application dans la sidebar
-                        </div>
-                    </div>
-                </div>
-
-                <!-- ── Zone résultats ── -->
-                <div class="discovery-results" id="discoveryResultsArea" style="display: none;">
-                    <!-- Barre d'infos + filtres -->
-                    <div class="discovery-results-toolbar">
-                        <div class="d-flex align-items-center gap-2 flex-wrap">
-                            <span class="badge" id="discoveryResultStatus">200</span>
-                            <small class="text-muted" id="discoveryResultTime">0ms</small>
-                            <small class="text-muted" id="discoveryResultCount"></small>
-                        </div>
-                        <div class="d-flex align-items-center gap-2 flex-wrap">
-                            <!-- Recherche texte -->
-                            <div class="input-group input-group-sm" style="width: 200px;">
-                                <span class="input-group-text"><i class="bi bi-search"></i></span>
-                                <input type="text" class="form-control" id="discoveryFilterSearch"
-                                       placeholder="Rechercher…" oninput="applyDiscoveryFilters()">
-                            </div>
-                            <!-- Filtre par champ -->
-                            <div class="input-group input-group-sm" style="width: 280px;">
-                                <select class="form-select" id="discoveryFilterField" onchange="applyDiscoveryFilters()" style="max-width: 100px;">
-                                    <option value="">Champ</option>
-                                </select>
-                                <select class="form-select" id="discoveryFilterOp" onchange="applyDiscoveryFilters()" style="max-width: 80px;">
-                                    <option value="contains">contient</option>
-                                    <option value="eq">=</option>
-                                    <option value="neq">≠</option>
-                                </select>
-                                <input type="text" class="form-control" id="discoveryFilterValue"
-                                       placeholder="Valeur" oninput="applyDiscoveryFilters()">
-                            </div>
-                            <!-- Sélection colonnes -->
-                            <div class="dropdown">
-                                <button class="btn btn-outline-secondary btn-sm dropdown-toggle" type="button"
-                                        data-bs-toggle="dropdown" data-bs-auto-close="outside">
-                                    <i class="bi bi-layout-three-columns"></i>
-                                </button>
-                                <div class="dropdown-menu dropdown-menu-end p-2" id="discoveryColumnSelector"
-                                     style="max-height: 300px; overflow-y: auto; min-width: 200px;">
-                                </div>
-                            </div>
-                            <!-- Actions -->
-                            <button class="btn btn-outline-secondary btn-sm" onclick="copyDiscoveryResult()" title="Copier JSON">
-                                <i class="bi bi-clipboard"></i>
-                            </button>
-                            <button class="btn btn-outline-secondary btn-sm" onclick="clearDiscoveryResult()" title="Effacer">
-                                <i class="bi bi-x-circle"></i>
-                            </button>
-                        </div>
-                    </div>
-
-                    <!-- Tableau de résultats -->
-                    <div class="discovery-table-wrapper" id="discoveryTableWrapper">
-                        <table class="table table-sm table-hover table-bordered mb-0" id="discoveryResultTable">
-                            <thead id="discoveryTableHead"></thead>
-                            <tbody id="discoveryTableBody"></tbody>
-                        </table>
-                    </div>
-
-                    <!-- Fallback JSON brut -->
-                    <pre class="discovery-raw-json d-none mb-0" id="discoveryResultRaw"></pre>
-                </div>
-            </main>
+            </div>
         </div>
     </div>
 
@@ -3258,7 +3083,7 @@
     <script src="js/modules/audit-page.js?v=3.7.1"></script>
     <script src="js/modules/admin-users-profiles.js?v=3.7.1"></script>
     <script src="js/modules/audit-errors.js?v=3.7.1"></script>
-    <script src="js/modules/discovery.js?v=3.7.1"></script>
+    <script src="js/modules/apps-health.js?v=3.7.1"></script>
     <script src="js/modules/backup-import.js?v=3.7.1"></script>
     <script src="js/modules/app-backups.js?v=3.7.1"></script>
     <script src="js/modules/admin-snapshots.js?v=3.7.1"></script>
