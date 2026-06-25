@@ -909,56 +909,25 @@ class HubAPI {
         return response.json();
     }
 
-    // ===== Discovery Explorer (admin) =====
+    // ===== Apps Health Dashboard (admin) =====
 
     /**
-     * Liste toutes les apps actives pour l'explorateur Discovery
-     * @returns {Promise<{apps: Array, total: number}>}
+     * Sonde toutes les apps actives pour le dashboard de sante
+     * @returns {Promise<{apps: Array, summary: {online, offline, degraded, total}}>}
      */
-    async getDiscoveryApps() {
-        return this.request('/discovery/apps');
+    async getAppsHealth() {
+        return this.request('/apps/health');
     }
 
     /**
-     * Récupère la spec OpenAPI d'une app via le proxy backend
+     * Redemarre le conteneur Docker d'une application
      * @param {string} slug - Slug de l'application
-     * @returns {Promise<{spec: Object|null, source: string|null}>}
+     * @returns {Promise<{ok: boolean, container_name: string, status: string}>}
      */
-    async getAppOpenApi(slug) {
-        return this.request(`/discovery/apps/${encodeURIComponent(slug)}/openapi`);
-    }
-
-    /**
-     * Exécute une requête vers une app cible via le proxy backend
-     * @param {string} appSlug - Slug de l'application cible
-     * @param {string} method - Méthode HTTP
-     * @param {string} path - Chemin de l'endpoint
-     * @param {Object} [queryParams] - Paramètres query
-     * @param {Object} [headers] - Headers supplémentaires
-     * @param {Object} [body] - Corps JSON
-     * @returns {Promise<{status: number, headers: Object, body: Object, elapsed_ms: number}>}
-     */
-    async proxyRequest(appSlug, method, path, queryParams = null, headers = null, body = null) {
-        return this.request('/discovery/proxy', {
-            method: 'POST',
-            body: JSON.stringify({
-                app_slug: appSlug,
-                method: method,
-                path: path,
-                query_params: queryParams,
-                headers: headers,
-                body: body
-            })
+    async restartApp(slug) {
+        return this.request(`/apps/${encodeURIComponent(slug)}/restart`, {
+            method: 'POST'
         });
-    }
-
-    /**
-     * Récupère le bloc M2M setup pour une app (Markdown + endpoints détaillés)
-     * @param {string} slug - Slug de l'application cible
-     * @returns {Promise<{app_slug: string, app_name: string, api_url: string, hub_url: string, token_url: string, endpoints: Array, markdown: string}>}
-     */
-    async getM2MSetup(slug) {
-        return this.request(`/discovery/apps/${encodeURIComponent(slug)}/m2m-setup`);
     }
     
     // ===== Backup/Restore API =====
