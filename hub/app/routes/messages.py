@@ -21,7 +21,7 @@ import time
 import logging
 
 from app.database import get_db
-from app.models import User, UserMessage, MessageReadReceipt, ServiceAccount, Application, utcnow
+from app.models import User, UserMessage, MessageReadReceipt, MessageTemplate, ServiceAccount, Application, utcnow
 from app.auth import get_current_user, get_current_entity, get_current_admin, get_settings
 from app.schemas import (
     MessageCreate, MessageM2MCreate, MessageResponse, MessageBrief,
@@ -29,6 +29,7 @@ from app.schemas import (
     MessageSyncItem, MessageSyncResponse,
     ReceiptSyncItem, ReceiptSyncResponse,
     MessageDetailSyncResponse, MessageReadReceiptResponse,
+    MessageTemplateCreate, MessageTemplateUpdate, MessageTemplateResponse,
 )
 
 logger = logging.getLogger(__name__)
@@ -1626,3 +1627,81 @@ async def m2m_get_message_detail(
         message=message_item,
         read_receipts=receipt_items,
     )
+
+
+# =============================================================================
+# TEMPLATES CRUD
+# =============================================================================
+
+@router.get("/templates", response_model=List[MessageTemplateResponse])
+async def list_templates(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    result = await db.execute(
+        select(MessageTemplate).order_by(MessageTemplate.name)
+    )
+    return result.scalars().all()
+
+
+@router.post("/templates", response_model=MessageTemplateResponse, status_code=201)
+async def create_template(
+    data: MessageTemplateCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_admin),
+):
+    existing = await db.scalar(
+        select(MessageTemplate).where(MessageTemplate.name == data.name)
+    )
+    if existing:
+        raise HTTPException(400, "Un template avec ce nom existe deja")
+
+    template = MessageTemplate(
+        name=data.name,
+        title_template=data.title_template,
+        body_template=data.body_template,
+        default_priority=data.default_priority.value if hasattr(data.default_priority, 'value') else data.default_priority,
+        default_target_type=data.default_target_type.value if hasattr(data.default_target_type, 'value') else data.default_target_type,
+        default_expiry_hours=data.default_expiry_hours,
+        default_action_url=data.default_action_url,
+        default_action_label=data.default_action_label,
+        created_by=current_user.username,
+    )
+    db.add(template)
+    await db.commit()
+    await db.refresh(template)
+    return template
+
+
+@router.put("/templates/{template_id}", response_model=MessageTemplateResponse)
+async def update_template(
+    template_id: int,
+    data: MessageTemplateUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_admin),
+):
+    template = await db.get(MessageTemplate, template_id)
+    if not template:
+        raise HTTPException(404, "Template introuvable")
+
+    update_data = data.model_dump(exclude_unset=True)
+    for key, value in update_data.items():
+        if hasattr(value, 'value'):
+            value = value.value
+        setattr(template, key, value)
+    await db.commit()
+    await db.refresh(template)
+    return template
+
+
+@router.delete("/templates/{template_id}", status_code=204)
+async def delete_template(
+    template_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_admin),
+):
+    template = await db.get(MessageTemplate, template_id)
+    if not template:
+        raise HTTPException(404, "Template introuvable")
+    await db.delete(template)
+    await db.commit()
