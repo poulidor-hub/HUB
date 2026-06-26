@@ -14,6 +14,7 @@ secrets/**/service_accounts/*.env
 secrets/secrets/
 
 # PKI / Certificats - Clés privées et certificats générés
+certs/
 certs/ca/*.key
 certs/ca/*.crt
 certs/server/**/*.key

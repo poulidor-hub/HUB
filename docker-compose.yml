@@ -51,6 +51,15 @@ services:
       - LOG_PURGE_INTERVAL_HOURS=${LOG_PURGE_INTERVAL_HOURS:-24}
       - DOCKER_SYNC_INTERVAL=${DOCKER_SYNC_INTERVAL:-300}
       - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-}
+      - HUB_HTTPS_ENABLED=${HUB_HTTPS_ENABLED:-true}
+      - HUB_HTTPS_PORT=${HUB_HTTPS_PORT:-443}
+      - PKI_CA_COMMON_NAME=${PKI_CA_COMMON_NAME:-Hub Local CA}
+      - PKI_CA_ORGANIZATION=${PKI_CA_ORGANIZATION:-Hub Internal}
+      - PKI_CA_VALIDITY_YEARS=${PKI_CA_VALIDITY_YEARS:-10}
+      - PKI_CERT_DOMAINS=${PKI_CERT_DOMAINS:-localhost,hub.local,hub-frontend}
+      - PKI_CERT_IPS=${PKI_CERT_IPS:-}
+      - PKI_CERT_VALIDITY_DAYS=${PKI_CERT_VALIDITY_DAYS:-365}
+      - PKI_KEY_SIZE=${PKI_KEY_SIZE:-4096}
       # Clé de chiffrement des secrets des service accounts
       # Générer avec: python -c "import secrets; print(secrets.token_hex(32))"
       - SECRETS_ENCRYPTION_KEY=${SECRETS_ENCRYPTION_KEY:?Définir SECRETS_ENCRYPTION_KEY dans .env (python -c "import secrets; print(secrets.token_hex(32))")}
@@ -70,6 +79,8 @@ services:
       - ./storage/backups:/code/storage/backups:rw
       # Stockage local des snapshots
       - ./storage/snapshots:/code/storage/snapshots:rw
+      # Certificats PKI (CA + cert serveur), partagés avec le frontend
+      - ./certs:/code/certs:rw
     # Groupe docker pour accéder au socket
     # ⚠️ Le GID varie selon les systèmes : 986 (Arch), 999 (Debian), 998, etc.
     # Vérifiez avec: getent group docker
@@ -104,6 +115,11 @@ services:
     restart: unless-stopped
     ports:
       - "${HUB_FRONTEND_PORT:-80}:80"
+      - "${HUB_HTTPS_PORT:-443}:443"
+    environment:
+      - HUB_HTTPS_ENABLED=${HUB_HTTPS_ENABLED:-true}
+    volumes:
+      - ./certs:/etc/nginx/ssl:ro
     depends_on:
       hub-api:
         condition: service_healthy
