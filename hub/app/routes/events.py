@@ -94,50 +94,40 @@ async def send_to_user(user_id: int, event_type: str, data: Optional[dict] = Non
             pass
 
 
+async def compute_dashboard_stats(db) -> dict:
+    """Compteurs du dashboard en UNE seule requête (scalar subqueries)."""
+    from app.models import Application, User, ServiceAccount, UserSession
+    from sqlalchemy import select, func
+
+    row = (await db.execute(select(
+        select(func.count(Application.id)).scalar_subquery(),
+        select(func.count(Application.id)).where(Application.is_active == True).scalar_subquery(),
+        select(func.count(User.id)).scalar_subquery(),
+        select(func.count(ServiceAccount.id)).scalar_subquery(),
+        select(func.count(UserSession.id)).where(UserSession.logout_at.is_(None)).scalar_subquery(),
+    ))).one()
+    apps_count, active_apps, users_count, sa_count, active_sessions = row
+    return {
+        "total_apps": apps_count or 0,
+        "active_apps": active_apps or 0,
+        "total_users": users_count or 0,
+        "total_service_accounts": sa_count or 0,
+        "active_sessions": active_sessions or 0,
+    }
+
+
 async def broadcast_stats_update():
     """
     Calcule et diffuse les statistiques légères à tous les clients.
-    
-    Statistiques envoyées (compteurs simples, pas de requêtes lourdes) :
-    - total_apps: nombre d'applications
-    - active_apps: applications actives
-    - total_users: nombre d'utilisateurs
-    - total_service_accounts: nombre de service accounts
-    - connected_sse_clients: nombre de clients SSE connectés
     """
     from app.database import async_session_maker
-    from app.models import Application, User, ServiceAccount, UserSession
-    from sqlalchemy import select, func
-    
+
     try:
         async with async_session_maker() as db:
-            # Compteurs simples (requêtes très légères)
-            apps_count = await db.scalar(select(func.count(Application.id)))
-            active_apps = await db.scalar(
-                select(func.count(Application.id))
-                .where(Application.is_active == True)
-            )
-            users_count = await db.scalar(select(func.count(User.id)))
-            sa_count = await db.scalar(select(func.count(ServiceAccount.id)))
-            
-            # Sessions actives (pas de logout_at)
-            active_sessions = await db.scalar(
-                select(func.count(UserSession.id))
-                .where(UserSession.logout_at.is_(None))
-            )
-            
-            stats = {
-                "total_apps": apps_count or 0,
-                "active_apps": active_apps or 0,
-                "total_users": users_count or 0,
-                "total_service_accounts": sa_count or 0,
-                "active_sessions": active_sessions or 0,
-                "connected_sse_clients": len(_connected_clients)
-            }
-            
+            stats = await compute_dashboard_stats(db)
+            stats["connected_sse_clients"] = len(_connected_clients)
             await broadcast_event("stats_updated", stats)
     except Exception as e:
-        # Ne pas faire planter si erreur de stats
         logger.warning(f"⚠️ Erreur calcul stats SSE: {e}")
 
 
