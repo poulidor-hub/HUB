@@ -1367,6 +1367,34 @@ class HubAPI {
         URL.revokeObjectURL(a.href);
     }
 
+    // =========================================================================
+    // MESSAGE TEMPLATES
+    // =========================================================================
+
+    async getTemplates() {
+        return this.request('/messages/templates');
+    }
+
+    async createTemplate(data) {
+        return this.request('/messages/templates', {
+            method: 'POST',
+            body: JSON.stringify(data),
+        });
+    }
+
+    async updateTemplate(id, data) {
+        return this.request(`/messages/templates/${id}`, {
+            method: 'PUT',
+            body: JSON.stringify(data),
+        });
+    }
+
+    async deleteTemplate(id) {
+        return this.request(`/messages/templates/${id}`, {
+            method: 'DELETE',
+        });
+    }
+
     // Account Requests (admin)
     async getAccountRequests(params = {}) {
         let url = '/account-requests/?';
