@@ -278,6 +278,20 @@ async def lifespan(app: FastAPI):
             "Les secrets des service accounts ne seront pas chiffrés. "
             "Définissez cette variable d'environnement pour la production."
         )
+    else:
+        try:
+            from cryptography.fernet import Fernet
+            Fernet(_settings.secrets_encryption_key.encode())
+            logger.info("🔐 Chiffrement Fernet des secrets activé")
+        except Exception:
+            logger.critical(
+                "⛔ SECRETS_ENCRYPTION_KEY est définie mais n'est pas une clé Fernet valide ! "
+                "Générez-la avec: python -c \"from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())\""
+            )
+            raise SystemExit(
+                "SECRETS_ENCRYPTION_KEY invalide. "
+                "Générez une clé valide avec Fernet.generate_key()."
+            )
     
     # Démarrer la tâche de nettoyage périodique
     _cleanup_task = asyncio.create_task(periodic_token_cleanup())
@@ -391,15 +405,14 @@ app = FastAPI(
 # CORS - origines autorisées (réseau local)
 # Configurer ALLOWED_ORIGINS avec les origines autorisées séparées par des virgules
 # Ex: "http://192.168.1.10,http://hub.local,http://localhost"
-# Si non défini, autorise toutes les origines (mode développement)
 import os
 _allowed_origins_env = os.getenv("ALLOWED_ORIGINS", "")
-_allowed_origins = [o.strip() for o in _allowed_origins_env.split(",") if o.strip()] if _allowed_origins_env else ["*"]
+_allowed_origins = [o.strip() for o in _allowed_origins_env.split(",") if o.strip()] if _allowed_origins_env else []
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=_allowed_origins,
-    allow_credentials=_allowed_origins != ["*"],  # True seulement si origines explicites
+    allow_origins=_allowed_origins if _allowed_origins else ["http://localhost"],
+    allow_credentials=bool(_allowed_origins),  # True seulement si origines explicites
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type", "X-Slug", "X-Request-ID"],
     expose_headers=["X-Request-ID"],

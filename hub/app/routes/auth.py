@@ -44,6 +44,16 @@ _RATE_LIMIT_WINDOW = 60  # secondes
 _RATE_LIMIT_MAX = 5  # max tentatives par fenêtre
 
 
+def _get_client_ip(request: Request) -> str:
+    forwarded = request.headers.get("X-Forwarded-For")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    real_ip = request.headers.get("X-Real-IP")
+    if real_ip:
+        return real_ip.strip()
+    return request.client.host if request.client else "unknown"
+
+
 def _check_rate_limit(ip: str) -> None:
     """Vérifie le rate limit pour une IP. Lève HTTPException 429 si dépassé."""
     import time
@@ -205,7 +215,7 @@ async def login_for_token(
     
     # === GRANT TYPE: PASSWORD (défaut) ===
     # Rate limiting sur le login par mot de passe
-    client_ip = request.client.host if request.client else "unknown"
+    client_ip = _get_client_ip(request)
     _check_rate_limit(client_ip)
     
     if not username or not password:
@@ -289,7 +299,7 @@ async def login_with_redirect(
 ):
     """Login avec redirection optionnelle vers une application (Authorization Code simplifié)"""
     # Rate limiting
-    client_ip = request.client.host if request.client else "unknown"
+    client_ip = _get_client_ip(request)
     _check_rate_limit(client_ip)
     
     result = await db.execute(
@@ -818,7 +828,7 @@ async def sso_login(
     from app.models import Application
     
     # Rate limiting
-    client_ip = request.client.host if request.client else "unknown"
+    client_ip = _get_client_ip(request)
     _check_rate_limit(client_ip)
     
     # 1. Vérifier l'utilisateur

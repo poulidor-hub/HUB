@@ -363,36 +363,54 @@ async def event_stream(request: Request):
     };
     ```
     """
-    # Essayer d'extraire l'user_id depuis le token (optionnel)
+    # Authentification requise : token Bearer OU beacon_token + user_id
     user_id = None
     auth_header = request.headers.get("authorization", "")
-    if not auth_header:
-        # SSE via EventSource ne supporte pas les headers custom
-        # Valider le user_id via le beacon_token HMAC (lié au secret serveur)
+    authenticated = False
+
+    if auth_header:
+        try:
+            token = auth_header.split(" ", 1)[1] if auth_header.startswith("Bearer ") else None
+            if token:
+                from app.auth import verify_token_not_revoked
+                from app.database import async_session_maker
+                async with async_session_maker() as db:
+                    payload = await verify_token_not_revoked(token, db)
+                    if payload.get("type") == "user":
+                        user_id = payload.get("user_id")
+                    authenticated = user_id is not None
+        except Exception as e:
+            logger.warning(f"SSE: token Bearer invalide: {e}")
+
+    if not authenticated:
         user_id_param = request.query_params.get("user_id")
         beacon_token = request.query_params.get("beacon_token", "")
         if user_id_param and beacon_token:
             try:
                 uid = int(user_id_param)
-                # Vérifier le beacon token pour éviter le spoofing
                 from app.routes.auth import verify_beacon_token
                 if verify_beacon_token(uid, beacon_token):
                     user_id = uid
+                    authenticated = True
                 else:
-                    logger.warning(f"⚠️ SSE: beacon_token invalide pour user_id={user_id_param} depuis {request.client.host if request.client else 'unknown'}")
+                    logger.warning(f"SSE: beacon_token invalide pour user_id={user_id_param}")
             except (ValueError, Exception):
                 pass
-    
+
+    if not authenticated:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentification requise pour le flux SSE. Utilisez un token Bearer ou beacon_token+user_id."
+        )
+
     queue: asyncio.Queue = asyncio.Queue()
     _connected_clients.add(queue)
-    
-    # Enregistrer la connexion utilisateur si on a l'ID
+
     if user_id:
         register_user_connection(user_id, queue)
-    
-    # Démarrer le cleanup périodique si premier client
+
     start_cleanup_task()
-    
+
     return StreamingResponse(
         event_generator(request, queue, user_id),
         media_type="text/event-stream",
