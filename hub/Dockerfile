@@ -20,6 +20,7 @@ RUN pip install --no-cache-dir --upgrade -r requirements.txt
 
 COPY ./app /code/app
 COPY ./migrations /code/migrations
+COPY pki.py /code/pki.py
 
 # Creer l'utilisateur appuser avec le même UID que l'utilisateur hôte
 # Cela permet d'accéder aux fichiers des volumes montés (ex: certs/ca/ca.key)

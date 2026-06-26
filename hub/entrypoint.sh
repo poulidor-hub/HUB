@@ -45,6 +45,20 @@ if [ -f "/code/storage/pending_restore.txt" ]; then
     echo "✅ Restauration terminee, demarrage de l'API..."
 fi
 
+# Bootstrap HTTPS : générer CA + cert serveur si absents (mode hybride)
+if [ "${HUB_HTTPS_ENABLED:-true}" = "true" ]; then
+    mkdir -p /code/certs/ca /code/certs/server/hub
+    chown -R appuser:appuser /code/certs 2>/dev/null || true
+    if [ ! -f /code/certs/server/hub/server.crt ]; then
+        echo "🔐 HTTPS activé, certificats absents → génération via pki.py..."
+        [ -f /code/certs/ca/ca.crt ] || gosu appuser python pki.py init
+        gosu appuser python pki.py cert create hub
+        echo "🔐 Certificats générés dans /code/certs/."
+    else
+        echo "🔐 HTTPS activé, certificats existants → conservés."
+    fi
+fi
+
 echo "✅ Initialisation terminée, lancement de l'application..."
 
 # Exécuter la commande en tant que appuser
