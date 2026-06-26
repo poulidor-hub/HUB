@@ -2302,40 +2302,74 @@
 
     <!-- Change Password Modal -->
     <div class="modal fade" id="changePasswordModal" tabindex="-1">
-        <div class="modal-dialog">
-            <div class="modal-content">
-                <div class="modal-header">
-                    <h5 class="modal-title"><i class="bi bi-key me-2"></i>Changer le mot de passe</h5>
-                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content cpw-modal">
+
+                <div class="cpw-head">
+                    <div class="cpw-badge"><i class="bi bi-key-fill"></i></div>
+                    <div class="cpw-head-text">
+                        <h5 class="cpw-title">Changer le mot de passe</h5>
+                        <p class="cpw-subtitle">Choisissez un nouveau mot de passe sécurisé.</p>
+                    </div>
+                    <button type="button" class="btn-close cpw-close" data-bs-dismiss="modal" aria-label="Fermer"></button>
                 </div>
+
                 <form id="changePasswordForm" onsubmit="handleChangePassword(event)">
-                    <div class="modal-body">
+                    <div class="modal-body cpw-body">
                         <div id="changePasswordMandatory" class="alert alert-warning" style="display: none;">
                             <i class="bi bi-exclamation-triangle me-2"></i>
                             Vous devez changer votre mot de passe pour continuer.
                         </div>
                         <div id="changePasswordError" class="alert alert-danger d-none"></div>
-                        <div class="mb-3">
-                            <label for="currentPassword" class="form-label">Mot de passe actuel</label>
-                            <input type="password" class="form-control" id="currentPassword" required>
+
+                        <div class="cpw-field">
+                            <label for="currentPassword">Mot de passe actuel</label>
+                            <div class="cpw-inp">
+                                <input type="password" id="currentPassword" required oninput="validateChangePasswordForm()">
+                                <button type="button" class="cpw-eye" tabindex="-1"
+                                        onclick="togglePasswordVisibility('currentPassword', this)"><i class="bi bi-eye"></i></button>
+                            </div>
                         </div>
-                        <div class="mb-3">
-                            <label for="newPassword" class="form-label">Nouveau mot de passe</label>
-                            <input type="password" class="form-control" id="newPassword" required minlength="8">
-                            <small class="text-muted">Minimum 8 caractères</small>
+
+                        <div class="cpw-field">
+                            <label for="newPassword">Nouveau mot de passe</label>
+                            <div class="cpw-inp">
+                                <input type="password" id="newPassword" required minlength="8" oninput="validateChangePasswordForm()">
+                                <button type="button" class="cpw-eye" tabindex="-1"
+                                        onclick="togglePasswordVisibility('newPassword', this)"><i class="bi bi-eye"></i></button>
+                            </div>
+                            <div id="pwdStrengthWrap" class="cpw-strength d-none">
+                                <div class="cpw-segs">
+                                    <span class="cpw-seg"></span><span class="cpw-seg"></span>
+                                    <span class="cpw-seg"></span><span class="cpw-seg"></span>
+                                </div>
+                                <span id="pwdStrengthLabel" class="cpw-strength-label"></span>
+                            </div>
+                            <ul id="pwdChecklist" class="cpw-check">
+                                <li data-rule="length"><i class="bi bi-circle"></i>Au moins 8 caractères</li>
+                                <li data-rule="different"><i class="bi bi-circle"></i>Différent du mot de passe actuel</li>
+                                <li data-rule="match"><i class="bi bi-circle"></i>Les deux nouveaux mots de passe correspondent</li>
+                            </ul>
                         </div>
-                        <div class="mb-3">
-                            <label for="confirmNewPassword" class="form-label">Confirmer le nouveau mot de passe</label>
-                            <input type="password" class="form-control" id="confirmNewPassword" required minlength="8">
+
+                        <div class="cpw-field">
+                            <label for="confirmNewPassword">Confirmer le nouveau mot de passe</label>
+                            <div class="cpw-inp">
+                                <input type="password" id="confirmNewPassword" required minlength="8" oninput="validateChangePasswordForm()">
+                                <button type="button" class="cpw-eye" tabindex="-1"
+                                        onclick="togglePasswordVisibility('confirmNewPassword', this)"><i class="bi bi-eye"></i></button>
+                            </div>
                         </div>
                     </div>
-                    <div class="modal-footer">
-                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuler</button>
-                        <button type="submit" class="btn btn-primary">
+
+                    <div class="modal-footer cpw-foot">
+                        <button type="button" class="btn btn-light" data-bs-dismiss="modal">Annuler</button>
+                        <button type="submit" class="btn btn-primary" id="changePasswordSubmit" disabled>
                             <i class="bi bi-check-lg me-1"></i>Changer le mot de passe
                         </button>
                     </div>
                 </form>
+
             </div>
         </div>
     </div>
