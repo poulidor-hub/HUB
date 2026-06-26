@@ -1230,240 +1230,226 @@
     </div>
 
     <!-- ================================================================= -->
-    <!-- Section Messages (Admin) -->
+    <!-- Section Messages (Admin) — Layout 3 volets -->
     <!-- ================================================================= -->
-    <div id="messagesSection" class="container-fluid py-4 d-none" style="margin-top: 70px;">
-        <div class="container">
-            <div class="d-flex justify-content-between align-items-center mb-4">
-                <h4 class="mb-0"><i class="bi bi-chat-dots me-2"></i>Messages</h4>
+    <div id="messagesSection" class="d-none" style="margin-top: 70px;">
+        <div class="msg-admin-layout">
+            <aside class="msg-sidebar" id="msgSidebar">
+                <div class="msg-sidebar-header">
+                    <h5 class="mb-0"><i class="bi bi-chat-dots me-2"></i>Messages</h5>
+                </div>
+                <div class="msg-sidebar-body">
+                    <div class="msg-tab-cards" id="msgTabCards">
+                        <button class="msg-tab-card active" onclick="switchMessageTab('all')" id="msgTabAll">
+                            <div class="msg-tab-card-label">Tous</div>
+                            <div class="msg-tab-card-count" id="msgTabAllBadge">0</div>
+                        </button>
+                        <button class="msg-tab-card" onclick="switchMessageTab('broadcast')" id="msgTabBroadcast">
+                            <div class="msg-tab-card-label">Globaux</div>
+                            <div class="msg-tab-card-count" id="msgTabBroadcastBadge">0</div>
+                        </button>
+                        <button class="msg-tab-card" onclick="switchMessageTab('user')" id="msgTabUser">
+                            <div class="msg-tab-card-label">Users</div>
+                            <div class="msg-tab-card-count" id="msgTabUserBadge">0</div>
+                        </button>
+                    </div>
+
+                    <div class="msg-sidebar-section">
+                        <div class="msg-sidebar-section-title">Statut</div>
+                        <div class="msg-chip-row" id="msgChipStatus">
+                            <button class="msg-chip active" data-filter="status" data-value="all" onclick="toggleMsgChip(this)">Tous</button>
+                            <button class="msg-chip" data-filter="status" data-value="active" onclick="toggleMsgChip(this)">Actif</button>
+                            <button class="msg-chip" data-filter="status" data-value="expired" onclick="toggleMsgChip(this)">Expire</button>
+                            <button class="msg-chip" data-filter="status" data-value="archived" onclick="toggleMsgChip(this)">Archive</button>
+                        </div>
+                    </div>
+
+                    <div class="msg-sidebar-section">
+                        <div class="msg-sidebar-section-title">Priorite</div>
+                        <div class="msg-chip-row" id="msgChipPriority">
+                            <button class="msg-chip active" data-filter="priority" data-value="" onclick="toggleMsgChip(this)">Toutes</button>
+                            <button class="msg-chip msg-chip-info" data-filter="priority" data-value="info" onclick="toggleMsgChip(this)">Info</button>
+                            <button class="msg-chip msg-chip-warning" data-filter="priority" data-value="warning" onclick="toggleMsgChip(this)">Warning</button>
+                            <button class="msg-chip msg-chip-urgent" data-filter="priority" data-value="urgent" onclick="toggleMsgChip(this)">Urgent</button>
+                        </div>
+                    </div>
+
+                    <div class="msg-sidebar-section">
+                        <div class="msg-sidebar-section-title">Source</div>
+                        <div class="msg-chip-row" id="msgChipSender">
+                            <button class="msg-chip active" data-filter="sender" data-value="" onclick="toggleMsgChip(this)">Tous</button>
+                            <button class="msg-chip" data-filter="sender" data-value="admin" onclick="toggleMsgChip(this)">Admin</button>
+                            <button class="msg-chip" data-filter="sender" data-value="app" onclick="toggleMsgChip(this)">App</button>
+                            <button class="msg-chip" data-filter="sender" data-value="system" onclick="toggleMsgChip(this)">Systeme</button>
+                        </div>
+                    </div>
+
+                    <div class="msg-sidebar-section" id="msgSavedViewsSection">
+                        <div class="msg-sidebar-section-title">Vues sauvegardees</div>
+                        <div id="msgSavedViews"></div>
+                        <button class="msg-save-view-btn" onclick="saveCurrentMsgView()">
+                            <i class="bi bi-bookmark-plus me-1"></i>Sauvegarder cette vue
+                        </button>
+                    </div>
+                </div>
+            </aside>
+
+            <section class="msg-list" id="msgList">
+                <div class="msg-list-header">
+                    <div class="input-group input-group-sm" style="max-width: 320px;">
+                        <span class="input-group-text"><i class="bi bi-search"></i></span>
+                        <input type="text" class="form-control" id="msgFilterSearch" placeholder="Rechercher..." oninput="debounceMsgSearch()">
+                    </div>
+                    <div class="d-flex gap-2">
+                        <button class="btn btn-primary btn-sm" onclick="openComposePanel()">
+                            <i class="bi bi-plus-lg me-1"></i>Nouveau
+                        </button>
+                        <button class="btn btn-outline-secondary btn-sm" onclick="exportMessages()" title="Export CSV">
+                            <i class="bi bi-download"></i>
+                        </button>
+                        <button class="btn btn-outline-secondary btn-sm" onclick="loadMessagesPage()" title="Rafraichir">
+                            <i class="bi bi-arrow-clockwise"></i>
+                        </button>
+                    </div>
+                </div>
+
+                <div class="msg-list-toolbar">
+                    <div class="btn-group btn-group-sm">
+                        <button class="btn btn-outline-secondary active" id="msgViewCards" onclick="setMsgView('cards')">
+                            <i class="bi bi-grid-3x3-gap-fill me-1"></i>Cartes
+                        </button>
+                        <button class="btn btn-outline-secondary" id="msgViewCompact" onclick="setMsgView('compact')">
+                            <i class="bi bi-list-ul me-1"></i>Compact
+                        </button>
+                    </div>
+                    <select class="form-select form-select-sm" id="msgSortBy" onchange="loadMessagesPage()" style="width: auto;">
+                        <option value="created_at">Plus recent</option>
+                        <option value="priority">Priorite</option>
+                        <option value="read_count">Taux lecture</option>
+                    </select>
+                    <div class="ms-auto d-flex gap-2 align-items-center">
+                        <span class="text-muted small" id="msgSelectionCount" style="display:none">
+                            <span id="msgSelectedNum">0</span> selectionnés
+                        </span>
+                        <button class="btn btn-outline-secondary btn-sm" id="btnArchiveSelected" onclick="archiveSelectedMessages()" style="display:none">
+                            <i class="bi bi-archive me-1"></i>Archiver
+                        </button>
+                        <button class="btn btn-outline-danger btn-sm" id="btnDeleteSelected" onclick="hardDeleteSelectedMessages()" style="display:none">
+                            <i class="bi bi-trash me-1"></i>Supprimer
+                        </button>
+                    </div>
+                </div>
+
+                <div class="msg-list-body" id="msgListBody">
+                    <div class="text-center text-muted py-5">Chargement...</div>
+                </div>
+
+                <nav id="messagesPagination" class="px-3 pb-2"></nav>
+            </section>
+
+            <section class="msg-detail" id="msgDetail">
+                <div class="msg-detail-empty">
+                    <i class="bi bi-chat-square-text" style="font-size: 3rem; opacity: .2;"></i>
+                    <p class="mt-3 text-muted">Selectionnez un message pour voir son detail</p>
+                </div>
+            </section>
+        </div>
+    </div>
+
+    <!-- Panneau de composition slide-in -->
+    <div id="composeSlideIn" class="msg-compose-overlay d-none">
+        <div class="msg-compose-panel">
+            <div class="msg-compose-header">
                 <div>
-                    <button class="btn btn-primary btn-sm me-2" onclick="showSendMessageModal()">
-                        <i class="bi bi-send me-1"></i>Nouveau message
-                    </button>
-                    <button class="btn btn-outline-secondary btn-sm me-2" onclick="exportMessages()">
-                        <i class="bi bi-download me-1"></i>Export CSV
-                    </button>
-                    <button class="btn btn-outline-secondary btn-sm" onclick="loadMessagesPage()">
-                        <i class="bi bi-arrow-clockwise"></i>
-                    </button>
+                    <h6 class="mb-0" id="composeTitle">Nouveau message</h6>
+                    <small class="text-muted" id="composeSubtitle">Envoi immediat</small>
                 </div>
+                <button class="btn-close" onclick="closeComposePanel()"></button>
             </div>
-
-            <!-- Onglets Global / Individuel -->
-            <ul class="nav nav-tabs mb-4" id="messagesTabNav" role="tablist">
-                <li class="nav-item" role="presentation">
-                    <button class="nav-link active" id="msgTabAll" type="button" role="tab" onclick="switchMessageTab('all')">
-                        <i class="bi bi-chat-dots me-1"></i>Tous <span class="badge bg-secondary ms-1" id="msgTabAllBadge">0</span>
-                    </button>
-                </li>
-                <li class="nav-item" role="presentation">
-                    <button class="nav-link" id="msgTabBroadcast" type="button" role="tab" onclick="switchMessageTab('broadcast')">
-                        <i class="bi bi-megaphone me-1"></i>Globaux <span class="badge bg-secondary ms-1" id="msgTabBroadcastBadge">0</span>
-                    </button>
-                </li>
-                <li class="nav-item" role="presentation">
-                    <button class="nav-link" id="msgTabUser" type="button" role="tab" onclick="switchMessageTab('user')">
-                        <i class="bi bi-person me-1"></i>Individuels <span class="badge bg-secondary ms-1" id="msgTabUserBadge">0</span>
-                    </button>
-                </li>
-            </ul>
-
-            <!-- KPI cards -->
-            <div class="row g-3 mb-3">
-                <div class="col-md-3">
-                    <div class="notif-kpi-card">
-                        <div class="notif-kpi-icon notif-kpi-icon-blue"><i class="bi bi-bell-fill"></i></div>
-                        <div class="notif-kpi-text">
-                            <div class="notif-kpi-label">Actives en cours</div>
-                            <div class="notif-kpi-value" id="kpiActiveCount">0</div>
-                        </div>
+            <div class="msg-compose-body" id="composeBody">
+                <div id="composeFormMode">
+                    <div class="mb-2">
+                        <label class="form-label small mb-1">Titre *</label>
+                        <input type="text" class="form-control form-control-sm" id="composeMsgTitle" maxlength="200">
                     </div>
-                </div>
-                <div class="col-md-3">
-                    <div class="notif-kpi-card">
-                        <div class="notif-kpi-icon notif-kpi-icon-green"><i class="bi bi-bar-chart-fill"></i></div>
-                        <div class="notif-kpi-text">
-                            <div class="notif-kpi-label">Taux de lecture moyen</div>
-                            <div class="notif-kpi-value" id="kpiReadRate">0%</div>
-                        </div>
+                    <div class="mb-2">
+                        <label class="form-label small mb-1">Message</label>
+                        <textarea class="form-control form-control-sm" id="composeMsgBody" rows="4"></textarea>
                     </div>
-                </div>
-                <div class="col-md-3">
-                    <div class="notif-kpi-card">
-                        <div class="notif-kpi-icon notif-kpi-icon-indigo"><i class="bi bi-app-indicator"></i></div>
-                        <div class="notif-kpi-text">
-                            <div class="notif-kpi-label">Apps émettrices</div>
-                            <div class="notif-kpi-value" id="kpiAppsCount">0</div>
-                        </div>
-                    </div>
-                </div>
-                <div class="col-md-3">
-                    <div class="notif-kpi-card">
-                        <div class="notif-kpi-icon notif-kpi-icon-amber"><i class="bi bi-archive-fill"></i></div>
-                        <div class="notif-kpi-text">
-                            <div class="notif-kpi-label">Expirées en attente</div>
-                            <div class="notif-kpi-value" id="kpiExpiredCount">0</div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Compteurs secondaires par priorité -->
-            <div class="d-flex flex-wrap gap-2 mb-3 align-items-center">
-                <span class="text-muted small me-1">Par priorité :</span>
-                <span class="badge bg-info" title="Info"><i class="bi bi-info-circle me-1"></i>Info <span id="msgStatInfo">0</span></span>
-                <span class="badge bg-warning text-dark" title="Warning"><i class="bi bi-exclamation-triangle me-1"></i>Warning <span id="msgStatWarning">0</span></span>
-                <span class="badge bg-danger" title="Urgent"><i class="bi bi-exclamation-octagon me-1"></i>Urgent <span id="msgStatUrgent">0</span></span>
-                <span class="badge bg-secondary ms-2" title="Total"><i class="bi bi-collection me-1"></i>Total <span id="msgStatTotal">0</span></span>
-            </div>
-
-            <!-- Filtres -->
-            <div class="card mb-3">
-                <div class="card-body py-2">
-                    <div class="row g-2 align-items-end messages-filters-row">
-                        <div class="col-lg-2 col-md-3">
-                            <label class="form-label small mb-0">Cycle de vie</label>
-                            <select class="form-select form-select-sm" id="msgFilterStatus" onchange="loadMessagesPage()">
-                                <option value="all" selected>Tout</option>
-                                <option value="active">Actives</option>
-                                <option value="expired">Expirées</option>
-                                <option value="archived">Archivées</option>
-                            </select>
-                        </div>
-                        <div class="col-lg-2 col-md-3">
-                            <label class="form-label small mb-0">Priorité</label>
-                            <select class="form-select form-select-sm" id="msgFilterPriority" onchange="loadMessagesPage()">
-                                <option value="">Toutes</option>
+                    <div class="row mb-2">
+                        <div class="col-6">
+                            <label class="form-label small mb-1">Priorite</label>
+                            <select class="form-select form-select-sm" id="composeMsgPriority">
                                 <option value="info">Info</option>
                                 <option value="warning">Warning</option>
                                 <option value="urgent">Urgent</option>
                             </select>
                         </div>
-                        <div class="col-lg-2 col-md-3">
-                            <label class="form-label small mb-0">Expéditeur</label>
-                            <select class="form-select form-select-sm" id="msgFilterSender" onchange="loadMessagesPage()">
-                                <option value="">Tous</option>
-                                <option value="admin">Admin</option>
-                                <option value="app">Application</option>
-                                <option value="system">Système</option>
-                            </select>
-                        </div>
-                        <div class="col-lg-2 col-md-4">
-                            <label class="form-label small mb-0">App source</label>
-                            <input type="text" class="form-control form-control-sm" id="msgFilterApp" placeholder="slug..." onchange="loadMessagesPage()">
-                        </div>
-                        <div class="col-lg-2 col-md-4">
-                            <label class="form-label small mb-0">Recherche</label>
-                            <input type="text" class="form-control form-control-sm" id="msgFilterSearch" placeholder="titre/corps..." onchange="loadMessagesPage()">
-                        </div>
-                        <div class="col-lg-2 col-md-3">
-                            <label class="form-label small mb-0">Période</label>
-                            <select class="form-select form-select-sm" id="msgFilterHours" onchange="loadMessagesPage()">
-                                <option value="">Tout</option>
-                                <option value="24">24h</option>
-                                <option value="48">48h</option>
-                                <option value="168">7 jours</option>
-                                <option value="720" selected>30 jours</option>
-                            </select>
-                        </div>
-                        <div class="col-lg-2 d-flex gap-1 justify-content-end mt-2">
-                            <button class="btn btn-outline-secondary btn-sm" id="btnArchiveSelected" onclick="archiveSelectedMessages()" title="Archiver la sélection" style="display: none;">
-                                <i class="bi bi-archive me-1"></i><span id="archiveSelectedCount">0</span>
-                            </button>
-                            <button class="btn btn-outline-warning btn-sm" onclick="purgeMessagesFiltered()" title="Archiver les messages filtrés">
-                                <i class="bi bi-archive"></i>
-                            </button>
-                            <button class="btn btn-outline-danger btn-sm" id="btnDeleteSelected" onclick="hardDeleteSelectedMessages()" title="Suppression définitive de la sélection" disabled>
-                                <i class="bi bi-trash-fill me-1"></i><span id="deleteSelectedCount">0</span>
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Tableau des messages -->
-            <div class="table-responsive">
-                <table class="table table-sm table-hover align-middle">
-                    <thead>
-                        <tr>
-                            <th style="width: 30px;"><input type="checkbox" id="msgSelectAll" onchange="toggleSelectAllMessages(this)" title="Tout sélectionner"></th>
-                            <th>Notification</th>
-                            <th>Statut & Rétention</th>
-                            <th>Source</th>
-                            <th style="min-width: 160px;">Engagement</th>
-                            <th class="text-end">Actions</th>
-                        </tr>
-                    </thead>
-                    <tbody id="messagesTableBody">
-                        <tr><td colspan="6" class="text-center text-muted">Chargement...</td></tr>
-                    </tbody>
-                </table>
-            </div>
-            <nav id="messagesPagination"></nav>
-        </div>
-    </div>
-
-    <!-- Modal Nouveau Message -->
-    <div class="modal fade" id="sendMessageModal" tabindex="-1">
-        <div class="modal-dialog modal-lg">
-            <div class="modal-content">
-                <div class="modal-header bg-primary text-white">
-                    <h5 class="modal-title"><i class="bi bi-send me-2"></i>Nouveau message</h5>
-                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
-                </div>
-                <div class="modal-body">
-                    <div class="mb-3">
-                        <label class="form-label">Titre *</label>
-                        <input type="text" class="form-control" id="msgTitle" maxlength="200" required>
-                    </div>
-                    <div class="mb-3">
-                        <label class="form-label">Corps du message</label>
-                        <textarea class="form-control" id="msgBody" rows="4"></textarea>
-                    </div>
-                    <div class="row">
-                        <div class="col-md-4 mb-3">
-                            <label class="form-label">Priorité</label>
-                            <select class="form-select" id="msgPriority">
-                                <option value="info" selected>Info</option>
-                                <option value="warning">Warning</option>
-                                <option value="urgent">Urgent</option>
-                            </select>
-                        </div>
-                        <div class="col-md-4 mb-3">
-                            <label class="form-label">Cible</label>
-                            <select class="form-select" id="msgTargetType" onchange="toggleMsgTargetUsers()">
+                        <div class="col-6">
+                            <label class="form-label small mb-1">Cible</label>
+                            <select class="form-select form-select-sm" id="composeMsgTargetType" onchange="toggleComposeTargetUsers()">
                                 <option value="broadcast">Tous les utilisateurs</option>
-                                <option value="user">Utilisateurs spécifiques</option>
+                                <option value="user">Utilisateurs specifiques</option>
                             </select>
                         </div>
-                        <div class="col-md-4 mb-3">
-                            <label class="form-label">Expiration</label>
-                            <input type="datetime-local" class="form-control" id="msgExpiresAt">
+                    </div>
+                    <div class="mb-2 d-none" id="composeTargetUsersGroup">
+                        <label class="form-label small mb-1">Utilisateurs</label>
+                        <select class="form-select form-select-sm" id="composeTargetUsers" multiple size="4"></select>
+                    </div>
+                    <div class="row mb-2">
+                        <div class="col-8">
+                            <label class="form-label small mb-1">Expiration</label>
+                            <input type="datetime-local" class="form-control form-control-sm" id="composeMsgExpiresAt">
+                        </div>
+                        <div class="col-4">
+                            <label class="form-label small mb-1">Preset</label>
+                            <select class="form-select form-select-sm" id="composeExpiresPreset" onchange="setComposeExpiresPreset()">
+                                <option value="">Personnalise</option>
+                                <option value="24">24h</option>
+                                <option value="168">7 jours</option>
+                                <option value="720">30 jours</option>
+                                <option value="0">Sans expiration</option>
+                            </select>
                         </div>
                     </div>
-                    <div class="mb-3 d-none" id="msgTargetUsersGroup">
-                        <label class="form-label">Utilisateurs destinataires</label>
-                        <select class="form-select" id="msgTargetUsers" multiple size="5">
-                        </select>
-                        <small class="text-muted">Maintenez Ctrl pour sélectionner plusieurs utilisateurs</small>
+                    <div class="row mb-2">
+                        <div class="col-6">
+                            <label class="form-label small mb-1">Lien d'action</label>
+                            <input type="url" class="form-control form-control-sm" id="composeActionUrl" placeholder="https://...">
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label small mb-1">Label</label>
+                            <input type="text" class="form-control form-control-sm" id="composeActionLabel" placeholder="Consulter" maxlength="100">
+                        </div>
                     </div>
-                    <div class="row">
-                        <div class="col-md-6 mb-3">
-                            <label class="form-label">URL d'action (optionnel)</label>
-                            <input type="url" class="form-control" id="msgActionUrl" placeholder="https://...">
-                        </div>
-                        <div class="col-md-6 mb-3">
-                            <label class="form-label">Libellé du bouton (optionnel)</label>
-                            <input type="text" class="form-control" id="msgActionLabel" placeholder="Voir le détail" maxlength="100">
-                        </div>
+                    <div class="mb-2">
+                        <label class="form-label small mb-1">Envoi differe</label>
+                        <input type="datetime-local" class="form-control form-control-sm" id="composeScheduledAt">
+                    </div>
+                    <div class="mb-2" id="composeTemplatesSection">
+                        <label class="form-label small mb-1">Template</label>
+                        <div id="composeTemplateList" class="msg-template-list"></div>
                     </div>
                 </div>
-                <div class="modal-footer">
-                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuler</button>
-                    <button type="button" class="btn btn-primary" onclick="confirmSendMessage()">
-                        <i class="bi bi-send me-1"></i>Envoyer
-                    </button>
+
+                <div id="composePreviewMode" class="d-none">
+                    <div class="msg-compose-preview">
+                        <small class="text-muted text-uppercase">Apercu utilisateur</small>
+                        <div class="msg-compose-preview-card" id="composePreviewCard"></div>
+                    </div>
+                    <div class="msg-compose-preview-summary" id="composePreviewSummary"></div>
                 </div>
+            </div>
+            <div class="msg-compose-footer">
+                <button class="btn btn-sm btn-outline-secondary" onclick="toggleComposePreview()" id="composePreviewBtn">
+                    <i class="bi bi-eye me-1"></i>Preview
+                </button>
+                <div class="flex-grow-1"></div>
+                <button class="btn btn-sm btn-secondary me-1" onclick="closeComposePanel()">Annuler</button>
+                <button class="btn btn-sm btn-primary" onclick="confirmSendMessage()" id="composeSendBtn">
+                    <i class="bi bi-send me-1"></i>Envoyer
+                </button>
             </div>
         </div>
     </div>
