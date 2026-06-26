@@ -7,6 +7,7 @@ secrets/service_accounts/*.env
 *.pem
 # Exports/backups sensibles (hashes, topologie) - toutes profondeurs
 secrets/**/*.json
+secrets/service_accounts/hub_backup.json
 # Secrets service accounts a toute profondeur (defense en profondeur)
 secrets/**/sa_*.env
 secrets/**/service_accounts/*.env
