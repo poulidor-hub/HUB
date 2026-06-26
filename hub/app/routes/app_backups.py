@@ -63,6 +63,8 @@ settings = get_settings()
 STORAGE_BASE_DIR = Path("/code/storage/backups")
 SECRETS_DIR = Path("/code/secrets")
 JWT_PRIVATE_KEY_PATH = SECRETS_DIR / "jwt_private_key.pem"
+BACKUP_PRIVATE_KEY_PATH = SECRETS_DIR / "backup_private_key.pem"
+BACKUP_PUBLIC_KEY_PATH = SECRETS_DIR / "backup_public_key.pem"
 
 router = APIRouter(tags=["App Backups"])
 
@@ -322,36 +324,35 @@ def extract_metadata_from_zip(zip_content: bytes) -> dict:
 def encrypt_backup(data: bytes) -> tuple[bytes, bytes, bytes]:
     """
     Chiffre les données avec un schéma hybride RSA + AES-256-GCM.
-    
+
     1. Génère une clé AES-256 aléatoire
     2. Chiffre les données avec AES-256-GCM
-    3. Chiffre la clé AES avec la clé RSA privée (pour signature/authenticité)
-    
+    3. Chiffre la clé AES avec la clé RSA dédiée aux backups
+
     Returns:
         tuple: (encrypted_data, encrypted_key, nonce)
     """
-    # Charger la clé privée RSA
-    if not JWT_PRIVATE_KEY_PATH.exists():
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Clé de chiffrement non trouvée"
-        )
-    
-    private_key_pem = JWT_PRIVATE_KEY_PATH.read_bytes()
+    if not BACKUP_PRIVATE_KEY_PATH.exists():
+        if JWT_PRIVATE_KEY_PATH.exists():
+            logger.warning("Clé backup absente, fallback sur clé JWT (legacy)")
+            key_path = JWT_PRIVATE_KEY_PATH
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Clé de chiffrement backup non trouvée"
+            )
+    else:
+        key_path = BACKUP_PRIVATE_KEY_PATH
+
+    private_key_pem = key_path.read_bytes()
     private_key = serialization.load_pem_private_key(private_key_pem, password=None)
-    
-    # Générer une clé AES-256 aléatoire (32 bytes)
+
     aes_key = secrets.token_bytes(32)
-    
-    # Générer un nonce pour AES-GCM (12 bytes recommandés)
     nonce = secrets.token_bytes(12)
-    
-    # Chiffrer les données avec AES-256-GCM
+
     aesgcm = AESGCM(aes_key)
     encrypted_data = aesgcm.encrypt(nonce, data, None)
-    
-    # Chiffrer la clé AES avec RSA (OAEP padding)
-    # Note: On utilise la clé publique extraite de la privée pour le chiffrement
+
     public_key = private_key.public_key()
     encrypted_key = public_key.encrypt(
         aes_key,
@@ -361,7 +362,7 @@ def encrypt_backup(data: bytes) -> tuple[bytes, bytes, bytes]:
             label=None
         )
     )
-    
+
     return encrypted_data, encrypted_key, nonce
 
 
@@ -380,8 +381,9 @@ def create_encrypted_package(backup_data: bytes, backup_id: str, app_slug: str) 
     
     # Créer l'en-tête avec métadonnées
     header = {
-        "version": "1.0",
+        "version": "2.0",
         "algorithm": "RSA-OAEP-256+AES-256-GCM",
+        "key_type": "backup" if BACKUP_PRIVATE_KEY_PATH.exists() else "jwt_legacy",
         "backup_id": backup_id,
         "app_slug": app_slug,
         "encrypted_at": utcnow().isoformat(),
@@ -422,30 +424,51 @@ def decrypt_encrypted_package(encrypted_package: bytes) -> tuple[bytes, dict]:
         
         # 3. Extraire les données chiffrées
         encrypted_data = encrypted_package[4 + header_length:]
-        
-        # 4. Charger la clé privée RSA
-        if not JWT_PRIVATE_KEY_PATH.exists():
+
+        # 4. Charger la clé privée : backup key prioritaire, JWT en fallback legacy
+        key_paths = []
+        if BACKUP_PRIVATE_KEY_PATH.exists():
+            key_paths.append(("backup", BACKUP_PRIVATE_KEY_PATH))
+        if JWT_PRIVATE_KEY_PATH.exists():
+            key_paths.append(("jwt", JWT_PRIVATE_KEY_PATH))
+
+        if not key_paths:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Clé de déchiffrement non trouvée"
+                detail="Aucune clé de déchiffrement trouvée"
             )
-        
-        private_key_pem = JWT_PRIVATE_KEY_PATH.read_bytes()
-        private_key = serialization.load_pem_private_key(private_key_pem, password=None)
-        
+
         # 5. Décoder la clé AES chiffrée et le nonce depuis base64
         encrypted_key = base64.b64decode(header["encrypted_key_b64"])
         nonce = base64.b64decode(header["nonce_b64"])
-        
-        # 6. Déchiffrer la clé AES avec RSA
-        aes_key = private_key.decrypt(
-            encrypted_key,
-            padding.OAEP(
-                mgf=padding.MGF1(algorithm=hashes.SHA256()),
-                algorithm=hashes.SHA256(),
-                label=None
+
+        # 6. Déchiffrer la clé AES avec RSA (essayer chaque clé)
+        aes_key = None
+        last_error = None
+        for key_name, key_path in key_paths:
+            try:
+                private_key_pem = key_path.read_bytes()
+                private_key = serialization.load_pem_private_key(private_key_pem, password=None)
+                aes_key = private_key.decrypt(
+                    encrypted_key,
+                    padding.OAEP(
+                        mgf=padding.MGF1(algorithm=hashes.SHA256()),
+                        algorithm=hashes.SHA256(),
+                        label=None
+                    )
+                )
+                if key_name != key_paths[0][0]:
+                    logger.info(f"Déchiffrement via clé {key_name} (fallback)")
+                break
+            except Exception as e:
+                last_error = e
+                continue
+
+        if aes_key is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Échec du déchiffrement avec toutes les clés disponibles: {last_error}"
             )
-        )
         
         # 7. Déchiffrer les données avec AES-GCM
         aesgcm = AESGCM(aes_key)

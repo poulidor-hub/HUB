@@ -23,7 +23,7 @@
     <!-- Navigation -->
     <nav class="navbar navbar-expand-lg navbar-dark bg-dark fixed-top d-none" id="mainNavbar">
         <div class="container">
-            <a class="navbar-brand d-flex align-items-center" href="#" onclick="showPage('dashboard')">
+            <a class="navbar-brand d-flex align-items-center" href="#"data-action="showPage" data-args="dashboard">
                 <i class="bi bi-grid-3x3-gap-fill me-2"></i>
                 <span>Hub</span>
             </a>
@@ -37,23 +37,23 @@
                 <div id="adminNavigation" class="d-none">
                     <ul class="navbar-nav me-auto">
                         <li class="nav-item">
-                            <a class="nav-link" href="#" onclick="showPage('audit')" id="navAudit">
+                            <a class="nav-link" href="#"data-action="showPage" data-args="audit" id="navAudit">
                                 <i class="bi bi-graph-up me-1"></i>Audit
                                 <span class="badge bg-danger ms-1" id="navAuditErrorBadge" style="display: none; font-size: 0.65em;">0</span>
                             </a>
                         </li>
                         <li class="nav-item">
-                            <a class="nav-link" href="#" onclick="showPage('users')" id="navUsers">
+                            <a class="nav-link" href="#"data-action="showPage" data-args="users" id="navUsers">
                                 <i class="bi bi-people me-1"></i>Utilisateurs
                             </a>
                         </li>
                         <li class="nav-item">
-                            <a class="nav-link" href="#" onclick="showPage('appsHealth')" id="navAppsHealth">
+                            <a class="nav-link" href="#"data-action="showPage" data-args="appsHealth" id="navAppsHealth">
                                 <i class="bi bi-heart-pulse me-1"></i>Apps
                             </a>
                         </li>
                         <li class="nav-item">
-                            <a class="nav-link" href="#" onclick="showPage('messages')" id="navMessages">
+                            <a class="nav-link" href="#"data-action="showPage" data-args="messages" id="navMessages">
                                 <i class="bi bi-chat-dots me-1"></i>Messages
                                 <span class="badge bg-info ms-1" id="navMessagesBadge" style="display: none; font-size: 0.65em;">0</span>
                             </a>
@@ -68,18 +68,18 @@
                     </span>
                     <!-- Cloche de notifications messages -->
                     <div id="messageBellContainer" class="d-none position-relative me-2">
-                        <button class="btn btn-outline-light btn-sm" onclick="showPage('inbox')" title="Mes notifications">
+                        <button class="btn btn-outline-light btn-sm"data-action="showPage" data-args="inbox" title="Mes notifications">
                             <i class="bi bi-bell"></i>
                             <span class="badge bg-danger position-absolute top-0 start-100 translate-middle rounded-pill" id="messageBellBadge" style="display: none; font-size: 0.6em;">0</span>
                         </button>
                     </div>
-                    <button id="changePasswordBtn" class="btn btn-outline-light btn-sm me-2 d-none" onclick="showChangePasswordModal(false)" title="Changer le mot de passe">
+                    <button id="changePasswordBtn" class="btn btn-outline-light btn-sm me-2 d-none"data-action="showChangePasswordModal" data-args="false" title="Changer le mot de passe">
                         <i class="bi bi-key"></i>
                     </button>
-                    <button id="adminBtn" class="btn btn-outline-light btn-sm me-2 d-none" onclick="showPage('admin')">
+                    <button id="adminBtn" class="btn btn-outline-light btn-sm me-2 d-none"data-action="showPage" data-args="admin">
                         <i class="bi bi-gear"></i> Admin
                     </button>
-                    <button id="logoutBtn" class="btn btn-outline-secondary btn-sm d-none" onclick="logout()">
+                    <button id="logoutBtn" class="btn btn-outline-secondary btn-sm d-none"data-action="logout">
                         <i class="bi bi-box-arrow-right"></i>
                     </button>
                 </div>
@@ -96,7 +96,7 @@
                     <h2 class="mt-3">Connexion</h2>
                     <p class="text-muted">Accédez à vos applications</p>
                 </div>
-                <form id="loginForm" onsubmit="handleLogin(event)">
+                <form id="loginForm"data-action="handleLogin" data-args="event">
                     <div class="mb-3">
                         <label for="loginUsername" class="form-label">Identifiant</label>
                         <div class="input-group">
@@ -117,7 +117,7 @@
                     </button>
                     <hr class="my-3">
                     <div id="accountRequestButton" class="text-center d-none">
-                        <button type="button" class="btn btn-outline-secondary btn-sm" onclick="showAccountRequestModal()">
+                        <button type="button" class="btn btn-outline-secondary btn-sm"data-action="showAccountRequestModal">
                             <i class="bi bi-person-plus me-1"></i>Faire une demande de compte
                         </button>
                     </div>
@@ -136,7 +136,7 @@
                     <p class="text-muted">Votre demande de compte a bien été transmise aux administrateurs.<br>
                     Un administrateur la traitera prochainement et <strong>vous préviendra par email</strong> dès que votre compte sera créé et prêt à être utilisé.</p>
                     <p class="text-muted small">L'email contiendra l'identifiant de connexion à utiliser s'il a été modifié. Le mot de passe restera celui que vous avez choisi lors de votre demande.</p>
-                    <button class="btn btn-primary mt-2" onclick="backToLoginFromRequest()">
+                    <button class="btn btn-primary mt-2"data-action="backToLoginFromRequest">
                         <i class="bi bi-arrow-left me-1"></i>Retour à la connexion
                     </button>
                 </div>
@@ -144,7 +144,7 @@
                     <i class="bi bi-check-circle display-1 text-success"></i>
                     <h4 class="mt-3 mb-3">Compte créé</h4>
                     <div class="alert alert-success">Votre compte a été créé. Un email vous a été envoyé avec l'identifiant de connexion à utiliser.</div>
-                    <button class="btn btn-primary" onclick="backToLoginFromRequest()">
+                    <button class="btn btn-primary"data-action="backToLoginFromRequest">
                         <i class="bi bi-arrow-left me-1"></i>Aller à la connexion
                     </button>
                 </div>
@@ -152,7 +152,7 @@
                     <i class="bi bi-x-circle display-1 text-danger"></i>
                     <h4 class="mt-3 mb-3">Demande refusée</h4>
                     <div class="alert alert-danger" id="accountRequestRejectionReason"></div>
-                    <button class="btn btn-primary" onclick="backToLoginFromRequest()">
+                    <button class="btn btn-primary"data-action="backToLoginFromRequest">
                         <i class="bi bi-arrow-left me-1"></i>Retour à la connexion
                     </button>
                 </div>
@@ -168,7 +168,7 @@
                     <h5 class="modal-title"><i class="bi bi-person-plus me-2"></i>Demande de compte</h5>
                     <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
                 </div>
-                <form id="accountRequestForm" onsubmit="handleAccountRequest(event)">
+                <form id="accountRequestForm"data-action="handleAccountRequest" data-args="event">
                     <div class="modal-body">
                         <div class="alert alert-info py-2 d-none" id="accountRequestImportantBox">
                             <i class="bi bi-info-circle me-1"></i>
@@ -240,13 +240,13 @@
             <div class="col-md-6 col-lg-4">
                 <div class="input-group">
                     <span class="input-group-text bg-white"><i class="bi bi-search"></i></span>
-                    <input type="text" class="form-control" id="appSearchInput" placeholder="Rechercher une application…" oninput="filterDashboardApps()">
-                    <button class="btn btn-outline-secondary d-none" id="appSearchClear" onclick="clearAppSearch()"><i class="bi bi-x-lg"></i></button>
+                    <input type="text" class="form-control" id="appSearchInput" placeholder="Rechercher une application…"data-action="filterDashboardApps">
+                    <button class="btn btn-outline-secondary d-none" id="appSearchClear"data-action="clearAppSearch"><i class="bi bi-x-lg"></i></button>
                 </div>
             </div>
             <div class="col-md-6 col-lg-8 d-flex align-items-center gap-2 flex-wrap mt-2 mt-md-0">
-                <button class="btn btn-sm dash-filter-btn active" data-filter="all" onclick="setDashboardFilter('all')">Toutes</button>
-                <button class="btn btn-sm dash-filter-btn" data-filter="favorites" onclick="setDashboardFilter('favorites')">
+                <button class="btn btn-sm dash-filter-btn active" data-filter="all"data-action="setDashboardFilter" data-args="all">Toutes</button>
+                <button class="btn btn-sm dash-filter-btn" data-filter="favorites"data-action="setDashboardFilter" data-args="favorites">
                     <i class="bi bi-star-fill text-warning me-1"></i>Favoris
                 </button>
                 <div id="categoryFilters" class="d-flex gap-1 flex-wrap"></div>
@@ -269,21 +269,21 @@
                 <div class="d-flex gap-2">
                     <input type="hidden" id="auditPeriodPage" value="7">
                     <div class="audit-seg" id="auditPageSeg">
-                        <button data-days="1" onclick="setAuditPeriod(1)">24h</button>
-                        <button data-days="7" class="active" onclick="setAuditPeriod(7)">7j</button>
-                        <button data-days="30" onclick="setAuditPeriod(30)">30j</button>
-                        <button data-days="90" onclick="setAuditPeriod(90)">90j</button>
+                        <button data-days="1"data-action="setAuditPeriod" data-args="1">24h</button>
+                        <button data-days="7" class="active"data-action="setAuditPeriod" data-args="7">7j</button>
+                        <button data-days="30"data-action="setAuditPeriod" data-args="30">30j</button>
+                        <button data-days="90"data-action="setAuditPeriod" data-args="90">90j</button>
                     </div>
                     <div class="btn-group btn-group-sm">
                         <button class="btn btn-outline-secondary dropdown-toggle" data-bs-toggle="dropdown">
                             <i class="bi bi-download me-1"></i>Export
                         </button>
                         <ul class="dropdown-menu dropdown-menu-end">
-                            <li><a class="dropdown-item" href="#" onclick="exportAuditLogs()"><i class="bi bi-file-earmark-text me-2"></i>Logs d'audit (CSV)</a></li>
-                            <li><a class="dropdown-item" href="#" onclick="exportSessions()"><i class="bi bi-file-earmark-text me-2"></i>Sessions (CSV)</a></li>
+                            <li><a class="dropdown-item" href="#"data-action="exportAuditLogs"><i class="bi bi-file-earmark-text me-2"></i>Logs d'audit (CSV)</a></li>
+                            <li><a class="dropdown-item" href="#"data-action="exportSessions"><i class="bi bi-file-earmark-text me-2"></i>Sessions (CSV)</a></li>
                         </ul>
                     </div>
-                    <button class="btn btn-outline-secondary btn-sm" onclick="loadAuditPageData()">
+                    <button class="btn btn-outline-secondary btn-sm"data-action="loadAuditPageData">
                         <i class="bi bi-arrow-clockwise"></i>
                     </button>
                 </div>
@@ -292,27 +292,27 @@
             <!-- Sous-navigation audit -->
             <ul class="nav audit-subnav" id="auditPageTabs">
                 <li class="nav-item">
-                    <button class="nav-link active" data-bs-toggle="tab" data-bs-target="#auditPageOverview" onclick="loadAuditPageOverview()">
+                    <button class="nav-link active" data-bs-toggle="tab" data-bs-target="#auditPageOverview"data-action="loadAuditPageOverview">
                         <i class="bi bi-speedometer2 me-1"></i>Vue d'ensemble
                     </button>
                 </li>
                 <li class="nav-item">
-                    <button class="nav-link" data-bs-toggle="tab" data-bs-target="#auditPageApps" onclick="loadAuditPageApps()">
+                    <button class="nav-link" data-bs-toggle="tab" data-bs-target="#auditPageApps"data-action="loadAuditPageApps">
                         <i class="bi bi-grid me-1"></i>Par Application
                     </button>
                 </li>
                 <li class="nav-item">
-                    <button class="nav-link" data-bs-toggle="tab" data-bs-target="#auditPageLogs" onclick="loadAuditPageLogsTab()">
+                    <button class="nav-link" data-bs-toggle="tab" data-bs-target="#auditPageLogs"data-action="loadAuditPageLogsTab">
                         <i class="bi bi-list-ul me-1"></i>Logs détaillés
                     </button>
                 </li>
                 <li class="nav-item">
-                    <button class="nav-link" data-bs-toggle="tab" data-bs-target="#auditPageSessions" onclick="loadAuditPageSessions()">
+                    <button class="nav-link" data-bs-toggle="tab" data-bs-target="#auditPageSessions"data-action="loadAuditPageSessions">
                         <i class="bi bi-clock-history me-1"></i>Sessions
                     </button>
                 </li>
                 <li class="nav-item">
-                    <button class="nav-link" data-bs-toggle="tab" data-bs-target="#auditPageErrors" onclick="loadAuditPageErrors()">
+                    <button class="nav-link" data-bs-toggle="tab" data-bs-target="#auditPageErrors"data-action="loadAuditPageErrors">
                         <i class="bi bi-exclamation-triangle me-1"></i>Erreurs
                         <span class="badge bg-danger ms-1" id="errorCountBadge" style="display: none;">0</span>
                     </button>
@@ -329,7 +329,7 @@
                             <div class="card mb-4">
                                 <div class="audit-card-head">
                                     <h2 class="h6 mb-0"><i class="bi bi-exclamation-triangle text-danger me-2"></i>Alertes à traiter</h2>
-                                    <a href="#" class="small text-primary text-decoration-none" onclick="openAuditTab('errors'); return false;">Voir toutes les erreurs <i class="bi bi-arrow-right"></i></a>
+                                    <a href="#" class="small text-primary text-decoration-none" data-action="openAuditTab" data-args="'errors'">Voir toutes les erreurs <i class="bi bi-arrow-right"></i></a>
                                 </div>
                                 <div id="auditAlertsList"></div>
                             </div>
@@ -337,14 +337,14 @@
                                 <div class="card-body">
                                     <h2 class="h6 mb-3"><i class="bi bi-search text-muted me-2"></i>Recherche rapide dans les logs</h2>
                                     <div class="d-flex flex-column flex-sm-row gap-2">
-                                        <input id="auditQuickSearchInput" class="form-control" placeholder="Rechercher IP ou utilisateur…" onkeydown="if(event.key==='Enter')auditQuickSearch()">
-                                        <button class="btn btn-secondary" onclick="openAuditTab('logs')"><i class="bi bi-funnel me-1"></i>Filtres avancés</button>
+                                        <input id="auditQuickSearchInput" class="form-control" placeholder="Rechercher IP ou utilisateur…" data-action="onKeydown" data-args="auditQuickSearch">
+                                        <button class="btn btn-secondary"data-action="openAuditTab" data-args="logs"><i class="bi bi-funnel me-1"></i>Filtres avancés</button>
                                     </div>
                                     <div class="d-flex flex-wrap align-items-center gap-2 mt-3">
                                         <small class="text-muted">Recherches fréquentes :</small>
-                                        <button class="audit-chip" onclick="auditChip('action','logout')">action:déconnexion</button>
-                                        <button class="audit-chip" onclick="auditChip('status','500')">status:500</button>
-                                        <button class="audit-chip" onclick="auditChip('app','demande-acces')">app:demande-acces</button>
+                                        <button class="audit-chip"data-action="auditChip" data-args="action|logout">action:déconnexion</button>
+                                        <button class="audit-chip"data-action="auditChip" data-args="status|500">status:500</button>
+                                        <button class="audit-chip"data-action="auditChip" data-args="app|demande-acces">app:demande-acces</button>
                                     </div>
                                 </div>
                             </div>
@@ -356,7 +356,7 @@
                                 </div>
                                 <div id="auditLiveSessions"></div>
                                 <div class="border-top p-3 text-center bg-light">
-                                    <a href="#" class="small text-primary text-decoration-none" onclick="openAuditTab('sessions'); return false;">Gérer toutes les sessions</a>
+                                    <a href="#" class="small text-primary text-decoration-none" data-action="openAuditTab" data-args="'sessions'">Gérer toutes les sessions</a>
                                 </div>
                             </div>
                         </div>
@@ -372,7 +372,7 @@
                     <!-- Détail d'une app -->
                     <div id="auditPageAppDetail" class="d-none">
                         <div class="d-flex align-items-center mb-4">
-                            <button class="btn btn-outline-secondary btn-sm me-3" onclick="hidePageAppDetail()">
+                            <button class="btn btn-outline-secondary btn-sm me-3"data-action="hidePageAppDetail">
                                 <i class="bi bi-arrow-left"></i>
                             </button>
                             <div class="d-flex align-items-center">
@@ -462,13 +462,13 @@
                             <div class="row g-3 align-items-end">
                                 <div class="col-md-3">
                                     <label class="form-label small">Action</label>
-                                    <select class="form-select form-select-sm" id="pageLogsFilterAction" onchange="loadAuditPageLogsTab()">
+                                    <select class="form-select form-select-sm" id="pageLogsFilterAction"data-action="loadAuditPageLogsTab">
                                         <option value="">Toutes les actions</option>
                                     </select>
                                 </div>
                                 <div class="col-md-3">
                                     <label class="form-label small">Application</label>
-                                    <select class="form-select form-select-sm" id="pageLogsFilterApp" onchange="loadAuditPageLogsTab()">
+                                    <select class="form-select form-select-sm" id="pageLogsFilterApp"data-action="loadAuditPageLogsTab">
                                         <option value="">Toutes les apps</option>
                                     </select>
                                 </div>
@@ -477,17 +477,17 @@
                                     <input type="text" class="form-control form-control-sm" id="pageLogsFilterUser"
                                            list="auditUsersDatalist"
                                            placeholder="Nom d'utilisateur" autocomplete="off"
-                                           onchange="loadAuditPageLogsTab()">
+                                          data-action="loadAuditPageLogsTab">
                                     <datalist id="auditUsersDatalist"></datalist>
                                 </div>
                                 <div class="col-md-3">
                                     <label class="form-label small">IP</label>
                                     <input type="text" class="form-control form-control-sm" id="pageLogsFilterIp"
                                            placeholder="Adresse IP" autocomplete="off"
-                                           onchange="loadAuditPageLogsTab()">
+                                          data-action="loadAuditPageLogsTab">
                                 </div>
                                 <div class="col-md-3">
-                                    <button class="btn btn-sm btn-outline-secondary w-100" onclick="resetPageLogsFilters()">
+                                    <button class="btn btn-sm btn-outline-secondary w-100"data-action="resetPageLogsFilters">
                                         <i class="bi bi-x-circle me-1"></i>Réinitialiser
                                     </button>
                                 </div>
@@ -535,7 +535,7 @@
                             <div class="row g-3 align-items-end">
                                 <div class="col-md-2">
                                     <label class="form-label small">Code HTTP</label>
-                                    <select class="form-select form-select-sm" id="errorsFilterCode" onchange="loadAuditPageErrors()">
+                                    <select class="form-select form-select-sm" id="errorsFilterCode"data-action="loadAuditPageErrors">
                                         <option value="">Tous</option>
                                         <option value="401">401 - Non authentifié</option>
                                         <option value="403">403 - Interdit</option>
@@ -546,7 +546,7 @@
                                 </div>
                                 <div class="col-md-2">
                                     <label class="form-label small">Type</label>
-                                    <select class="form-select form-select-sm" id="errorsFilterType" onchange="loadAuditPageErrors()">
+                                    <select class="form-select form-select-sm" id="errorsFilterType"data-action="loadAuditPageErrors">
                                         <option value="">Tous</option>
                                         <option value="authentication">Authentification</option>
                                         <option value="authorization">Autorisation</option>
@@ -557,17 +557,17 @@
                                 </div>
                                 <div class="col-md-2">
                                     <label class="form-label small">App source</label>
-                                    <select class="form-select form-select-sm" id="errorsFilterApp" onchange="loadAuditPageErrors()">
+                                    <select class="form-select form-select-sm" id="errorsFilterApp"data-action="loadAuditPageErrors">
                                         <option value="">Toutes</option>
                                     </select>
                                 </div>
                                 <div class="col-md-2">
                                     <label class="form-label small">Chemin (contient)</label>
-                                    <input type="text" class="form-control form-control-sm" id="errorsFilterPath" placeholder="/api/..." onchange="loadAuditPageErrors()">
+                                    <input type="text" class="form-control form-control-sm" id="errorsFilterPath" placeholder="/api/..."data-action="loadAuditPageErrors">
                                 </div>
                                 <div class="col-md-2">
                                     <label class="form-label small">Période</label>
-                                    <select class="form-select form-select-sm" id="errorsFilterHours" onchange="loadAuditPageErrors()">
+                                    <select class="form-select form-select-sm" id="errorsFilterHours"data-action="loadAuditPageErrors">
                                         <option value="1">1 heure</option>
                                         <option value="6">6 heures</option>
                                         <option value="24" selected>24 heures</option>
@@ -576,7 +576,7 @@
                                     </select>
                                 </div>
                                 <div class="col-md-2">
-                                    <button class="btn btn-sm btn-outline-secondary w-100" onclick="resetErrorsFilters()">
+                                    <button class="btn btn-sm btn-outline-secondary w-100"data-action="resetErrorsFilters">
                                         <i class="bi bi-x-circle me-1"></i>Réinitialiser
                                     </button>
                                 </div>
@@ -592,14 +592,14 @@
                                 <span class="text-muted small" id="errorsCount">0 erreurs</span>
                                 <nav id="errorsPagination"></nav>
                                 <div class="btn-group btn-group-sm">
-                                    <button class="btn btn-outline-danger" onclick="purgeErrors()" title="Purger les erreurs de la période filtrée">
+                                    <button class="btn btn-outline-danger"data-action="purgeErrors" title="Purger les erreurs de la période filtrée">
                                         <i class="bi bi-trash me-1"></i>Purger la période
                                     </button>
-                                    <button class="btn btn-outline-danger" onclick="purgeAllErrors()" title="Purger toutes les erreurs">
+                                    <button class="btn btn-outline-danger"data-action="purgeAllErrors" title="Purger toutes les erreurs">
                                         <i class="bi bi-trash-fill"></i>
                                     </button>
                                 </div>
-                                <button class="btn btn-outline-secondary btn-sm" onclick="exportErrors()">
+                                <button class="btn btn-outline-secondary btn-sm"data-action="exportErrors">
                                     <i class="bi bi-download me-1"></i>CSV
                                 </button>
                             </div>
@@ -621,7 +621,7 @@
                     <h1 class="h3 mb-1"><i class="bi bi-heart-pulse me-2"></i>Sante des Applications</h1>
                     <p class="text-muted mb-0" id="appsHealthSummary">Chargement…</p>
                 </div>
-                <button class="btn btn-primary" onclick="loadAppsHealth()" id="appsHealthRefreshBtn">
+                <button class="btn btn-primary"data-action="loadAppsHealth" id="appsHealthRefreshBtn">
                     <i class="bi bi-arrow-clockwise me-1"></i>Rafraichir
                 </button>
             </div>
@@ -644,7 +644,7 @@
                     <p class="text-muted mb-0">Gérer les comptes utilisateurs, leurs profils et accès aux applications</p>
                 </div>
                 <div class="d-flex gap-2">
-                    <button class="btn btn-primary btn-sm" onclick="showAddUserFormPage()">
+                    <button class="btn btn-primary btn-sm"data-action="showAddUserFormPage">
                         <i class="bi bi-person-plus me-1"></i>Ajouter
                     </button>
                 </div>
@@ -659,13 +659,13 @@
                     </button>
                 </li>
                 <li class="nav-item">
-                    <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tabProfiles" onclick="loadProfilesTab()">
+                    <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tabProfiles"data-action="loadProfilesTab">
                         <i class="bi bi-person-badge me-1"></i>Profils
                         <span id="profilesTabCount" class="badge bg-secondary ms-1">0</span>
                     </button>
                 </li>
                 <li class="nav-item">
-                    <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tabAccountRequests" onclick="loadAccountRequestsTab()">
+                    <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tabAccountRequests"data-action="loadAccountRequestsTab">
                         <i class="bi bi-person-plus me-1"></i>Demandes
                         <span id="accountRequestsTabCount" class="badge bg-warning text-dark ms-1 d-none">0</span>
                     </button>
@@ -720,16 +720,16 @@
                                         <span class="input-group-text"><i class="bi bi-search"></i></span>
                                         <input type="text" class="form-control" id="usersSearchInput" 
                                             placeholder="Rechercher (nom, email, app)..." 
-                                            oninput="debounceUsersSearch()">
+                                           data-action="debounceUsersSearch">
                                     </div>
                                 </div>
                                 <div class="col-md-2">
-                                    <select class="form-select form-select-sm" id="usersFilterApp" onchange="loadUsersPageData()">
+                                    <select class="form-select form-select-sm" id="usersFilterApp"data-action="loadUsersPageData">
                                         <option value="">Toutes les apps</option>
                                     </select>
                                 </div>
                                 <div class="col-md-2">
-                                    <select class="form-select form-select-sm" id="usersFilterRole" onchange="loadUsersPageData()">
+                                    <select class="form-select form-select-sm" id="usersFilterRole"data-action="loadUsersPageData">
                                         <option value="">Tous les rôles</option>
                                         <option value="admin">Admin</option>
                                         <option value="manager">Manager</option>
@@ -738,13 +738,13 @@
                                     </select>
                                 </div>
                                 <div class="col-md-2">
-                                    <select class="form-select form-select-sm" id="usersFilterProfile" onchange="loadUsersPageData()">
+                                    <select class="form-select form-select-sm" id="usersFilterProfile"data-action="loadUsersPageData">
                                         <option value="">Tous les profils</option>
                                         <option value="-1">Sans profil</option>
                                     </select>
                                 </div>
                                 <div class="col-md-2">
-                                    <select class="form-select form-select-sm" id="usersFilterStatus" onchange="loadUsersPageData()">
+                                    <select class="form-select form-select-sm" id="usersFilterStatus"data-action="loadUsersPageData">
                                         <option value="">Tous statuts</option>
                                         <option value="true">Actifs</option>
                                         <option value="false">Inactifs</option>
@@ -758,21 +758,21 @@
                                         </button>
                                         <ul class="dropdown-menu dropdown-menu-end">
                                             <li><h6 class="dropdown-header">Gestion des accès</h6></li>
-                                            <li><a class="dropdown-item" href="#" onclick="showBulkOperationsModal('assign-roles'); return false;">
+                                            <li><a class="dropdown-item" href="#" data-action="showBulkOperationsModal" data-args="'assign-roles'">
                                                 <i class="bi bi-plus-circle text-success me-2"></i>Assigner des rôles
                                             </a></li>
-                                            <li><a class="dropdown-item" href="#" onclick="showBulkOperationsModal('remove-access'); return false;">
+                                            <li><a class="dropdown-item" href="#" data-action="showBulkOperationsModal" data-args="'remove-access'">
                                                 <i class="bi bi-dash-circle text-warning me-2"></i>Retirer des accès
                                             </a></li>
                                             <li><hr class="dropdown-divider"></li>
                                             <li><h6 class="dropdown-header">Gestion des utilisateurs</h6></li>
-                                            <li><a class="dropdown-item" href="#" onclick="showBulkOperationsModal('create'); return false;">
+                                            <li><a class="dropdown-item" href="#" data-action="showBulkOperationsModal" data-args="'create'">
                                                 <i class="bi bi-person-plus text-primary me-2"></i>Créer en masse
                                             </a></li>
-                                            <li><a class="dropdown-item" href="#" onclick="showBulkOperationsModal('csv-import'); return false;">
+                                            <li><a class="dropdown-item" href="#" data-action="showBulkOperationsModal" data-args="'csv-import'">
                                                 <i class="bi bi-filetype-csv text-success me-2"></i>Importer depuis CSV
                                             </a></li>
-                                            <li><a class="dropdown-item" href="#" onclick="showBulkOperationsModal('delete'); return false;">
+                                            <li><a class="dropdown-item" href="#" data-action="showBulkOperationsModal" data-args="'delete'">
                                                 <i class="bi bi-trash text-danger me-2"></i>Supprimer en masse
                                             </a></li>
                                         </ul>
@@ -790,7 +790,7 @@
                         <div class="card-footer d-flex justify-content-between align-items-center py-2" id="usersPagePaginationBar">
                             <small class="text-muted" id="usersPageInfo">-</small>
                             <div class="d-flex align-items-center gap-3">
-                                <select class="form-select form-select-sm" id="usersPerPage" onchange="changeUsersPerPage()" style="width: 80px;">
+                                <select class="form-select form-select-sm" id="usersPerPage"data-action="changeUsersPerPage" style="width: 80px;">
                                     <option value="25">25</option>
                                     <option value="50" selected>50</option>
                                     <option value="100">100</option>
@@ -809,10 +809,10 @@
                             <small class="text-muted">Modèles de rôles applicables en un clic (ex: Cadre, Agent, Admin SI)</small>
                         </div>
                         <div class="d-flex gap-2">
-                            <button class="btn btn-outline-secondary btn-sm" onclick="loadProfilesTab()">
+                            <button class="btn btn-outline-secondary btn-sm"data-action="loadProfilesTab">
                                 <i class="bi bi-arrow-clockwise me-1"></i>Actualiser
                             </button>
-                            <button class="btn btn-primary btn-sm" onclick="showProfileModal()">
+                            <button class="btn btn-primary btn-sm"data-action="showProfileModal">
                                 <i class="bi bi-plus-lg me-1"></i>Nouveau profil
                             </button>
                         </div>
@@ -861,22 +861,22 @@
                         </div>
                         <div class="d-flex gap-2 align-items-center">
                             <div class="form-check form-switch me-2" title="Activer/désactiver les demandes de compte">
-                                <input class="form-check-input" type="checkbox" id="toggleAccountRequests" onchange="handleToggleAccountRequests(this.checked)">
+                                <input class="form-check-input" type="checkbox" id="toggleAccountRequests"data-action="handleToggleAccountRequests" data-args="this.checked">
                                 <label class="form-check-label small" for="toggleAccountRequests">Inscriptions</label>
                             </div>
-                            <button class="btn btn-outline-primary btn-sm" onclick="showAccountRequestNotificationAdminsModal()" title="Administrateurs notifiés">
+                            <button class="btn btn-outline-primary btn-sm"data-action="showAccountRequestNotificationAdminsModal" title="Administrateurs notifiés">
                                 <i class="bi bi-bell me-1"></i>Notifications
                             </button>
-                            <button class="btn btn-outline-primary btn-sm" onclick="showAccountRequestFormConfigModal()" title="Configurer le formulaire de demande">
+                            <button class="btn btn-outline-primary btn-sm"data-action="showAccountRequestFormConfigModal" title="Configurer le formulaire de demande">
                                 <i class="bi bi-sliders me-1"></i>Formulaire
                             </button>
-                            <select class="form-select form-select-sm" id="accountRequestsFilterStatus" onchange="loadAccountRequestsTab()" style="width: auto;">
+                            <select class="form-select form-select-sm" id="accountRequestsFilterStatus"data-action="loadAccountRequestsTab" style="width: auto;">
                                 <option value="">Tous les statuts</option>
                                 <option value="pending" selected>En attente</option>
                                 <option value="approved">Approuvées</option>
                                 <option value="rejected">Refusées</option>
                             </select>
-                            <button class="btn btn-outline-secondary btn-sm" onclick="loadAccountRequestsTab()">
+                            <button class="btn btn-outline-secondary btn-sm"data-action="loadAccountRequestsTab">
                                 <i class="bi bi-arrow-clockwise me-1"></i>Actualiser
                             </button>
                         </div>
@@ -946,7 +946,7 @@
                     </button>
                 </li>
                 <li class="nav-item">
-                    <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tabAppBackups" onclick="switchBackupWorkspace('apps');">
+                    <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tabAppBackups"data-action="switchBackupWorkspace" data-args="pps">
                         <i class="bi bi-hdd-stack me-1"></i>Sauvegardes
                     </button>
                 </li>
@@ -958,13 +958,13 @@
                     <div class="d-flex justify-content-between align-items-center mb-3">
                         <h5 class="mb-0">Gestion des Applications</h5>
                         <div class="btn-group">
-                            <button class="btn btn-outline-secondary btn-sm" onclick="showPortsPoolModal()">
+                            <button class="btn btn-outline-secondary btn-sm"data-action="showPortsPoolModal">
                                 <i class="bi bi-hdd-network me-1"></i>Pool de ports
                             </button>
-                            <button class="btn btn-outline-secondary btn-sm" onclick="showDockerScanModal()">
+                            <button class="btn btn-outline-secondary btn-sm"data-action="showDockerScanModal">
                                 <i class="bi bi-box-seam me-1"></i>Scanner Docker
                             </button>
-                            <button class="btn btn-primary btn-sm" onclick="showAddAppForm()">
+                            <button class="btn btn-primary btn-sm"data-action="showAddAppForm">
                                 <i class="bi bi-plus-lg me-1"></i>Ajouter
                             </button>
                         </div>
@@ -976,15 +976,15 @@
                                     <label class="form-label small mb-1">Recherche</label>
                                     <div class="input-group input-group-sm">
                                         <span class="input-group-text"><i class="bi bi-search"></i></span>
-                                        <input type="search" class="form-control" id="adminAppsSearch" placeholder="Nom, slug, URL, catégorie..." oninput="filterAdminApps()">
-                                        <button class="btn btn-outline-secondary d-none" type="button" id="adminAppsSearchClear" onclick="clearAdminAppsSearch()" title="Effacer la recherche">
+                                        <input type="search" class="form-control" id="adminAppsSearch" placeholder="Nom, slug, URL, catégorie..."data-action="filterAdminApps">
+                                        <button class="btn btn-outline-secondary d-none" type="button" id="adminAppsSearchClear"data-action="clearAdminAppsSearch" title="Effacer la recherche">
                                             <i class="bi bi-x-lg"></i>
                                         </button>
                                     </div>
                                 </div>
                                 <div class="col-xl-3 col-md-6">
                                     <label class="form-label small mb-1">Statut</label>
-                                    <select class="form-select form-select-sm" id="adminAppsStatusFilter" onchange="filterAdminApps()">
+                                    <select class="form-select form-select-sm" id="adminAppsStatusFilter"data-action="filterAdminApps">
                                         <option value="all">Tous</option>
                                         <option value="active">Actives</option>
                                         <option value="inactive">Inactives</option>
@@ -994,12 +994,12 @@
                                 </div>
                                 <div class="col-xl-3 col-md-6">
                                     <label class="form-label small mb-1">Catégorie</label>
-                                    <select class="form-select form-select-sm" id="adminAppsCategoryFilter" onchange="filterAdminApps()">
+                                    <select class="form-select form-select-sm" id="adminAppsCategoryFilter"data-action="filterAdminApps">
                                         <option value="all">Toutes</option>
                                     </select>
                                 </div>
                                 <div class="col-xl-1 col-md-6 d-grid">
-                                    <button class="btn btn-outline-secondary btn-sm" type="button" onclick="resetAdminAppsFilters()" title="Réinitialiser les filtres">
+                                    <button class="btn btn-outline-secondary btn-sm" type="button"data-action="resetAdminAppsFilters" title="Réinitialiser les filtres">
                                         <i class="bi bi-arrow-counterclockwise"></i>
                                     </button>
                                 </div>
@@ -1017,7 +1017,7 @@
                             <h5 class="mb-0">Service Accounts (M2M)</h5>
                             <small class="text-muted">Comptes techniques pour la communication entre applications</small>
                         </div>
-                        <button class="btn btn-primary btn-sm" onclick="showAddServiceAccountForm()">
+                        <button class="btn btn-primary btn-sm"data-action="showAddServiceAccountForm">
                             <i class="bi bi-plus-lg me-1"></i>Ajouter
                         </button>
                     </div>
@@ -1032,15 +1032,15 @@
                             <h5 class="mb-0"><i class="bi bi-hdd-stack me-2"></i>Sauvegardes des Applications</h5>
                             <small class="text-muted">Gestion centralisée des backups de toutes les applications</small>
                         </div>
-                        <button class="btn btn-outline-secondary btn-sm" onclick="loadAppBackupsOverview()">
+                        <button class="btn btn-outline-secondary btn-sm"data-action="loadAppBackupsOverview">
                             <i class="bi bi-arrow-clockwise me-1"></i>Actualiser
                         </button>
                     </div>
                     <div class="d-flex flex-wrap gap-2 mb-3" role="group" aria-label="Navigation sauvegardes">
-                        <button type="button" class="btn btn-primary btn-sm" id="backupWorkspaceAppsTab" onclick="switchBackupWorkspace('apps')">
+                        <button type="button" class="btn btn-primary btn-sm" id="backupWorkspaceAppsTab"data-action="switchBackupWorkspace" data-args="pps">
                             <i class="bi bi-hdd-stack me-1"></i>Applications
                         </button>
-                        <button type="button" class="btn btn-outline-primary btn-sm" id="backupWorkspaceSnapshotsTab" onclick="switchBackupWorkspace('snapshots')">
+                        <button type="button" class="btn btn-outline-primary btn-sm" id="backupWorkspaceSnapshotsTab"data-action="switchBackupWorkspace" data-args="napshots">
                             <i class="bi bi-camera me-1"></i>Snapshots
                         </button>
                     </div>
@@ -1143,10 +1143,10 @@
                                 <small id="snapshotCountLabel" class="text-muted">Chargement...</small>
                             </div>
                             <div class="d-flex gap-2">
-                                <button class="btn btn-outline-secondary btn-sm" onclick="loadSnapshots()" title="Actualiser">
+                                <button class="btn btn-outline-secondary btn-sm"data-action="loadSnapshots" title="Actualiser">
                                     <i class="bi bi-arrow-clockwise"></i>
                                 </button>
-                                <button class="btn btn-primary btn-sm" onclick="createSnapshot()">
+                                <button class="btn btn-primary btn-sm"data-action="createSnapshot">
                                     <i class="bi bi-plus-lg me-1"></i>Creer maintenant
                                 </button>
                             </div>
@@ -1167,7 +1167,7 @@
                             <i class="bi bi-camera display-1 text-muted"></i>
                             <h5 class="mt-3 text-muted">Aucun snapshot pour le moment</h5>
                             <p class="text-muted">Creez votre premier snapshot pour sauvegarder la configuration du Hub.</p>
-                            <button class="btn btn-primary" onclick="createSnapshot()">
+                            <button class="btn btn-primary"data-action="createSnapshot">
                                 <i class="bi bi-plus-lg me-1"></i>Creer maintenant
                             </button>
                         </div>
@@ -1215,7 +1215,7 @@
                                         <div><span id="snapshotS3Status" class="badge">-</span></div>
                                     </div>
                                     <div class="col-md-3 d-flex align-items-end">
-                                        <button class="btn btn-outline-primary btn-sm w-100" onclick="saveSnapshotConfig()">
+                                        <button class="btn btn-outline-primary btn-sm w-100"data-action="saveSnapshotConfig">
                                             <i class="bi bi-check-lg me-1"></i>Enregistrer
                                         </button>
                                     </div>
@@ -1240,15 +1240,15 @@
                 </div>
                 <div class="msg-sidebar-body">
                     <div class="msg-tab-cards" id="msgTabCards">
-                        <button class="msg-tab-card active" onclick="switchMessageTab('all')" id="msgTabAll">
+                        <button class="msg-tab-card active"data-action="switchMessageTab" data-args="all" id="msgTabAll">
                             <div class="msg-tab-card-label">Tous</div>
                             <div class="msg-tab-card-count" id="msgTabAllBadge">0</div>
                         </button>
-                        <button class="msg-tab-card" onclick="switchMessageTab('broadcast')" id="msgTabBroadcast">
+                        <button class="msg-tab-card"data-action="switchMessageTab" data-args="broadcast" id="msgTabBroadcast">
                             <div class="msg-tab-card-label">Globaux</div>
                             <div class="msg-tab-card-count" id="msgTabBroadcastBadge">0</div>
                         </button>
-                        <button class="msg-tab-card" onclick="switchMessageTab('user')" id="msgTabUser">
+                        <button class="msg-tab-card"data-action="switchMessageTab" data-args="user" id="msgTabUser">
                             <div class="msg-tab-card-label">Users</div>
                             <div class="msg-tab-card-count" id="msgTabUserBadge">0</div>
                         </button>
@@ -1257,30 +1257,30 @@
                     <div class="msg-sidebar-section">
                         <div class="msg-sidebar-section-title">Statut</div>
                         <div class="msg-chip-row" id="msgChipStatus">
-                            <button class="msg-chip active" data-filter="status" data-value="all" onclick="toggleMsgChip(this)">Tous</button>
-                            <button class="msg-chip" data-filter="status" data-value="active" onclick="toggleMsgChip(this)">Actif</button>
-                            <button class="msg-chip" data-filter="status" data-value="expired" onclick="toggleMsgChip(this)">Expire</button>
-                            <button class="msg-chip" data-filter="status" data-value="archived" onclick="toggleMsgChip(this)">Archive</button>
+                            <button class="msg-chip active" data-filter="status" data-value="all"data-action="toggleMsgChip" data-args="$el">Tous</button>
+                            <button class="msg-chip" data-filter="status" data-value="active"data-action="toggleMsgChip" data-args="$el">Actif</button>
+                            <button class="msg-chip" data-filter="status" data-value="expired"data-action="toggleMsgChip" data-args="$el">Expire</button>
+                            <button class="msg-chip" data-filter="status" data-value="archived"data-action="toggleMsgChip" data-args="$el">Archive</button>
                         </div>
                     </div>
 
                     <div class="msg-sidebar-section">
                         <div class="msg-sidebar-section-title">Priorite</div>
                         <div class="msg-chip-row" id="msgChipPriority">
-                            <button class="msg-chip active" data-filter="priority" data-value="" onclick="toggleMsgChip(this)">Toutes</button>
-                            <button class="msg-chip msg-chip-info" data-filter="priority" data-value="info" onclick="toggleMsgChip(this)">Info</button>
-                            <button class="msg-chip msg-chip-warning" data-filter="priority" data-value="warning" onclick="toggleMsgChip(this)">Warning</button>
-                            <button class="msg-chip msg-chip-urgent" data-filter="priority" data-value="urgent" onclick="toggleMsgChip(this)">Urgent</button>
+                            <button class="msg-chip active" data-filter="priority" data-value=""data-action="toggleMsgChip" data-args="$el">Toutes</button>
+                            <button class="msg-chip msg-chip-info" data-filter="priority" data-value="info"data-action="toggleMsgChip" data-args="$el">Info</button>
+                            <button class="msg-chip msg-chip-warning" data-filter="priority" data-value="warning"data-action="toggleMsgChip" data-args="$el">Warning</button>
+                            <button class="msg-chip msg-chip-urgent" data-filter="priority" data-value="urgent"data-action="toggleMsgChip" data-args="$el">Urgent</button>
                         </div>
                     </div>
 
                     <div class="msg-sidebar-section">
                         <div class="msg-sidebar-section-title">Source</div>
                         <div class="msg-chip-row" id="msgChipSender">
-                            <button class="msg-chip active" data-filter="sender" data-value="" onclick="toggleMsgChip(this)">Tous</button>
-                            <button class="msg-chip" data-filter="sender" data-value="admin" onclick="toggleMsgChip(this)">Admin</button>
-                            <button class="msg-chip" data-filter="sender" data-value="app" onclick="toggleMsgChip(this)">App</button>
-                            <button class="msg-chip" data-filter="sender" data-value="system" onclick="toggleMsgChip(this)">Systeme</button>
+                            <button class="msg-chip active" data-filter="sender" data-value=""data-action="toggleMsgChip" data-args="$el">Tous</button>
+                            <button class="msg-chip" data-filter="sender" data-value="admin"data-action="toggleMsgChip" data-args="$el">Admin</button>
+                            <button class="msg-chip" data-filter="sender" data-value="app"data-action="toggleMsgChip" data-args="$el">App</button>
+                            <button class="msg-chip" data-filter="sender" data-value="system"data-action="toggleMsgChip" data-args="$el">Systeme</button>
                         </div>
                     </div>
 
@@ -1291,16 +1291,16 @@
                 <div class="msg-list-header">
                     <div class="input-group input-group-sm" style="max-width: 320px;">
                         <span class="input-group-text"><i class="bi bi-search"></i></span>
-                        <input type="text" class="form-control" id="msgFilterSearch" placeholder="Rechercher..." oninput="debounceMsgSearch()">
+                        <input type="text" class="form-control" id="msgFilterSearch" placeholder="Rechercher..."data-action="debounceMsgSearch">
                     </div>
                     <div class="d-flex gap-2">
-                        <button class="btn btn-primary btn-sm" onclick="openComposePanel()">
+                        <button class="btn btn-primary btn-sm"data-action="openComposePanel">
                             <i class="bi bi-plus-lg me-1"></i>Nouveau
                         </button>
-                        <button class="btn btn-outline-secondary btn-sm" onclick="exportMessages()" title="Export CSV">
+                        <button class="btn btn-outline-secondary btn-sm"data-action="exportMessages" title="Export CSV">
                             <i class="bi bi-download"></i>
                         </button>
-                        <button class="btn btn-outline-secondary btn-sm" onclick="loadMessagesPage()" title="Rafraichir">
+                        <button class="btn btn-outline-secondary btn-sm"data-action="loadMessagesPage" title="Rafraichir">
                             <i class="bi bi-arrow-clockwise"></i>
                         </button>
                     </div>
@@ -1308,14 +1308,14 @@
 
                 <div class="msg-list-toolbar">
                     <div class="btn-group btn-group-sm">
-                        <button class="btn btn-outline-secondary active" id="msgViewCards" onclick="setMsgView('cards')">
+                        <button class="btn btn-outline-secondary active" id="msgViewCards"data-action="setMsgView" data-args="cards">
                             <i class="bi bi-grid-3x3-gap-fill me-1"></i>Cartes
                         </button>
-                        <button class="btn btn-outline-secondary" id="msgViewCompact" onclick="setMsgView('compact')">
+                        <button class="btn btn-outline-secondary" id="msgViewCompact"data-action="setMsgView" data-args="compact">
                             <i class="bi bi-list-ul me-1"></i>Compact
                         </button>
                     </div>
-                    <select class="form-select form-select-sm" id="msgSortBy" onchange="loadMessagesPage()" style="width: auto;">
+                    <select class="form-select form-select-sm" id="msgSortBy"data-action="loadMessagesPage" style="width: auto;">
                         <option value="created_at">Plus recent</option>
                         <option value="priority">Priorite</option>
                         <option value="read_count">Taux lecture</option>
@@ -1324,10 +1324,10 @@
                         <span class="text-muted small" id="msgSelectionCount" style="display:none">
                             <span id="msgSelectedNum">0</span> selectionnés
                         </span>
-                        <button class="btn btn-outline-secondary btn-sm" id="btnArchiveSelected" onclick="archiveSelectedMessages()" style="display:none">
+                        <button class="btn btn-outline-secondary btn-sm" id="btnArchiveSelected"data-action="archiveSelectedMessages" style="display:none">
                             <i class="bi bi-archive me-1"></i>Archiver
                         </button>
-                        <button class="btn btn-outline-danger btn-sm" id="btnDeleteSelected" onclick="hardDeleteSelectedMessages()" style="display:none">
+                        <button class="btn btn-outline-danger btn-sm" id="btnDeleteSelected"data-action="hardDeleteSelectedMessages" style="display:none">
                             <i class="bi bi-trash me-1"></i>Supprimer
                         </button>
                     </div>
@@ -1357,7 +1357,7 @@
                     <h6 class="mb-0" id="composeTitle">Nouveau message</h6>
                     <small class="text-muted" id="composeSubtitle">Envoi immediat</small>
                 </div>
-                <button class="btn-close" onclick="closeComposePanel()"></button>
+                <button class="btn-close"data-action="closeComposePanel"></button>
             </div>
             <div class="msg-compose-body" id="composeBody">
                 <div id="composeFormMode">
@@ -1380,7 +1380,7 @@
                         </div>
                         <div class="col-6">
                             <label class="form-label small mb-1">Cible</label>
-                            <select class="form-select form-select-sm" id="composeMsgTargetType" onchange="toggleComposeTargetUsers()">
+                            <select class="form-select form-select-sm" id="composeMsgTargetType"data-action="toggleComposeTargetUsers">
                                 <option value="broadcast">Tous les utilisateurs</option>
                                 <option value="user">Utilisateurs specifiques</option>
                             </select>
@@ -1397,7 +1397,7 @@
                         </div>
                         <div class="col-4">
                             <label class="form-label small mb-1">Preset</label>
-                            <select class="form-select form-select-sm" id="composeExpiresPreset" onchange="setComposeExpiresPreset()">
+                            <select class="form-select form-select-sm" id="composeExpiresPreset"data-action="setComposeExpiresPreset">
                                 <option value="">Personnalise</option>
                                 <option value="24">24h</option>
                                 <option value="168">7 jours</option>
@@ -1435,12 +1435,12 @@
                 </div>
             </div>
             <div class="msg-compose-footer">
-                <button class="btn btn-sm btn-outline-secondary" onclick="toggleComposePreview()" id="composePreviewBtn">
+                <button class="btn btn-sm btn-outline-secondary"data-action="toggleComposePreview" id="composePreviewBtn">
                     <i class="bi bi-eye me-1"></i>Preview
                 </button>
                 <div class="flex-grow-1"></div>
-                <button class="btn btn-sm btn-secondary me-1" onclick="closeComposePanel()">Annuler</button>
-                <button class="btn btn-sm btn-primary" onclick="confirmSendMessage()" id="composeSendBtn">
+                <button class="btn btn-sm btn-secondary me-1"data-action="closeComposePanel">Annuler</button>
+                <button class="btn btn-sm btn-primary"data-action="confirmSendMessage" id="composeSendBtn">
                     <i class="bi bi-send me-1"></i>Envoyer
                 </button>
             </div>
@@ -1458,11 +1458,11 @@
                     <h6 class="mb-0"><i class="bi bi-bell-fill text-primary me-2"></i>Mes Notifications</h6>
                 </div>
                 <div class="inbox-sidebar-body">
-                    <button class="inbox-tab inbox-tab-active" id="inboxTabInbox" onclick="selectInboxTab('inbox')">
+                    <button class="inbox-tab inbox-tab-active" id="inboxTabInbox"data-action="selectInboxTab" data-args="inbox">
                         <i class="bi bi-inbox me-2"></i>Boîte de réception
                         <span class="badge bg-primary ms-auto" id="inboxUnreadBadge" style="display: none;">0</span>
                     </button>
-                    <button class="inbox-tab" id="inboxTabHistory" onclick="selectInboxTab('history')">
+                    <button class="inbox-tab" id="inboxTabHistory"data-action="selectInboxTab" data-args="history">
                         <i class="bi bi-clock-history me-2"></i>Historique
                     </button>
                     <div class="inbox-sidebar-section">Par application</div>
@@ -1471,7 +1471,7 @@
                     </div>
                 </div>
                 <div class="inbox-sidebar-footer">
-                    <button class="btn btn-sm btn-link text-decoration-none" onclick="markAllUserMessagesRead()">
+                    <button class="btn btn-sm btn-link text-decoration-none"data-action="markAllUserMessagesRead">
                         <i class="bi bi-check2-all me-1"></i>Tout marquer comme lu
                     </button>
                 </div>
@@ -1481,7 +1481,7 @@
             <section class="inbox-list">
                 <div class="inbox-list-header">
                     <strong id="inboxListTitle">Boîte de réception</strong>
-                    <button class="btn btn-sm btn-link text-decoration-none p-0" onclick="loadInboxPage()" title="Rafraîchir">
+                    <button class="btn btn-sm btn-link text-decoration-none p-0"data-action="loadInboxPage" title="Rafraîchir">
                         <i class="bi bi-arrow-clockwise"></i>
                     </button>
                 </div>
@@ -1519,7 +1519,7 @@
                 </div>
                 <div class="modal-footer">
                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuler</button>
-                    <button type="button" class="btn btn-danger" onclick="confirmRejectApp()">
+                    <button type="button" class="btn btn-danger"data-action="confirmRejectApp">
                         <i class="bi bi-x-circle me-1"></i>Rejeter
                     </button>
                 </div>
@@ -1537,7 +1537,7 @@
                     <h5 class="modal-title"><i class="bi bi-bell me-2"></i>Notifications des demandes</h5>
                     <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
                 </div>
-                <form id="accountRequestNotificationAdminsForm" onsubmit="handleSaveAccountRequestNotificationAdmins(event)">
+                <form id="accountRequestNotificationAdminsForm"data-action="handleSaveAccountRequestNotificationAdmins" data-args="event">
                     <div class="modal-body">
                         <div id="accountRequestNotificationAdminsError" class="alert alert-danger d-none" role="alert"></div>
                         <div id="accountRequestNotificationAdminsList" class="border rounded p-2" style="max-height: 320px; overflow-y: auto;">
@@ -1563,7 +1563,7 @@
                     <h5 class="modal-title"><i class="bi bi-sliders me-2"></i>Formulaire de demande</h5>
                     <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
                 </div>
-                <form id="accountRequestFormConfigForm" onsubmit="handleSaveAccountRequestFormConfig(event)">
+                <form id="accountRequestFormConfigForm"data-action="handleSaveAccountRequestFormConfig" data-args="event">
                     <div class="modal-body">
                         <div id="accountRequestFormConfigError" class="alert alert-danger d-none" role="alert"></div>
                         <div class="mb-3">
@@ -1605,7 +1605,7 @@
                     <h5 class="modal-title"><i class="bi bi-check-circle me-2"></i>Approuver la demande</h5>
                     <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
                 </div>
-                <form id="approveRequestForm" onsubmit="handleApproveRequest(event)">
+                <form id="approveRequestForm"data-action="handleApproveRequest" data-args="event">
                     <div class="modal-body">
                         <input type="hidden" id="approveRequestId">
                         <p>Vous allez créer un compte pour :</p>
@@ -1665,7 +1665,7 @@
                     <h5 class="modal-title"><i class="bi bi-x-circle me-2"></i>Refuser la demande</h5>
                     <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
                 </div>
-                <form id="rejectRequestForm" onsubmit="handleRejectRequest(event)">
+                <form id="rejectRequestForm"data-action="handleRejectRequest" data-args="event">
                     <div class="modal-body">
                         <input type="hidden" id="rejectRequestId">
                         <p>Vous allez refuser la demande de <strong id="rejectRequestName"></strong>.</p>
@@ -1692,7 +1692,7 @@
                     <h5 class="modal-title" id="appFormTitle">Nouvelle Application</h5>
                     <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
                 </div>
-                <form id="appForm" onsubmit="handleSaveApp(event)">
+                <form id="appForm"data-action="handleSaveApp" data-args="event">
                     <div class="modal-body pt-3">
                         <input type="hidden" id="appId">
                         <input type="hidden" id="appMode" value="create">
@@ -1700,7 +1700,7 @@
                         <!-- ── Identité ── -->
                         <div class="row g-3 align-items-end mb-3">
                             <div class="col-auto">
-                                <div class="app-form-preview" id="appFormPreview" onclick="toggleIconPicker()" title="Choisir l'icône" style="cursor:pointer">
+                                <div class="app-form-preview" id="appFormPreview"data-action="toggleIconPicker" title="Choisir l'icône" style="cursor:pointer">
                                     <i id="iconPreview" class="bi bi-app"></i>
                                 </div>
                                 <input type="hidden" id="appIcon" value="bi-app">
@@ -1720,7 +1720,7 @@
                         <!-- Icon Picker -->
                         <div id="iconPickerContainer" class="icon-picker-container d-none mb-3">
                             <div class="icon-picker-header">
-                                <input type="text" class="form-control form-control-sm" id="iconSearchInput" placeholder="Rechercher une icône..." oninput="filterIcons()">
+                                <input type="text" class="form-control form-control-sm" id="iconSearchInput" placeholder="Rechercher une icône..."data-action="filterIcons">
                             </div>
                             <div id="iconPickerGrid" class="icon-picker-grid">
                             </div>
@@ -1740,7 +1740,7 @@
                                 <!-- Mode ports (création) -->
                                 <div id="simplePortsSection">
                                     <div class="form-check form-check-inline mb-3">
-                                        <input class="form-check-input" type="checkbox" id="appCustomHost" onchange="toggleCustomHost()">
+                                        <input class="form-check-input" type="checkbox" id="appCustomHost"data-action="toggleCustomHost">
                                         <label class="form-check-label small" for="appCustomHost">Serveur différent du Hub</label>
                                     </div>
                                     <div class="mb-3 d-none" id="customHostGroup">
@@ -1753,13 +1753,13 @@
                                         <div class="col-md-6">
                                             <div class="input-group">
                                                 <span class="input-group-text"><i class="bi bi-hdd-rack me-1"></i> API *</span>
-                                                <input type="number" class="form-control" id="appApiPort" min="1" max="65535" required placeholder="8080" oninput="updateUrlPreview()">
+                                                <input type="number" class="form-control" id="appApiPort" min="1" max="65535" required placeholder="8080"data-action="updateUrlPreview">
                                             </div>
                                         </div>
                                         <div class="col-md-6">
                                             <div class="input-group">
                                                 <span class="input-group-text"><i class="bi bi-window me-1"></i> Front</span>
-                                                <input type="number" class="form-control" id="appFrontendPort" min="1" max="65535" placeholder="3000" oninput="updateUrlPreview()">
+                                                <input type="number" class="form-control" id="appFrontendPort" min="1" max="65535" placeholder="3000"data-action="updateUrlPreview">
                                             </div>
                                             <input type="hidden" id="appFrontendHttps" value="false">
                                         </div>
@@ -1839,7 +1839,7 @@
                     <h5 class="modal-title" id="userFormTitle">Nouvel Utilisateur</h5>
                     <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
                 </div>
-                <form id="userForm" onsubmit="handleSaveUser(event)">
+                <form id="userForm"data-action="handleSaveUser" data-args="event">
                     <div class="modal-body">
                         <input type="hidden" id="userId">
                         <div class="row g-3">
@@ -1925,7 +1925,7 @@
                     <h5 class="modal-title" id="profileFormTitle">Nouveau Profil</h5>
                     <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
                 </div>
-                <form id="profileForm" onsubmit="handleSaveProfile(event)">
+                <form id="profileForm"data-action="handleSaveProfile" data-args="event">
                     <div class="modal-body">
                         <input type="hidden" id="profileId">
                         <div class="row g-3">
@@ -1952,14 +1952,14 @@
                                 <div class="mb-2">
                                     <div class="input-group input-group-sm">
                                         <span class="input-group-text"><i class="bi bi-search"></i></span>
-                                        <input type="text" class="form-control" id="profileAppsSearchInput" placeholder="Filtrer les applications..." oninput="filterProfileApps()">
+                                        <input type="text" class="form-control" id="profileAppsSearchInput" placeholder="Filtrer les applications..."data-action="filterProfileApps">
                                     </div>
                                 </div>
                                 <div class="mb-2 d-flex gap-2">
-                                    <button type="button" class="btn btn-outline-secondary btn-sm" onclick="profileSelectAllApps(true)">
+                                    <button type="button" class="btn btn-outline-secondary btn-sm"data-action="profileSelectAllApps" data-args="true">
                                         <i class="bi bi-check-all me-1"></i>Tout cocher
                                     </button>
-                                    <button type="button" class="btn btn-outline-secondary btn-sm" onclick="profileSelectAllApps(false)">
+                                    <button type="button" class="btn btn-outline-secondary btn-sm"data-action="profileSelectAllApps" data-args="false">
                                         <i class="bi bi-x-lg me-1"></i>Tout décocher
                                     </button>
                                 </div>
@@ -1994,7 +1994,7 @@
                     <div class="mb-3">
                         <div class="input-group input-group-sm">
                             <span class="input-group-text"><i class="bi bi-search"></i></span>
-                            <input type="text" class="form-control" id="applyProfileSearchInput" placeholder="Filtrer les utilisateurs..." oninput="filterApplyProfileUsers()">
+                            <input type="text" class="form-control" id="applyProfileSearchInput" placeholder="Filtrer les utilisateurs..."data-action="filterApplyProfileUsers">
                         </div>
                     </div>
                     <div class="form-check mb-2">
@@ -2009,7 +2009,7 @@
                 </div>
                 <div class="modal-footer">
                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuler</button>
-                    <button type="button" class="btn btn-primary" onclick="handleApplyProfile()">
+                    <button type="button" class="btn btn-primary"data-action="handleApplyProfile">
                         <i class="bi bi-check-lg me-1"></i>Appliquer
                     </button>
                 </div>
@@ -2025,7 +2025,7 @@
                     <h5 class="modal-title" id="saFormTitle">Nouveau Service Account</h5>
                     <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
                 </div>
-                <form id="serviceAccountForm" onsubmit="handleSaveServiceAccount(event)">
+                <form id="serviceAccountForm"data-action="handleSaveServiceAccount" data-args="event">
                     <div class="modal-body">
                         <input type="hidden" id="saId">
                         <div class="row g-3">
@@ -2079,7 +2079,7 @@
                         <label class="form-label">Client ID</label>
                         <div class="input-group">
                             <input type="text" class="form-control font-monospace" id="saClientId" readonly>
-                            <button class="btn btn-outline-secondary" type="button" onclick="copyToClipboard('saClientId')">
+                            <button class="btn btn-outline-secondary" type="button"data-action="copyToClipboard" data-args="saClientId">
                                 <i class="bi bi-clipboard"></i>
                             </button>
                         </div>
@@ -2088,7 +2088,7 @@
                         <label class="form-label">Client Secret</label>
                         <div class="input-group">
                             <input type="text" class="form-control font-monospace" id="saClientSecret" readonly>
-                            <button class="btn btn-outline-secondary" type="button" onclick="copyToClipboard('saClientSecret')">
+                            <button class="btn btn-outline-secondary" type="button"data-action="copyToClipboard" data-args="saClientSecret">
                                 <i class="bi bi-clipboard"></i>
                             </button>
                         </div>
@@ -2192,7 +2192,7 @@
                     </div>
                 </div>
                 <div class="modal-footer">
-                    <button type="button" class="btn btn-outline-secondary" onclick="refreshPortsPool()">
+                    <button type="button" class="btn btn-outline-secondary"data-action="refreshPortsPool">
                         <i class="bi bi-arrow-clockwise me-1"></i>Rafraîchir
                     </button>
                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Fermer</button>
@@ -2236,7 +2236,7 @@
                     <div id="dockerContainers" class="d-none">
                         <div class="d-flex justify-content-between align-items-center mb-3">
                             <div class="form-check">
-                                <input class="form-check-input" type="checkbox" id="dockerSelectAll" onchange="toggleDockerSelectAll()">
+                                <input class="form-check-input" type="checkbox" id="dockerSelectAll"data-action="toggleDockerSelectAll">
                                 <label class="form-check-label fw-bold" for="dockerSelectAll">
                                     Tout sélectionner
                                 </label>
@@ -2268,7 +2268,7 @@
                             <strong class="small text-muted me-2">Sélection :</strong>
                             <span id="dockerSelectionSummary"><span class="text-muted">Aucune sélection</span></span>
                         </div>
-                        <button type="button" class="btn btn-success" id="dockerBatchImportBtn" onclick="batchImportDockerSelection()" disabled>
+                        <button type="button" class="btn btn-success" id="dockerBatchImportBtn"data-action="batchImportDockerSelection" disabled>
                             <i class="bi bi-lightning-charge me-1"></i>Importer la sélection
                         </button>
                     </div>
@@ -2276,20 +2276,20 @@
                     <div class="d-flex justify-content-between align-items-center w-100">
                         <div>
                             <div class="form-check form-check-inline">
-                                <input class="form-check-input" type="checkbox" id="dockerIncludeStopped" onchange="refreshDockerScan()">
+                                <input class="form-check-input" type="checkbox" id="dockerIncludeStopped"data-action="refreshDockerScan">
                                 <label class="form-check-label small" for="dockerIncludeStopped">
                                     Conteneurs arrêtés
                                 </label>
                             </div>
                             <div class="form-check form-check-inline">
-                                <input class="form-check-input" type="checkbox" id="dockerShowAll" onchange="refreshDockerScan()">
+                                <input class="form-check-input" type="checkbox" id="dockerShowAll"data-action="refreshDockerScan">
                                 <label class="form-check-label small" for="dockerShowAll">
                                     Afficher tout
                                 </label>
                             </div>
                         </div>
                         <div>
-                            <button type="button" class="btn btn-outline-secondary btn-sm" onclick="refreshDockerScan()">
+                            <button type="button" class="btn btn-outline-secondary btn-sm"data-action="refreshDockerScan">
                                 <i class="bi bi-arrow-clockwise me-1"></i>Actualiser
                             </button>
                             <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Fermer</button>
@@ -2314,7 +2314,7 @@
                     <button type="button" class="btn-close cpw-close" data-bs-dismiss="modal" aria-label="Fermer"></button>
                 </div>
 
-                <form id="changePasswordForm" onsubmit="handleChangePassword(event)">
+                <form id="changePasswordForm"data-action="handleChangePassword" data-args="event">
                     <div class="modal-body cpw-body">
                         <div id="changePasswordMandatory" class="alert alert-warning" style="display: none;">
                             <i class="bi bi-exclamation-triangle me-2"></i>
@@ -2325,18 +2325,18 @@
                         <div class="cpw-field">
                             <label for="currentPassword">Mot de passe actuel</label>
                             <div class="cpw-inp">
-                                <input type="password" id="currentPassword" required oninput="validateChangePasswordForm()">
+                                <input type="password" id="currentPassword" requireddata-action="validateChangePasswordForm">
                                 <button type="button" class="cpw-eye" tabindex="-1"
-                                        onclick="togglePasswordVisibility('currentPassword', this)"><i class="bi bi-eye"></i></button>
+                                       data-action="togglePasswordVisibility" data-args="currentPassword|$el"><i class="bi bi-eye"></i></button>
                             </div>
                         </div>
 
                         <div class="cpw-field">
                             <label for="newPassword">Nouveau mot de passe</label>
                             <div class="cpw-inp">
-                                <input type="password" id="newPassword" required minlength="8" oninput="validateChangePasswordForm()">
+                                <input type="password" id="newPassword" required minlength="8"data-action="validateChangePasswordForm">
                                 <button type="button" class="cpw-eye" tabindex="-1"
-                                        onclick="togglePasswordVisibility('newPassword', this)"><i class="bi bi-eye"></i></button>
+                                       data-action="togglePasswordVisibility" data-args="newPassword|$el"><i class="bi bi-eye"></i></button>
                             </div>
                             <div id="pwdStrengthWrap" class="cpw-strength d-none">
                                 <div class="cpw-segs">
@@ -2355,9 +2355,9 @@
                         <div class="cpw-field">
                             <label for="confirmNewPassword">Confirmer le nouveau mot de passe</label>
                             <div class="cpw-inp">
-                                <input type="password" id="confirmNewPassword" required minlength="8" oninput="validateChangePasswordForm()">
+                                <input type="password" id="confirmNewPassword" required minlength="8"data-action="validateChangePasswordForm">
                                 <button type="button" class="cpw-eye" tabindex="-1"
-                                        onclick="togglePasswordVisibility('confirmNewPassword', this)"><i class="bi bi-eye"></i></button>
+                                       data-action="togglePasswordVisibility" data-args="confirmNewPassword|$el"><i class="bi bi-eye"></i></button>
                             </div>
                         </div>
                     </div>
@@ -2382,14 +2382,14 @@
                     <h5 class="modal-title"><i class="bi bi-gear me-2"></i>Configuration sauvegarde</h5>
                     <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
                 </div>
-                <form id="appBackupConfigForm" onsubmit="saveAppBackupConfig(event)">
+                <form id="appBackupConfigForm"data-action="saveAppBackupConfig" data-args="event">
                     <div class="modal-body">
                         <input type="hidden" id="backupConfigAppSlug">
                         <h6 class="mb-3"><i class="bi bi-app me-1"></i><span id="backupConfigAppName">Application</span></h6>
                         
                         <div class="mb-3">
                             <label class="form-label">Mode de sauvegarde</label>
-                            <select class="form-select" id="backupConfigMode" onchange="toggleCronInput()">
+                            <select class="form-select" id="backupConfigMode"data-action="toggleCronInput">
                                 <option value="disabled">Désactivé - Pas de sauvegarde</option>
                                 <option value="manual">Manuel - Sauvegarde à la demande via le HUB</option>
                                 <option value="scheduled">Planifié - Sauvegarde automatique</option>
@@ -2400,7 +2400,7 @@
                             <label class="form-label">Planification</label>
                             <div class="row g-2">
                                 <div class="col-md-5">
-                                    <select class="form-select" id="backupCronPreset" onchange="updateCronBuilderVisibility(); updateCronFromBuilder();">
+                                    <select class="form-select" id="backupCronPreset" data-action="onChange" data-args="updateCronBuilderVisibility(); updateCronFromBuilder();">
                                         <option value="daily">Tous les jours</option>
                                         <option value="weekly">Chaque semaine</option>
                                         <option value="monthly">Chaque mois</option>
@@ -2408,10 +2408,10 @@
                                     </select>
                                 </div>
                                 <div class="col-md-3">
-                                    <input type="time" class="form-control" id="backupCronTime" value="02:00" onchange="updateCronFromBuilder()">
+                                    <input type="time" class="form-control" id="backupCronTime" value="02:00"data-action="updateCronFromBuilder">
                                 </div>
                                 <div class="col-md-4" id="backupCronWeekdayGroup">
-                                    <select class="form-select" id="backupCronWeekday" onchange="updateCronFromBuilder()">
+                                    <select class="form-select" id="backupCronWeekday"data-action="updateCronFromBuilder">
                                         <option value="1">Lundi</option>
                                         <option value="2">Mardi</option>
                                         <option value="3">Mercredi</option>
@@ -2422,11 +2422,11 @@
                                     </select>
                                 </div>
                                 <div class="col-md-4 d-none" id="backupCronMonthdayGroup">
-                                    <input type="number" class="form-control" id="backupCronMonthday" min="1" max="28" value="1" onchange="updateCronFromBuilder()">
+                                    <input type="number" class="form-control" id="backupCronMonthday" min="1" max="28" value="1"data-action="updateCronFromBuilder">
                                 </div>
                             </div>
                             <div class="mt-2 d-none" id="backupCronAdvancedGroup">
-                                <input type="text" class="form-control" id="backupConfigCron" placeholder="0 2 * * *" oninput="updateCronPreview()">
+                                <input type="text" class="form-control" id="backupConfigCron" placeholder="0 2 * * *"data-action="updateCronPreview">
                             </div>
                             <div class="form-text">
                                 Expression générée : <code id="backupCronPreview">0 2 * * *</code>
@@ -2472,13 +2472,13 @@
                     <h5 class="modal-title"><i class="bi bi-diagram-3 me-2"></i><span id="backupClusterModalTitle">Cluster de sauvegarde</span></h5>
                     <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
                 </div>
-                <form id="backupClusterForm" onsubmit="saveBackupCluster(event)">
+                <form id="backupClusterForm"data-action="saveBackupCluster" data-args="event">
                     <div class="modal-body">
                         <input type="hidden" id="backupClusterId">
                         <div class="row g-3">
                             <div class="col-md-5">
                                 <label class="form-label">Nom</label>
-                                <input type="text" class="form-control" id="backupClusterName" required maxlength="100" oninput="suggestBackupClusterSlug()">
+                                <input type="text" class="form-control" id="backupClusterName" required maxlength="100"data-action="suggestBackupClusterSlug">
                             </div>
                             <div class="col-md-4">
                                 <label class="form-label">Slug</label>
@@ -2596,12 +2596,12 @@
                 <div class="modal-footer">
                     <div class="d-flex w-100 justify-content-between">
                         <div>
-                            <button type="button" class="btn btn-outline-primary" onclick="showImportRestoreModal()">
+                            <button type="button" class="btn btn-outline-primary"data-action="showImportRestoreModal">
                                 <i class="bi bi-upload me-1"></i>Importer & Restaurer
                             </button>
                         </div>
                         <div>
-                            <button type="button" class="btn btn-success" id="triggerBackupBtn" onclick="triggerAppBackup()" style="display: none;">
+                            <button type="button" class="btn btn-success" id="triggerBackupBtn"data-action="triggerAppBackup" style="display: none;">
                                 <i class="bi bi-play-circle me-1"></i>Déclencher une sauvegarde
                             </button>
                             <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Fermer</button>
@@ -2630,7 +2630,7 @@
                 </div>
                 <div class="modal-footer">
                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuler</button>
-                    <button type="button" class="btn btn-success" onclick="confirmTriggerBackup()">
+                    <button type="button" class="btn btn-success"data-action="confirmTriggerBackup">
                         <i class="bi bi-play-circle me-1"></i>Confirmer
                     </button>
                 </div>
@@ -2670,12 +2670,12 @@
                         <label for="confirmDeleteInput" class="form-label text-danger">
                             <i class="bi bi-shield-exclamation me-1"></i>Pour confirmer, tapez <code>SUPPRIMER</code> ci-dessous :
                         </label>
-                        <input type="text" class="form-control" id="confirmDeleteInput" placeholder="SUPPRIMER" oninput="checkDeleteConfirmation()">
+                        <input type="text" class="form-control" id="confirmDeleteInput" placeholder="SUPPRIMER"data-action="checkDeleteConfirmation">
                     </div>
                 </div>
                 <div class="modal-footer">
                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuler</button>
-                    <button type="button" class="btn btn-danger" id="confirmDeleteBackupBtn" onclick="confirmDeleteBackup()" disabled>
+                    <button type="button" class="btn btn-danger" id="confirmDeleteBackupBtn"data-action="confirmDeleteBackup" disabled>
                         <i class="bi bi-trash me-1"></i>Supprimer définitivement
                     </button>
                 </div>
@@ -2735,7 +2735,7 @@
                             <strong>Restauration complète Vaultwarden :</strong> cette opération peut remplacer le volume Vaultwarden et restaurer un bundle de secrets chiffré.
                         </div>
                         <div class="form-check mb-2">
-                            <input class="form-check-input" type="checkbox" id="restoreVaultwarden" onchange="updateRestoreVaultwardenConfirmation()">
+                            <input class="form-check-input" type="checkbox" id="restoreVaultwarden"data-action="updateRestoreVaultwardenConfirmation">
                             <label class="form-check-label" for="restoreVaultwarden">Restaurer le snapshot Vaultwarden complet</label>
                         </div>
                         <div class="form-check mb-2">
@@ -2747,7 +2747,7 @@
                             <label class="form-check-label" for="requireVaultwardenOffline">Exiger Vaultwarden hors ligne côté application cible</label>
                         </div>
                         <div id="restoreFullConfirmGroup" class="form-check mt-3 d-none">
-                            <input class="form-check-input" type="checkbox" id="confirmFullRestore" onchange="updateRestoreVaultwardenConfirmation()">
+                            <input class="form-check-input" type="checkbox" id="confirmFullRestore"data-action="updateRestoreVaultwardenConfirmation">
                             <label class="form-check-label fw-semibold text-danger" for="confirmFullRestore">
                                 Je confirme vouloir lancer une restauration complète Vaultwarden
                             </label>
@@ -2756,7 +2756,7 @@
                 </div>
                 <div class="modal-footer">
                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuler</button>
-                    <button type="button" class="btn btn-warning" id="executeRestoreBtn" onclick="executeRestore()">
+                    <button type="button" class="btn btn-warning" id="executeRestoreBtn"data-action="executeRestore">
                         <i class="bi bi-arrow-counterclockwise me-1"></i>Restaurer
                     </button>
                 </div>
@@ -2777,7 +2777,7 @@
                     
                     <div class="mb-3">
                         <label for="importRestoreFile" class="form-label">Fichier de backup (.zip ou .encrypted)</label>
-                        <input class="form-control" type="file" id="importRestoreFile" accept=".zip,.encrypted" onchange="previewImportRestoreFile()">
+                        <input class="form-control" type="file" id="importRestoreFile" accept=".zip,.encrypted"data-action="previewImportRestoreFile">
                     </div>
                     
                     <!-- Aperçu du fichier -->
@@ -2826,7 +2826,7 @@
                         Options à utiliser uniquement pour un ZIP Vaultwarden complet.
                     </div>
                     <div class="form-check mb-2">
-                        <input class="form-check-input" type="checkbox" id="importRestoreVaultwarden" onchange="updateImportVaultwardenConfirmation()">
+                        <input class="form-check-input" type="checkbox" id="importRestoreVaultwarden"data-action="updateImportVaultwardenConfirmation">
                         <label class="form-check-label" for="importRestoreVaultwarden">Restaurer le snapshot Vaultwarden complet</label>
                     </div>
                     <div class="form-check mb-2">
@@ -2838,7 +2838,7 @@
                         <label class="form-check-label" for="importRequireVaultwardenOffline">Exiger Vaultwarden hors ligne côté application cible</label>
                     </div>
                     <div id="importFullConfirmGroup" class="form-check mt-3 d-none">
-                        <input class="form-check-input" type="checkbox" id="importConfirmFullRestore" onchange="updateImportVaultwardenConfirmation()">
+                        <input class="form-check-input" type="checkbox" id="importConfirmFullRestore"data-action="updateImportVaultwardenConfirmation">
                         <label class="form-check-label fw-semibold text-danger" for="importConfirmFullRestore">
                             Je confirme vouloir lancer une restauration complète Vaultwarden
                         </label>
@@ -2846,7 +2846,7 @@
                 </div>
                 <div class="modal-footer">
                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuler</button>
-                    <button type="button" class="btn btn-primary" id="executeImportRestoreBtn" onclick="executeImportRestore()" disabled>
+                    <button type="button" class="btn btn-primary" id="executeImportRestoreBtn"data-action="executeImportRestore" disabled>
                         <i class="bi bi-upload me-1"></i>Importer et restaurer
                     </button>
                 </div>
@@ -2937,7 +2937,7 @@
                         <div id="bulkCreateUsersList">
                             <!-- Les lignes de création sont ajoutées dynamiquement -->
                         </div>
-                        <button type="button" class="btn btn-outline-secondary btn-sm mt-2" onclick="addBulkCreateUserRow()">
+                        <button type="button" class="btn btn-outline-secondary btn-sm mt-2"data-action="addBulkCreateUserRow">
                             <i class="bi bi-plus me-1"></i>Ajouter un utilisateur
                         </button>
                         
@@ -2948,7 +2948,7 @@
                         <div class="row g-3 align-items-end">
                             <div class="col-md-6">
                                 <label for="bulkCreateProfileSelect" class="form-label">Assigner un profil</label>
-                                <select class="form-select" id="bulkCreateProfileSelect" onchange="onBulkProfileChange()">
+                                <select class="form-select" id="bulkCreateProfileSelect"data-action="onBulkProfileChange">
                                     <option value="">-- Aucun profil --</option>
                                 </select>
                             </div>
@@ -2997,15 +2997,15 @@
                                 Le profil doit correspondre exactement à un profil existant (sinon il sera ignoré).
                             </div>
                             <div class="d-flex gap-2 mb-3">
-                                <button type="button" class="btn btn-outline-primary btn-sm" onclick="downloadCsvTemplate()">
+                                <button type="button" class="btn btn-outline-primary btn-sm"data-action="downloadCsvTemplate">
                                     <i class="bi bi-download me-1"></i>Télécharger le template CSV
                                 </button>
                             </div>
                             <div class="mb-3">
                                 <label for="csvFileInput" class="form-label">Fichier CSV</label>
-                                <input type="file" class="form-control" id="csvFileInput" accept=".csv" onchange="onCsvFileSelected(this)">
+                                <input type="file" class="form-control" id="csvFileInput" accept=".csv"data-action="onCsvFileSelected" data-args="$el">
                             </div>
-                            <button type="button" class="btn btn-primary btn-sm" id="csvAnalyzeBtn" disabled onclick="analyzeCsvFile()">
+                            <button type="button" class="btn btn-primary btn-sm" id="csvAnalyzeBtn" disableddata-action="analyzeCsvFile">
                                 <i class="bi bi-search me-1"></i>Analyser
                             </button>
                         </div>
@@ -3014,7 +3014,7 @@
                         <div id="csvStep2" class="d-none">
                             <div class="d-flex justify-content-between align-items-center mb-3">
                                 <h6 class="mb-0"><i class="bi bi-eye me-2"></i>Aperçu de l'import</h6>
-                                <button type="button" class="btn btn-outline-secondary btn-sm" onclick="resetCsvImport()">
+                                <button type="button" class="btn btn-outline-secondary btn-sm"data-action="resetCsvImport">
                                     <i class="bi bi-arrow-left me-1"></i>Retour
                                 </button>
                             </div>
@@ -3035,7 +3035,7 @@
                             </div>
                             <div id="csvConfirmSection" class="mt-3 pt-3 border-top">
                                 <div id="csvConfirmMessage" class="alert alert-warning small"></div>
-                                <button type="button" class="btn btn-success" id="csvConfirmBtn" onclick="confirmCsvImport()">
+                                <button type="button" class="btn btn-success" id="csvConfirmBtn"data-action="confirmCsvImport">
                                     <i class="bi bi-check-lg me-1"></i>Confirmer la création
                                 </button>
                             </div>
@@ -3050,7 +3050,7 @@
                 </div>
                 <div class="modal-footer">
                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Fermer</button>
-                    <button type="button" class="btn btn-primary" onclick="executeBulkOperation()">
+                    <button type="button" class="btn btn-primary"data-action="executeBulkOperation">
                         <i class="bi bi-check-lg me-1"></i>Exécuter
                     </button>
                 </div>

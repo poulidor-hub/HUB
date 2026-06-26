@@ -147,6 +147,34 @@ def ensure_keys_exist(auto_generate: bool = False) -> tuple[str, str]:
     logger.info(f"✅ Clé privée générée : {local_private}")
     logger.info(f"✅ Clé publique générée : {local_public}")
     logger.warning("⚠️  En production, utilisez des clés pré-générées et désactivez AUTO_GENERATE_KEYS !")
+
+    return private_key, public_key
+
+
+def ensure_backup_keys_exist() -> tuple[str, str]:
+    if Path("/code").exists():
+        local_secrets_dir = Path("/code/secrets")
+    else:
+        local_secrets_dir = Path(__file__).parent.parent.parent / "secrets"
+
+    backup_private = local_secrets_dir / "backup_private_key.pem"
+    backup_public = local_secrets_dir / "backup_public_key.pem"
+
+    if backup_private.exists() and backup_public.exists():
+        private_key = backup_private.read_text().strip()
+        public_key = backup_public.read_text().strip()
+        _validate_pem_keys(private_key, public_key)
+        logger.info("🔐 Clés de chiffrement backup chargées")
+        return private_key, public_key
+
+    logger.info("🔐 Génération automatique des clés de chiffrement backup...")
+    private_key, public_key = generate_rsa_keys()
+    local_secrets_dir.mkdir(parents=True, exist_ok=True)
+    backup_private.write_text(private_key)
+    backup_public.write_text(public_key)
+    logger.info(f"✅ Clé backup privée générée : {backup_private}")
+    logger.info(f"✅ Clé backup publique générée : {backup_public}")
+    return private_key, public_key
     
     return private_key, public_key
 

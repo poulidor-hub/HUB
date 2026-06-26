@@ -3,6 +3,8 @@ secrets/jwt_private_key.pem
 secrets/*.key
 secrets/sa_*.env
 secrets/service_accounts/*.env
+secrets/backup_private_key.pem
+secrets/backup_public_key.pem
 .env.prod
 *.pem
 # Exports/backups sensibles (hashes, topologie) - toutes profondeurs

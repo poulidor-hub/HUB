@@ -270,7 +270,7 @@ async def lifespan(app: FastAPI):
     await create_default_admin()
     
     # Vérifier la configuration des secrets
-    from app.config import get_settings
+    from app.config import get_settings, ensure_backup_keys_exist
     _settings = get_settings()
     if not _settings.secrets_encryption_key:
         logger.warning(
@@ -292,6 +292,9 @@ async def lifespan(app: FastAPI):
                 "SECRETS_ENCRYPTION_KEY invalide. "
                 "Générez une clé valide avec Fernet.generate_key()."
             )
+
+    # Générer les clés de chiffrement backup (indépendantes des clés JWT)
+    ensure_backup_keys_exist()
     
     # Démarrer la tâche de nettoyage périodique
     _cleanup_task = asyncio.create_task(periodic_token_cleanup())
