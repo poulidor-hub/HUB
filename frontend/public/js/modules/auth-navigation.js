@@ -386,11 +386,31 @@ function showChangePasswordModal(mandatory = false) {
     document.getElementById('changePasswordForm').reset();
     document.getElementById('changePasswordError').classList.add('d-none');
     
-    // Masquer/afficher le bouton de fermeture selon le mode
-    const closeBtn = document.querySelector('#changePasswordModal .btn-close');
-    const cancelBtn = document.querySelector('#changePasswordModal .btn-secondary');
+    // Réinitialiser l'état visuel (Direction A)
+    document.querySelectorAll('#changePasswordModal .cpw-inp input').forEach(inp => {
+        inp.type = 'password';
+    });
+    document.querySelectorAll('#changePasswordModal .cpw-eye i').forEach(icon => {
+        icon.className = 'bi bi-eye';
+    });
+    const wrap = document.getElementById('pwdStrengthWrap');
+    if (wrap) {
+        wrap.classList.add('d-none');
+        wrap.querySelectorAll('.cpw-seg').forEach(s => { s.className = 'cpw-seg'; });
+    }
+    document.querySelectorAll('#pwdChecklist li').forEach(li => {
+        li.classList.remove('ok');
+        const icon = li.querySelector('i');
+        if (icon) icon.className = 'bi bi-circle';
+    });
+    const submitBtn = document.getElementById('changePasswordSubmit');
+    if (submitBtn) submitBtn.disabled = true;
+
+    // Masquer/afficher les boutons de fermeture selon le mode
+    const closeBtn = document.querySelector('#changePasswordModal .cpw-close');
+    const cancelBtn = document.querySelector('#changePasswordModal .cpw-foot .btn-light');
     if (closeBtn) closeBtn.style.display = mandatory ? 'none' : 'block';
-    if (cancelBtn) cancelBtn.style.display = mandatory ? 'none' : 'block';
+    if (cancelBtn) cancelBtn.style.display = mandatory ? 'none' : 'inline-block';
     
     // Afficher un message si obligatoire
     const mandatoryAlert = document.getElementById('changePasswordMandatory');
@@ -399,6 +419,80 @@ function showChangePasswordModal(mandatory = false) {
     }
     
     changePasswordModal.show();
+}
+
+/**
+ * Affiche/masque un champ mot de passe et bascule l'icône œil.
+ */
+function togglePasswordVisibility(inputId, btn) {
+    const input = document.getElementById(inputId);
+    if (!input) return;
+    const icon = btn.querySelector('i');
+    const show = input.type === 'password';
+    input.type = show ? 'text' : 'password';
+    if (icon) icon.className = show ? 'bi bi-eye-slash' : 'bi bi-eye';
+}
+
+/**
+ * Heuristique maison : score 0..4 -> nombre de blocs allumés + classes couleur.
+ */
+function computePasswordStrength(pwd) {
+    let score = 0;
+    if (pwd.length >= 8) score++;
+    if (pwd.length >= 12) score++;
+    if (/[a-z]/.test(pwd) && /[A-Z]/.test(pwd)) score++;
+    if (/\d/.test(pwd)) score++;
+    if (/[^A-Za-z0-9]/.test(pwd)) score++;
+    score = Math.min(score, 4);
+    const buckets = [
+        { label: 'Très faible', segs: 1, seg: 'weak',    lbl: 'weak'    },
+        { label: 'Faible',      segs: 1, seg: 'weak',    lbl: 'weak'    },
+        { label: 'Moyen',       segs: 2, seg: 'mid',     lbl: 'mid'     },
+        { label: 'Fort',        segs: 3, seg: 'strong',  lbl: 'strong'  },
+        { label: 'Très fort',   segs: 4, seg: 'vstrong', lbl: 'vstrong' },
+    ];
+    return buckets[score];
+}
+
+/**
+ * Validation temps réel : checklist + jauge de force + activation du bouton.
+ */
+function validateChangePasswordForm() {
+    const current = document.getElementById('currentPassword').value;
+    const next = document.getElementById('newPassword').value;
+    const confirm = document.getElementById('confirmNewPassword').value;
+
+    const rules = {
+        length: next.length >= 8,
+        different: next.length > 0 && current.length > 0 && next !== current,
+        match: confirm.length > 0 && next === confirm,
+    };
+
+    document.querySelectorAll('#pwdChecklist li').forEach(li => {
+        const ok = rules[li.dataset.rule];
+        const icon = li.querySelector('i');
+        if (icon) icon.className = ok ? 'bi bi-check-circle-fill' : 'bi bi-circle';
+        li.classList.toggle('ok', ok);
+    });
+
+    const wrap = document.getElementById('pwdStrengthWrap');
+    const label = document.getElementById('pwdStrengthLabel');
+    const segs = wrap.querySelectorAll('.cpw-seg');
+    if (next.length === 0) {
+        wrap.classList.add('d-none');
+        segs.forEach(s => { s.className = 'cpw-seg'; });
+    } else {
+        wrap.classList.remove('d-none');
+        const s = computePasswordStrength(next);
+        segs.forEach((seg, i) => {
+            seg.className = 'cpw-seg' + (i < s.segs ? ' on-' + s.seg : '');
+        });
+        label.textContent = s.label;
+        label.className = 'cpw-strength-label ' + s.lbl;
+    }
+
+    const allOk = current.length > 0 && rules.length && rules.different && rules.match;
+    document.getElementById('changePasswordSubmit').disabled = !allOk;
 }
 
 /**
