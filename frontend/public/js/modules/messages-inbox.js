@@ -48,53 +48,6 @@ function debounceMsgSearch() {
     }, 400);
 }
 
-// ===== Vues sauvegardees =====
-
-const SAVED_VIEWS_KEY = 'hub_msg_saved_views';
-
-function _getSavedViews() {
-    try { return JSON.parse(localStorage.getItem(SAVED_VIEWS_KEY) || '[]'); }
-    catch { return []; }
-}
-
-function saveCurrentMsgView() {
-    const name = prompt('Nom de cette vue :');
-    if (!name) return;
-    const views = _getSavedViews();
-    views.push({ name, filters: { ...msgActiveFilters } });
-    localStorage.setItem(SAVED_VIEWS_KEY, JSON.stringify(views));
-    renderSavedViews();
-}
-
-function loadSavedView(index) {
-    const views = _getSavedViews();
-    if (index >= views.length) return;
-    const saved = views[index].filters;
-    Object.entries(saved).forEach(([filter, value]) => {
-        msgActiveFilters[filter] = value;
-        const rowId = filter === 'status' ? 'msgChipStatus' : filter === 'priority' ? 'msgChipPriority' : 'msgChipSender';
-        const chipRow = document.getElementById(rowId);
-        if (chipRow) {
-            chipRow.querySelectorAll('.msg-chip').forEach(b => b.classList.remove('active'));
-            const match = chipRow.querySelector(`[data-value="${value}"]`);
-            if (match) match.classList.add('active');
-        }
-    });
-    messagesPage = 1;
-    loadMessagesPage();
-}
-
-function renderSavedViews() {
-    const container = document.getElementById('msgSavedViews');
-    if (!container) return;
-    const views = _getSavedViews();
-    container.innerHTML = views.map((v, i) =>
-        `<div class="msg-saved-view" onclick="loadSavedView(${i})">
-            <i class="bi bi-bookmark me-1"></i>${escapeHtml(v.name)}
-        </div>`
-    ).join('');
-}
-
 // ===== Admin : Page Messages =====
 
 async function loadMessagesPage() {
@@ -138,8 +91,6 @@ async function loadMessagesPage() {
         } else {
             renderMessageCompact(data);
         }
-
-        renderSavedViews();
     } catch (error) {
         showToast('Erreur', 'Impossible de charger les messages: ' + error.message, 'danger');
     }

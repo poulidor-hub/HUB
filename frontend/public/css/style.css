@@ -1597,30 +1597,6 @@ body {
 .msg-chip.msg-chip-warning.active { background: #f59e0b; border-color: #f59e0b; color: #000; }
 .msg-chip.msg-chip-urgent.active { background: #dc3545; border-color: #dc3545; }
 
-.msg-save-view-btn {
-    display: block;
-    width: 100%;
-    text-align: center;
-    padding: 4px;
-    margin-top: 4px;
-    font-size: 0.72rem;
-    color: var(--bs-primary, #6366f1);
-    background: none;
-    border: 1px dashed var(--bs-border-color, #dee2e6);
-    border-radius: 6px;
-    cursor: pointer;
-}
-.msg-save-view-btn:hover { background: #e9ecef; }
-
-.msg-saved-view {
-    font-size: 0.78rem;
-    padding: 4px 6px;
-    cursor: pointer;
-    color: #6366f1;
-    border-radius: 4px;
-}
-.msg-saved-view:hover { background: #e9ecef; }
-
 /* Liste centrale */
 .msg-list {
     display: flex;
