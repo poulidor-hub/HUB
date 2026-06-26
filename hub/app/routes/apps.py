@@ -1902,175 +1902,248 @@ async def toggle_app_active(
 @router.get("/me/credentials", response_model=AppCredentialsResponse)
 async def get_app_credentials(
     request: Request,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    token: Optional[str] = Depends(oauth2_scheme),
 ):
     """
     Récupère les credentials M2M d'une application.
-    
-    ⚠️ Accessible UNIQUEMENT depuis les réseaux Docker (IP whitelist).
-    ⚠️ Le client_secret n'est PAS retourné (sécurité).
-    
-    L'application doit fournir soit :
-    - `X-Client-ID` : son client_id (ex: sa_xxxx...)
-    - `X-Slug` : son slug d'application (ex: mon-app)
+
+    Authentification (par priorité) :
+    1. Token M2M valide (recommandé)
+    2. IP whitelist + X-Slug/X-Client-ID (déprécié)
+
+    Le client_secret n'est PAS retourné (sécurité).
     """
     client_ip = request.client.host if request.client else None
-    
-    if not is_docker_network_ip(client_ip):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"Accès autorisé uniquement depuis le réseau Docker (IP: {client_ip})"
-        )
-    
     client_id = request.headers.get("X-Client-ID")
     app_slug = request.headers.get("X-Slug")
-    
-    if not client_id and not app_slug:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Header X-Client-ID ou X-Slug requis"
-        )
-    
-    # Trouver le service account (par client_id ou par slug)
-    if client_id:
-        result = await db.execute(
-            select(ServiceAccount)
-            .options(selectinload(ServiceAccount.applications))
-            .where(ServiceAccount.client_id == client_id)
-        )
-        sa = result.scalar_one_or_none()
-        app = sa.applications[0] if sa and sa.applications else None
-    else:
-        result = await db.execute(
-            select(Application)
-            .options(
-                selectinload(Application.service_accounts)
-                .selectinload(ServiceAccount.applications)
+
+    if token:
+        try:
+            payload = await verify_token_not_revoked(token, db)
+            if payload.get("type") != "service_account":
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Seuls les tokens M2M sont acceptés"
+                )
+            client_id_from_token = payload.get("sub")
+            result = await db.execute(
+                select(ServiceAccount)
+                .options(selectinload(ServiceAccount.applications))
+                .where(ServiceAccount.client_id == client_id_from_token)
             )
-            .where(Application.slug == app_slug)
+            sa = result.scalar_one_or_none()
+            app = sa.applications[0] if sa and sa.applications else None
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.warning(f"Token M2M invalide pour /me/credentials: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Token M2M invalide ou expiré"
+            )
+    else:
+        if not is_docker_network_ip(client_ip):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Accès autorisé uniquement depuis le réseau Docker ou avec un token M2M (IP: {client_ip})"
+            )
+
+        if not client_id and not app_slug:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Header X-Client-ID ou X-Slug requis"
+            )
+
+        logger.warning(
+            "⏳ DEPRECATION: /me/credentials appelé sans token M2M (IP=%s, X-Slug=%s, X-Client-ID=%s). "
+            "Cette application doit migrer vers l'authentification par token M2M.",
+            client_ip, app_slug or "N/A", client_id or "N/A"
         )
-        app = result.scalar_one_or_none()
+
+        if client_id:
+            result = await db.execute(
+                select(ServiceAccount)
+                .options(selectinload(ServiceAccount.applications))
+                .where(ServiceAccount.client_id == client_id)
+            )
+            sa = result.scalar_one_or_none()
+            app = sa.applications[0] if sa and sa.applications else None
+        else:
+            result = await db.execute(
+                select(Application)
+                .options(
+                    selectinload(Application.service_accounts)
+                    .selectinload(ServiceAccount.applications)
+                )
+                .where(Application.slug == app_slug)
+            )
+            app = result.scalar_one_or_none()
+            if not app:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Application '{app_slug}' non trouvée"
+                )
+            sa = _get_owner_service_account_for_app(app)
+
+        if not sa:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Service account non trouvé"
+            )
+
         if not app:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Application '{app_slug}' non trouvée"
+                detail="Aucune application associée à ce service account"
             )
-        sa = _get_owner_service_account_for_app(app)
-    
-    if not sa:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Service account non trouvé"
-        )
-    
-    if not app:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Aucune application associée à ce service account"
-        )
 
-    if client_id and not sa.applications:
+        if client_id and not sa.applications:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Aucune application associée à ce service account"
+            )
+
+    if not sa or not app:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Aucune application associée à ce service account"
+            detail="Application ou service account non trouvé"
         )
 
     host = settings.get_hub_host()
-    
+
     return AppCredentialsResponse(
         app_slug=app.slug,
         app_name=app.name,
         client_id=sa.client_id,
-        client_secret=None,  # Jamais retourné ici pour la sécurité
+        client_secret=None,
         hub_host=host,
         hub_api_port=8000,
-        message="Credentials récupérés. Le client_secret n'est pas retourné pour des raisons de sécurité. Utilisez /me/regenerate-secret si vous avez perdu votre secret."
+        message="Credentials récupérés. Le client_secret n'est pas retourné pour des raisons de sécurité."
     )
 
 
 @router.post("/me/regenerate-secret", response_model=AppCredentialsResponse)
 async def regenerate_app_secret(
     request: Request,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    token: Optional[str] = Depends(oauth2_scheme),
 ):
     """
-    Régénère le client_secret d'une application.
-    
-    ⚠️ Accessible UNIQUEMENT depuis les réseaux Docker (IP whitelist).
+    Regénère le client_secret d'une application.
+
+    Authentification (par priorité) :
+    1. Token M2M valide (recommandé) — header Authorization: Bearer <token>
+    2. IP whitelist + X-Slug/X-Client-ID (déprécié)
+
     ⚠️ L'ancien secret sera IMMÉDIATEMENT invalidé !
-    
-    L'application doit fournir soit :
-    - `X-Client-ID` : son client_id (ex: sa_xxxx...)
-    - `X-Slug` : son slug d'application (ex: mon-app)
-    
+
     Le nouveau secret est retourné UNE SEULE FOIS dans cette réponse.
     """
     client_ip = request.client.host if request.client else None
-    
-    if not is_docker_network_ip(client_ip):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"Accès autorisé uniquement depuis le réseau Docker (IP: {client_ip})"
-        )
-    
     client_id = request.headers.get("X-Client-ID")
     app_slug = request.headers.get("X-Slug")
-    
-    if not client_id and not app_slug:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Header X-Client-ID ou X-Slug requis"
-        )
-    
-    # Trouver le service account (par client_id ou par slug)
-    if client_id:
-        result = await db.execute(
-            select(ServiceAccount)
-            .options(selectinload(ServiceAccount.applications))
-            .where(ServiceAccount.client_id == client_id)
-        )
-        sa = result.scalar_one_or_none()
-        app = sa.applications[0] if sa and sa.applications else None
-    else:
-        result = await db.execute(
-            select(Application)
-            .options(
-                selectinload(Application.service_accounts)
-                .selectinload(ServiceAccount.applications)
+
+    if token:
+        try:
+            payload = await verify_token_not_revoked(token, db)
+            if payload.get("type") != "service_account":
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Seuls les tokens M2M (service accounts) sont acceptés"
+                )
+            client_id_from_token = payload.get("sub")
+
+            result = await db.execute(
+                select(ServiceAccount)
+                .options(selectinload(ServiceAccount.applications))
+                .where(ServiceAccount.client_id == client_id_from_token)
             )
-            .where(Application.slug == app_slug)
+            sa = result.scalar_one_or_none()
+            if not sa:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Service account non trouvé"
+                )
+            app = sa.applications[0] if sa.applications else None
+            if not app:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Aucune application associée à ce service account"
+                )
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.warning(f"Token M2M invalide pour regenerate-secret: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Token M2M invalide ou expiré"
+            )
+    else:
+        if not is_docker_network_ip(client_ip):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Accès autorisé uniquement depuis le réseau Docker ou avec un token M2M (IP: {client_ip})"
+            )
+
+        if not client_id and not app_slug:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Header X-Client-ID ou X-Slug requis"
+            )
+
+        logger.warning(
+            "⏳ DEPRECATION: regenerate-secret appelé sans token M2M (IP=%s, X-Slug=%s, X-Client-ID=%s). "
+            "Cette application doit migrer vers l'authentification par token M2M.",
+            client_ip, app_slug or "N/A", client_id or "N/A"
         )
-        app = result.scalar_one_or_none()
+
+        if client_id:
+            result = await db.execute(
+                select(ServiceAccount)
+                .options(selectinload(ServiceAccount.applications))
+                .where(ServiceAccount.client_id == client_id)
+            )
+            sa = result.scalar_one_or_none()
+            app = sa.applications[0] if sa and sa.applications else None
+        else:
+            result = await db.execute(
+                select(Application)
+                .options(
+                    selectinload(Application.service_accounts)
+                    .selectinload(ServiceAccount.applications)
+                )
+                .where(Application.slug == app_slug)
+            )
+            app = result.scalar_one_or_none()
+            if not app:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Application '{app_slug}' non trouvée"
+                )
+            sa = _get_owner_service_account_for_app(app)
+
+        if not sa:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Service account non trouvé"
+            )
+
         if not app:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Application '{app_slug}' non trouvée"
+                detail="Aucune application associée à ce service account"
             )
-        sa = _get_owner_service_account_for_app(app)
-    
-    if not sa:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Service account non trouvé"
-        )
-    
-    if not app:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Aucune application associée à ce service account"
-        )
 
-    if client_id and not sa.applications:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Aucune application associée à ce service account"
-        )
-    
-    # Générer un nouveau secret
+        if client_id and not sa.applications:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Aucune application associée à ce service account"
+            )
+
     new_secret = ServiceAccount.generate_client_secret()
     sa.client_secret_hash = get_password_hash(new_secret)
-    
-    # 🔄 Resynchroniser automatiquement les applications partagées (is_shared_service=True)
+
     shared_result = await db.execute(
         select(Application).where(Application.is_shared_service == True)
     )
@@ -2080,10 +2153,9 @@ async def regenerate_app_secret(
         if shared_app not in sa.applications:
             sa.applications.append(shared_app)
             synced_slugs.append(shared_app.slug)
-    
+
     await db.commit()
-    
-    # Mettre à jour le fichier de backup avec tous les accès (app + shared)
+
     all_app_slugs = [a.slug for a in sa.applications]
     save_service_account_credentials(
         name=app.slug,
@@ -2091,21 +2163,22 @@ async def regenerate_app_secret(
         client_secret=new_secret,
         app_slugs=all_app_slugs
     )
-    
+
     host = settings.get_hub_host()
+    auth_method = "token M2M" if token else "IP whitelist (déprécié)"
     if synced_slugs:
-        logger.info(f"🔄 Secret régénéré pour '{app.slug}' depuis {client_ip} - Apps partagées resync: {synced_slugs}")
+        logger.info(f"Secret régénéré pour '{app.slug}' ({auth_method}) - Apps partagées resync: {synced_slugs}")
     else:
-        logger.info(f"🔄 Secret régénéré pour '{app.slug}' depuis {client_ip}")
-    
+        logger.info(f"Secret régénéré pour '{app.slug}' ({auth_method})")
+
     return AppCredentialsResponse(
         app_slug=app.slug,
         app_name=app.name,
         client_id=sa.client_id,
-        client_secret=new_secret,  # Retourné UNE SEULE FOIS !
+        client_secret=new_secret,
         hub_host=host,
         hub_api_port=8000,
-        message="⚠️ NOUVEAU SECRET GÉNÉRÉ ! L'ancien secret est maintenant invalide. Stockez ce secret en mémoire, il ne sera plus affiché."
+        message="NOUVEAU SECRET GÉNÉRÉ ! L'ancien secret est maintenant invalide. Stockez ce secret en mémoire, il ne sera plus affiché."
     )
 
 
@@ -2114,90 +2187,129 @@ async def regenerate_app_secret(
 async def update_app_shared(
     request: Request,
     is_shared: bool,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    token: Optional[str] = Depends(oauth2_scheme),
 ):
     """
     Met à jour le flag is_shared_service d'une application.
-    
-    ⚠️ Accessible UNIQUEMENT depuis les réseaux Docker (IP whitelist).
-    
-    L'application doit fournir le header `X-Slug` avec son slug.
-    
+
+    Authentification (par priorité) :
+    1. Token M2M valide (recommandé)
+    2. IP whitelist + X-Slug (déprécié)
+
     Si is_shared=True, l'application sera automatiquement accessible
     par tous les nouveaux service accounts créés.
     """
     client_ip = request.client.host if request.client else None
-    
-    if not is_docker_network_ip(client_ip):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"Accès autorisé uniquement depuis le réseau Docker (IP: {client_ip})"
-        )
-    
     app_slug = request.headers.get("X-Slug")
+
+    if token:
+        try:
+            payload = await verify_token_not_revoked(token, db)
+            if payload.get("type") != "service_account":
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Seuls les tokens M2M sont acceptés"
+                )
+            client_id_from_token = payload.get("sub")
+            result = await db.execute(
+                select(ServiceAccount)
+                .options(selectinload(ServiceAccount.applications))
+                .where(ServiceAccount.client_id == client_id_from_token)
+            )
+            sa = result.scalar_one_or_none()
+            if not sa or not sa.applications:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Service account ou application non trouvé"
+                )
+            app_slug = app_slug or (sa.applications[0].slug if sa.applications else None)
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.warning(f"Token M2M invalide pour /me/shared: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Token M2M invalide ou expiré"
+            )
+    else:
+        if not is_docker_network_ip(client_ip):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Accès autorisé uniquement depuis le réseau Docker ou avec un token M2M (IP: {client_ip})"
+            )
+
+        if not app_slug:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Header X-Slug requis"
+            )
+
+        logger.warning(
+            "⏳ DEPRECATION: /me/shared appelé sans token M2M (IP=%s, X-Slug=%s). "
+            "Cette application doit migrer vers l'authentification par token M2M.",
+            client_ip, app_slug
+        )
+
     if not app_slug:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Header X-Slug requis"
         )
-    
+
     result = await db.execute(
         select(Application).where(Application.slug == app_slug)
     )
     app = result.scalar_one_or_none()
-    
+
     if not app:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Application '{app_slug}' non trouvée"
         )
-    
+
     old_shared = app.is_shared_service
     app.is_shared_service = is_shared
-    
-    # Si l'app devient un service partagé et était en attente, l'approuver automatiquement
+
     auto_approved = False
     if is_shared and not old_shared and app.approval_status == ApprovalStatus.pending:
-        from datetime import datetime, timezone
         app.approval_status = ApprovalStatus.approved
         app.approved_at = utcnow()
         app.is_active = True
         if app.description:
             app.description = app.description.replace(" (en attente d'approbation)", "")
-        
-        # Activer le(s) service account(s) associé(s)
-        sa_result = await db.execute(
+
+        sa_result_inner = await db.execute(
             select(ServiceAccount)
             .join(service_account_app_access)
             .where(service_account_app_access.c.app_id == app.id)
         )
-        for sa in sa_result.scalars().all():
-            sa.is_active = True
-            if sa.description:
-                sa.description = sa.description.replace(" (en attente d'approbation)", "")
-        
+        for sa_inner in sa_result_inner.scalars().all():
+            sa_inner.is_active = True
+            if sa_inner.description:
+                sa_inner.description = sa_inner.description.replace(" (en attente d'approbation)", "")
+
         auto_approved = True
-        logger.info(f"✅ Application '{app_slug}' auto-approuvée car devenue service partagé (M2M)")
-    
+        logger.info(f"Application '{app_slug}' auto-approuvée car devenue service partagé (M2M)")
+
     db.add(app)
     await db.commit()
-    
-    # Si l'app est maintenant un service partagé approuvé, l'ajouter à tous les SA
+
     shared_added_count = 0
     if is_shared and app.approval_status == ApprovalStatus.approved:
         shared_added_count = await add_shared_service_to_all_service_accounts(db, app)
         if shared_added_count > 0:
             await db.commit()
-    
-    logger.info(f"🔧 Application '{app_slug}' is_shared_service={is_shared} via X-Slug depuis {client_ip}")
-    
+
+    auth_method = "token M2M" if token else "IP whitelist (déprécié)"
+    logger.info(f"Application '{app_slug}' is_shared_service={is_shared} ({auth_method})")
+
     message = f"Application '{app_slug}' mise à jour"
     if auto_approved:
         message += " et auto-approuvée (service partagé M2M)"
     if shared_added_count > 0:
         message += f". Ajoutée à {shared_added_count} service account(s)."
-    
-    # Notifier les clients SSE
+
     notify_event("apps_updated", {
         "action": "updated" if not auto_approved else "auto_approved",
         "app_slug": app_slug,
@@ -2206,7 +2318,7 @@ async def update_app_shared(
     })
     if auto_approved:
         notify_stats_update()
-    
+
     return {
         "message": message,
         "slug": app_slug,
@@ -2310,75 +2422,105 @@ def filter_openapi_spec(spec: dict) -> tuple:
 async def push_openapi_spec(
     request: Request,
     body: AppOpenApiPush,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    token: Optional[str] = Depends(oauth2_scheme),
 ):
     """
     Permet à une application de pousser sa spécification OpenAPI au Hub.
-    
-    ⚠️ Accessible UNIQUEMENT depuis les réseaux Docker (IP whitelist).
-    L'application doit fournir le header `X-Slug` avec son slug.
-    
-    La spec est automatiquement filtrée pour ne conserver que les 
-    endpoints métier (les endpoints techniques comme /health, /docs, 
+
+    Authentification (par priorité) :
+    1. Token M2M valide (recommandé)
+    2. IP whitelist + X-Slug (déprécié)
+
+    La spec est automatiquement filtrée pour ne conserver que les
+    endpoints métier (les endpoints techniques comme /health, /docs,
     /openapi.json sont exclus).
-    
-    Le Discovery Explorer utilisera cette spec stockée en priorité.
-    
-    **Exemple d'utilisation au démarrage de l'app :**
-    ```python
-    import httpx
-    from fastapi.openapi.utils import get_openapi
-    
-    spec = get_openapi(title=app.title, version=app.version, routes=app.routes)
-    httpx.post(
-        f"http://hub:8000/api/apps/me/openapi",
-        json={"openapi_spec": spec},
-        headers={"X-Slug": settings.app_slug}
-    )
-    ```
     """
     client_ip = request.client.host if request.client else None
-    
-    if not is_docker_network_ip(client_ip):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"Accès autorisé uniquement depuis le réseau Docker (IP: {client_ip})"
-        )
-    
     app_slug = request.headers.get("X-Slug")
+    app = None
+
+    if token:
+        try:
+            payload = await verify_token_not_revoked(token, db)
+            if payload.get("type") != "service_account":
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Seuls les tokens M2M sont acceptés"
+                )
+            client_id_from_token = payload.get("sub")
+            result = await db.execute(
+                select(ServiceAccount)
+                .options(selectinload(ServiceAccount.applications))
+                .where(ServiceAccount.client_id == client_id_from_token)
+            )
+            sa = result.scalar_one_or_none()
+            if not sa or not sa.applications:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Service account ou application non trouvé"
+                )
+            app = sa.applications[0]
+            app_slug = app_slug or app.slug
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.warning(f"Token M2M invalide pour /me/openapi: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Token M2M invalide ou expiré"
+            )
+    else:
+        if not is_docker_network_ip(client_ip):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Accès autorisé uniquement depuis le réseau Docker ou avec un token M2M (IP: {client_ip})"
+            )
+
+        if not app_slug:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Header X-Slug requis"
+            )
+
+        logger.warning(
+            "⏳ DEPRECATION: /me/openapi appelé sans token M2M (IP=%s, X-Slug=%s). "
+            "Cette application doit migrer vers l'authentification par token M2M.",
+            client_ip, app_slug
+        )
+
     if not app_slug:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Header X-Slug requis"
         )
-    
-    result = await db.execute(
-        select(Application).where(Application.slug == app_slug)
-    )
-    app = result.scalar_one_or_none()
-    
+
+    if app is None:
+        result = await db.execute(
+            select(Application).where(Application.slug == app_slug)
+        )
+        app = result.scalar_one_or_none()
+
     if not app:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Application '{app_slug}' non trouvée"
         )
-    
-    # Filtrer les endpoints techniques
+
     filtered_spec, total_endpoints, filtered_count = filter_openapi_spec(body.openapi_spec)
     business_count = total_endpoints - filtered_count
-    
-    # Stocker la spec filtrée
+
     app.api_endpoints = filtered_spec
     app.api_endpoints_updated_at = utcnow()
-    
+
     await db.commit()
-    
+
+    auth_method = "token M2M" if token else "IP whitelist (déprécié)"
     logger.info(
-        f"📋 Spec OpenAPI reçue pour '{app_slug}': "
+        f"Spec OpenAPI reçue pour '{app_slug}' ({auth_method}): "
         f"{business_count} endpoints métier, {filtered_count} techniques exclus"
     )
-    
-    # Audit
+
     await log_action(
         db=db,
         user_id=None,
@@ -2386,17 +2528,16 @@ async def push_openapi_spec(
         target=app_slug,
         ip_address=client_ip,
         user_agent=None,
-        details=f"Spec OpenAPI poussée: {business_count} endpoints métier, {filtered_count} exclus"
+        details=f"Spec OpenAPI poussée ({auth_method}): {business_count} endpoints métier, {filtered_count} exclus"
     )
     await db.commit()
-    
-    # Notifier les clients SSE
+
     notify_event("apps_updated", {
         "action": "openapi_updated",
         "app_slug": app_slug,
         "endpoints_count": business_count,
     })
-    
+
     return AppOpenApiResponse(
         message=f"Spécification OpenAPI enregistrée pour '{app_slug}'",
         app_slug=app_slug,
