@@ -638,10 +638,9 @@ async def receive_backup(
     
     Authentification: Token M2M (service account) ou utilisateur admin.
     """
-    # Vérifier que l'application existe
     app = await get_app_or_404(db, slug)
-    
-    # Déterminer qui crée le backup
+    await check_backup_entity_access(slug, current_user, db)
+
     if hasattr(current_user, 'client_id'):
         created_by = current_user.name
         created_by_type = "app"
@@ -796,7 +795,8 @@ async def list_app_backups(
     L'alias /backup/list est conservé pour compatibilite avec les anciens clients.
     """
     app = await get_app_or_404(db, slug)
-    
+    await check_backup_entity_access(slug, current_user, db)
+
     result = await db.execute(
         select(AppBackup)
         .where(AppBackup.app_slug == slug)
@@ -833,7 +833,8 @@ async def get_latest_backup(
     Utilisez l'endpoint /export pour télécharger une version chiffrée.
     """
     app = await get_app_or_404(db, slug)
-    
+    await check_backup_entity_access(slug, current_user, db)
+
     result = await db.execute(
         select(AppBackup)
         .where(AppBackup.app_slug == slug)
@@ -1822,6 +1823,49 @@ def restore_audit_identity(current_entity):
     return None, None
 
 
+async def check_backup_entity_access(
+    slug: str,
+    current_entity,
+    db: AsyncSession,
+) -> None:
+    if isinstance(current_entity, User):
+        if not current_entity.is_admin:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Acces administrateur requis pour les backups"
+            )
+        return
+    elif isinstance(current_entity, ServiceAccount):
+        sa_result = await db.execute(
+            select(ServiceAccount)
+            .options(selectinload(ServiceAccount.applications))
+            .where(ServiceAccount.id == current_entity.id)
+        )
+        sa = sa_result.scalar_one_or_none()
+        if not sa:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Service account introuvable"
+            )
+        app_slugs = [app.slug for app in sa.applications]
+        if slug not in app_slugs:
+            logger.warning(
+                "⛔ Service account '%s' (client_id=%s) "
+                "a tente d'acceder aux backups de '%s' sans y etre autorise",
+                sa.name, sa.client_id, slug
+            )
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Service account n'a pas acces a l'application '{slug}'"
+            )
+        return
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Type d'authentification non reconnu"
+        )
+
+
 async def log_restore_audit(
     db: AsyncSession,
     request: Request,
@@ -2673,6 +2717,8 @@ async def get_orphan_backups_for_slug(
     Utile pour une application qui veut savoir si des sauvegardes existent
     avant de s'enregistrer sur le HUB.
     """
+    await check_backup_entity_access(slug, current_user, db)
+
     # Vérifier si l'application existe
     result = await db.execute(
         select(Application).where(Application.slug == slug)
