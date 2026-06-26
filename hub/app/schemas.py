@@ -1459,7 +1459,7 @@ class MessageSenderType(str, Enum):
 
 
 class MessageCreate(BaseModel):
-    """Création d'un message par un admin"""
+    """Creation d'un message par un admin"""
     title: str = Field(..., min_length=1, max_length=200)
     body: Optional[str] = None
     priority: MessagePriority = MessagePriority.info
@@ -1468,6 +1468,8 @@ class MessageCreate(BaseModel):
     action_url: Optional[str] = Field(None, max_length=500)
     action_label: Optional[str] = Field(None, max_length=100)
     expires_at: Optional[datetime] = None
+    scheduled_at: Optional[datetime] = None  # Envoi differe
+    template_id: Optional[int] = None  # Template pre-remplissage
 
 
 class MessageM2MCreate(BaseModel):
@@ -1503,6 +1505,48 @@ class MessageBrief(BaseModel):
     delivered_at: Optional[datetime] = None
     clicked_at: Optional[datetime] = None
     read_at: Optional[datetime] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class MessageTemplateCreate(BaseModel):
+    """Creation d'un template de message"""
+    name: str = Field(..., min_length=1, max_length=255)
+    title_template: Optional[str] = Field(None, max_length=500)
+    body_template: Optional[str] = None
+    default_priority: MessagePriority = MessagePriority.info
+    default_target_type: MessageTargetType = MessageTargetType.broadcast
+    default_expiry_hours: Optional[int] = Field(None, ge=0)
+    default_action_url: Optional[str] = Field(None, max_length=500)
+    default_action_label: Optional[str] = Field(None, max_length=100)
+
+
+class MessageTemplateUpdate(BaseModel):
+    """Mise a jour d'un template de message"""
+    name: Optional[str] = Field(None, min_length=1, max_length=255)
+    title_template: Optional[str] = Field(None, max_length=500)
+    body_template: Optional[str] = None
+    default_priority: Optional[MessagePriority] = None
+    default_target_type: Optional[MessageTargetType] = None
+    default_expiry_hours: Optional[int] = Field(None, ge=0)
+    default_action_url: Optional[str] = Field(None, max_length=500)
+    default_action_label: Optional[str] = Field(None, max_length=100)
+
+
+class MessageTemplateResponse(BaseModel):
+    """Reponse d'un template de message"""
+    id: int
+    name: str
+    title_template: Optional[str] = None
+    body_template: Optional[str] = None
+    default_priority: str
+    default_target_type: str
+    default_expiry_hours: Optional[int] = None
+    default_action_url: Optional[str] = None
+    default_action_label: Optional[str] = None
+    created_by: Optional[str] = None
+    created_at: datetime
+    updated_at: Optional[datetime] = None
 
     model_config = ConfigDict(from_attributes=True)
 

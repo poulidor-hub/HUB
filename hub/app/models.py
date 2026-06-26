@@ -568,6 +568,9 @@ class UserMessage(Base):
     # Expiration
     expires_at = Column(DateTime, nullable=True)  # NULL = pas d'expiration
     
+    # Envoi differe (NULL = envoi immediat)
+    scheduled_at = Column(DateTime, nullable=True)
+    
     # Horodatage
     created_at = Column(DateTime, default=utcnow, index=True)
     
@@ -611,6 +614,27 @@ class MessageReadReceipt(Base):
     
     def __repr__(self):
         return f"<MessageReadReceipt msg={self.message_id} user={self.user_id}>"
+
+
+class MessageTemplate(Base):
+    """Templates de messages reutilisables (geres par les admins)"""
+    __tablename__ = "message_templates"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(255), nullable=False, unique=True)
+    title_template = Column(String(500), nullable=True)
+    body_template = Column(Text, nullable=True)
+    default_priority = Column(String(20), nullable=False, default="info")
+    default_target_type = Column(String(20), nullable=False, default="broadcast")
+    default_expiry_hours = Column(Integer, nullable=True)
+    default_action_url = Column(String(500), nullable=True)
+    default_action_label = Column(String(100), nullable=True)
+    created_by = Column(String(150), nullable=True)
+    created_at = Column(DateTime, default=utcnow)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
+
+    def __repr__(self):
+        return f"<MessageTemplate {self.id} '{self.name}'>"
 
 
 class AppSetting(Base):
