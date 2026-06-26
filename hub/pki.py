@@ -137,3 +137,45 @@ def create_server_cert(name: str = "hub", force: bool = False) -> None:
     )
     _write_key(srv_key, key, 0o644)
     _write_cert(srv_crt, cert)
+
+
+def info() -> None:
+    ca_crt, _ = _ca_paths()
+    if not ca_crt.exists():
+        print("CA absente. Lancez `python pki.py init`.")
+        return
+    cert = x509.load_pem_x509_certificate(ca_crt.read_bytes())
+    fingerprint = cert.fingerprint(hashes.SHA256()).hex(":")
+    print(f"CA: {ca_crt}")
+    print(f"Empreinte SHA-256: {fingerprint}")
+    print(f"➡️  Importez {ca_crt} dans le magasin de confiance des postes/navigateurs.")
+
+
+def main(argv: list[str] | None = None) -> None:
+    parser = argparse.ArgumentParser(prog="pki.py", description="PKI interne du Hub")
+    sub = parser.add_subparsers(dest="cmd", required=True)
+
+    p_init = sub.add_parser("init", help="Générer la CA interne")
+    p_init.add_argument("--force", action="store_true")
+
+    p_cert = sub.add_parser("cert", help="Gestion des certificats serveur")
+    cert_sub = p_cert.add_subparsers(dest="cert_cmd", required=True)
+    p_create = cert_sub.add_parser("create", help="Créer un certificat serveur")
+    p_create.add_argument("name")
+    p_create.add_argument("--force", action="store_true")
+
+    sub.add_parser("info", help="Afficher l'empreinte de la CA")
+
+    args = parser.parse_args(argv)
+    if args.cmd == "init":
+        init_ca(force=args.force)
+        print("✅ CA générée")
+    elif args.cmd == "cert" and args.cert_cmd == "create":
+        create_server_cert(args.name, force=args.force)
+        print(f"✅ Certificat serveur '{args.name}' généré")
+    elif args.cmd == "info":
+        info()
+
+
+if __name__ == "__main__":
+    main(sys.argv[1:])

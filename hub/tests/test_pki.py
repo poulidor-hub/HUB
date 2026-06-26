@@ -58,3 +58,15 @@ def test_create_server_cert_requires_ca(certs):
     with pytest.raises(FileNotFoundError):
         pki.create_server_cert("hub")
 
+
+def test_cli_init_then_cert(certs, monkeypatch, capsys):
+    monkeypatch.setattr(pki.settings, "hub_host", "10.0.0.9")
+    pki.main(["init"])
+    pki.main(["cert", "create", "hub"])
+    assert (certs / "ca" / "ca.crt").exists()
+    assert (certs / "server" / "hub" / "server.crt").exists()
+    pki.main(["info"])
+    out = capsys.readouterr().out
+    assert "ca.crt" in out
+
+
