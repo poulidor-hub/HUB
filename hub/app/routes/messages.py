@@ -168,14 +168,25 @@ async def send_message(
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Envoie un message (admin). Ciblé à des utilisateurs ou broadcast.
+    Envoie un message (admin). Cible a des utilisateurs ou broadcast.
+    Supporte template_id (pre-remplissage) et scheduled_at (envoi differe).
     """
     from app.routes.audit import log_action
 
+    # Pre-remplissage depuis template si fourni
+    if payload.template_id:
+        template = await db.get(MessageTemplate, payload.template_id)
+        if template:
+            if not payload.body and template.body_template:
+                payload.body = template.body_template
+            if not payload.action_url and template.default_action_url:
+                payload.action_url = template.default_action_url
+            if not payload.action_label and template.default_action_label:
+                payload.action_label = template.default_action_label
+
     if payload.target_type == "user":
         if not payload.target_user_ids or len(payload.target_user_ids) == 0:
-            raise HTTPException(status_code=400, detail="target_user_ids requis pour un message ciblé")
-        # Vérifier que les users existent
+            raise HTTPException(status_code=400, detail="target_user_ids requis pour un message cible")
         result = await db.execute(
             select(User.id).where(User.id.in_(payload.target_user_ids))
         )
@@ -184,10 +195,17 @@ async def send_message(
         if invalid_ids:
             raise HTTPException(status_code=400, detail=f"Utilisateurs introuvables: {sorted(invalid_ids)}")
 
+    # Determiner le statut initial : scheduled si envoi differe
+    now = utcnow()
+    is_scheduled = False
+    if payload.scheduled_at is not None:
+        scheduled_dt = payload.scheduled_at.replace(tzinfo=None) if payload.scheduled_at.tzinfo else payload.scheduled_at
+        is_scheduled = scheduled_dt > now
+    initial_status = "scheduled" if is_scheduled else "active"
+
     messages_created = []
 
     if payload.target_type == "broadcast":
-        # Snapshot du nombre total de destinataires à l'envoi
         total_targets = await db.scalar(select(func.count(User.id))) or 0
         msg = UserMessage(
             sender_type="admin",
@@ -199,19 +217,19 @@ async def send_message(
             action_url=payload.action_url,
             action_label=payload.action_label,
             expires_at=payload.expires_at,
-            status="active",
-            total_targets=total_targets,
+            scheduled_at=payload.scheduled_at,
+            status=initial_status,
+            total_targets=total_targets if not is_scheduled else 0,
         )
         db.add(msg)
         await db.flush()
         messages_created.append(msg)
 
-        # SSE broadcast
-        from app.routes.events import broadcast_event
-        await broadcast_event("user_message", _message_to_brief(msg))
+        if not is_scheduled:
+            from app.routes.events import broadcast_event
+            await broadcast_event("user_message", _message_to_brief(msg))
 
     else:
-        # Résoudre les usernames pour target_username
         users_map = await _build_users_map(db, set(payload.target_user_ids))
         for uid in payload.target_user_ids:
             msg = UserMessage(
@@ -226,29 +244,33 @@ async def send_message(
                 action_url=payload.action_url,
                 action_label=payload.action_label,
                 expires_at=payload.expires_at,
-                status="active",
-                total_targets=1,
+                scheduled_at=payload.scheduled_at,
+                status=initial_status,
+                total_targets=1 if not is_scheduled else 0,
             )
             db.add(msg)
             await db.flush()
             messages_created.append(msg)
-            # SSE ciblé
-            await _send_user_message_sse(uid, _message_to_brief(msg))
+            if not is_scheduled:
+                await _send_user_message_sse(uid, _message_to_brief(msg))
 
     await db.commit()
 
     await log_action(
         db, current_user.id, "send_message",
-        target=f"{payload.target_type}:{len(messages_created)} message(s)",
-        details=f"title={payload.title}, priority={payload.priority.value}",
+        target=f"{payload.target_type}:{len(messages_created)} message(s)" + (" [differe]" if is_scheduled else ""),
+        details=f"title={payload.title}, priority={payload.priority.value}" + (f", scheduled_at={payload.scheduled_at.isoformat()}" if is_scheduled else ""),
         notify_sse=False
     )
     await db.commit()
 
-    _notify_message("messages_updated", {"action": "sent", "count": len(messages_created)})
+    if not is_scheduled:
+        _notify_message("messages_updated", {"action": "sent", "count": len(messages_created)})
 
     return {
-        "sent": len(messages_created),
+        "sent": 0 if is_scheduled else len(messages_created),
+        "scheduled": is_scheduled,
+        "scheduled_at": payload.scheduled_at.isoformat() if payload.scheduled_at else None,
         "message_ids": [m.id for m in messages_created],
         "target_type": payload.target_type.value,
     }
@@ -931,6 +953,84 @@ async def mark_message_clicked(
 # =============================================================================
 # ENDPOINTS ADMIN — Détail et purge (après /me pour éviter conflit de route)
 # =============================================================================
+
+# =============================================================================
+# TEMPLATES CRUD (avant /{message_id} pour eviter conflit de route)
+# =============================================================================
+
+@router.get("/templates", response_model=List[MessageTemplateResponse])
+async def list_templates(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    result = await db.execute(
+        select(MessageTemplate).order_by(MessageTemplate.name)
+    )
+    return result.scalars().all()
+
+
+@router.post("/templates", response_model=MessageTemplateResponse, status_code=201)
+async def create_template(
+    data: MessageTemplateCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_admin),
+):
+    existing = await db.scalar(
+        select(MessageTemplate).where(MessageTemplate.name == data.name)
+    )
+    if existing:
+        raise HTTPException(400, "Un template avec ce nom existe deja")
+
+    template = MessageTemplate(
+        name=data.name,
+        title_template=data.title_template,
+        body_template=data.body_template,
+        default_priority=data.default_priority.value if hasattr(data.default_priority, 'value') else data.default_priority,
+        default_target_type=data.default_target_type.value if hasattr(data.default_target_type, 'value') else data.default_target_type,
+        default_expiry_hours=data.default_expiry_hours,
+        default_action_url=data.default_action_url,
+        default_action_label=data.default_action_label,
+        created_by=current_user.username,
+    )
+    db.add(template)
+    await db.commit()
+    await db.refresh(template)
+    return template
+
+
+@router.put("/templates/{template_id}", response_model=MessageTemplateResponse)
+async def update_template(
+    template_id: int,
+    data: MessageTemplateUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_admin),
+):
+    template = await db.get(MessageTemplate, template_id)
+    if not template:
+        raise HTTPException(404, "Template introuvable")
+
+    update_data = data.model_dump(exclude_unset=True)
+    for key, value in update_data.items():
+        if hasattr(value, 'value'):
+            value = value.value
+        setattr(template, key, value)
+    await db.commit()
+    await db.refresh(template)
+    return template
+
+
+@router.delete("/templates/{template_id}", status_code=204)
+async def delete_template(
+    template_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_admin),
+):
+    template = await db.get(MessageTemplate, template_id)
+    if not template:
+        raise HTTPException(404, "Template introuvable")
+    await db.delete(template)
+    await db.commit()
+
 
 @router.get("/{message_id}")
 async def get_message_detail(
@@ -1630,78 +1730,112 @@ async def m2m_get_message_detail(
 
 
 # =============================================================================
-# TEMPLATES CRUD
+# JOB : Dispatch des messages differes + SEED templates
 # =============================================================================
 
-@router.get("/templates", response_model=List[MessageTemplateResponse])
-async def list_templates(
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    result = await db.execute(
-        select(MessageTemplate).order_by(MessageTemplate.name)
-    )
-    return result.scalars().all()
+async def dispatch_scheduled_messages():
+    """Envoie les messages dont le scheduled_at est passe (appele periodiquement)."""
+    from app.database import async_session_maker
+    from app.routes.events import broadcast_event
+
+    async with async_session_maker() as db:
+        now = utcnow()
+        result = await db.execute(
+            select(UserMessage).where(
+                UserMessage.status == "scheduled",
+                UserMessage.scheduled_at <= now,
+            )
+        )
+        scheduled_messages = result.scalars().all()
+
+        if not scheduled_messages:
+            return 0
+
+        for msg in scheduled_messages:
+            msg.status = "active"
+            msg.total_targets = 0
+
+            if msg.target_type == "broadcast":
+                users = await db.execute(select(User))
+                user_list = users.scalars().all()
+                for user in user_list:
+                    receipt = MessageReadReceipt(message_id=msg.id, user_id=user.id)
+                    db.add(receipt)
+                msg.total_targets = len(user_list)
+                await db.flush()
+                await broadcast_event("user_message", _message_to_brief(msg))
+            elif msg.target_user_id:
+                receipt = MessageReadReceipt(message_id=msg.id, user_id=msg.target_user_id)
+                db.add(receipt)
+                msg.total_targets = 1
+                await db.flush()
+                await _send_user_message_sse(msg.target_user_id, _message_to_brief(msg))
+
+        await db.commit()
+
+        if scheduled_messages:
+            _notify_message("messages_updated", {"action": "dispatched", "count": len(scheduled_messages)})
+            logger.info(f"Dispatched {len(scheduled_messages)} scheduled messages")
+
+        return len(scheduled_messages)
 
 
-@router.post("/templates", response_model=MessageTemplateResponse, status_code=201)
-async def create_template(
-    data: MessageTemplateCreate,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_admin),
-):
-    existing = await db.scalar(
-        select(MessageTemplate).where(MessageTemplate.name == data.name)
-    )
-    if existing:
-        raise HTTPException(400, "Un template avec ce nom existe deja")
+async def periodic_scheduled_message_dispatch():
+    """Tache periodique qui dispatch les messages differes toutes les 60 secondes."""
+    import asyncio
+    logger.info("Scheduled message dispatch demarre")
+    try:
+        while True:
+            await asyncio.sleep(60)
+            try:
+                dispatched = await dispatch_scheduled_messages()
+                if dispatched:
+                    logger.info(f"{dispatched} message(s) differes envoyes")
+            except Exception as e:
+                logger.error(f"Erreur dispatch messages differes: {e}", exc_info=True)
+    except asyncio.CancelledError:
+        logger.info("Scheduled message dispatch arrete")
 
-    template = MessageTemplate(
-        name=data.name,
-        title_template=data.title_template,
-        body_template=data.body_template,
-        default_priority=data.default_priority.value if hasattr(data.default_priority, 'value') else data.default_priority,
-        default_target_type=data.default_target_type.value if hasattr(data.default_target_type, 'value') else data.default_target_type,
-        default_expiry_hours=data.default_expiry_hours,
-        default_action_url=data.default_action_url,
-        default_action_label=data.default_action_label,
-        created_by=current_user.username,
-    )
-    db.add(template)
+
+# =============================================================================
+# SEED : Templates par defaut
+# =============================================================================
+
+async def seed_default_templates(db: AsyncSession):
+    """Cree les templates par defaut s'ils n'existent pas deja."""
+    defaults = [
+        {
+            "name": "Maintenance planifiee",
+            "title_template": "Maintenance planifiee — [DATE]",
+            "body_template": "Le serveur sera indisponible le [DATE] de [HEURE_DEBUT] a [HEURE_FIN] pour maintenance. Merci de sauvegarder votre travail avant cette periode.",
+            "default_priority": "warning",
+            "default_target_type": "broadcast",
+            "default_expiry_hours": 48,
+        },
+        {
+            "name": "Incident / Alerte",
+            "title_template": "Incident — [SERVICE]",
+            "body_template": "Nous rencontrons actuellement un incident sur [SERVICE]. L'equipe technique est mobilisee. Prochaine mise a jour des que possible.",
+            "default_priority": "urgent",
+            "default_target_type": "broadcast",
+            "default_expiry_hours": 24,
+        },
+        {
+            "name": "Annonce nouvelle version",
+            "title_template": "Nouvelle version disponible — [APP] v[VERSION]",
+            "body_template": "Decouvrez les nouveautes de la version [VERSION] :\n- \n- \n\nPlus de details dans le changelog.",
+            "default_priority": "info",
+            "default_target_type": "broadcast",
+            "default_expiry_hours": 168,
+        },
+    ]
+
+    for tmpl in defaults:
+        existing = await db.scalar(
+            select(MessageTemplate).where(MessageTemplate.name == tmpl["name"])
+        )
+        if not existing:
+            db.add(MessageTemplate(**tmpl))
+
     await db.commit()
-    await db.refresh(template)
-    return template
-
-
-@router.put("/templates/{template_id}", response_model=MessageTemplateResponse)
-async def update_template(
-    template_id: int,
-    data: MessageTemplateUpdate,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_admin),
-):
-    template = await db.get(MessageTemplate, template_id)
-    if not template:
-        raise HTTPException(404, "Template introuvable")
-
-    update_data = data.model_dump(exclude_unset=True)
-    for key, value in update_data.items():
-        if hasattr(value, 'value'):
-            value = value.value
-        setattr(template, key, value)
-    await db.commit()
-    await db.refresh(template)
-    return template
-
-
-@router.delete("/templates/{template_id}", status_code=204)
-async def delete_template(
-    template_id: int,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_admin),
-):
-    template = await db.get(MessageTemplate, template_id)
-    if not template:
-        raise HTTPException(404, "Template introuvable")
-    await db.delete(template)
-    await db.commit()
+    logger.info("Message templates seed complete")

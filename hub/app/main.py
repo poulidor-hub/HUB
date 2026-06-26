@@ -23,12 +23,13 @@ logger = logging.getLogger(__name__)
 
 settings = get_settings()
 
-# Variables globales pour contrôler les tâches périodiques
+# Variables globales pour controler les taches periodiques
 _cleanup_task = None
 _docker_sync_task = None
 _log_purge_task = None
 _backup_scheduler_task = None
 _snapshot_scheduler_task = None
+_msg_dispatch_task = None
 
 
 async def create_default_admin():
@@ -260,7 +261,7 @@ async def periodic_backup_scheduler():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _cleanup_task, _docker_sync_task, _log_purge_task, _backup_scheduler_task, _snapshot_scheduler_task
+    global _cleanup_task, _docker_sync_task, _log_purge_task, _backup_scheduler_task, _snapshot_scheduler_task, _msg_dispatch_task
     
     # Startup
     logger.info("🚀 Démarrage du Hub d'Authentification...")
@@ -291,9 +292,19 @@ async def lifespan(app: FastAPI):
     # Démarrer le scheduler de backups
     _backup_scheduler_task = asyncio.create_task(periodic_backup_scheduler())
 
-    # Démarrer le scheduler de snapshots
+    # Demarrer le scheduler de snapshots
     from app.routes.snapshots import _snapshot_cron_scheduler
     _snapshot_scheduler_task = asyncio.create_task(_snapshot_cron_scheduler())
+
+    # Demarrer le dispatcheur de messages differes
+    from app.routes.messages import periodic_scheduled_message_dispatch
+    _msg_dispatch_task = asyncio.create_task(periodic_scheduled_message_dispatch())
+
+    # Seed des templates de messages par defaut
+    from app.routes.messages import seed_default_templates
+    from app.database import async_session_maker
+    async with async_session_maker() as seed_db:
+        await seed_default_templates(seed_db)
 
     # Kill-switch backups : requalifier les backups restés "running" (cas crash)
     try:
@@ -358,6 +369,12 @@ async def lifespan(app: FastAPI):
         _snapshot_scheduler_task.cancel()
         try:
             await _snapshot_scheduler_task
+        except asyncio.CancelledError:
+            pass
+    if _msg_dispatch_task:
+        _msg_dispatch_task.cancel()
+        try:
+            await _msg_dispatch_task
         except asyncio.CancelledError:
             pass
     
