@@ -213,6 +213,18 @@ class Settings(BaseSettings):
     # Host du Hub (IP ou hostname accessible par les clients)
     # Si non défini, sera détecté automatiquement
     hub_host: str = ""
+
+    # === HTTPS / PKI interne ===
+    hub_https_enabled: bool = True
+    hub_https_port: int = 443
+    certs_dir: str = "/code/certs"
+    pki_ca_common_name: str = "Hub Local CA"
+    pki_ca_organization: str = "Hub Internal"
+    pki_ca_validity_years: int = 10
+    pki_cert_domains: str = "localhost,hub.local,hub-frontend"
+    pki_cert_ips: str = ""
+    pki_cert_validity_days: int = 365
+    pki_key_size: int = 4096
     
     # Cookie settings pour le SSO
     cookie_httponly: bool = True
