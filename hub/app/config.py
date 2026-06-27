@@ -212,6 +212,9 @@ class Settings(BaseSettings):
     # Synchronisation automatique avec Docker (en secondes)
     # 0 = désactivé, 300 = toutes les 5 minutes
     docker_sync_interval: int = 300
+
+    # Activer le scan Docker (socket requis). False = aucun accès au socket (production).
+    docker_scan_enabled: bool = False
     
     # Cooldown pour les notifications SSE d'audit (en secondes)
     # Évite les rafraîchissements trop fréquents de la page audit

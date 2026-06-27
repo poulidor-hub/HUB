@@ -81,8 +81,12 @@ async def periodic_token_cleanup():
 
 async def periodic_docker_sync():
     """Tâche périodique pour synchroniser l'état des apps avec Docker"""
+    if not settings.docker_scan_enabled:
+        logger.info("🐳 Scan Docker désactivé (DOCKER_SCAN_ENABLED=false)")
+        return
+
     interval = settings.docker_sync_interval
-    
+
     if interval <= 0:
         logger.info("🐳 Synchronisation Docker désactivée (DOCKER_SYNC_INTERVAL=0)")
         return

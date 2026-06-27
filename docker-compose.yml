@@ -62,6 +62,7 @@ services:
       - ERROR_RETENTION_DAYS=${ERROR_RETENTION_DAYS:-30}
       - LOG_PURGE_INTERVAL_HOURS=${LOG_PURGE_INTERVAL_HOURS:-24}
       - DOCKER_SYNC_INTERVAL=${DOCKER_SYNC_INTERVAL:-300}
+      - DOCKER_SCAN_ENABLED=${DOCKER_SCAN_ENABLED:-false}
       - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-}
       - HUB_HTTPS_ENABLED=${HUB_HTTPS_ENABLED:-true}
       - HUB_HTTPS_PORT=${HUB_HTTPS_PORT:-443}
@@ -85,20 +86,12 @@ services:
       - ./INTEGRATION.md:/code/INTEGRATION.md:ro
       # Changelog pour agents IA (accessible via /api/docs/changelog)
       - ./CHANGELOG.md:/code/CHANGELOG.md:ro
-      # Socket Docker pour la détection automatique des conteneurs (lecture seule)
-      - /var/run/docker.sock:/var/run/docker.sock:ro
       # Stockage des sauvegardes d'applications
       - ./storage/backups:/code/storage/backups:rw
       # Stockage local des snapshots
       - ./storage/snapshots:/code/storage/snapshots:rw
       # Certificats PKI (CA + cert serveur), partagés avec le frontend
       - ./certs:/code/certs:rw
-    # Groupe docker pour accéder au socket
-    # ⚠️ Le GID varie selon les systèmes : 986 (Arch), 999 (Debian), 998, etc.
-    # Vérifiez avec: getent group docker
-    # Définissez DOCKER_GID dans .env ou utilisez: DOCKER_GID=$(getent group docker | cut -d: -f3)
-    group_add:
-      - "${DOCKER_GID:-986}"
     depends_on:
       db:
         condition: service_healthy

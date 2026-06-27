@@ -17,6 +17,12 @@ services:
   hub-api:
     # Hot-reload pour le développement
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --timeout-graceful-shutdown 5
+    environment:
+      - APP_ENV=development
+      - DOCKER_SCAN_ENABLED=true
+    group_add:
+      # GID du groupe docker hôte. Override: DOCKER_GID=$(getent group docker | cut -d: -f3)
+      - "${DOCKER_GID:-986}"
     volumes:
       # Montage du code source pour hot-reload
       - ./hub/app:/code/app
@@ -24,3 +30,5 @@ services:
       - ./hub/migrations:/code/migrations
       - ./hub/app_tester.py:/code/app_tester.py
       - ./hub/pytest.ini:/code/pytest.ini
+      # Socket Docker (dev uniquement) pour le scan des conteneurs
+      - /var/run/docker.sock:/var/run/docker.sock:ro
