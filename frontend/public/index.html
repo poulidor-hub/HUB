@@ -2314,6 +2314,20 @@
                     <button type="button" class="btn-close cpw-close" data-bs-dismiss="modal" aria-label="Fermer"></button>
                 </div>
 
+                <ul class="nav nav-tabs px-3 pt-2" id="cpwTabs" role="tablist">
+                    <li class="nav-item" role="presentation">
+                        <button class="nav-link active" id="cpw-tab-pwd" data-bs-toggle="tab"
+                                data-bs-target="#cpw-pane-pwd" type="button" role="tab">Mot de passe</button>
+                    </li>
+                    <li class="nav-item" role="presentation">
+                        <button class="nav-link" id="cpw-tab-totp" data-bs-toggle="tab"
+                                data-bs-target="#cpw-pane-totp" type="button" role="tab"
+                                data-action="renderTotpTab">Authentification par token</button>
+                    </li>
+                </ul>
+                <div class="tab-content">
+                <div class="tab-pane fade show active" id="cpw-pane-pwd" role="tabpanel">
+
                 <form id="changePasswordForm"data-action="handleChangePassword" data-args="event">
                     <div class="modal-body cpw-body">
                         <div id="changePasswordMandatory" class="alert alert-warning" style="display: none;">
@@ -2369,6 +2383,45 @@
                         </button>
                     </div>
                 </form>
+                </div><!-- /cpw-pane-pwd -->
+                <div class="tab-pane fade" id="cpw-pane-totp" role="tabpanel">
+                    <div class="cpw-body">
+                        <div id="totpError" class="alert alert-danger d-none"></div>
+                        <div id="totpEnabledBox" class="d-none">
+                            <p class="text-success"><i class="bi bi-shield-check me-1"></i>
+                                Authentification par token activée.</p>
+                            <div class="cpw-field">
+                                <label for="totpDisablePassword">Mot de passe actuel</label>
+                                <div class="cpw-inp">
+                                    <input type="password" id="totpDisablePassword">
+                                </div>
+                            </div>
+                            <button type="button" class="btn btn-outline-danger"
+                                    data-action="handleTotpDisable">Désactiver</button>
+                        </div>
+                        <div id="totpDisabledBox" class="d-none">
+                            <p class="text-muted">Scannez ce QR code avec votre application
+                                d'authentification (Google Authenticator, FreeOTP, Authy…),
+                                puis saisissez le code à 6 chiffres pour activer.</p>
+                            <button type="button" class="btn btn-primary mb-3"
+                                    data-action="handleTotpSetup">Activer</button>
+                            <div id="totpSetupArea" class="d-none text-center">
+                                <img id="totpQr" alt="QR code TOTP" class="mb-2" style="max-width:200px">
+                                <p class="small">Clé manuelle : <code id="totpSecret"></code></p>
+                                <div class="cpw-field text-start">
+                                    <label for="totpConfirmCode">Code à 6 chiffres</label>
+                                    <div class="cpw-inp">
+                                        <input type="text" id="totpConfirmCode" inputmode="numeric"
+                                               maxlength="8" autocomplete="one-time-code">
+                                    </div>
+                                </div>
+                                <button type="button" class="btn btn-success"
+                                        data-action="handleTotpConfirm">Confirmer</button>
+                            </div>
+                        </div>
+                    </div>
+                </div><!-- /cpw-pane-totp -->
+                </div><!-- /tab-content -->
 
             </div>
         </div>

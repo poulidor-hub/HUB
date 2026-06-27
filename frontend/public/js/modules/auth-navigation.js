@@ -538,3 +538,66 @@ async function handleChangePassword(event) {
         errorDiv.classList.remove('d-none');
     }
 }
+
+// ===== Authentification par token (TOTP) =====
+
+async function renderTotpTab() {
+    const errorDiv = document.getElementById('totpError');
+    errorDiv.classList.add('d-none');
+    const enabledBox = document.getElementById('totpEnabledBox');
+    const disabledBox = document.getElementById('totpDisabledBox');
+    document.getElementById('totpSetupArea').classList.add('d-none');
+    try {
+        const me = await api.getCurrentUser();
+        if (me.totp_enabled) {
+            enabledBox.classList.remove('d-none');
+            disabledBox.classList.add('d-none');
+        } else {
+            enabledBox.classList.add('d-none');
+            disabledBox.classList.remove('d-none');
+        }
+    } catch (e) {
+        errorDiv.textContent = 'Impossible de charger l\'état de l\'authentificateur';
+        errorDiv.classList.remove('d-none');
+    }
+}
+
+async function handleTotpSetup() {
+    const errorDiv = document.getElementById('totpError');
+    errorDiv.classList.add('d-none');
+    try {
+        const data = await api.totpSetup();
+        document.getElementById('totpQr').src = data.qr_data_uri;
+        document.getElementById('totpSecret').textContent = data.secret;
+        document.getElementById('totpSetupArea').classList.remove('d-none');
+    } catch (e) {
+        errorDiv.textContent = e.message || 'Erreur lors de l\'initialisation';
+        errorDiv.classList.remove('d-none');
+    }
+}
+
+async function handleTotpConfirm() {
+    const errorDiv = document.getElementById('totpError');
+    errorDiv.classList.add('d-none');
+    const code = document.getElementById('totpConfirmCode').value.trim();
+    try {
+        await api.totpConfirm(code);
+        await renderTotpTab();
+    } catch (e) {
+        errorDiv.textContent = e.message || 'Code invalide';
+        errorDiv.classList.remove('d-none');
+    }
+}
+
+async function handleTotpDisable() {
+    const errorDiv = document.getElementById('totpError');
+    errorDiv.classList.add('d-none');
+    const pw = document.getElementById('totpDisablePassword').value;
+    try {
+        await api.totpDisable(pw);
+        await renderTotpTab();
+    } catch (e) {
+        errorDiv.textContent = e.message || 'Erreur lors de la désactivation';
+        errorDiv.classList.remove('d-none');
+    }
+}
