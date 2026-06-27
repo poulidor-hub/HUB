@@ -954,6 +954,11 @@
                         <i class="bi bi-hdd-stack me-1"></i>Sauvegardes
                     </button>
                 </li>
+                <li class="nav-item">
+                    <button class="nav-link" id="vpn-tab" data-bs-toggle="tab" data-bs-target="#vpnPanel">
+                        <i class="bi bi-shield-lock me-1"></i>VPN
+                    </button>
+                </li>
             </ul>
 
             <div class="tab-content">
@@ -1227,6 +1232,79 @@
                             </div>
                         </div>
                     </div>
+
+                <!-- VPN Panel -->
+                <div class="tab-pane fade" id="vpnPanel">
+                    <div class="card">
+                        <div class="card-body">
+                            <div class="d-flex justify-content-between align-items-center mb-3">
+                                <h6 class="card-title mb-0"><i class="bi bi-shield-lock me-2"></i>Configuration VPN WireGuard</h6>
+                                <div class="d-flex align-items-center gap-2">
+                                    <span id="vpnStatusBadge" class="badge bg-secondary d-none">Déconnecté</span>
+                                    <div class="form-check form-switch mb-0">
+                                        <input class="form-check-input" type="checkbox" id="toggleVpn"
+                                               data-action="handleVpnToggle">
+                                        <label class="form-check-label small" for="toggleVpn">Activer</label>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div id="vpnConfigForm" class="d-none">
+                                <div class="row g-3">
+                                    <div class="col-md-6">
+                                        <label class="form-label small">Clé privée</label>
+                                        <div class="input-group">
+                                            <input type="password" class="form-control form-control-sm" id="vpnPrivateKey" placeholder="yAnz5TF+X...">
+                                            <button class="btn btn-outline-secondary btn-sm" type="button" data-action="handleVpnKeyGen">
+                                                <i class="bi bi-arrow-repeat"></i> Générer
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <label class="form-label small">Adresse VPN</label>
+                                        <input type="text" class="form-control form-control-sm" id="vpnAddress" placeholder="10.8.0.5/24">
+                                    </div>
+                                    <div class="col-md-6">
+                                        <label class="form-label small">DNS (optionnel)</label>
+                                        <input type="text" class="form-control form-control-sm" id="vpnDns" placeholder="1.1.1.1">
+                                    </div>
+                                    <div class="col-md-6">
+                                        <label class="form-label small">Clé publique du serveur</label>
+                                        <input type="text" class="form-control form-control-sm" id="vpnPublicKey" placeholder="xTIBA5r...">
+                                    </div>
+                                    <div class="col-md-6">
+                                        <label class="form-label small">Endpoint</label>
+                                        <input type="text" class="form-control form-control-sm" id="vpnEndpoint" placeholder="vps.example.com:51820">
+                                    </div>
+                                    <div class="col-md-6">
+                                        <label class="form-label small">AllowedIPs</label>
+                                        <input type="text" class="form-control form-control-sm" id="vpnAllowedIPs" value="0.0.0.0/0">
+                                    </div>
+                                    <div class="col-md-6">
+                                        <label class="form-label small">PresharedKey (optionnel)</label>
+                                        <input type="password" class="form-control form-control-sm" id="vpnPresharedKey" placeholder="Optionnel">
+                                    </div>
+                                </div>
+                                <div class="mt-3">
+                                    <button class="btn btn-primary btn-sm" data-action="handleVpnDeploy">
+                                        <i class="bi bi-cloud-upload me-1"></i>Déployer
+                                    </button>
+                                </div>
+                            </div>
+
+                            <!-- Stats de connexion -->
+                            <div id="vpnStats" class="d-none mt-3">
+                                <hr>
+                                <div class="row small text-muted">
+                                    <div class="col-md-3"><strong>IP VPN:</strong> <span id="vpnStatsIp">-</span></div>
+                                    <div class="col-md-3"><strong>Endpoint:</strong> <span id="vpnStatsEndpoint">-</span></div>
+                                    <div class="col-md-3"><strong>RX:</strong> <span id="vpnStatsRx">-</span></div>
+                                    <div class="col-md-3"><strong>TX:</strong> <span id="vpnStatsTx">-</span></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
     </div>
@@ -3200,5 +3278,6 @@
     <script src="js/modules/account-requests.js?v=3.7.1"></script>
     <script src="js/app.js?v=3.7.1"></script>
     <script src="js/modules/init.js?v=3.7.1"></script>
+    <script src="js/modules/admin-vpn.js?v=3.7.1"></script>
 </body>
 </html>
