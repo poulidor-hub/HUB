@@ -1,11 +1,11 @@
 # =============================================================================
-# Docker Compose Override — Développement uniquement
+# Docker Compose — Développement uniquement (overlay explicite)
 # =============================================================================
-# Ce fichier est automatiquement chargé par `docker compose up` s'il existe.
-# Il ajoute les options de développement : hot-reload et montage du code source.
-#
-# En production, renommez ou supprimez ce fichier, ou utilisez :
-#   docker compose -f docker-compose.yml up -d
+# Ce fichier n'est PAS chargé automatiquement. Pour le développement :
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+#   (ou: make up-dev)
+# En production, n'utilisez QUE le fichier de base :
+#   docker compose -f docker-compose.yml up -d   (ou: make up-prod)
 # =============================================================================
 
 services:

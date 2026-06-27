@@ -196,9 +196,10 @@ async def run_docker_config(temp_dir: Path) -> dict:
     if compose_file.exists():
         (docker_dir / "docker-compose.yml").write_bytes(compose_file.read_bytes())
 
-    override_file = project_root / "docker-compose.override.yml"
-    if override_file.exists():
-        (docker_dir / "docker-compose.override.yml").write_bytes(override_file.read_bytes())
+    for dev_name in ("docker-compose.dev.yml", "docker-compose.override.yml"):
+        dev_file = project_root / dev_name
+        if dev_file.exists():
+            (docker_dir / dev_name).write_bytes(dev_file.read_bytes())
 
     if VERSION_FILE.exists():
         (docker_dir / "VERSION").write_bytes(VERSION_FILE.read_bytes())
