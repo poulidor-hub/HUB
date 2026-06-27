@@ -1168,6 +1168,12 @@ async def register_app(
                 existing_app.description = app_data.description
                 updated_fields.append("description mise à jour")
             
+            # Mettre à jour la version si fournie et différente
+            if app_data.version and existing_app.version != app_data.version:
+                old_value = existing_app.version
+                existing_app.version = app_data.version
+                updated_fields.append(f"version: {old_value} → {app_data.version}")
+            
             # Mettre à jour la spec OpenAPI si fournie
             if app_data.api_endpoints:
                 filtered_spec, total_ep, filtered_ep = filter_openapi_spec(app_data.api_endpoints)
@@ -1273,6 +1279,7 @@ async def register_app(
         is_shared_service=app_data.is_shared,  # Permet l'accès M2M si True
         is_remote=is_remote,  # Marquer comme app distante si custom_host fourni
         registered_from_ip=client_ip,  # Enregistrer l'IP source
+        version=app_data.version,  # Version de l'app, capturée à l'enregistrement
         approval_status=ApprovalStatus.pending,  # En attente d'approbation admin
         is_active=False  # Inactive jusqu'à approbation
     )

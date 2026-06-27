@@ -867,6 +867,7 @@ class AppRegisterRequest(BaseModel):
     custom_host: Optional[str] = Field(None, description="Host/IP de l'application si hébergée sur un serveur distant (ex: 192.168.1.200)")
     is_shared: bool = Field(False, description="Si True, l'application sera accessible par tous les service accounts (M2M)")
     api_endpoints: Optional[Dict[str, Any]] = Field(None, description="Spécification OpenAPI (JSON) décrivant les endpoints métier de l'application")
+    version: Optional[str] = Field(None, max_length=50, description="Version de l'app (fichier VERSION), capturée à l'enregistrement")
 
 
 class AppRegisterResponse(BaseModel):

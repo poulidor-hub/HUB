@@ -42,3 +42,48 @@ async def test_application_version_defaults_to_none(async_session):
         select(Application).where(Application.slug == "no-version-app")
     )
     assert result.scalar_one().version is None
+
+
+@pytest.mark.asyncio
+async def test_register_new_app_stores_version(client, async_session):
+    with patch("app.routes.apps.is_docker_network_ip", return_value=True):
+        response = await client.post(
+            "/api/apps/register",
+            json={"slug": "verapp", "name": "Ver App", "api_port": 9200, "version": "2.0.1"},
+        )
+    assert response.status_code == 200
+    result = await async_session.execute(
+        select(Application).where(Application.slug == "verapp")
+    )
+    assert result.scalar_one().version == "2.0.1"
+
+
+@pytest.mark.asyncio
+async def test_register_without_version_stays_none(client, async_session):
+    with patch("app.routes.apps.is_docker_network_ip", return_value=True):
+        response = await client.post(
+            "/api/apps/register",
+            json={"slug": "verapp-none", "name": "No Ver", "api_port": 9201},
+        )
+    assert response.status_code == 200
+    result = await async_session.execute(
+        select(Application).where(Application.slug == "verapp-none")
+    )
+    assert result.scalar_one().version is None
+
+
+@pytest.mark.asyncio
+async def test_reregister_updates_version(client, async_session):
+    async_session.add(_make_app("verapp-upd", version="1.0.0"))
+    await async_session.commit()
+    with patch("app.routes.apps.is_docker_network_ip", return_value=True), \
+         patch("app.routes.apps.settings.force_replace_app", False):
+        response = await client.post(
+            "/api/apps/register",
+            json={"slug": "verapp-upd", "name": "Upd", "api_port": 9202, "version": "1.1.0"},
+        )
+    assert response.status_code == 200
+    result = await async_session.execute(
+        select(Application).where(Application.slug == "verapp-upd")
+    )
+    assert result.scalar_one().version == "1.1.0"
