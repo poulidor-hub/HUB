@@ -140,3 +140,8 @@ volumes:
 networks:
   hub-network:
     driver: bridge
+    ipam:
+      config:
+        # Sous-réseau fixe du Hub (sinon Docker en attribue un aléatoire dans 172.16-31.x).
+        # Doit correspondre à la première entrée de APP_WHITELIST_NETWORKS dans .env.
+        - subnet: 172.20.0.0/16
