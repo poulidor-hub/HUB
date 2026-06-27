@@ -170,7 +170,9 @@ function renderAppsGrid(apps) {
                     </div>
                     <div class="app-card-footer">
                         ${app.category ? `<span class="badge app-category-badge">${escapeHtml(app.category)}</span>` : '<span></span>'}
-                        ${appVersionLabel ? `<span class="app-version-badge">${escapeHtml(appVersionLabel)}</span>` : '<span></span>'}
+                        ${appVersionLabel
+                            ? `<span class="app-version-badge">${escapeHtml(appVersionLabel)}</span>`
+                            : `<span class="app-version-badge app-version-unknown" title="Affichage de version non supporté par cette application">n/d</span>`}
                     </div>
                     ${isAdmin ? `
                         <div class="app-role-selector" onclick="event.stopPropagation()">

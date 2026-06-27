@@ -108,6 +108,11 @@ body {
     white-space: nowrap;
 }
 
+.app-version-unknown {
+    font-style: italic;
+    opacity: 0.45;
+}
+
 .app-card .card-body {
     padding: 1rem;
     display: flex;
