@@ -601,3 +601,56 @@ async function handleTotpDisable() {
         errorDiv.classList.remove('d-none');
     }
 }
+
+// ===== Récupération de mot de passe (TOTP) =====
+
+let recoverModal = null;
+let recoverResetToken = null;
+
+function showRecoverModal() {
+    recoverResetToken = null;
+    document.getElementById('recoverError').classList.add('d-none');
+    document.getElementById('recoverSuccess').classList.add('d-none');
+    document.getElementById('recoverVerifyForm').classList.remove('d-none');
+    document.getElementById('recoverResetForm').classList.add('d-none');
+    document.getElementById('recoverVerifyForm').reset();
+    document.getElementById('recoverResetForm').reset();
+    if (!recoverModal) {
+        recoverModal = new bootstrap.Modal(document.getElementById('recoverModal'));
+    }
+    recoverModal.show();
+}
+
+async function handleRecoverVerify(event) {
+    event.preventDefault();
+    const errorDiv = document.getElementById('recoverError');
+    errorDiv.classList.add('d-none');
+    const username = document.getElementById('recoverUsername').value.trim();
+    const code = document.getElementById('recoverCode').value.trim();
+    try {
+        const data = await api.recoverVerify(username, code);
+        recoverResetToken = data.reset_token;
+        document.getElementById('recoverVerifyForm').classList.add('d-none');
+        document.getElementById('recoverResetForm').classList.remove('d-none');
+    } catch (e) {
+        errorDiv.textContent = e.message || 'Code de récupération invalide';
+        errorDiv.classList.remove('d-none');
+    }
+}
+
+async function handleRecoverReset(event) {
+    event.preventDefault();
+    const errorDiv = document.getElementById('recoverError');
+    const successDiv = document.getElementById('recoverSuccess');
+    errorDiv.classList.add('d-none');
+    const newPassword = document.getElementById('recoverNewPassword').value;
+    try {
+        await api.recoverReset(recoverResetToken, newPassword);
+        document.getElementById('recoverResetForm').classList.add('d-none');
+        successDiv.textContent = 'Mot de passe réinitialisé. Vous pouvez vous connecter.';
+        successDiv.classList.remove('d-none');
+    } catch (e) {
+        errorDiv.textContent = e.message || 'Échec de la réinitialisation';
+        errorDiv.classList.remove('d-none');
+    }
+}
