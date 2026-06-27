@@ -284,25 +284,10 @@ async def lifespan(app: FastAPI):
 
     _settings = get_settings()
     if not _settings.secrets_encryption_key:
-        logger.warning(
-            "⚠️  SECRETS_ENCRYPTION_KEY non définie ! "
-            "Les secrets des service accounts ne seront pas chiffrés. "
-            "Définissez cette variable d'environnement pour la production."
+        logger.info(
+            "⚠️  SECRETS_ENCRYPTION_KEY non définie : "
+            "les secrets des service accounts ne seront pas chiffrés."
         )
-    else:
-        try:
-            from cryptography.fernet import Fernet
-            Fernet(_settings.secrets_encryption_key.encode())
-            logger.info("🔐 Chiffrement Fernet des secrets activé")
-        except Exception:
-            logger.critical(
-                "⛔ SECRETS_ENCRYPTION_KEY est définie mais n'est pas une clé Fernet valide ! "
-                "Générez-la avec: python -c \"from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())\""
-            )
-            raise SystemExit(
-                "SECRETS_ENCRYPTION_KEY invalide. "
-                "Générez une clé valide avec Fernet.generate_key()."
-            )
 
     # Générer les clés de chiffrement backup (indépendantes des clés JWT)
     ensure_backup_keys_exist()

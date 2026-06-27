@@ -208,6 +208,9 @@ class Settings(BaseSettings):
     # Générée avec: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
     # Si vide, les secrets seront stockés en clair (non recommandé en production)
     secrets_encryption_key: str = ""
+
+    # Autorise explicitement les secrets en clair (clé Fernet vide) — DEV uniquement.
+    allow_plaintext_secrets: bool = False
     
     # Synchronisation automatique avec Docker (en secondes)
     # 0 = désactivé, 300 = toutes les 5 minutes
@@ -333,11 +336,63 @@ def _check_allowed_origins(settings: "Settings") -> list[str]:
 
 
 def _check_secrets(settings: "Settings") -> list[str]:
+    key = settings.secrets_encryption_key.strip()
+    if not key:
+        if is_production(settings) and not settings.allow_plaintext_secrets:
+            raise ConfigValidationError(
+                "SECRETS_ENCRYPTION_KEY est vide en production : les secrets seraient stockés en clair. "
+                "Générez une clé via Fernet.generate_key() ou définissez ALLOW_PLAINTEXT_SECRETS=true (dev)."
+            )
+        return ["⚠️  SECRETS_ENCRYPTION_KEY vide : secrets stockés en clair."]
+    from cryptography.fernet import Fernet
+    try:
+        Fernet(key.encode())
+    except Exception as exc:
+        raise ConfigValidationError(
+            "SECRETS_ENCRYPTION_KEY définie mais invalide (pas une clé Fernet). "
+            f"Générez-la via Fernet.generate_key(). Détail : {exc}"
+        )
     return []
+
+
+_WEAK_PASSWORDS = {"admin", "password", "admin123", "changez_moi", "changeme", ""}
+
+
+def _extract_db_password(database_url: str) -> str:
+    """Extrait le mot de passe d'une URL postgresql+asyncpg://user:pass@host/db."""
+    try:
+        after_scheme = database_url.split("://", 1)[1]
+        creds = after_scheme.split("@", 1)[0]
+        if ":" in creds:
+            return creds.split(":", 1)[1]
+    except (IndexError, ValueError):
+        pass
+    return ""
 
 
 def _check_passwords(settings: "Settings") -> list[str]:
-    return []
+    warns: list[str] = []
+    prod = is_production(settings)
+
+    admin = settings.admin_password.strip()
+    admin_weak = admin.lower() in _WEAK_PASSWORDS or len(admin) < 8
+    if admin_weak:
+        msg = ("ADMIN_PASSWORD est faible (valeur par défaut ou < 8 caractères). "
+               "Définissez un mot de passe fort dans .env.")
+        if prod:
+            raise ConfigValidationError(msg)
+        warns.append(f"⚠️  {msg}")
+
+    db_pwd = _extract_db_password(settings.database_url)
+    db_weak = db_pwd.lower() in _WEAK_PASSWORDS or "changez_moi" in db_pwd.lower() or len(db_pwd) < 8
+    if db_weak:
+        msg = ("Mot de passe de la base de données faible/par défaut dans DATABASE_URL. "
+               "Régénérez-le (scripts/gen-secrets.sh) et mettez à jour POSTGRES_PASSWORD + DATABASE_URL.")
+        if prod:
+            raise ConfigValidationError(msg)
+        warns.append(f"⚠️  {msg}")
+
+    return warns
 
 
 def validate_security_config(settings: "Settings") -> list[str]:

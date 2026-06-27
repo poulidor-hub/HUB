@@ -76,6 +76,7 @@ services:
       # Clé de chiffrement Fernet des secrets service accounts
       # Générer avec: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
       - SECRETS_ENCRYPTION_KEY=${SECRETS_ENCRYPTION_KEY:?Définir SECRETS_ENCRYPTION_KEY dans .env (générée via Fernet.generate_key())}
+      - ALLOW_PLAINTEXT_SECRETS=${ALLOW_PLAINTEXT_SECRETS:-false}
     volumes:
       # Secrets et clés JWT
       - ./secrets:/code/secrets:rw
