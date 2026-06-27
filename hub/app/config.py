@@ -248,6 +248,9 @@ class Settings(BaseSettings):
     # Format : préfixes IP séparés par des virgules (ex: "172.17.,172.18.,192.168.50.")
     app_whitelist_networks: str = ""
 
+    # Répertoire de configuration VPN WireGuard (partagé avec le conteneur wireguard-client)
+    vpn_config_dir: str = "/vpn"
+
     # === Pool d'allocation dynamique des ports d'applications ===
     # Plages utilisées par POST /api/apps/allocate-ports.
     # Le frontend est alloué par pas de 2 (frontend_port + 1 réservé pour le HTTPS).

@@ -94,6 +94,8 @@ services:
       - ./storage/snapshots:/code/storage/snapshots:rw
       # Certificats PKI (CA + cert serveur), partagés avec le frontend
       - ./certs:/code/certs:rw
+      # Configuration VPN WireGuard (volume partagé avec wireguard-client)
+      - vpn-config:/vpn:rw
     depends_on:
       db:
         condition: service_healthy
@@ -155,9 +157,28 @@ services:
       - SETGID
       - SETUID
 
+  # ===== VPN WireGuard Client =====
+  wireguard-client:
+    image: linuxserver/wireguard:latest
+    container_name: hub-wireguard
+    network_mode: host
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=${TZ:-Europe/Paris}
+      - WG_ENABLED=${WG_ENABLED:-false}
+    volumes:
+      - vpn-config:/config
+    restart: unless-stopped
+
 # ===== VOLUMES =====
 volumes:
   postgres_data:
+    driver: local
+  vpn-config:
     driver: local
 
 # ===== RÉSEAUX =====
