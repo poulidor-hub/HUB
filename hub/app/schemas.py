@@ -47,6 +47,36 @@ class PasswordChangeRequest(BaseModel):
     new_password: str = Field(..., min_length=8, description="Nouveau mot de passe (min 8 caractères)")
 
 
+# ===== TOTP / Récupération de mot de passe =====
+class TotpSetupResponse(BaseModel):
+    """Réponse d'initialisation TOTP (secret en attente de confirmation)."""
+    otpauth_uri: str
+    secret: str
+    qr_data_uri: str
+
+
+class TotpConfirmRequest(BaseModel):
+    code: str = Field(..., min_length=6, max_length=8, description="Code TOTP à 6 chiffres")
+
+
+class TotpDisableRequest(BaseModel):
+    current_password: str = Field(..., description="Mot de passe actuel")
+
+
+class RecoverVerifyRequest(BaseModel):
+    username: str = Field(..., min_length=1, max_length=50)
+    totp_code: str = Field(..., min_length=6, max_length=8)
+
+
+class RecoverVerifyResponse(BaseModel):
+    reset_token: str
+
+
+class RecoverResetRequest(BaseModel):
+    reset_token: str
+    new_password: str = Field(..., min_length=8)
+
+
 # ===== Profile Schemas =====
 class ProfileAppRoleRequest(BaseModel):
     """App + rôle pour un profil"""

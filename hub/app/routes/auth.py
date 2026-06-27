@@ -12,7 +12,12 @@ import logging
 
 from app.database import get_db
 from app.models import User, AuditLog, ServiceAccount, UserAppRole, UserSession, Application, utcnow
-from app.schemas import Token, LoginRequest, TokenIntrospection, RefreshTokenRequest, LogoutRequest, PasswordChangeRequest, AppLaunchResponse
+from app.schemas import (
+    Token, LoginRequest, TokenIntrospection, RefreshTokenRequest, LogoutRequest,
+    PasswordChangeRequest, AppLaunchResponse,
+    TotpSetupResponse, TotpConfirmRequest, TotpDisableRequest,
+    RecoverVerifyRequest, RecoverVerifyResponse, RecoverResetRequest,
+)
 from app.routes.events import notify_stats_update, notify_event
 from app.auth import (
     verify_password,
@@ -25,9 +30,19 @@ from app.auth import (
     verify_token,
     get_current_user,
     get_password_hash,
-    get_settings
+    get_settings,
+    create_reset_token,
+    decode_reset_token,
+    password_fingerprint,
 )
 from app.routes.audit import start_session, end_session, log_action
+from app.routes.service_accounts import encrypt_secret, decrypt_secret
+from app.totp import (
+    generate_totp_secret,
+    build_provisioning_uri,
+    build_qr_data_uri,
+    verify_totp_code,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -404,6 +419,7 @@ async def get_current_user_info(
         "email": current_user.email,
         "is_admin": current_user.is_admin,
         "must_change_password": current_user.must_change_password or False,
+        "totp_enabled": current_user.totp_enabled or False,
         "beacon_token": generate_beacon_token(current_user.id),
         "applications": [
             {
@@ -470,6 +486,85 @@ async def change_password(
     notify_event("audit_updated", {"action": "password_changed", "username": current_user.username})
     
     return {"message": "Mot de passe modifié avec succès"}
+
+
+@router.post("/totp/setup", response_model=TotpSetupResponse)
+async def totp_setup(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Génère un secret TOTP en attente (non activé) et renvoie le QR code."""
+    secret = generate_totp_secret()
+    account = current_user.email or current_user.username
+    uri = build_provisioning_uri(secret, account, settings.totp_issuer)
+
+    current_user.totp_secret = encrypt_secret(secret)
+    current_user.totp_enabled = False
+    current_user.totp_confirmed_at = None
+    current_user.totp_last_counter = None
+    await db.commit()
+
+    return TotpSetupResponse(
+        otpauth_uri=uri,
+        secret=secret,
+        qr_data_uri=build_qr_data_uri(uri),
+    )
+
+
+@router.post("/totp/confirm")
+async def totp_confirm(
+    request: Request,
+    payload: TotpConfirmRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Confirme l'enrôlement TOTP en vérifiant un premier code."""
+    if not current_user.totp_secret:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Aucun enrôlement TOTP en attente")
+
+    secret = decrypt_secret(current_user.totp_secret)
+    counter = verify_totp_code(secret, payload.code, current_user.totp_last_counter)
+    if counter is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Code invalide")
+
+    current_user.totp_enabled = True
+    current_user.totp_confirmed_at = utcnow()
+    current_user.totp_last_counter = counter
+
+    db.add(AuditLog(
+        user_id=current_user.id,
+        action="totp_enabled",
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent", "")[:255],
+    ))
+    await db.commit()
+    return {"message": "Authentification par token activée"}
+
+
+@router.post("/totp/disable")
+async def totp_disable(
+    request: Request,
+    payload: TotpDisableRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Désactive le TOTP après vérification du mot de passe actuel."""
+    if not verify_password(payload.current_password, current_user.hashed_password):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Mot de passe actuel incorrect")
+
+    current_user.totp_enabled = False
+    current_user.totp_secret = None
+    current_user.totp_confirmed_at = None
+    current_user.totp_last_counter = None
+
+    db.add(AuditLog(
+        user_id=current_user.id,
+        action="totp_disabled",
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent", "")[:255],
+    ))
+    await db.commit()
+    return {"message": "Authentification par token désactivée"}
 
 
 @router.post("/logout")
