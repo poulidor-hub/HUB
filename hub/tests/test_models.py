@@ -262,3 +262,18 @@ class TestDefaultRoles:
     def test_default_roles_count(self):
         """Vérifie le nombre de rôles par défaut"""
         assert len(DEFAULT_ROLES) == 4
+
+
+async def test_user_has_totp_fields(async_session):
+    user = User(
+        username="totpfields",
+        email="totpfields@example.com",
+        hashed_password=get_password_hash("password123"),
+    )
+    async_session.add(user)
+    await async_session.commit()
+    await async_session.refresh(user)
+    assert user.totp_enabled is False
+    assert user.totp_secret is None
+    assert user.totp_confirmed_at is None
+    assert user.totp_last_counter is None

@@ -141,6 +141,10 @@ class User(Base):
     is_admin = Column(Boolean, default=False)  # Admin du Hub (pas des apps)
     must_change_password = Column(Boolean, default=False)  # Forcer le changement de mdp à la prochaine connexion
     can_change_password = Column(Boolean, default=True)  # Autoriser l'utilisateur à changer son mdp (False pour comptes partagés)
+    totp_secret = Column(String(255), nullable=True)  # Secret TOTP chiffré Fernet (préfixe ENC:)
+    totp_enabled = Column(Boolean, default=False)  # Authentificateur activé (après confirmation)
+    totp_confirmed_at = Column(DateTime, nullable=True)  # Date d'activation du TOTP
+    totp_last_counter = Column(BigInteger, nullable=True)  # Dernier pas de temps accepté (anti-rejeu)
     created_at = Column(DateTime, default=utcnow)
     updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
     
