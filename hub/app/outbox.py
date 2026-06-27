@@ -3,14 +3,14 @@ Transactional Outbox — garantie de livraison des appels HTTP sortants du Hub.
 """
 import asyncio
 import logging
-from datetime import datetime, timezone, timedelta
+from datetime import timedelta
 from typing import Optional, Callable, Awaitable
 
 from sqlalchemy import select, or_, and_, func, delete
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.database import async_session_maker as _default_session_maker
-from app.models import OutboxMessage
+from app.models import OutboxMessage, utcnow
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +42,7 @@ class OutboxService:
         max_retries: int = 10,
     ) -> int:
         async with self._session_maker() as session:
-            now = datetime.now(timezone.utc)
+            now = utcnow()
             msg = OutboxMessage(
                 target_url=target_url,
                 target_slug=target_slug or "unknown",
@@ -62,7 +62,7 @@ class OutboxService:
             return msg.id
 
     async def _fetch_pending(self, session: AsyncSession) -> list[OutboxMessage]:
-        now = datetime.now(timezone.utc)
+        now = utcnow()
         stmt = (
             select(OutboxMessage)
             .where(
@@ -129,7 +129,7 @@ class OutboxService:
             if not messages:
                 return
 
-            now = datetime.now(timezone.utc)
+            now = utcnow()
 
             for msg in messages:
                 msg.status = "in_progress"
@@ -196,7 +196,7 @@ class OutboxService:
             if msg.status != "failed":
                 return False
             msg.status = "pending"
-            msg.next_retry_at = datetime.now(timezone.utc)
+            msg.next_retry_at = utcnow()
             msg.retry_count = 0
             msg.last_error = None
             await session.commit()
@@ -230,7 +230,7 @@ class OutboxService:
             }
 
     async def cleanup_old_messages(self):
-        now = datetime.now(timezone.utc)
+        now = utcnow()
         async with self._session_maker() as session:
             deleted = await session.execute(
                 delete(OutboxMessage).where(
