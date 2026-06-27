@@ -567,6 +567,78 @@ async def totp_disable(
     return {"message": "Authentification par token désactivée"}
 
 
+_RECOVER_GENERIC_ERROR = "Code de récupération invalide ou récupération indisponible"
+
+
+@router.post("/recover/verify", response_model=RecoverVerifyResponse)
+async def recover_verify(
+    request: Request,
+    payload: RecoverVerifyRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Étape 1 de récupération : vérifie le code TOTP, renvoie un jeton de reset."""
+    client_ip = _get_client_ip(request)
+    _check_rate_limit(client_ip)
+
+    result = await db.execute(select(User).where(User.username == payload.username))
+    user = result.scalar_one_or_none()
+
+    if not user or not user.is_active or not user.totp_enabled or not user.totp_secret:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=_RECOVER_GENERIC_ERROR)
+
+    secret = decrypt_secret(user.totp_secret)
+    counter = verify_totp_code(secret, payload.totp_code, user.totp_last_counter)
+    if counter is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=_RECOVER_GENERIC_ERROR)
+
+    user.totp_last_counter = counter
+    db.add(AuditLog(
+        user_id=user.id,
+        action="password_recovery_verified",
+        ip_address=client_ip,
+        user_agent=request.headers.get("user-agent", "")[:255],
+    ))
+    await db.commit()
+
+    reset_token = create_reset_token(user.username, user.hashed_password)
+    return RecoverVerifyResponse(reset_token=reset_token)
+
+
+@router.post("/recover/reset")
+async def recover_reset(
+    request: Request,
+    payload: RecoverResetRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Étape 2 de récupération : applique le nouveau mot de passe via le jeton."""
+    client_ip = _get_client_ip(request)
+    _check_rate_limit(client_ip)
+
+    token_payload = decode_reset_token(payload.reset_token)
+    username = token_payload.get("sub")
+
+    result = await db.execute(select(User).where(User.username == username))
+    user = result.scalar_one_or_none()
+    if not user or not user.is_active:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Jeton de réinitialisation invalide ou expiré")
+
+    if token_payload.get("pfp") != password_fingerprint(user.hashed_password):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Jeton de réinitialisation invalide ou expiré")
+
+    user.hashed_password = get_password_hash(payload.new_password)
+    user.must_change_password = False
+    db.add(AuditLog(
+        user_id=user.id,
+        action="password_recovered",
+        ip_address=client_ip,
+        user_agent=request.headers.get("user-agent", "")[:255],
+    ))
+    await db.commit()
+
+    notify_event("audit_updated", {"action": "password_recovered", "username": user.username})
+    return {"message": "Mot de passe réinitialisé avec succès"}
+
+
 @router.post("/logout")
 async def logout(
     request: Request,
