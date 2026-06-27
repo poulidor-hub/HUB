@@ -183,6 +183,7 @@ class Application(Base):
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(100), nullable=False)
     slug = Column(String(50), unique=True, index=True, nullable=False)
+    version = Column(String(50), nullable=True)  # Version de l'app, capturée à l'enregistrement
     description = Column(Text)
     icon = Column(String(50), default="bi-app")  # Bootstrap Icons
     color = Column(String(7), default="#0d6efd")  # Couleur hex
