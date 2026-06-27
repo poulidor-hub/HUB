@@ -39,7 +39,7 @@ services:
       - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-hubadmin}:${POSTGRES_PASSWORD:-hub_secure_password_2025}@db:5432/${POSTGRES_DB:-hub_auth}
       - JWT_ALGORITHM=RS256
       - APP_ENV=${APP_ENV:-production}
-      - ACCESS_TOKEN_EXPIRE_MINUTES=${ACCESS_TOKEN_EXPIRE_MINUTES:-480}
+      - ACCESS_TOKEN_EXPIRE_MINUTES=${ACCESS_TOKEN_EXPIRE_MINUTES:-30}
       - ADMIN_USERNAME=${ADMIN_USERNAME:?Définir ADMIN_USERNAME dans .env}
       - ADMIN_PASSWORD=${ADMIN_PASSWORD:?Définir ADMIN_PASSWORD dans .env}
       - ADMIN_EMAIL=${ADMIN_EMAIL:-admin@local.lan}
