@@ -165,6 +165,6 @@ networks:
     driver: bridge
     ipam:
       config:
-        # Sous-réseau fixe du Hub (sinon Docker en attribue un aléatoire dans 172.16-31.x).
+        # Sous-réseau fixe du Hub (hors plage 172.16-31.x — réservée aux apps).
         # Doit correspondre à la première entrée de APP_WHITELIST_NETWORKS dans .env.
-        - subnet: 172.21.0.0/16
+        - subnet: 10.42.0.0/16
