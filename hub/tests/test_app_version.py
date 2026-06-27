@@ -87,3 +87,23 @@ async def test_reregister_updates_version(client, async_session):
         select(Application).where(Application.slug == "verapp-upd")
     )
     assert result.scalar_one().version == "1.1.0"
+
+
+@pytest.mark.asyncio
+async def test_dashboard_returns_app_version_from_app(client, async_session, admin_user, test_app):
+    test_app.version = "3.3.3"
+    async_session.add(test_app)
+    await async_session.commit()
+    token, _, _ = create_access_token(username=admin_user.username, apps={})
+    response = await client.get("/api/apps/", headers=get_auth_header(token))
+    assert response.status_code == 200
+    target = next(a for a in response.json() if a["slug"] == "test-app")
+    assert target["app_version"] == "3.3.3"
+
+
+@pytest.mark.asyncio
+async def test_dashboard_app_version_null_when_unset(client, async_session, admin_user, test_app):
+    token, _, _ = create_access_token(username=admin_user.username, apps={})
+    response = await client.get("/api/apps/", headers=get_auth_header(token))
+    target = next(a for a in response.json() if a["slug"] == "test-app")
+    assert target["app_version"] is None

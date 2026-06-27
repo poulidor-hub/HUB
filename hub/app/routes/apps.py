@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func
+from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 from typing import List, Optional, Union, Dict
 from datetime import datetime, timezone
@@ -15,7 +15,7 @@ from app.routes.events import notify_event, notify_stats_update
 from app.routes.app_backups import reassociate_orphan_backups
 
 from app.database import get_db
-from app.models import Application, User, ServiceAccount, UserAppRole, ApprovalStatus, service_account_app_access, DEFAULT_ROLES, AppBackup, UserFavorite, utcnow
+from app.models import Application, User, ServiceAccount, UserAppRole, ApprovalStatus, service_account_app_access, DEFAULT_ROLES, UserFavorite, utcnow
 from app.schemas import (
     AppCreate, AppCreateSimplified, AppUpdate, AppResponse, AppWithUsers, AppWithUsersAndDocker,
     AppResponseWithMyRole,
@@ -512,29 +512,6 @@ async def list_apps(
     )
     favorite_app_ids = {row[0] for row in fav_result}
     
-    # Récupérer la version de chaque app depuis le dernier backup
-    # Sous-requête : pour chaque app_slug, prendre le created_at max
-    latest_backup_subq = (
-        select(
-            AppBackup.app_slug,
-            func.max(AppBackup.created_at).label("max_created_at")
-        )
-        .where(AppBackup.app_version.isnot(None))
-        .group_by(AppBackup.app_slug)
-        .subquery()
-    )
-    # Jointure pour récupérer l'app_version du backup le plus récent
-    versions_result = await db.execute(
-        select(AppBackup.app_slug, AppBackup.app_version)
-        .join(
-            latest_backup_subq,
-            (AppBackup.app_slug == latest_backup_subq.c.app_slug) &
-            (AppBackup.created_at == latest_backup_subq.c.max_created_at)
-        )
-        .where(AppBackup.app_version.isnot(None))
-    )
-    app_versions_map = {row.app_slug: row.app_version for row in versions_result}
-    
     if current_user.is_admin:
         # Tri alphabétique par nom pour un ordre stable et prévisible
         result = await db.execute(
@@ -548,7 +525,7 @@ async def list_apps(
             AppResponseWithMyRole.from_app_with_role(
                 app, 
                 user_roles_map.get(app.slug),
-                app_version=app_versions_map.get(app.slug),
+                app_version=app.version,
                 is_favorite=app.id in favorite_app_ids
             )
             for app in apps
@@ -564,7 +541,7 @@ async def list_apps(
             AppResponseWithMyRole.from_app_with_role(
                 ar.application, 
                 ar.role,
-                app_version=app_versions_map.get(ar.application.slug),
+                app_version=ar.application.version,
                 is_favorite=ar.application.id in favorite_app_ids
             )
             for ar in sorted_roles

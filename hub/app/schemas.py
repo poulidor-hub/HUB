@@ -314,7 +314,7 @@ class AppResponse(AppBase):
 class AppResponseWithMyRole(AppResponse):
     """Application avec le rôle de l'utilisateur courant (pour le dashboard)"""
     my_role: Optional[str] = None  # Rôle de l'utilisateur courant sur cette app (null si pas de rôle)
-    app_version: Optional[str] = None  # Version de l'app (depuis le dernier backup)
+    app_version: Optional[str] = None  # Version de l'app (capturée à l'enregistrement)
     is_favorite: bool = False  # Si l'utilisateur a mis cette app en favori
     category: Optional[str] = None  # Catégorie de l'application
     
