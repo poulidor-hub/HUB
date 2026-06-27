@@ -14,16 +14,19 @@
  * Convention data-args : arguments séparés par "|", $el = l'élément cliqué
  */
 (function() {
-    function parseArgs(target, argsStr) {
+    function parseArgs(target, argsStr, event) {
         if (!argsStr) return [];
         return argsStr.split('|').map(function(a) {
-            return a === '$el' ? target : a;
+            if (a === '$el') return target;
+            if (a === 'event' || a === '$event') return event;
+            return a;
         });
     }
 
     document.addEventListener('click', function(e) {
         var target = e.target.closest('[data-action]');
         if (!target) return;
+        if (target.tagName === 'FORM') return;
         var fnName = target.getAttribute('data-action');
         if (fnName === 'onClickExpr') {
             var expr = target.getAttribute('data-args') || '';
@@ -39,7 +42,7 @@
         var fn = window[fnName];
         if (typeof fn !== 'function') return;
         e.preventDefault();
-        var args = parseArgs(target, target.getAttribute('data-args') || '');
+        var args = parseArgs(target, target.getAttribute('data-args') || '', e);
         fn.apply(window, args);
     });
 
@@ -50,13 +53,14 @@
         var fn = window[fnName];
         if (typeof fn !== 'function') return;
         e.preventDefault();
-        var args = parseArgs(form, form.getAttribute('data-args') || '');
+        var args = parseArgs(form, form.getAttribute('data-args') || '', e);
         fn.apply(window, args);
     });
 
     document.addEventListener('change', function(e) {
         var target = e.target.closest('[data-action]');
         if (!target) return;
+        if (target.tagName === 'FORM') return;
         var fnName = target.getAttribute('data-action');
         if (fnName === 'onChange') {
             var expr = target.getAttribute('data-args') || '';
@@ -67,17 +71,18 @@
         }
         var fn = window[fnName];
         if (typeof fn !== 'function') return;
-        var args = parseArgs(target, target.getAttribute('data-args') || '');
+        var args = parseArgs(target, target.getAttribute('data-args') || '', e);
         fn.apply(window, args);
     });
 
     document.addEventListener('input', function(e) {
         var target = e.target.closest('[data-action]');
         if (!target) return;
+        if (target.tagName === 'FORM') return;
         var fnName = target.getAttribute('data-action');
         var fn = window[fnName];
         if (typeof fn !== 'function') return;
-        var args = parseArgs(target, target.getAttribute('data-args') || '');
+        var args = parseArgs(target, target.getAttribute('data-args') || '', e);
         fn.apply(window, args);
     });
 

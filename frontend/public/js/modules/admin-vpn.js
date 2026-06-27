@@ -13,6 +13,7 @@ const VPN_POLL_INTERVAL = 10000;
 let vpnPollTimer = null;
 
 async function loadVpnState() {
+    if (!api.token) return;
     try {
         const data = await api.request('/vpn/status');
         const toggle = document.getElementById('toggleVpn');
@@ -185,8 +186,9 @@ function stopVpnPolling() {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
-    loadVpnState().catch(() => {});
-
+    // Ne pas charger l'état VPN au démarrage : /vpn/status est protégé et un appel
+    // non authentifié (page de login) déclenche un faux "session expirée".
+    // Le chargement est géré à l'affichage de l'onglet VPN (shown.bs.tab).
     const vpnTab = document.getElementById('vpn-tab');
     if (vpnTab) {
         vpnTab.addEventListener('shown.bs.tab', () => {

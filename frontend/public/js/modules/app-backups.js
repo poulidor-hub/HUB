@@ -23,6 +23,36 @@ let backupClusters = [];
 const runningBackups = new Map();
 let _runningBackupsTimer = null;
 
+// Map<backup_id, finished_at_ms> : backups dont l'événement SSE terminal
+// (backup_completed / backup_failed) a déjà été traité. Sert à neutraliser la
+// race où l'insertion optimiste de doTriggerBackup s'exécute APRÈS l'arrivée du
+// SSE terminal (cas du backup Hub sur lui-même, quasi instantané), ce qui
+// ré-injectait un backup déjà terminé et bloquait l'indicateur "En cours…".
+const recentlyFinishedBackups = new Map();
+const RECENTLY_FINISHED_TTL_MS = 60 * 1000;
+
+function markBackupFinished(backupId) {
+    if (!backupId) return;
+    const now = Date.now();
+    recentlyFinishedBackups.set(backupId, now);
+    // Purge des entrées trop anciennes pour éviter une croissance illimitée.
+    for (const [id, ts] of recentlyFinishedBackups.entries()) {
+        if (now - ts > RECENTLY_FINISHED_TTL_MS) {
+            recentlyFinishedBackups.delete(id);
+        }
+    }
+}
+
+function wasBackupRecentlyFinished(backupId) {
+    if (!backupId || !recentlyFinishedBackups.has(backupId)) return false;
+    const ts = recentlyFinishedBackups.get(backupId);
+    if (Date.now() - ts > RECENTLY_FINISHED_TTL_MS) {
+        recentlyFinishedBackups.delete(backupId);
+        return false;
+    }
+    return true;
+}
+
 const BACKUP_STEP_LABELS = {
     queued: 'En attente…',
     create: 'Création sur l\'app…',
@@ -1260,6 +1290,16 @@ async function doTriggerBackup(slug, appName) {
 
         // Nouveau flux asynchrone (202 Accepted)
         if (response && response.status === 'pending') {
+            // Garde anti-race : si le SSE terminal (backup_completed/failed) est
+            // déjà arrivé avant la résolution de ce 202 (cas du backup Hub quasi
+            // instantané), ne pas ré-injecter un backup déjà terminé sinon
+            // l'indicateur "En cours…" resterait bloqué jusqu'à un refresh.
+            if (wasBackupRecentlyFinished(response.backup_id)) {
+                runningBackups.delete(slug);
+                renderRunningBackups();
+                loadAppBackupsOverview();
+                return;
+            }
             // Insérer immédiatement dans la Map en attendant le 1er événement SSE
             runningBackups.set(slug, {
                 backup_id: response.backup_id,

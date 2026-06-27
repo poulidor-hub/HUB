@@ -197,6 +197,12 @@ class Settings(BaseSettings):
     # Vide => refus de démarrage en production (voir validate_security_config).
     allowed_origins: str = ""
 
+    # CORS — regex d'origines autorisées (en plus de allowed_origins).
+    # Permet d'ouvrir tout un sous-réseau LAN sans lister chaque IP/port.
+    # Ex (LAN 192.168.1.0/24 + localhost) :
+    #   ^https?://(192\.168\.1\.\d{1,3}|localhost|127\.0\.0\.1)(:\d+)?$
+    allowed_origin_regex: str = ""
+
     # Mode développement - Génération automatique des clés JWT
     auto_generate_keys: bool = False  # True uniquement en DEV !
     
@@ -336,7 +342,7 @@ def is_production(settings: "Settings") -> bool:
 
 
 def _check_allowed_origins(settings: "Settings") -> list[str]:
-    if settings.allowed_origins_list:
+    if settings.allowed_origins_list or settings.allowed_origin_regex.strip():
         return []
     if is_production(settings):
         raise ConfigValidationError(

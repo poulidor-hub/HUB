@@ -425,12 +425,16 @@ app = FastAPI(
 # CORS - origines autorisées (source unique : Settings.allowed_origins).
 # Configurer ALLOWED_ORIGINS dans .env (origines séparées par des virgules).
 # Ex: "https://hub.local,https://192.0.2.10:4241"
+# ALLOWED_ORIGIN_REGEX permet d'ouvrir tout un sous-réseau LAN (toutes IP/ports).
 _allowed_origins = settings.allowed_origins_list
+_allowed_origin_regex = settings.allowed_origin_regex.strip() or None
+_cors_enabled = bool(_allowed_origins or _allowed_origin_regex)
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_allowed_origins if _allowed_origins else ["http://localhost"],
-    allow_credentials=bool(_allowed_origins),  # True seulement si origines explicites
+    allow_origin_regex=_allowed_origin_regex,
+    allow_credentials=_cors_enabled,  # True seulement si origines/regex explicites
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type", "X-Slug", "X-Request-ID"],
     expose_headers=["X-Request-ID"],

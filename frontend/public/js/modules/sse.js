@@ -400,6 +400,7 @@ function handleSSEEvent(data) {
 
         case 'backup_completed': {
             const slug = data.data?.app_slug;
+            markBackupFinished(data.data?.backup_id);
             if (slug && runningBackups.has(slug)) {
                 runningBackups.delete(slug);
                 renderRunningBackups();
@@ -418,6 +419,7 @@ function handleSSEEvent(data) {
 
         case 'backup_failed': {
             const slug = data.data?.app_slug;
+            markBackupFinished(data.data?.backup_id);
             if (slug && runningBackups.has(slug)) {
                 runningBackups.delete(slug);
                 renderRunningBackups();
