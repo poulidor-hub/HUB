@@ -412,12 +412,10 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# CORS - origines autorisées (réseau local)
-# Configurer ALLOWED_ORIGINS avec les origines autorisées séparées par des virgules
-# Ex: "http://192.168.1.10,http://hub.local,http://localhost"
-import os
-_allowed_origins_env = os.getenv("ALLOWED_ORIGINS", "")
-_allowed_origins = [o.strip() for o in _allowed_origins_env.split(",") if o.strip()] if _allowed_origins_env else []
+# CORS - origines autorisées (source unique : Settings.allowed_origins).
+# Configurer ALLOWED_ORIGINS dans .env (origines séparées par des virgules).
+# Ex: "https://hub.local,https://192.0.2.10:4241"
+_allowed_origins = settings.allowed_origins_list
 
 app.add_middleware(
     CORSMiddleware,

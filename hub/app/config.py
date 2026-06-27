@@ -319,7 +319,14 @@ def is_production(settings: "Settings") -> bool:
 
 
 def _check_allowed_origins(settings: "Settings") -> list[str]:
-    return []
+    if settings.allowed_origins_list:
+        return []
+    if is_production(settings):
+        raise ConfigValidationError(
+            "ALLOWED_ORIGINS est vide en production. Définissez les origines des frontends "
+            "(Hub + apps), séparées par des virgules, dans .env."
+        )
+    return ["⚠️  ALLOWED_ORIGINS vide (dev) : CORS limité à http://localhost, credentials désactivés."]
 
 
 def _check_secrets(settings: "Settings") -> list[str]:

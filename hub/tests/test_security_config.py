@@ -40,3 +40,21 @@ class TestDispatcher:
 
     def test_dev_mode_never_raises(self):
         validate_security_config(make_settings(app_env="development"))
+
+
+class TestAllowedOrigins:
+    def test_empty_origins_fails_in_production(self):
+        with pytest.raises(ConfigValidationError, match="ALLOWED_ORIGINS"):
+            validate_security_config(make_settings(app_env="production", allowed_origins=""))
+
+    def test_empty_origins_ok_in_development(self):
+        validate_security_config(make_settings(app_env="development", allowed_origins=""))
+
+    def test_set_origins_ok_in_production(self):
+        validate_security_config(
+            make_settings(app_env="production", allowed_origins="https://hub.local,https://192.0.2.10")
+        )
+
+    def test_origins_list_property_parses_and_strips(self):
+        s = make_settings(allowed_origins=" https://a , https://b ,")
+        assert s.allowed_origins_list == ["https://a", "https://b"]
