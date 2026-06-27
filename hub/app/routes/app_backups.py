@@ -1451,6 +1451,20 @@ async def perform_app_backup(
                     params=create_params or None,
                 )
             except httpx.RequestError as net_err:
+                from app.outbox import outbox_service
+                try:
+                    await outbox_service.enqueue(
+                        target_url=create_url,
+                        method="POST",
+                        headers={"Authorization": f"Bearer {m2m_token}"},
+                        payload=create_params,
+                        target_slug=slug,
+                        auth_context={"type": "m2m", "slug": slug},
+                        max_retries=5,
+                    )
+                    logger.info(f"📦 Backup outbox créé pour {slug}")
+                except Exception as outbox_err:
+                    logger.error(f"❌ Outbox enqueue failed: {outbox_err}")
                 await _fail(
                     f"Impossible de contacter {create_url}: {net_err}",
                     status_code=502,
@@ -1461,6 +1475,21 @@ async def perform_app_backup(
                 logger.error(
                     f"❌ Erreur création backup {slug}: {create_response.status_code} - {error_detail}"
                 )
+                if create_response.status_code >= 500:
+                    from app.outbox import outbox_service
+                    try:
+                        await outbox_service.enqueue(
+                            target_url=create_url,
+                            method="POST",
+                            headers={"Authorization": f"Bearer {m2m_token}"},
+                            payload=create_params,
+                            target_slug=slug,
+                            auth_context={"type": "m2m", "slug": slug},
+                            max_retries=5,
+                        )
+                        logger.info(f"📦 Backup outbox créé pour {slug} (HTTP {create_response.status_code})")
+                    except Exception as outbox_err:
+                        logger.error(f"❌ Outbox enqueue failed: {outbox_err}")
                 await _fail(
                     f"L'application a retourné HTTP {create_response.status_code} sur {create_url} : {error_detail}",
                     status_code=502,

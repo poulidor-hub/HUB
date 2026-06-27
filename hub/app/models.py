@@ -696,3 +696,28 @@ class PortAllocation(Base):
     frontend_port = Column(Integer, nullable=False)
     frontend_https_port = Column(Integer, nullable=False)
     allocated_at = Column(DateTime, default=utcnow)
+
+
+class OutboxMessage(Base):
+    """Message en attente de livraison différée (Transactional Outbox)."""
+    __tablename__ = "outbox"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    target_url = Column(Text, nullable=False)
+    target_slug = Column(String(100), nullable=True)
+    method = Column(String(10), nullable=False, default="POST")
+    headers = Column(JSON, default={})
+    payload = Column(JSON, nullable=True)
+    auth_context = Column(JSON, nullable=True)
+    status = Column(String(20), nullable=False, default="pending")
+    created_at = Column(DateTime, default=utcnow)
+    scheduled_at = Column(DateTime, default=utcnow)
+    next_retry_at = Column(DateTime, nullable=True, default=utcnow)
+    retry_count = Column(Integer, default=0)
+    max_retries = Column(Integer, default=10)
+    last_error = Column(Text, nullable=True)
+    delivered_at = Column(DateTime, nullable=True)
+
+    def __repr__(self):
+        slug = self.target_slug or self.target_url
+        return f"<OutboxMessage(id={self.id}, target='{slug}', status='{self.status}')>"

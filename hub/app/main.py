@@ -11,6 +11,7 @@ from sqlalchemy import select
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.database import init_db, async_session_maker, apply_migrations
+from app.outbox import outbox_service
 from app.models import User, ErrorLog, utcnow
 from app.auth import get_password_hash, cleanup_expired_tokens
 from app.config import get_settings
@@ -30,6 +31,7 @@ _log_purge_task = None
 _backup_scheduler_task = None
 _snapshot_scheduler_task = None
 _msg_dispatch_task = None
+_outbox_worker_task = None
 
 
 async def create_default_admin():
@@ -313,6 +315,22 @@ async def lifespan(app: FastAPI):
     from app.routes.messages import periodic_scheduled_message_dispatch
     _msg_dispatch_task = asyncio.create_task(periodic_scheduled_message_dispatch())
 
+    # Demarrer le worker outbox (livraison garantie des appels M2M)
+    async def _outbox_auth_provider(slug: str) -> dict:
+        from app.auth import create_access_token
+        from datetime import timedelta
+        token, _, _ = create_access_token(
+            username=f"sa_{slug}",
+            apps={slug: "admin"},
+            expires_delta=timedelta(minutes=10),
+            is_service_account=True,
+        )
+        return {"Authorization": f"Bearer {token}", "X-Slug": slug}
+
+    outbox_service.set_auth_provider(_outbox_auth_provider)
+    outbox_service.start_worker()
+    logger.info("📦 Worker outbox démarré")
+
     # Seed des templates de messages par defaut
     from app.routes.messages import seed_default_templates
     from app.database import async_session_maker
@@ -390,6 +408,9 @@ async def lifespan(app: FastAPI):
             await _msg_dispatch_task
         except asyncio.CancelledError:
             pass
+    
+    await outbox_service.stop_worker()
+    await outbox_service.cleanup_old_messages()
     
     logger.info("✅ Shutdown terminé proprement")
 
@@ -681,3 +702,33 @@ async def root():
         "docs": "/docs",
         "health": "/health"
     }
+
+
+# ============================================================
+# ENDPOINTS OUTBOX (administration)
+# ============================================================
+
+@app.get("/api/outbox/stats", tags=["Admin"])
+async def outbox_stats(request: Request):
+    """Statistiques de la file outbox."""
+    return await outbox_service.get_stats()
+
+
+@app.post("/api/outbox/{msg_id}/retry", tags=["Admin"])
+async def outbox_retry(
+    msg_id: int,
+    request: Request,
+):
+    """Force le retry d'un message outbox en échec."""
+    success = await outbox_service.retry_failed_message(msg_id)
+    if success:
+        return {"success": True, "message": f"Message #{msg_id} remis en file d'attente"}
+    from starlette.exceptions import HTTPException
+    raise HTTPException(status_code=404, detail=f"Message #{msg_id} introuvable ou pas en échec")
+
+
+@app.post("/api/outbox/cleanup", tags=["Admin"])
+async def outbox_cleanup(request: Request):
+    """Purge les vieux messages outbox (delivered > 7j, failed > 30j)."""
+    await outbox_service.cleanup_old_messages()
+    return {"success": True, "message": "Nettoyage effectué"}
