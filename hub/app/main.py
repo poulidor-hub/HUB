@@ -15,7 +15,7 @@ from app.outbox import outbox_service
 from app.models import User, ErrorLog, utcnow
 from app.auth import get_password_hash, cleanup_expired_tokens
 from app.config import get_settings
-from app.routes import auth, users, apps, service_accounts, audit, docs, events, app_backups, profiles, apps_health, messages, account_requests, snapshots
+from app.routes import auth, users, apps, service_accounts, audit, docs, events, app_backups, profiles, apps_health, messages, account_requests, snapshots, vpn
 from app.routes import settings as settings_routes
 
 import logging
@@ -660,6 +660,7 @@ app.include_router(profiles.router)
 app.include_router(messages.router)
 app.include_router(account_requests.router)
 app.include_router(settings_routes.router)
+app.include_router(vpn.router)
 
 
 @app.get("/api/health", include_in_schema=False)
