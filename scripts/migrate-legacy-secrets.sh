@@ -5,6 +5,12 @@
 # À exécuter UNE SEULE FOIS après une mise à jour du Hub, dans le dossier HUB_base.
 # Prérequis : le Hub doit être en cours d'exécution (docker compose up -d).
 #
+# ⚠️  SÉCURITÉ : Ce script ne touche JAMAIS aux données applicatives.
+#     Il modifie uniquement les credentials d'authentification (.env + PostgreSQL).
+#     Aucune application, backup, utilisateur, rôle ou donnée métier n'est affecté.
+#     Une sauvegarde du .env est créée avant toute modification.
+#     Rollback : restaurer la sauvegarde .env.bak.* + ALTER USER avec l'ancien mdp.
+#
 # Ce script :
 #   1. Détecte les mots de passe DB/admin faibles dans .env
 #   2. Génère de nouveaux secrets forts
@@ -29,6 +35,8 @@ BOLD='\033[1m'
 NC='\033[0m'
 
 echo -e "${BOLD}🔐 migrate-legacy-secrets — v1.0${NC}"
+echo -e "${GREEN}✅ Ce script ne modifie QUE les credentials (.env + ALTER USER).${NC}"
+echo -e "${GREEN}   Aucune donnée applicative, backup ou utilisateur n'est touché.${NC}"
 echo ""
 
 # ── 1. Vérifier que .env existe ──
@@ -92,6 +100,22 @@ fi
 echo ""
 echo -e "${BOLD}Résumé des changements :${NC}"
 
+if $WEAK_DB; then
+    echo -e "  🔑 POSTGRES_PASSWORD    → régénéré (DB mise à jour via ALTER USER)"
+fi
+if $WEAK_ADMIN; then
+    echo -e "  🔑 ADMIN_PASSWORD       → régénéré (pas d'impact DB, utilisateur Hub uniquement)"
+fi
+
+echo ""
+echo -e "${YELLOW}⚠️  Confirmez-vous la migration ? (oui/non)${NC}"
+read -r CONFIRM
+if [[ "${CONFIRM,,}" != "oui" && "${CONFIRM,,}" != "o" && "${CONFIRM,,}" != "yes" && "${CONFIRM,,}" != "y" ]]; then
+    echo -e "${YELLOW}⏭️  Migration annulée.${NC}"
+    exit 0
+fi
+echo ""
+
 # ── 4. Sauvegarder .env ──
 cp "$ENV_FILE" "${ENV_FILE}${BACKUP_SUFFIX}"
 echo -e "  📄 Sauvegarde : ${ENV_FILE}${BACKUP_SUFFIX}"
@@ -146,4 +170,11 @@ echo "     docker compose logs hub-api | grep -E '⚠️|ADMIN_PASSWORD|base de 
 echo ""
 echo -e "  4. Supprimez la sauvegarde quand tout est OK :"
 echo -e "     rm ${ENV_FILE}${BACKUP_SUFFIX}"
+echo ""
+echo -e "  ${RED}🔄 ROLLBACK (si problème) :${NC}"
+echo -e "     cp ${ENV_FILE}${BACKUP_SUFFIX} ${ENV_FILE}"
+if $WEAK_DB; then
+echo -e "     docker compose exec db psql -U ${CURRENT_PG_USER} -d hub_auth -c \"ALTER USER \\\"${CURRENT_PG_USER}\\\" WITH PASSWORD '${CURRENT_PG_PWD}';\""
+fi
+echo -e "     docker compose up -d --force-recreate"
 echo -e "${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
