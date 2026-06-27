@@ -16,6 +16,17 @@ services:
       - hub-network
     mem_limit: 1g
     memswap_limit: 1g
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      # postgres démarre en root puis bascule sur l'utilisateur postgres (chown du datadir)
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETGID
+      - SETUID
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-hubadmin} -d ${POSTGRES_DB:-hub_auth}"]
       interval: 10s
@@ -100,6 +111,15 @@ services:
     memswap_limit: 2g
     security_opt:
       - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      # entrypoint.sh tourne en root (chown secrets/certs) puis exec gosu appuser
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETGID
+      - SETUID
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\""]
       interval: 10s
@@ -130,6 +150,15 @@ services:
     memswap_limit: 256m
     security_opt:
       - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      # nginx : master root lie 80/443 puis lance les workers en user nginx
+      - NET_BIND_SERVICE
+      - CHOWN
+      - DAC_OVERRIDE
+      - SETGID
+      - SETUID
 
 # ===== VOLUMES =====
 volumes:
