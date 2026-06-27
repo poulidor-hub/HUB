@@ -209,6 +209,10 @@ class Settings(BaseSettings):
     # Si vide, les secrets seront stockés en clair (non recommandé en production)
     secrets_encryption_key: str = ""
 
+    # TOTP / récupération de mot de passe
+    totp_issuer: str = "HUB"  # Nom affiché dans l'application d'authentification
+    recovery_token_ttl_minutes: int = 5  # Durée de vie du jeton de réinitialisation
+
     # Autorise explicitement les secrets en clair (clé Fernet vide) — DEV uniquement.
     allow_plaintext_secrets: bool = False
 

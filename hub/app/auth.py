@@ -84,6 +84,44 @@ def create_access_token(
     return token, expire, jti
 
 
+def password_fingerprint(hashed_password: str) -> str:
+    """Empreinte courte du hash de mot de passe (rend le reset token usage-unique)."""
+    return hashlib.sha256(hashed_password.encode()).hexdigest()[:16]
+
+
+def create_reset_token(username: str, hashed_password: str) -> str:
+    """Crée un JWT de réinitialisation à usage unique, scope=pwd_reset."""
+    expire = utcnow() + timedelta(minutes=settings.recovery_token_ttl_minutes)
+    payload = {
+        "sub": username,
+        "scope": "pwd_reset",
+        "pfp": password_fingerprint(hashed_password),
+        "exp": expire,
+        "iat": utcnow(),
+    }
+    return jwt.encode(
+        payload,
+        settings.jwt_private_key,
+        algorithm=settings.jwt_algorithm,
+        headers={"kid": "hub-jwt-key-1"},
+    )
+
+
+def decode_reset_token(token: str) -> dict:
+    """Décode et valide un reset token. Lève HTTPException(400) si invalide."""
+    try:
+        payload = jwt.decode(
+            token,
+            settings.jwt_public_key,
+            algorithms=[settings.jwt_algorithm],
+        )
+    except jwt.PyJWTError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Jeton de réinitialisation invalide ou expiré")
+    if payload.get("scope") != "pwd_reset":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Jeton de réinitialisation invalide ou expiré")
+    return payload
+
+
 async def create_refresh_token(
     db: AsyncSession,
     user_id: Optional[int] = None,
