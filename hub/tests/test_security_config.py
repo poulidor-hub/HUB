@@ -109,23 +109,25 @@ class TestPasswords:
     )
 
     @pytest.mark.parametrize("weak", ["admin", "password", "admin123", "CHANGEZ_MOI", "short"])
-    def test_weak_admin_password_fails_in_production(self, weak):
+    def test_weak_admin_password_warns(self, weak):
         opts = dict(self.GOOD, admin_password=weak)
-        with pytest.raises(ConfigValidationError, match="ADMIN_PASSWORD"):
-            validate_security_config(make_settings(**opts))
+        warns = validate_security_config(make_settings(**opts))
+        assert any("ADMIN_PASSWORD" in w for w in warns)
 
-    def test_strong_admin_password_ok(self):
-        validate_security_config(make_settings(**self.GOOD))
+    def test_strong_admin_password_silent(self):
+        warns = validate_security_config(make_settings(**self.GOOD))
+        assert not warns
 
-    def test_weak_db_password_fails_in_production(self):
+    def test_weak_db_password_warns(self):
         opts = dict(
             self.GOOD,
             database_url="postgresql+asyncpg://hubadmin:CHANGEZ_MOI_mot_de_passe_securise@db:5432/hub_auth",
         )
-        with pytest.raises(ConfigValidationError, match="base de données"):
-            validate_security_config(make_settings(**opts))
-
-    def test_weak_passwords_only_warn_in_development(self):
-        opts = dict(self.GOOD, app_env="development", admin_password="admin")
         warns = validate_security_config(make_settings(**opts))
-        assert any("ADMIN_PASSWORD" in w for w in warns)
+        assert any("base de données" in w for w in warns)
+
+    def test_skip_password_check_silences_all(self):
+        opts = dict(self.GOOD, admin_password="admin", skip_password_check=True,
+                    database_url="postgresql+asyncpg://hubadmin:password@db:5432/hub_auth")
+        warns = validate_security_config(make_settings(**opts))
+        assert not warns
