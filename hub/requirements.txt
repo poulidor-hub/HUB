@@ -11,6 +11,10 @@ pydantic[email]>=2.5.0
 pydantic-settings>=2.1.0
 email-validator>=2.1.0
 
+# TOTP authenticator (récupération de mot de passe self-service)
+pyotp>=2.9.0
+qrcode>=7.4
+
 # Docker SDK (pour la détection automatique des conteneurs)
 docker>=7.0.0
 
