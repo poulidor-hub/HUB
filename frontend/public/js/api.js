@@ -413,6 +413,54 @@ class HubAPI {
         });
     }
 
+    async totpSetup() {
+        return this.request('/auth/totp/setup', { method: 'POST' });
+    }
+
+    async totpConfirm(code) {
+        return this.request('/auth/totp/confirm', {
+            method: 'POST',
+            body: JSON.stringify({ code })
+        });
+    }
+
+    async totpDisable(currentPassword) {
+        return this.request('/auth/totp/disable', {
+            method: 'POST',
+            body: JSON.stringify({ current_password: currentPassword })
+        });
+    }
+
+    async recoverVerify(username, totpCode) {
+        const resp = await fetch(`${API_BASE}/auth/recover/verify`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username, totp_code: totpCode })
+        });
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok) {
+            throw new Error(data.detail || 'Code de récupération invalide');
+        }
+        return data;
+    }
+
+    async recoverReset(resetToken, newPassword) {
+        const resp = await fetch(`${API_BASE}/auth/recover/reset`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ reset_token: resetToken, new_password: newPassword })
+        });
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok) {
+            throw new Error(data.detail || 'Échec de la réinitialisation');
+        }
+        return data;
+    }
+
+    async adminDisableTotp(userId) {
+        return this.request(`/users/${userId}/totp/disable`, { method: 'POST' });
+    }
+
     async logout() {
         // Sauvegarder les tokens avant de les effacer
         const accessToken = this.token;
