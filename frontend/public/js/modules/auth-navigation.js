@@ -375,12 +375,17 @@ let changePasswordModal = null;
  * @param {boolean} mandatory - Si true, l'utilisateur ne peut pas fermer le modal
  */
 function showChangePasswordModal(mandatory = false) {
-    if (!changePasswordModal) {
-        changePasswordModal = new bootstrap.Modal(document.getElementById('changePasswordModal'), {
-            backdrop: mandatory ? 'static' : true,
-            keyboard: !mandatory
-        });
+    // Recréer l'instance à chaque ouverture pour que backdrop/keyboard reflètent
+    // le mode courant. Sinon, un modal d'abord ouvert en mode obligatoire reste
+    // "static" (impossible à fermer par clic extérieur / Échap) lors des ouvertures
+    // suivantes via l'icône, même quand il n'est plus obligatoire.
+    if (changePasswordModal) {
+        changePasswordModal.dispose();
     }
+    changePasswordModal = new bootstrap.Modal(document.getElementById('changePasswordModal'), {
+        backdrop: mandatory ? 'static' : true,
+        keyboard: !mandatory
+    });
     
     // Réinitialiser le formulaire
     document.getElementById('changePasswordForm').reset();
