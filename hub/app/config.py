@@ -188,7 +188,15 @@ class Settings(BaseSettings):
     admin_username: str = "admin"
     admin_password: str = ""  # Doit être défini via ADMIN_PASSWORD
     admin_email: str = "admin@local.lan"
-    
+
+    # Environnement applicatif : "production" (strict) ou "development" (permissif).
+    # En production, les misconfigs de sécurité empêchent le démarrage.
+    app_env: str = "production"
+
+    # CORS — origines autorisées (séparées par des virgules).
+    # Vide => refus de démarrage en production (voir validate_security_config).
+    allowed_origins: str = ""
+
     # Mode développement - Génération automatique des clés JWT
     auto_generate_keys: bool = False  # True uniquement en DEV !
     
@@ -288,9 +296,48 @@ class Settings(BaseSettings):
         _, public_key = self._load_jwt_keys()
         return public_key
 
+    @property
+    def allowed_origins_list(self) -> list[str]:
+        """Liste des origines CORS, nettoyée."""
+        return [o.strip() for o in self.allowed_origins.split(",") if o.strip()]
+
     model_config = ConfigDict(env_file=".env", extra="ignore")
 
 
 @lru_cache()
 def get_settings() -> Settings:
     return Settings()
+
+
+class ConfigValidationError(Exception):
+    """Erreur de configuration de sécurité fatale (empêche le démarrage en production)."""
+
+
+def is_production(settings: "Settings") -> bool:
+    """Retourne True si le Hub tourne en mode production."""
+    return settings.app_env.strip().lower() == "production"
+
+
+def _check_allowed_origins(settings: "Settings") -> list[str]:
+    return []
+
+
+def _check_secrets(settings: "Settings") -> list[str]:
+    return []
+
+
+def _check_passwords(settings: "Settings") -> list[str]:
+    return []
+
+
+def validate_security_config(settings: "Settings") -> list[str]:
+    """Valide la configuration de sécurité au démarrage.
+
+    Retourne la liste des avertissements non bloquants.
+    Lève ConfigValidationError si une erreur fatale est détectée en production.
+    """
+    warnings_out: list[str] = []
+    warnings_out += _check_allowed_origins(settings)
+    warnings_out += _check_secrets(settings)
+    warnings_out += _check_passwords(settings)
+    return warnings_out

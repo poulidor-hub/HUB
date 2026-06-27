@@ -269,8 +269,15 @@ async def lifespan(app: FastAPI):
     await apply_migrations()  # Appliquer les migrations SQL si nécessaires
     await create_default_admin()
     
-    # Vérifier la configuration des secrets
-    from app.config import get_settings, ensure_backup_keys_exist
+    # Vérifier la configuration des secrets et de sécurité
+    from app.config import get_settings, ensure_backup_keys_exist, validate_security_config, ConfigValidationError
+    try:
+        for _warn in validate_security_config(get_settings()):
+            logger.warning(_warn)
+    except ConfigValidationError as _cfg_err:
+        logger.critical(f"⛔ Configuration de sécurité invalide : {_cfg_err}")
+        raise SystemExit(str(_cfg_err))
+
     _settings = get_settings()
     if not _settings.secrets_encryption_key:
         logger.warning(
