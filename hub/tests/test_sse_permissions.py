@@ -179,3 +179,16 @@ class TestRefreshTokenPermissions:
         assert "apps" in payload
         assert test_app.slug in payload["apps"]
         assert payload["apps"][test_app.slug] == "manager"
+
+
+class TestSSEStreamAuth:
+    """Le flux SSE /api/events/stream doit exiger une authentification."""
+
+    @pytest.mark.asyncio
+    async def test_event_stream_requires_auth(self, client: AsyncClient):
+        """
+        Sans token Bearer ni beacon_token+user_id, l'endpoint doit répondre 401
+        proprement (régression : NameError 'status' non importé -> 500).
+        """
+        response = await client.get("/api/events/stream")
+        assert response.status_code == 401
