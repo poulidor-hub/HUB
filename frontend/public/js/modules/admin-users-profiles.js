@@ -179,6 +179,7 @@ function renderUsersPageTable(users) {
                         <td>
                             <strong>${escapeHtml(user.username)}</strong>
                             ${user.must_change_password ? '<i class="bi bi-key-fill text-warning ms-1" title="Doit changer son mot de passe"></i>' : ''}
+                            ${user.totp_enabled ? '<i class="bi bi-shield-lock-fill text-info ms-1" title="Authentificateur activé"></i>' : ''}
                         </td>
                         <td><small class="text-muted">${escapeHtml(user.email || '-')}</small></td>
                         <td>
@@ -210,6 +211,9 @@ function renderUsersPageTable(users) {
                                     title="Révoquer les sessions" ${user.id === currentUser.id ? 'disabled' : ''}>
                                     <i class="bi bi-door-closed"></i>
                                 </button>
+                                ${user.totp_enabled ? `<button class="btn btn-sm btn-outline-info" onclick="adminDisableUserTotp(${user.id})" title="Désactiver l'authentificateur">
+                                    <i class="bi bi-shield-slash"></i>
+                                </button>` : ''}
                                 <button class="btn btn-sm btn-outline-danger" onclick="deleteUserPage(${user.id}, '${escapeHtml(user.username)}')" 
                                     title="Supprimer" ${user.id === currentUser.id ? 'disabled' : ''}>
                                     <i class="bi bi-trash"></i>
@@ -238,6 +242,16 @@ function renderUsersPageTable(users) {
             </tbody>
         </table>
     `;
+}
+
+async function adminDisableUserTotp(userId) {
+    if (!confirm('Désactiver l\'authentificateur de cet utilisateur ?')) return;
+    try {
+        await api.adminDisableTotp(userId);
+        await loadUsersPageData();
+    } catch (e) {
+        alert(e.message || 'Erreur lors de la désactivation');
+    }
 }
 
 function toggleUserApps(userId) {

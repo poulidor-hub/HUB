@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Query, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, status, Query, UploadFile, File, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, delete, func, or_
@@ -13,7 +13,7 @@ from app.database import get_db
 from app.routes.events import notify_event, notify_stats_update
 from app.models import (
     User, Application, UserAppRole, ServiceAccount,
-    AppRole, DEFAULT_ROLES, Profile, user_profiles
+    AppRole, DEFAULT_ROLES, Profile, user_profiles, AuditLog
 )
 from app.schemas import (
     UserCreate, UserUpdate, UserResponse, PaginatedUsersResponse,
@@ -1567,3 +1567,33 @@ async def bulk_remove_app_access(
         total_failed=failed_count,
         results=results
     )
+
+
+@router.post("/{user_id}/totp/disable")
+async def admin_disable_user_totp(
+    user_id: int,
+    request: Request,
+    current_admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Admin : désactive l'authentificateur TOTP d'un utilisateur (secours perte d'appareil)."""
+    result = await db.execute(select(User).where(User.id == user_id))
+    user = result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Utilisateur non trouvé")
+
+    user.totp_enabled = False
+    user.totp_secret = None
+    user.totp_confirmed_at = None
+    user.totp_last_counter = None
+
+    db.add(AuditLog(
+        user_id=current_admin.id,
+        action="totp_disabled_by_admin",
+        target=user.username,
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent", "")[:255],
+    ))
+    await db.commit()
+    notify_event("users_updated", {"action": "totp_disabled", "user_id": user.id})
+    return {"message": "Authentification par token désactivée pour l'utilisateur"}

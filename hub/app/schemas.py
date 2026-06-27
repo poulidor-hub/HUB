@@ -173,6 +173,7 @@ class UserResponse(UserBase):
     is_admin: bool
     must_change_password: bool = False
     can_change_password: bool = True
+    totp_enabled: bool = False
     created_at: datetime
     app_roles: List[UserAppRoleResponse] = []
     profiles: List[ProfileBriefResponse] = []
@@ -205,6 +206,7 @@ class UserResponse(UserBase):
             is_admin=user.is_admin,
             must_change_password=user.must_change_password or False,
             can_change_password=user.can_change_password if user.can_change_password is not None else True,
+            totp_enabled=user.totp_enabled or False,
             created_at=user.created_at,
             app_roles=app_roles,
             profiles=profiles_brief
