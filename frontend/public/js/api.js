@@ -403,6 +403,13 @@ class HubAPI {
         return this.request('/auth/me');
     }
 
+    async importVpnConfig(config) {
+        return this.request('/vpn/import', {
+            method: 'POST',
+            body: JSON.stringify({ config })
+        });
+    }
+
     async changePassword(currentPassword, newPassword) {
         return this.request('/auth/change-password', {
             method: 'PUT',
