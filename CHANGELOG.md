@@ -5,6 +5,33 @@
 
 ---
 
+## [3.8.0] - 29 juin 2026
+
+### ⚡ Import de configuration VPN par fichier .conf
+
+- Nouvel endpoint `POST /api/vpn/import` : import d'un fichier de configuration
+  WireGuard (.conf). Le backend parse, valide (clés base64, CIDR, port), vérifie
+  la whitelist de directives (rejet des hooks shell `PostUp`/`PostDown`/`PreUp`/
+  `PreDown` → 422 sécurité), écrit le `.conf` tel quel, active le VPN et
+  journalise l'audit `VPN_CONFIG_IMPORTED`.
+- Helpers `_extract_private_key()` et `_validate_import_conf()` avec whitelist
+  `_ALLOWED_WG_DIRECTIVES` / `_FORBIDDEN_WG_DIRECTIVES`. La clé privée n'est
+  jamais renvoyée par l'API (seul le hash SHA-256).
+- 11 nouveaux tests (helpers + endpoint import).
+
+### 💄 Refonte de la vue VPN WireGuard (thème Hub)
+
+- Interface pensée pour un utilisateur non-informaticien : point focal = import
+  du fichier `.conf` par glisser-déposer ou sélecteur de fichier. Résumé d'état
+  affiché après import. Paramètres avancés repliés (collapse), pré-remplis après
+  import, chaque terme technique expliqué par une infobulle Bootstrap
+  (`data-bs-toggle="tooltip"`).
+- Styles `vpn-*` alignés sur le thème Hub « Soft & Clean » (tokens `cpw-*`) :
+  badge-icône bouclier, dropzone, inputs avancés, résumé vert.
+- Méthode `api.importVpnConfig(config)` pour l'appel frontend.
+
+---
+
 ## [3.7.2] - 28 juin 2026
 
 ### 🗑️ Centralisation du dev-interface (vers POULIDOR)
