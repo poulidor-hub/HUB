@@ -148,6 +148,99 @@ def _parse_wg_show_output(output: str) -> dict:
 
 
 # =============================================================================
+# Import de configuration (.conf)
+# =============================================================================
+
+_ALLOWED_WG_DIRECTIVES = {
+    "interface": {"privatekey", "address", "dns", "mtu", "table", "listenport"},
+    "peer": {"publickey", "endpoint", "allowedips", "presharedkey", "persistentkeepalive"},
+}
+
+_FORBIDDEN_WG_DIRECTIVES = {"postup", "postdown", "preup", "predown", "saveconfig"}
+
+_WG_PRIVATE_KEY_RE = re.compile(r"^\s*PrivateKey\s*=\s*(.+?)\s*$", re.MULTILINE)
+
+
+def _extract_private_key(content: str) -> str | None:
+    m = _WG_PRIVATE_KEY_RE.search(content)
+    if not m:
+        return None
+    return m.group(1).strip()
+
+
+def _validate_import_conf(content: str) -> dict:
+    """Valide un .conf WireGuard importé.
+
+    Lève HTTPException(422) si une directive est interdite/inconnue ou si un
+    champ essentiel est manquant/invalide. Retourne un résumé SANS la clé privée.
+    """
+    if not content or not content.strip():
+        raise HTTPException(status_code=422, detail="Fichier de configuration vide")
+
+    current_section = None
+    for raw in content.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("[") and line.endswith("]"):
+            current_section = line[1:-1].strip().lower()
+            continue
+        if "=" not in line:
+            continue
+        key = line.split("=", 1)[0].strip().lower()
+        if key in _FORBIDDEN_WG_DIRECTIVES:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Directive interdite pour des raisons de sécurité : {key} "
+                       f"(scripts PostUp/PostDown/PreUp/PreDown non autorisés)",
+            )
+        allowed = _ALLOWED_WG_DIRECTIVES.get(current_section or "", set())
+        if key not in allowed:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Directive inconnue ou non autorisée : {key}",
+            )
+
+    parsed = _parse_wg_conf(content)
+    private_key = _extract_private_key(content)
+
+    if not private_key or not _is_valid_wg_key(private_key):
+        raise HTTPException(status_code=422, detail="Clé privée (PrivateKey) manquante ou invalide")
+
+    address = parsed.get("address")
+    if not address or not _is_valid_cidr(address):
+        raise HTTPException(status_code=422, detail="Adresse (Address) manquante ou invalide")
+
+    public_key = parsed.get("publickey")
+    if not public_key or not _is_valid_wg_key(public_key):
+        raise HTTPException(status_code=422, detail="Clé publique du serveur (PublicKey) manquante ou invalide")
+
+    endpoint = parsed.get("endpoint")
+    if not endpoint or ":" not in endpoint:
+        raise HTTPException(status_code=422, detail="Endpoint manquant ou invalide (format host:port attendu)")
+    _, _, port_str = endpoint.partition(":")
+    try:
+        port = int(port_str.strip())
+        if not (1 <= port <= 65535):
+            raise ValueError
+    except ValueError:
+        raise HTTPException(status_code=422, detail=f"Port d'endpoint invalide : {port_str}")
+
+    allowed_ips = parsed.get("allowedips")
+    if not allowed_ips:
+        raise HTTPException(status_code=422, detail="AllowedIPs manquant")
+
+    return {
+        "address": address,
+        "dns": parsed.get("dns"),
+        "public_key": public_key,
+        "endpoint": endpoint,
+        "allowed_ips": allowed_ips,
+        "private_key_hash": hashlib.sha256(private_key.encode()).hexdigest(),
+    }
+
+
+# =============================================================================
 # Schemas Pydantic
 # =============================================================================
 

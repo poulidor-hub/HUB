@@ -10,11 +10,24 @@ from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
+from fastapi import HTTPException
 from app.models import AppSetting, User
+from app.routes import vpn as vpn_module
 from tests.conftest import get_auth_header
 
 
 VPN_SETTINGS = {"vpn_enabled", "vpn_config_hash"}
+
+_VALID_CONF = """[Interface]
+PrivateKey = OUrAxOwyrwschr4I3Nj+FvNVzSOv2JyHZQRYwEb5Fzo=
+Address = 10.8.0.5/24
+DNS = 1.1.1.1
+
+[Peer]
+PublicKey = IV/yo+aGOozVjU49Bm3+ZMGlhS6DR/f27YJBgHfW0WI==
+Endpoint = vps.example.com:51820
+AllowedIPs = 0.0.0.0/0
+"""
 
 
 async def _seed_vpn_settings(db: AsyncSession, enabled: bool = False, config_hash: str = ""):
@@ -314,3 +327,37 @@ class TestVpnGenerateKey:
         await _seed_vpn_settings(async_session)
         resp = await client.post("/api/vpn/generate-key")
         assert resp.status_code in (401, 403)
+
+
+# =============================================================================
+# Helpers d'import (_validate_import_conf / _extract_private_key)
+# =============================================================================
+
+class TestImportHelpers:
+    def test_extract_private_key(self):
+        assert vpn_module._extract_private_key(_VALID_CONF) == \
+            "OUrAxOwyrwschr4I3Nj+FvNVzSOv2JyHZQRYwEb5Fzo="
+
+    def test_extract_private_key_absent(self):
+        assert vpn_module._extract_private_key("[Interface]\nAddress = 10.0.0.1/24\n") is None
+
+    def test_validate_import_conf_ok(self):
+        summary = vpn_module._validate_import_conf(_VALID_CONF)
+        assert summary["address"] == "10.8.0.5/24"
+        assert summary["endpoint"] == "vps.example.com:51820"
+        assert summary["public_key"] == "IV/yo+aGOozVjU49Bm3+ZMGlhS6DR/f27YJBgHfW0WI=="
+        assert len(summary["private_key_hash"]) == 64
+        assert "private_key" not in summary
+
+    def test_validate_import_conf_rejects_postup(self):
+        conf = _VALID_CONF.replace("[Peer]", "PostUp = echo hacked\n\n[Peer]")
+        with pytest.raises(HTTPException) as exc:
+            vpn_module._validate_import_conf(conf)
+        assert exc.value.status_code == 422
+        assert "postup" in exc.value.detail.lower()
+
+    def test_validate_import_conf_rejects_bad_key(self):
+        conf = _VALID_CONF.replace("OUrAxOwyrwschr4I3Nj+FvNVzSOv2JyHZQRYwEb5Fzo=", "bad-key!!!")
+        with pytest.raises(HTTPException) as exc:
+            vpn_module._validate_import_conf(conf)
+        assert exc.value.status_code == 422
