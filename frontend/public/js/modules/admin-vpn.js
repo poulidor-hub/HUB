@@ -80,9 +80,10 @@ async function loadVpnConfig() {
     }
 }
 
-async function handleVpnToggle(checked) {
+async function handleVpnToggle() {
     const toggle = document.getElementById('toggleVpn');
     const form = document.getElementById('vpnConfigForm');
+    const checked = toggle ? toggle.checked : false;
 
     try {
         const data = await api.request('/vpn/toggle', {
