@@ -11,6 +11,7 @@
 
 const VPN_POLL_INTERVAL = 10000;
 let vpnPollTimer = null;
+let _vpnTooltips = [];
 
 async function loadVpnState() {
     if (!api.token) return;
@@ -35,6 +36,18 @@ async function loadVpnState() {
             } else {
                 badge.classList.add('bg-secondary');
                 badge.textContent = 'Déconnecté';
+            }
+        }
+
+        const summary = document.getElementById('vpnImportSummary');
+        const summaryText = document.getElementById('vpnImportSummaryText');
+        if (summary && summaryText) {
+            if (data.enabled) {
+                summary.classList.remove('d-none');
+                summaryText.textContent =
+                    'Configuration active — Serveur ' + (data.endpoint || '—');
+            } else {
+                summary.classList.add('d-none');
             }
         }
 
@@ -186,6 +199,49 @@ function stopVpnPolling() {
     }
 }
 
+async function handleVpnFile(fileArg) {
+    const input = document.getElementById('vpnFileInput');
+    const file = (fileArg instanceof File) ? fileArg : (input && input.files && input.files[0]);
+    if (!file) return;
+
+    try {
+        const text = await file.text();
+        await api.importVpnConfig(text);
+        showToast('VPN', 'Configuration importée', 'success');
+        if (input) input.value = '';
+        await loadVpnState();
+    } catch (e) {
+        showToast('VPN', e.message || "Échec de l'import", 'danger');
+    }
+}
+
+function setupVpnDragDrop() {
+    const dz = document.getElementById('vpnDropzone');
+    if (!dz || dz.dataset.ddBound === '1') return;
+    dz.dataset.ddBound = '1';
+
+    ['dragover', 'dragenter'].forEach(evt =>
+        dz.addEventListener(evt, (e) => { e.preventDefault(); dz.classList.add('drag-over'); }));
+    ['dragleave', 'dragend'].forEach(evt =>
+        dz.addEventListener(evt, () => dz.classList.remove('drag-over')));
+    dz.addEventListener('drop', (e) => {
+        e.preventDefault();
+        dz.classList.remove('drag-over');
+        const file = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+        if (file) handleVpnFile(file);
+    });
+}
+
+function initVpnTooltips() {
+    const panel = document.getElementById('vpnPanel');
+    if (!panel || typeof bootstrap === 'undefined') return;
+    _vpnTooltips.forEach(t => { try { t.dispose(); } catch (e) {} });
+    _vpnTooltips = [];
+    panel.querySelectorAll('[data-bs-toggle="tooltip"]').forEach(el => {
+        _vpnTooltips.push(new bootstrap.Tooltip(el));
+    });
+}
+
 document.addEventListener('DOMContentLoaded', () => {
     // Ne pas charger l'état VPN au démarrage : /vpn/status est protégé et un appel
     // non authentifié (page de login) déclenche un faux "session expirée".
@@ -193,6 +249,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const vpnTab = document.getElementById('vpn-tab');
     if (vpnTab) {
         vpnTab.addEventListener('shown.bs.tab', () => {
+            setupVpnDragDrop();
+            initVpnTooltips();
             loadVpnState().catch(() => {});
         });
     }
