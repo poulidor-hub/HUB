@@ -5,6 +5,13 @@
 
 ---
 
+## [3.7.2] - 28 juin 2026
+
+### 🗑️ Centralisation du dev-interface (vers POULIDOR)
+- Retrait de `opencode.json`, `.github/` (instructions / skills / prompts) et
+  `AI_INDEX.md`. Le tooling de dev est centralisé dans le méta-dépôt POULIDOR ;
+  l'instruction `hub-application-contract.instructions.md` y a été conservée.
+
 ## [3.7.1] - 23 juin 2026
 
 ### ⚡ Sauvegardes d'applications asynchrones avec progression temps réel
