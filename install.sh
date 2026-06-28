@@ -1,0 +1,381 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# =============================================================================
+# POULIDOR Hub — Installation
+# =============================================================================
+# Usage :
+#   ./install.sh                          # Mode interactif
+#   ./install.sh --profile client.json    # Mode non-interactif
+# =============================================================================
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+CYAN='\033[0;36m'
+NC='\033[0m'
+BOLD='\033[1m'
+
+say()  { echo -e "$1"; }
+ok()   { say "  ${GREEN}✓${NC} $1"; }
+warn() { say "  ${YELLOW}⚠${NC} $1"; }
+err()  { say "  ${RED}✗${NC} $1"; exit 1; }
+
+PROFILE=""
+INTERACTIVE=true
+
+# ── Parse arguments ──────────────────────────────────────────────────────────
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --profile)
+            shift
+            PROFILE="${1:-}"
+            if [ -z "$PROFILE" ] || [ ! -f "$PROFILE" ]; then
+                err "Profil introuvable : ${PROFILE:-'(chemin vide)'}"
+            fi
+            INTERACTIVE=false
+            ;;
+        -h|--help)
+            say "Usage : $0 [--profile client.json]"
+            say ""
+            say "  Mode interactif (défaut) : guide l'utilisateur pas à pas."
+            say "  Mode --profile          : lit un fichier JSON et configure sans interaction."
+            say ""
+            say "  Exemple de profil : docs/hub-profile.example.json"
+            exit 0
+            ;;
+        *)
+            err "Argument inconnu : $1 (utilisez --help)"
+            ;;
+    esac
+    shift
+done
+
+say ""
+say "${BOLD}${CYAN}══════════════════════════════════════════════════════════${NC}"
+say "${BOLD}${CYAN}   POULIDOR Hub — Installation${NC}"
+if ! $INTERACTIVE; then
+    say "   Profil : ${YELLOW}${PROFILE}${NC}"
+fi
+say "${BOLD}${CYAN}══════════════════════════════════════════════════════════${NC}"
+say ""
+
+# ── 0. Prérequis ─────────────────────────────────────────────────────────────
+
+say "${BOLD}0. Prérequis${NC}"
+
+if ! command -v docker &> /dev/null; then
+    err "Docker n'est pas installé. https://docs.docker.com/engine/install/"
+fi
+ok "Docker $(docker --version | awk '{print $3}' | tr -d ',')"
+
+if ! docker compose version &> /dev/null; then
+    err "'docker compose' (plugin) non disponible."
+fi
+ok "Docker Compose $(docker compose version --short)"
+
+PYTHON_CMD=""
+if python3 --version &> /dev/null; then
+    PYTHON_CMD="python3"
+elif python --version &> /dev/null; then
+    PYTHON_CMD="python"
+fi
+if [ -z "$PYTHON_CMD" ]; then
+    warn "Python 3 non trouvé — la clé Fernet sera générée via openssl"
+    PYTHON_OK=false
+else
+    ok "Python $( $PYTHON_CMD --version 2>&1 )"
+    PYTHON_OK=true
+fi
+
+say ""
+
+# ── 1. Configuration ─────────────────────────────────────────────────────────
+
+say "${BOLD}1. Configuration du Hub${NC}"
+say ""
+
+if $INTERACTIVE; then
+    # --- Mode interactif ---
+
+    DETECTED_IP=$(hostname -I 2>/dev/null | awk '{print $1}' || echo "")
+    if [ -n "$DETECTED_IP" ]; then
+        read -p "  Adresse IP du serveur [$DETECTED_IP] : " SERVER_IP
+        SERVER_IP="${SERVER_IP:-$DETECTED_IP}"
+    else
+        read -p "  Adresse IP du serveur : " SERVER_IP
+    fi
+
+    read -p "  Port HTTP [80] : " HUB_HTTP_PORT; HUB_HTTP_PORT="${HUB_HTTP_PORT:-80}"
+    read -p "  Port HTTPS [443] : " HUB_HTTPS_PORT; HUB_HTTPS_PORT="${HUB_HTTPS_PORT:-443}"
+    read -p "  Port API [8000] : " HUB_API_PORT; HUB_API_PORT="${HUB_API_PORT:-8000}"
+
+    read -p "  Admin username [admin] : " ADMIN_USER; ADMIN_USER="${ADMIN_USER:-admin}"
+    read -sp "  Admin password (min 8 car.) : " ADMIN_PASS; say ""
+    if [ ${#ADMIN_PASS} -lt 8 ]; then err "Mot de passe trop court."; fi
+    read -p "  Admin email [admin@local.lan] : " ADMIN_EMAIL; ADMIN_EMAIL="${ADMIN_EMAIL:-admin@local.lan}"
+
+    DOCKER_SUBNET=$(docker network inspect hub-network 2>/dev/null | $PYTHON_CMD -c "import sys,json; print(json.load(sys.stdin)[0]['IPAM']['Config'][0]['Subnet'])" 2>/dev/null || echo "10.42.0.0/16")
+    LAN_CIDR="${SERVER_IP%.*}.0/24"
+    read -p "  Whitelist réseaux (CIDR) [$DOCKER_SUBNET,$LAN_CIDR] : " WHITELIST
+    WHITELIST="${WHITELIST:-$DOCKER_SUBNET,$LAN_CIDR}"
+
+    DEFAULT_ORIGINS="https://${SERVER_IP},http://${SERVER_IP}"
+    read -p "  Origines CORS [$DEFAULT_ORIGINS] : " CORS_ORIGINS
+    CORS_ORIGINS="${CORS_ORIGINS:-$DEFAULT_ORIGINS}"
+
+    read -p "  Activer HTTPS (TLS) ? [O/n] : " ENABLE_HTTPS
+    if [ "$ENABLE_HTTPS" = "n" ] || [ "$ENABLE_HTTPS" = "N" ]; then HTTPS_ENABLED=false; else HTTPS_ENABLED=true; fi
+
+    DB_PASS=$(openssl rand -base64 18 2>/dev/null || $PYTHON_CMD -c "import secrets; print(secrets.token_urlsafe(18))" 2>/dev/null || echo "CHANGEZ_MOI_$(date +%s)")
+    DOCKER_SCAN_ENABLED=false
+
+    CLIENT_NAME=""
+    CLIENT_CONTACT=""
+    CLIENT_EMAIL=""
+
+else
+    # --- Mode profil (non-interactif) ---
+
+    VALUES=$($PYTHON_CMD -c "
+import json, sys
+with open('$PROFILE') as f:
+    p = json.load(f)
+
+c = p.get('client', {})
+s = p.get('server', {})
+a = p.get('admin', {})
+po = p.get('ports', {})
+o = p.get('options', {})
+
+print(c.get('name',''))
+print(c.get('contact_name',''))
+print(c.get('contact_email',''))
+print(s['ip'])
+print(s.get('lan_cidr','${SERVER_IP:-0.0.0.0}'.rsplit('.',1)[0]+'.0/24'))
+print(s.get('docker_subnet','10.42.0.0/16'))
+print(a['username'])
+print(a['password'])
+print(a['email'])
+print(po.get('http',80))
+print(po.get('https',443))
+print(po.get('api',8000))
+print(str(o.get('https_enabled',True)).lower())
+print(o.get('docker_scan_enabled',False))
+" 2>/dev/null) || err "Erreur de lecture du profil JSON '${PROFILE}'"
+
+    CLIENT_NAME=$(echo "$VALUES"    | sed -n '1p')
+    CLIENT_CONTACT=$(echo "$VALUES"  | sed -n '2p')
+    CLIENT_EMAIL=$(echo "$VALUES"   | sed -n '3p')
+    SERVER_IP=$(echo "$VALUES"       | sed -n '4p')
+    LAN_CIDR=$(echo "$VALUES"        | sed -n '5p')
+    DOCKER_SUBNET=$(echo "$VALUES"   | sed -n '6p')
+    ADMIN_USER=$(echo "$VALUES"      | sed -n '7p')
+    ADMIN_PASS=$(echo "$VALUES"      | sed -n '8p')
+    ADMIN_EMAIL=$(echo "$VALUES"     | sed -n '9p')
+    HUB_HTTP_PORT=$(echo "$VALUES"   | sed -n '10p')
+    HUB_HTTPS_PORT=$(echo "$VALUES"  | sed -n '11p')
+    HUB_API_PORT=$(echo "$VALUES"    | sed -n '12p')
+    HTTPS_ENABLED=$(echo "$VALUES"   | sed -n '13p')
+    DOCKER_SCAN_ENABLED=$(echo "$VALUES" | sed -n '14p')
+
+    if [ ${#ADMIN_PASS} -lt 8 ]; then err "Mot de passe admin trop court dans le profil."; fi
+    if [ -z "$SERVER_IP" ]; then err "server.ip requis dans le profil."; fi
+
+    WHITELIST="${DOCKER_SUBNET},${LAN_CIDR}"
+    CORS_ORIGINS="https://${SERVER_IP},http://${SERVER_IP}"
+    DB_PASS=$(openssl rand -base64 18 2>/dev/null || $PYTHON_CMD -c "import secrets; print(secrets.token_urlsafe(18))" 2>/dev/null || echo "CHANGEZ_MOI_$(date +%s)")
+fi
+
+ok "Hôte   : ${GREEN}${SERVER_IP}${NC}"
+ok "Admin  : ${GREEN}${ADMIN_USER}${NC}"
+ok "Ports  : HTTP ${HUB_HTTP_PORT} / HTTPS ${HUB_HTTPS_PORT} / API ${HUB_API_PORT}"
+ok "HTTPS  : ${HTTPS_ENABLED}"
+ok "Réseaux: ${WHITELIST}"
+if [ -n "$CLIENT_NAME" ]; then
+    ok "Client : ${GREEN}${CLIENT_NAME}${NC} — ${CLIENT_CONTACT} (${CLIENT_EMAIL})"
+fi
+
+say ""
+
+# ── 2. Générer les secrets ──────────────────────────────────────────────────
+
+say "${BOLD}2. Génération des secrets${NC}"
+
+if $PYTHON_OK; then
+    FERNET_KEY=$($PYTHON_CMD -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())" 2>/dev/null || \
+        $PYTHON_CMD -c "import secrets; import base64; print(base64.urlsafe_b64encode(secrets.token_bytes(32)).decode())")
+else
+    FERNET_KEY=$(openssl rand -base64 32 2>/dev/null | tr '+/' '-_' | tr -d '=')
+fi
+ok "Clé Fernet générée"
+
+JWT_DIR="secrets/jwt"
+if [ ! -f "$JWT_DIR/private_key.pem" ]; then
+    mkdir -p "$JWT_DIR"
+    if command -v openssl &> /dev/null; then
+        openssl genpkey -algorithm RSA -out "$JWT_DIR/private_key.pem" -pkeyopt rsa_keygen_bits:4096 2>/dev/null
+        openssl rsa -pubout -in "$JWT_DIR/private_key.pem" -out "$JWT_DIR/public_key.pem" 2>/dev/null
+        ok "Clés JWT RSA 4096 → $JWT_DIR/"
+        AUTO_KEYS=false
+    else
+        warn "openssl absent → AUTO_GENERATE_KEYS activé"
+        AUTO_KEYS=true
+    fi
+else
+    ok "Clés JWT déjà présentes"
+    AUTO_KEYS=false
+fi
+AUTO_KEYS="${AUTO_KEYS:-false}"
+
+# ── 3. Écrire .env ───────────────────────────────────────────────────────────
+
+say "${BOLD}3. Écriture du .env${NC}"
+
+if [ -f .env ]; then
+    if $INTERACTIVE; then
+        read -p "  .env existe. Écraser ? [o/N] : " OVERWRITE
+        if [ "$OVERWRITE" != "o" ] && [ "$OVERWRITE" != "O" ]; then
+            warn ".env conservé. Pour appliquer : nano .env && docker compose up -d"
+            exit 0
+        fi
+    else
+        warn ".env existant écrasé (mode profil)"
+    fi
+fi
+
+cat > .env << EOF
+# ======================================
+# POULIDOR Hub — Configuration
+# Généré le $(date '+%Y-%m-%d %H:%M')
+EOF
+
+if [ -n "$CLIENT_NAME" ]; then
+    echo "# Client : ${CLIENT_NAME}" >> .env
+fi
+
+cat >> .env << EOF
+# ======================================
+
+# PostgreSQL
+POSTGRES_USER=hubadmin
+POSTGRES_PASSWORD=${DB_PASS}
+POSTGRES_DB=hub_auth
+
+# Hub API
+DATABASE_URL=postgresql+asyncpg://hubadmin:${DB_PASS}@db:5432/hub_auth
+JWT_ALGORITHM=RS256
+APP_ENV=production
+ACCESS_TOKEN_EXPIRE_MINUTES=30
+
+# Admin
+ADMIN_USERNAME=${ADMIN_USER}
+ADMIN_PASSWORD=${ADMIN_PASS}
+ADMIN_EMAIL=${ADMIN_EMAIL}
+
+# Ports
+HUB_API_PORT=${HUB_API_PORT}
+HUB_HOST=${SERVER_IP}
+HUB_FRONTEND_PORT=${HUB_HTTP_PORT}
+HUB_HTTPS_PORT=${HUB_HTTPS_PORT}
+HUB_HTTPS_ENABLED=${HTTPS_ENABLED}
+
+# Clés JWT
+AUTO_GENERATE_KEYS=${AUTO_KEYS}
+FORCE_REPLACE_APP=false
+
+# Sécurité
+SECRETS_ENCRYPTION_KEY=${FERNET_KEY}
+ALLOW_PLAINTEXT_SECRETS=false
+SKIP_PASSWORD_CHECK=false
+
+# Réseau
+APP_WHITELIST_NETWORKS=${WHITELIST}
+
+# CORS
+ALLOWED_ORIGINS=${CORS_ORIGINS}
+
+# Docker
+DOCKER_SYNC_INTERVAL=300
+DOCKER_SCAN_ENABLED=${DOCKER_SCAN_ENABLED}
+
+# Audit
+AUDIT_SSE_COOLDOWN=5.0
+AUDIT_RETENTION_DAYS=90
+ERROR_RETENTION_DAYS=30
+LOG_PURGE_INTERVAL_HOURS=24
+
+# PKI
+PKI_CA_COMMON_NAME=Hub Local CA
+PKI_CA_ORGANIZATION=Hub Internal
+PKI_CA_VALIDITY_YEARS=10
+PKI_CERT_DOMAINS=localhost,hub.local,hub-frontend
+PKI_CERT_IPS=${SERVER_IP}
+PKI_CERT_VALIDITY_DAYS=365
+PKI_KEY_SIZE=4096
+HOST_UID=$(id -u)
+
+# Ports apps
+APP_PORT_API_START=9000
+APP_PORT_API_END=9499
+APP_PORT_FRONTEND_START=4200
+APP_PORT_FRONTEND_END=4699
+PORT_SCAN_DOCKER_ENABLED=true
+EOF
+
+ok ".env écrit"
+say ""
+
+# ── 4. Démarrer ─────────────────────────────────────────────────────────────
+
+say "${BOLD}4. Démarrage Docker Compose${NC}"
+say ""
+docker compose up -d
+say ""
+
+# ── 5. Vérification ─────────────────────────────────────────────────────────
+
+say "${BOLD}5. Vérification santé${NC}"
+say ""
+
+sleep 5
+MAX_WAIT=60
+ELAPSED=0
+while [ $ELAPSED -lt $MAX_WAIT ]; do
+    if curl -sk "http://localhost:${HUB_API_PORT}/api/health" 2>/dev/null | grep -q '"status":"healthy"'; then
+        ok "Hub opérationnel en ${ELAPSED}s"
+        break
+    fi
+    sleep 3
+    ELAPSED=$((ELAPSED + 3))
+    say "  ... attente ${ELAPSED}s/${MAX_WAIT}s"
+done
+
+if [ $ELAPSED -ge $MAX_WAIT ]; then
+    warn "Le Hub tarde à démarrer. Logs : docker compose logs hub-api"
+fi
+say ""
+
+# ── 6. Résumé ───────────────────────────────────────────────────────────────
+
+say "${BOLD}${GREEN}══════════════════════════════════════════════════════════${NC}"
+say "${BOLD}${GREEN}   Hub installé !${NC}"
+say "${BOLD}${GREEN}══════════════════════════════════════════════════════════${NC}"
+say ""
+say "  Accès   : ${BOLD}http${HTTPS_ENABLED:+s}://${SERVER_IP}:${HUB_HTTP_PORT}${NC}"
+say "  Login   : ${BOLD}${ADMIN_USER}${NC}"
+if [ -n "$CLIENT_NAME" ]; then
+    say "  Client  : ${BOLD}${CLIENT_NAME}${NC}"
+fi
+say ""
+say "${BOLD}Prochaines étapes :${NC}"
+say "  1. Ouvrez l'URL et connectez-vous"
+say "  2. Changez le mot de passe admin"
+say "  3. Déployez vos applications"
+say ""
+say "${BOLD}Commandes utiles :${NC}"
+say "  docker compose ps"
+say "  docker compose logs -f"
+say "  docker compose down / up -d"
+say ""

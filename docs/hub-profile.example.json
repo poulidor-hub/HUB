@@ -1,0 +1,32 @@
+{
+  "format_version": "1.0",
+  "client": {
+    "name": "ACME Atelier",
+    "contact_name": "Camille Martin",
+    "contact_email": "camille.martin@acme.test",
+    "contact_phone": "06 12 34 56 78"
+  },
+  "server": {
+    "ip": "192.0.2.11",
+    "lan_cidr": "192.168.1.0/24",
+    "docker_subnet": "10.42.0.0/16"
+  },
+  "admin": {
+    "username": "admin",
+    "password": "CHANGEZ_MOI_admin_password",
+    "email": "admin@acme.test"
+  },
+  "ports": {
+    "http": 80,
+    "https": 443,
+    "api": 8000
+  },
+  "options": {
+    "https_enabled": true,
+    "docker_scan_enabled": false,
+    "app_port_api_start": 9000,
+    "app_port_api_end": 9499,
+    "app_port_frontend_start": 4200,
+    "app_port_frontend_end": 4699
+  }
+}
