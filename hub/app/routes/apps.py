@@ -29,7 +29,7 @@ from app.schemas import (
     AllocatePortsRequest, AllocatePortsResponse,
     PortsStatusResponse, PortAllocationItem,
 )
-from app.auth import get_current_admin, get_current_user, get_password_hash, get_settings, verify_token_not_revoked, oauth2_scheme
+from app.auth import get_current_admin, get_current_user, get_password_hash, get_settings, verify_token_not_revoked, oauth2_scheme, optional_oauth2_scheme
 from app.routes.service_accounts import save_service_account_credentials, delete_service_account_credentials
 from app.routes.audit import log_action
 from app.docker_scanner import docker_scanner
@@ -1887,7 +1887,7 @@ async def toggle_app_active(
 async def get_app_credentials(
     request: Request,
     db: AsyncSession = Depends(get_db),
-    token: Optional[str] = Depends(oauth2_scheme),
+    token: Optional[str] = Depends(optional_oauth2_scheme),
 ):
     """
     Récupère les credentials M2M d'une application.
@@ -2011,7 +2011,7 @@ async def get_app_credentials(
 async def regenerate_app_secret(
     request: Request,
     db: AsyncSession = Depends(get_db),
-    token: Optional[str] = Depends(oauth2_scheme),
+    token: Optional[str] = Depends(optional_oauth2_scheme),
 ):
     """
     Regénère le client_secret d'une application.
@@ -2172,7 +2172,7 @@ async def update_app_shared(
     request: Request,
     is_shared: bool,
     db: AsyncSession = Depends(get_db),
-    token: Optional[str] = Depends(oauth2_scheme),
+    token: Optional[str] = Depends(optional_oauth2_scheme),
 ):
     """
     Met à jour le flag is_shared_service d'une application.
@@ -2407,7 +2407,7 @@ async def push_openapi_spec(
     request: Request,
     body: AppOpenApiPush,
     db: AsyncSession = Depends(get_db),
-    token: Optional[str] = Depends(oauth2_scheme),
+    token: Optional[str] = Depends(optional_oauth2_scheme),
 ):
     """
     Permet à une application de pousser sa spécification OpenAPI au Hub.

@@ -17,6 +17,7 @@ from app.models import User, ServiceAccount, RefreshToken, RevokedToken, UserApp
 settings = get_settings()
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/token")
+optional_oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/token", auto_error=False)
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
