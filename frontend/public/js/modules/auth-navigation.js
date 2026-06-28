@@ -375,6 +375,12 @@ let changePasswordModal = null;
  * @param {boolean} mandatory - Si true, l'utilisateur ne peut pas fermer le modal
  */
 function showChangePasswordModal(mandatory = false) {
+    // La délégation data-action passe les arguments en CHAÎNE ("false"/"true").
+    // Or "false" est truthy en JS : sans coercition, l'ouverture via l'icône
+    // (data-args="false") basculerait en mode obligatoire (× et Annuler masqués,
+    // backdrop static, Échap inactif) -> modale impossible à fermer.
+    mandatory = (mandatory === true || mandatory === 'true');
+
     // Recréer l'instance à chaque ouverture pour que backdrop/keyboard reflètent
     // le mode courant. Sinon, un modal d'abord ouvert en mode obligatoire reste
     // "static" (impossible à fermer par clic extérieur / Échap) lors des ouvertures
