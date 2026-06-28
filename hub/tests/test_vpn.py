@@ -361,3 +361,89 @@ class TestImportHelpers:
         with pytest.raises(HTTPException) as exc:
             vpn_module._validate_import_conf(conf)
         assert exc.value.status_code == 422
+
+
+# =============================================================================
+# POST /api/vpn/import
+# =============================================================================
+
+class TestVpnImport:
+    """Tests du endpoint POST /api/vpn/import"""
+
+    async def test_import_valid_conf(
+        self, client: AsyncClient, async_session: AsyncSession,
+        admin_token: str, vpn_temp_dir: str,
+    ):
+        await _seed_vpn_settings(async_session)
+        auth = get_auth_header(admin_token)
+
+        resp = await client.post("/api/vpn/import", json={"config": _VALID_CONF}, headers=auth)
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] == "imported"
+        assert body["enabled"] is True
+        assert body["endpoint"] == "vps.example.com:51820"
+        assert "yAnz5TF+" not in str(body)
+
+        conf_path = os.path.join(vpn_temp_dir, "wg_confs", "wg0.conf")
+        assert os.path.isfile(conf_path)
+        with open(conf_path) as f:
+            assert "yAnz5TF+" in f.read()
+
+        result = await async_session.execute(
+            select(AppSetting).where(AppSetting.key == "vpn_enabled")
+        )
+        assert result.scalar_one().value == "true"
+
+    async def test_import_missing_private_key(
+        self, client: AsyncClient, async_session: AsyncSession,
+        admin_token: str, vpn_temp_dir: str,
+    ):
+        await _seed_vpn_settings(async_session)
+        auth = get_auth_header(admin_token)
+        conf = _VALID_CONF.replace(
+            "PrivateKey = OUrAxOwyrwschr4I3Nj+FvNVzSOv2JyHZQRYwEb5Fzo=\n", ""
+        )
+        resp = await client.post("/api/vpn/import", json={"config": conf}, headers=auth)
+        assert resp.status_code == 422
+
+    async def test_import_invalid_key(
+        self, client: AsyncClient, async_session: AsyncSession,
+        admin_token: str, vpn_temp_dir: str,
+    ):
+        await _seed_vpn_settings(async_session)
+        auth = get_auth_header(admin_token)
+        conf = _VALID_CONF.replace("OUrAxOwyrwschr4I3Nj+FvNVzSOv2JyHZQRYwEb5Fzo=", "bad!!!")
+        resp = await client.post("/api/vpn/import", json={"config": conf}, headers=auth)
+        assert resp.status_code == 422
+
+    async def test_import_postup_rejected(
+        self, client: AsyncClient, async_session: AsyncSession,
+        admin_token: str, vpn_temp_dir: str,
+    ):
+        await _seed_vpn_settings(async_session)
+        auth = get_auth_header(admin_token)
+        conf = _VALID_CONF.replace("[Peer]", "PostUp = echo hacked\n\n[Peer]")
+        resp = await client.post("/api/vpn/import", json={"config": conf}, headers=auth)
+        assert resp.status_code == 422
+        assert "postup" in resp.json()["detail"].lower()
+
+    async def test_import_preserves_mtu(
+        self, client: AsyncClient, async_session: AsyncSession,
+        admin_token: str, vpn_temp_dir: str,
+    ):
+        await _seed_vpn_settings(async_session)
+        auth = get_auth_header(admin_token)
+        conf = _VALID_CONF.replace("Address = 10.8.0.5/24", "Address = 10.8.0.5/24\nMTU = 1420")
+        resp = await client.post("/api/vpn/import", json={"config": conf}, headers=auth)
+        assert resp.status_code == 200
+        conf_path = os.path.join(vpn_temp_dir, "wg_confs", "wg0.conf")
+        with open(conf_path) as f:
+            assert "MTU = 1420" in f.read()
+
+    async def test_import_unauthorized(
+        self, client: AsyncClient, async_session: AsyncSession, vpn_temp_dir: str,
+    ):
+        await _seed_vpn_settings(async_session)
+        resp = await client.post("/api/vpn/import", json={"config": _VALID_CONF})
+        assert resp.status_code == 401

@@ -295,6 +295,10 @@ class VpnToggleRequest(BaseModel):
     enabled: bool
 
 
+class VpnImportRequest(BaseModel):
+    config: str
+
+
 # =============================================================================
 # Endpoints
 # =============================================================================
@@ -449,6 +453,57 @@ async def toggle_vpn(
         pass
 
     return {"vpn_enabled": payload.enabled}
+
+
+@router.post("/import")
+async def import_vpn_config(
+    payload: VpnImportRequest,
+    current_admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    summary = _validate_import_conf(payload.config)
+
+    _wg_conf_dir()
+    conf_path = _wg_conf_path()
+    content = payload.config if payload.config.endswith("\n") else payload.config + "\n"
+    conf_path.write_text(content)
+
+    config_hash = hashlib.sha256(content.encode()).hexdigest()
+
+    for key, value in [
+        (VPN_ENABLED_KEY, "true"),
+        (VPN_CONFIG_HASH_KEY, config_hash),
+    ]:
+        result = await db.execute(select(AppSetting).where(AppSetting.key == key))
+        setting = result.scalar_one_or_none()
+        if not setting:
+            setting = AppSetting(key=key, value=value)
+            db.add(setting)
+        else:
+            setting.value = value
+            setting.updated_at = utcnow()
+            setting.updated_by_id = current_admin.id
+
+    await db.commit()
+
+    logger.info(
+        f"Configuration VPN importée par {current_admin.username} "
+        f"(endpoint={summary['endpoint']})"
+    )
+
+    try:
+        from app.routes.audit import log_action
+        await log_action(
+            db, current_admin.id, "VPN_CONFIG_IMPORTED",
+            target="vpn",
+            details=f"Config VPN importée: endpoint={summary['endpoint']}, address={summary['address']}",
+            notify_sse=False,
+        )
+        await db.commit()
+    except Exception:
+        pass
+
+    return {"status": "imported", "enabled": True, **summary}
 
 
 @router.get("/config")
