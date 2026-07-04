@@ -27,6 +27,9 @@ certs/registry.json
 # Superpowers (brainstorm visual companion artifacts)
 .superpowers/
 
+# Superpowers — plans d'implémentation auto-générés (éphémères)
+docs/superpowers/plans/
+
 # Python
 __pycache__/
 *.py[cod]

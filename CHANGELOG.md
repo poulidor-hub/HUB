@@ -5,6 +5,16 @@
 
 ---
 
+## [3.8.1] - 4 juillet 2026
+
+### ⚡ Nettoyage Git — exclusion des plans d'implémentation
+
+- Ajout de `docs/superpowers/plans/` au `.gitignore` (le pattern `.superpowers/` était déjà présent)
+- `git rm --cached` des 8 fichiers de plans auto-générés par le workflow Superpowers
+- Les plans restent sur le disque pour référence locale, mais ne sont plus commités
+
+---
+
 ## [3.8.0] - 29 juin 2026
 
 ### ⚡ Import de configuration VPN par fichier .conf
