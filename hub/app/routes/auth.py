@@ -666,7 +666,7 @@ async def logout(
                     expires_at=datetime.fromtimestamp(exp, tz=timezone.utc).replace(tzinfo=None),
                     reason="logout"
                 )
-        except:
+        except Exception:
             pass  # Token déjà invalide, on continue
     
     # Révoquer le refresh token spécifique s'il est fourni
@@ -676,7 +676,7 @@ async def logout(
             if refresh_token_obj and refresh_token_obj.user_id == current_user.id:
                 refresh_token_obj.revoked_at = utcnow()
                 await db.commit()
-        except:
+        except Exception:
             pass  # Token déjà invalide ou n'appartient pas à l'utilisateur
     
     # Révoquer tous les refresh tokens si demandé
@@ -853,7 +853,7 @@ async def introspect_token(
             token_type="Bearer",
             client_id=payload.get("sub") if payload.get("type") == "service_account" else None
         )
-    except:
+    except Exception:
         return TokenIntrospection(active=False)
 
 
