@@ -175,8 +175,6 @@ def ensure_backup_keys_exist() -> tuple[str, str]:
     logger.info(f"✅ Clé backup privée générée : {backup_private}")
     logger.info(f"✅ Clé backup publique générée : {backup_public}")
     return private_key, public_key
-    
-    return private_key, public_key
 
 
 class Settings(BaseSettings):

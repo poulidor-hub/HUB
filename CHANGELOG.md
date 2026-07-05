@@ -5,7 +5,28 @@
 
 ---
 
-## [3.8.1] - 4 juillet 2026
+## [3.9.0] - 5 juillet 2026
+
+### ⚡ SSE — authentification par query param (?token=)
+- Le endpoint `/api/events/stream` accepte désormais un fallback
+  `?token=JWT` en query param pour les clients EventSource (navigateur),
+  qui ne peuvent pas envoyer de headers HTTP personnalisés.
+  Authentification prioritaire : Bearer header, puis `?token=`, puis beacon.
+- Filtre `_SuppressLegacySSE401Filter` dans `main.py` : masque le bruit
+  `GET /api/events/stream ... 401` dans les logs uvicorn (apps legacy
+  qui n'utilisent pas encore le fallback).
+
+### ⚡ Docker info — production durcie
+- `get_app_docker_info` renseigne `docker_available: false` avec un
+  message explicite quand le socket Docker n'est pas monté (production),
+  au lieu de laisser le champ absent ou un timeout.
+- UI frontend distingue visuellement "Docker désactivé" (info) vs
+  "Conteneur non trouvé" (warning).
+
+### 🧹 Cleanup
+- `config.py` : retrait d'un `return` unreachable dans `ensure_backup_keys_exist()`.
+- `TODO.md` : entrée backup scheduler marquée résolue (`periodic_backup_scheduler()`
+  implémenté dans `main.py:184`).
 
 ### ⚡ Nettoyage Git — exclusion des plans d'implémentation
 

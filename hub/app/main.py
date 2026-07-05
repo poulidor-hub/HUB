@@ -22,6 +22,32 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+
+class _SuppressLegacySSE401Filter(logging.Filter):
+    """Filtre les logs d'accès uvicorn 401 sur /api/events/stream.
+
+    Les applications legacy tentent en boucle d'ouvrir le flux SSE sans token
+    valide, ce qui inonde les logs de lignes `GET /api/events/stream ... 401`.
+    Ce bruit est attendu et sans intérêt : on l'ignore silencieusement.
+    Les autres 401 (et tout autre statut) restent loggés normalement.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        args = record.args
+        if not isinstance(args, tuple) or len(args) < 5:
+            return True
+        method, path, status_code = args[1], args[2], args[4]
+        if (
+            status_code == 401
+            and method == "GET"
+            and str(path).split("?", 1)[0] == "/api/events/stream"
+        ):
+            return False
+        return True
+
+
+logging.getLogger("uvicorn.access").addFilter(_SuppressLegacySSE401Filter())
+
 settings = get_settings()
 
 # Variables globales pour controler les taches periodiques

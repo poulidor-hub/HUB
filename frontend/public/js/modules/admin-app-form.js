@@ -163,11 +163,18 @@ async function showDockerDetails(slug) {
         console.log('🐳 Docker info:', info);
         
         if (!info.container_found) {
+            const dockerOff = info.docker_available === false;
+            const alertClass = dockerOff ? 'alert-info' : 'alert-warning';
+            const alertIcon = dockerOff ? 'bi-shield-lock' : 'bi-exclamation-triangle';
+            const alertTitle = dockerOff ? 'Scan Docker désactivé' : 'Conteneur non trouvé';
+            const alertMessage = dockerOff
+                ? (info.developer_info?.warning || 'Le socket Docker n\'est pas monté dans le Hub.')
+                : (info.developer_info?.warning || 'Le conteneur Docker n\'a pas été trouvé.');
             content.innerHTML = `
-                <div class="alert alert-warning">
-                    <i class="bi bi-exclamation-triangle me-2"></i>
-                    <strong>Conteneur non trouvé</strong>
-                    <p class="mb-0 mt-2">${info.developer_info?.warning || 'Le conteneur Docker n\'a pas été trouvé.'}</p>
+                <div class="alert ${alertClass}">
+                    <i class="bi ${alertIcon} me-2"></i>
+                    <strong>${alertTitle}</strong>
+                    <p class="mb-0 mt-2">${alertMessage}</p>
                     ${info.developer_info?.tip ? `<small class="text-muted">${info.developer_info.tip}</small>` : ''}
                 </div>
                 <div class="card">

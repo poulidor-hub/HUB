@@ -3287,10 +3287,11 @@ async def get_app_docker_info(
     
     # Vérifier si Docker est disponible
     if not docker_scanner.is_available:
+        response.docker_available = False
         response.developer_info = {
-            "warning": "Docker non accessible sur ce serveur",
+            "warning": "Scan Docker désactivé sur ce serveur",
             "api_url": app.api_url,
-            "tip": "Utilisez l'URL API directement pour joindre ce service"
+            "tip": "Comportement normal en production durcie : le socket Docker n'est pas monté dans le Hub. Utilisez l'URL API directement pour joindre ce service."
         }
         return response
     
@@ -3312,9 +3313,11 @@ async def get_app_docker_info(
     try:
         client = docker_scanner.client
         if not client:
+            response.docker_available = False
             response.developer_info = {
                 "warning": "Client Docker non initialisé",
-                "api_url": app.api_url
+                "api_url": app.api_url,
+                "tip": "Comportement normal en production durcie : le socket Docker n'est pas monté dans le Hub. Utilisez l'URL API directement pour joindre ce service."
             }
             return response
         

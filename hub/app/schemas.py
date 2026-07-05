@@ -457,6 +457,10 @@ class DockerInfoResponse(BaseModel):
     app_api_url: str
     app_frontend_url: Optional[str] = None
     
+    # Accès au daemon Docker depuis le Hub (False = socket non monté / scan désactivé,
+    # comportement normal en production durcie)
+    docker_available: bool = True
+
     # Info conteneur Docker
     container_found: bool = False
     container_id: Optional[str] = None

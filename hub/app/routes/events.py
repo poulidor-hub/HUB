@@ -383,6 +383,21 @@ async def event_stream(request: Request):
             logger.warning(f"SSE: token Bearer invalide: {e}")
 
     if not authenticated:
+        # Fallback 2: token JWT passé en query param (compatibilité EventSource)
+        token_param = request.query_params.get("token")
+        if token_param:
+            try:
+                from app.auth import verify_token_not_revoked
+                from app.database import async_session_maker
+                async with async_session_maker() as db:
+                    payload = await verify_token_not_revoked(token_param, db)
+                    if payload.get("type") == "user":
+                        user_id = payload.get("user_id")
+                    authenticated = user_id is not None
+            except Exception as e:
+                logger.warning(f"SSE: token URL invalide: {e}")
+
+    if not authenticated:
         user_id_param = request.query_params.get("user_id")
         beacon_token = request.query_params.get("beacon_token", "")
         if user_id_param and beacon_token:
@@ -400,7 +415,7 @@ async def event_stream(request: Request):
     if not authenticated:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Authentification requise pour le flux SSE. Utilisez un token Bearer ou beacon_token+user_id."
+            detail="Authentification requise pour le flux SSE. Utilisez un token Bearer, ?token=JWT, ou beacon_token+user_id."
         )
 
     queue: asyncio.Queue = asyncio.Queue()
