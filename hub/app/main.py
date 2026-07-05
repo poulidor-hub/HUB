@@ -299,9 +299,9 @@ async def lifespan(app: FastAPI):
     logger.info("🚀 Démarrage du Hub d'Authentification...")
     await init_db()
     await apply_migrations()  # Appliquer les migrations SQL si nécessaires
-    await create_default_admin()
-    
-    # Vérifier la configuration des secrets et de sécurité
+
+    # Vérifier la configuration des secrets et de sécurité AVANT l'admin bootstrap
+    # (un mdp admin/DB faible ou des secrets manquants bloquent en production)
     from app.config import get_settings, ensure_backup_keys_exist, validate_security_config, ConfigValidationError
     try:
         for _warn in validate_security_config(get_settings()):
@@ -309,6 +309,8 @@ async def lifespan(app: FastAPI):
     except ConfigValidationError as _cfg_err:
         logger.critical(f"⛔ Configuration de sécurité invalide : {_cfg_err}")
         raise SystemExit(str(_cfg_err))
+
+    await create_default_admin()
 
     _settings = get_settings()
     if not _settings.secrets_encryption_key:

@@ -142,7 +142,9 @@ def ensure_keys_exist(auto_generate: bool = False) -> tuple[str, str]:
     
     # Sauvegarder les clés
     local_private.write_text(private_key)
+    local_private.chmod(0o600)
     local_public.write_text(public_key)
+    local_public.chmod(0o644)
     
     logger.info(f"✅ Clé privée générée : {local_private}")
     logger.info(f"✅ Clé publique générée : {local_public}")
@@ -171,16 +173,18 @@ def ensure_backup_keys_exist() -> tuple[str, str]:
     private_key, public_key = generate_rsa_keys()
     local_secrets_dir.mkdir(parents=True, exist_ok=True)
     backup_private.write_text(private_key)
+    backup_private.chmod(0o600)
     backup_public.write_text(public_key)
+    backup_public.chmod(0o644)
     logger.info(f"✅ Clé backup privée générée : {backup_private}")
     logger.info(f"✅ Clé backup publique générée : {backup_public}")
     return private_key, public_key
 
 
 class Settings(BaseSettings):
-    database_url: str = "postgresql+asyncpg://hubadmin:hub_secure_password_2025@db:5432/hub_auth"
+    database_url: str = "postgresql+asyncpg://hubadmin:CHANGEZ_MOI_DB_PASSWORD@db:5432/hub_auth"
     jwt_algorithm: str = "RS256"
-    access_token_expire_minutes: int = 15  # Token court (15 min) - refresh fréquent = meilleur tracking sessions
+    access_token_expire_minutes: int = 30  # TTL access token (doit matcher docker-compose/.env)
     refresh_token_expire_days: int = 7  # 7 jours pour le refresh token
     session_timeout_minutes: int = 20  # Seuil pour considérer une session comme terminée (sans logout explicite)
     admin_username: str = "admin"
@@ -282,13 +286,7 @@ class Settings(BaseSettings):
     pki_cert_ips: str = ""
     pki_cert_validity_days: int = 365
     pki_key_size: int = 4096
-    
-    # Cookie settings pour le SSO
-    cookie_httponly: bool = True
-    cookie_samesite: str = "lax"  # "strict", "lax", ou "none"
-    cookie_domain: str = ""  # Laisser vide pour le domaine actuel
-    cookie_secure: bool = False  # False pour HTTP
-    
+
     # Cache des clés JWT (initialisé au premier accès)
     _jwt_keys_cache: tuple[str, str] | None = None
     
@@ -370,7 +368,7 @@ def _check_secrets(settings: "Settings") -> list[str]:
     return []
 
 
-_WEAK_PASSWORDS = {"admin", "password", "admin123", "changez_moi", "changeme", ""}
+_WEAK_PASSWORDS = {"admin", "password", "admin123", "changez_moi", "changeme", "hub_secure_password_2025", ""}
 
 
 def _extract_db_password(database_url: str) -> str:
@@ -396,13 +394,17 @@ def _check_passwords(settings: "Settings") -> list[str]:
     if admin_weak:
         msg = ("ADMIN_PASSWORD est faible (valeur par défaut ou < 8 caractères). "
                "Définissez un mot de passe fort dans .env.")
+        if is_production(settings):
+            raise ConfigValidationError(msg)
         warns.append(f"⚠️  {msg}")
 
     db_pwd = _extract_db_password(settings.database_url)
     db_weak = db_pwd.lower() in _WEAK_PASSWORDS or "changez_moi" in db_pwd.lower() or len(db_pwd) < 8
     if db_weak:
         msg = ("Mot de passe de la base de données faible/par défaut dans DATABASE_URL. "
-               "Régénérez-le (scripts/gen-secrets.sh) et mettez à jour POSTGRES_PASSWORD + DATABASE_URL.")
+               "Régénérez-le (rejouez install.sh) et mettez à jour POSTGRES_PASSWORD + DATABASE_URL.")
+        if is_production(settings):
+            raise ConfigValidationError(msg)
         warns.append(f"⚠️  {msg}")
 
     return warns

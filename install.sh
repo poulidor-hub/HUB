@@ -23,6 +23,7 @@ err()  { say "  ${RED}✗${NC} $1"; exit 1; }
 
 PROFILE=""
 INTERACTIVE=true
+FORCE=false
 
 # ── Parse arguments ──────────────────────────────────────────────────────────
 
@@ -36,11 +37,15 @@ while [[ $# -gt 0 ]]; do
             fi
             INTERACTIVE=false
             ;;
+        --force)
+            FORCE=true
+            ;;
         -h|--help)
-            say "Usage : $0 [--profile client.json]"
+            say "Usage : $0 [--profile client.json] [--force]"
             say ""
             say "  Mode interactif (défaut) : guide l'utilisateur pas à pas."
             say "  Mode --profile          : lit un fichier JSON et configure sans interaction."
+            say "  --force                 : autorise l'écrasement d'un .env existant (ATTENTION)."
             say ""
             say "  Exemple de profil : docs/hub-profile.example.json"
             exit 0
@@ -153,7 +158,8 @@ print(c.get('name',''))
 print(c.get('contact_name',''))
 print(c.get('contact_email',''))
 print(s['ip'])
-print(s.get('lan_cidr','${SERVER_IP:-0.0.0.0}'.rsplit('.',1)[0]+'.0/24'))
+_ip = s['ip'].rsplit('.',1)[0]
+print(s.get('lan_cidr') or (_ip + '.0/24') if _ip else '0.0.0.0/0')
 print(s.get('docker_subnet','10.42.0.0/16'))
 print(a['username'])
 print(a['password'])
@@ -211,19 +217,36 @@ else
 fi
 ok "Clé Fernet générée"
 
-JWT_DIR="secrets/jwt"
-if [ ! -f "$JWT_DIR/private_key.pem" ]; then
-    mkdir -p "$JWT_DIR"
+# Clés JWT au chemin attendu par le code : secrets/jwt_private_key.pem
+# (top-level dans secrets/, cf. app/config.py → local_secrets_dir / "jwt_private_key.pem")
+JWT_PRIVATE="secrets/jwt_private_key.pem"
+JWT_PUBLIC="secrets/jwt_public_key.pem"
+
+# Migration : anciennes installs écrivaient dans secrets/jwt/. On les déplace au bon endroit.
+if [ -f "secrets/jwt/private_key.pem" ] && [ ! -f "$JWT_PRIVATE" ]; then
+    mkdir -p secrets
+    mv "secrets/jwt/private_key.pem" "$JWT_PRIVATE"
+    [ -f "secrets/jwt/public_key.pem" ] && mv "secrets/jwt/public_key.pem" "$JWT_PUBLIC"
+    rmdir secrets/jwt 2>/dev/null || true
+    ok "Clés JWT migrées secrets/jwt/ → secrets/ (chemin attendu par le code)"
+fi
+
+if [ ! -f "$JWT_PRIVATE" ]; then
+    mkdir -p secrets
     if command -v openssl &> /dev/null; then
-        openssl genpkey -algorithm RSA -out "$JWT_DIR/private_key.pem" -pkeyopt rsa_keygen_bits:4096 2>/dev/null
-        openssl rsa -pubout -in "$JWT_DIR/private_key.pem" -out "$JWT_DIR/public_key.pem" 2>/dev/null
-        ok "Clés JWT RSA 4096 → $JWT_DIR/"
+        openssl genpkey -algorithm RSA -out "$JWT_PRIVATE" -pkeyopt rsa_keygen_bits:4096 2>/dev/null
+        openssl rsa -pubout -in "$JWT_PRIVATE" -out "$JWT_PUBLIC" 2>/dev/null
+        chmod 600 "$JWT_PRIVATE"
+        chmod 644 "$JWT_PUBLIC"
+        ok "Clés JWT RSA 4096 → secrets/jwt_private_key.pem (+pub)"
         AUTO_KEYS=false
     else
         warn "openssl absent → AUTO_GENERATE_KEYS activé"
         AUTO_KEYS=true
     fi
 else
+    chmod 600 "$JWT_PRIVATE" 2>/dev/null || true
+    chmod 644 "$JWT_PUBLIC" 2>/dev/null || true
     ok "Clés JWT déjà présentes"
     AUTO_KEYS=false
 fi
@@ -240,8 +263,12 @@ if [ -f .env ]; then
             warn ".env conservé. Pour appliquer : nano .env && docker compose up -d"
             exit 0
         fi
+    elif ! $FORCE; then
+        err ".env existe déjà. Le mode --profile refuse de l'écraser par sécurité.
+  Utilisez --force pour autoriser l'écrasement, ou supprimez .env manuellement
+  si vous voulez repartir d'une configuration vierge."
     else
-        warn ".env existant écrasé (mode profil)"
+        warn ".env existant écrasé (mode profil + --force)"
     fi
 fi
 
@@ -325,6 +352,7 @@ PORT_SCAN_DOCKER_ENABLED=true
 EOF
 
 ok ".env écrit"
+chmod 600 .env
 say ""
 
 # ── 4. Démarrer ─────────────────────────────────────────────────────────────
@@ -363,7 +391,8 @@ say "${BOLD}${GREEN}════════════════════
 say "${BOLD}${GREEN}   Hub installé !${NC}"
 say "${BOLD}${GREEN}══════════════════════════════════════════════════════════${NC}"
 say ""
-say "  Accès   : ${BOLD}http${HTTPS_ENABLED:+s}://${SERVER_IP}:${HUB_HTTP_PORT}${NC}"
+if [ "$HTTPS_ENABLED" = "true" ]; then _SCHEME="https"; else _SCHEME="http"; fi
+say "  Accès   : ${BOLD}${_SCHEME}://${SERVER_IP}:${HUB_HTTP_PORT}${NC}"
 say "  Login   : ${BOLD}${ADMIN_USER}${NC}"
 if [ -n "$CLIENT_NAME" ]; then
     say "  Client  : ${BOLD}${CLIENT_NAME}${NC}"

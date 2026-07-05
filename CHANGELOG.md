@@ -5,6 +5,76 @@
 
 ---
 
+## [3.9.1] - 5 juillet 2026
+
+### 🔒 Sécurité — install & secrets (audit)
+
+- **B1 — Chemin des clés JWT corrigé** : `install.sh` écrivait dans
+  `secrets/jwt/` mais le code lit `secrets/jwt_private_key.pem` (top-level).
+  Conséquence : les clés générées à l'install n'étaient jamais utilisées,
+  et `AUTO_GENERATE_KEYS=true` était forcé en plein `APP_ENV=production`
+  (régénération 2048 au lieu du 4096 de l'install). `install.sh` écrit
+  désormais au bon chemin, avec migration automatique des anciennes clés
+  `secrets/jwt/` → `secrets/`.
+- **S2 — Mot de passe DB fail-fast** : retrait du fallback compromis
+  `hub_secure_password_2025` du `docker-compose.yml` (`${POSTGRES_PASSWORD:?}`)
+  et de `config.py`. En production, un mot de passe DB ou admin faible/par
+  défaut déclenche désormais un `ConfigValidationError` bloquant au démarrage
+  (échappatoire : `SKIP_PASSWORD_CHECK=true`). `hub_secure_password_2025`
+  ajouté à `_WEAK_PASSWORDS`.
+- **S3 — Permissions restrictives** : toutes les clés privées et secrets
+  écrits en `0o600` (clé JWT auto-générée, clés backup, `server.key` TLS
+  `pki.py`, `sa_*.env`, configs WireGuard). `entrypoint.sh` passe en
+  `chmod -R u+rwX,go-rwx` sur `/code/secrets`. `install.sh` applique
+  `chmod 600 .env` et sur les clés JWT.
+- **S4 — Introspection RFC 7662** : `/api/auth/token/introspect` n'est plus
+  accessible anonymement depuis l'extérieur. Les appels internes (réseaux
+  whitelistés = apps du parc) restent permis ; un appel externe doit
+  présenter un token Bearer valide, sinon 401.
+
+### 🛡 Garde-fou install.sh
+
+- **`.env` protégé en mode `--profile`** : le script refuse désormais
+  d'écraser un fichier `.env` existant quand il est lancé sans
+  confirmation interactive. Seul le flag `--force` permet de
+  passer outre. Évite la destruction accidentelle d'une config live
+  (ex. relancer `install.sh --profile` sur un Hub déjà configuré).
+- **`--force`** : nouveau flag pour autoriser l'écrasement en mode
+  non-interactif (ATTENTION : écrase `.env` et relance `docker compose up`).
+
+- **m1** : l'URL affichée en fin d'install affichait toujours `https://`
+  même avec HTTPS désactivé (expansion `${HTTPS_ENABLED:+s}` fautive).
+- **m2** : en mode `--profile`, le CIDR LAN de fallback produisait
+  `0.0.0/24` (SERVER_IP non encore défini) — désormais calculé dans le
+  parseur Python depuis `server.ip`.
+- **m5** : `start_period` du healthcheck `hub-api` réduit de 600s à 120s.
+
+### 🧪 Tests
+
+- `test_security_config.py` : les mots de passe faibles lèvent désormais en
+  production (tests `_blocks_in_production`) et ne font plus que warn.
+- `test_pki.py` : la clé serveur TLS est attendue en `0o600`.
+- `test_api_auth.py` : couverture du blocage introspection externe (401).
+- **m7** : `validate_security_config()` s'exécute désormais AVANT
+  `create_default_admin()` au bootstrap (`main.py` lifespan).
+
+### 🧹 Nettoyage
+
+- **Cookie dead-code** : suppression des champs `cookie_secure`,
+  `cookie_httponly`, `cookie_samesite`, `cookie_domain` (jamais utilisés —
+  le Hub est pur JWT/Bearer, aucun `set_cookie`).
+- **Cruft dev supprimé** : `index_Test.py`, `present.html`,
+  `presentsales.html`, `hub/app_tester.py` (contenait `password="admin123"`
+  en dur).
+- Ajout de `hub/.dockerignore` (cache Python exclu de l'image).
+
+### ⚠️ Action requise sur les déploiements existants
+
+- Rejouer `./install.sh` (il génère/migre les clés JWT au bon chemin et
+  repasse `AUTO_GENERATE_KEYS=false`), puis `docker compose up -d`.
+
+---
+
 ## [3.9.0] - 5 juillet 2026
 
 ### ⚡ SSE — authentification par query param (?token=)

@@ -6,7 +6,7 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-hubadmin}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-hub_secure_password_2025}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Définir POSTGRES_PASSWORD dans .env (généré par install.sh)}
       POSTGRES_DB: ${POSTGRES_DB:-hub_auth}
     volumes:
       - postgres_data:/var/lib/postgresql/data
@@ -47,7 +47,7 @@ services:
     ports:
       - "${HUB_API_PORT:-8000}:8000"
     environment:
-      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-hubadmin}:${POSTGRES_PASSWORD:-hub_secure_password_2025}@db:5432/${POSTGRES_DB:-hub_auth}
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-hubadmin}:${POSTGRES_PASSWORD:?Définir POSTGRES_PASSWORD dans .env}@db:5432/${POSTGRES_DB:-hub_auth}
       - JWT_ALGORITHM=RS256
       - APP_ENV=${APP_ENV:-production}
       - ACCESS_TOKEN_EXPIRE_MINUTES=${ACCESS_TOKEN_EXPIRE_MINUTES:-30}
@@ -125,7 +125,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-      start_period: 600s
+      start_period: 120s
 
   # ===== FRONTEND (Nginx) =====
   hub-frontend:

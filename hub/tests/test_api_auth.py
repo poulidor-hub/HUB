@@ -175,8 +175,10 @@ class TestAuthEndpoints:
         assert response.status_code == 401
     
     @pytest.mark.asyncio
-    async def test_token_introspection(self, client: AsyncClient, test_user: User):
-        """Test de l'introspection de token"""
+    async def test_token_introspection(self, client: AsyncClient, test_user: User, monkeypatch):
+        """Test de l'introspection de token (appel interne whitelisté)"""
+        # Simule une app du parc appelant depuis un réseau whitelisté
+        monkeypatch.setattr("app.routes.apps.is_docker_network_ip", lambda ip: True)
         token, _, _ = create_access_token(
             username=test_user.username,
             apps={"test-app": "user"}
@@ -192,10 +194,11 @@ class TestAuthEndpoints:
         assert data["active"] is True
         assert data["sub"] == "testuser"
         assert "apps" in data
-    
+
     @pytest.mark.asyncio
-    async def test_token_introspection_expired(self, client: AsyncClient):
-        """Introspection d'un token expiré"""
+    async def test_token_introspection_expired(self, client: AsyncClient, monkeypatch):
+        """Introspection d'un token expiré (appel interne whitelisté)"""
+        monkeypatch.setattr("app.routes.apps.is_docker_network_ip", lambda ip: True)
         token, _, _ = create_access_token(
             username="testuser",
             apps={},
@@ -210,6 +213,14 @@ class TestAuthEndpoints:
         assert response.status_code == 200
         data = response.json()
         assert data["active"] is False
+
+    @pytest.mark.asyncio
+    async def test_token_introspection_external_blocked(self, client: AsyncClient, test_user: User, monkeypatch):
+        """Un appel externe (non whitelisté) sans Authorization doit être rejeté (RFC 7662 §2.1)."""
+        monkeypatch.setattr("app.routes.apps.is_docker_network_ip", lambda ip: False)
+        token, _, _ = create_access_token(username=test_user.username, apps={"test-app": "user"})
+        response = await client.post("/api/auth/token/introspect", data={"token": token})
+        assert response.status_code == 401
     
     @pytest.mark.asyncio
     async def test_logout(self, client: AsyncClient, test_user: User):

@@ -11,11 +11,11 @@ echo "🚀 Initialisation du Hub API..."
 # Créer les dossiers nécessaires s'ils n'existent pas
 mkdir -p /code/secrets/service_accounts /code/storage/backups /code/storage/snapshots
 
-# Ajuster les permissions du dossier secrets
+# Ajuster les permissions du dossier secrets (lecture/écriture owner uniquement)
 if [ -d "/code/secrets" ]; then
     echo "🔑 Ajustement des permissions des secrets..."
     chown -R appuser:appuser /code/secrets 2>/dev/null || true
-    chmod -R u+rw /code/secrets 2>/dev/null || true
+    chmod -R u+rwX,go-rwx /code/secrets 2>/dev/null || true
 fi
 
 # Ajuster les permissions du dossier storage

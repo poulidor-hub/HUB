@@ -322,6 +322,7 @@ async def deploy_vpn_config(
     )
     conf_path = _wg_conf_path()
     conf_path.write_text(conf_content)
+    conf_path.chmod(0o600)
 
     config_hash = hashlib.sha256(conf_content.encode()).hexdigest()
 
@@ -467,6 +468,7 @@ async def import_vpn_config(
     conf_path = _wg_conf_path()
     content = payload.config if payload.config.endswith("\n") else payload.config + "\n"
     conf_path.write_text(content)
+    conf_path.chmod(0o600)
 
     config_hash = hashlib.sha256(content.encode()).hexdigest()
 

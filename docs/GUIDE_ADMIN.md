@@ -217,7 +217,7 @@ docker compose exec db pg_dump -U hubadmin hub_auth > backup_$(date +%Y%m%d).sql
 - [ ] `ALLOWED_ORIGINS` restreint aux domaines connus
 - [ ] `APP_WHITELIST_NETWORKS` limité aux CIDR Docker + LAN/VPN
 - [ ] `ACCESS_TOKEN_EXPIRE_MINUTES=30` (pas plus)
-- [ ] Clés JWT présentes dans `secrets/jwt/`
+- [ ] Clés JWT présentes dans `secrets/jwt_private_key.pem` (+ `.env` en `chmod 600`)
 - [ ] `.env` non versionné (pas dans Git)
 - [ ] Ports non exposés sur Internet (LAN/VPN seulement)
 

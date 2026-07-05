@@ -1,0 +1,10 @@
+# Artefacts Python — jamais utiles à l'exécution
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+
+# Outils de test/dev locaux (hors image prod) — on GARDE app/tests (make test-docker)
+app_tester.py
+*.md

@@ -155,6 +155,7 @@ CLIENT_SECRET={encrypted_secret}
             content += f"# Applications autorisées: {', '.join(app_slugs)}\n"
         
         filename.write_text(content)
+        filename.chmod(0o600)
         
         if is_encrypted:
             logger.info(f"✅ Credentials sauvegardés (chiffrés) dans {filename}")

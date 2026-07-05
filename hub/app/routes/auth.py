@@ -809,14 +809,30 @@ async def introspect_token(
     """
     Introspection de token (RFC 7662).
     Permet aux applications de vérifier si un token est valide et non révoqué.
-    
-    ⚠️ Cet endpoint devrait être protégé par authentification (RFC 7662 §2.1).
-    Le mode non-authentifié est déprécié et sera supprimé dans une future version.
+
+    Sécurité : les appels internes (réseaux whitelistés = apps du parc) sont
+    autorisés sans authentification supplémentaire. Tout appel externe doit
+    présenter un token Bearer valide (Authorization: Bearer ...), conformément
+    à la RFC 7662 §2.1, sinon 401.
     """
-    # Log deprecation si pas d'auth header
+    from app.routes.apps import is_docker_network_ip
+
+    client_ip = _get_client_ip(request)
     auth_header = request.headers.get("authorization", "")
-    if not auth_header:
-        logger.warning(f"⚠️ DEPRECATED: Introspection sans authentification depuis {request.client.host if request.client else 'unknown'}")
+
+    if not is_docker_network_ip(client_ip):
+        # Appel externe : exiger un token Bearer valide pour introspecter.
+        if not auth_header.startswith("Bearer "):
+            raise HTTPException(
+                status_code=401,
+                detail="Introspection depuis un réseau externe : un token Bearer valide est requis (Authorization: Bearer ...).",
+            )
+        try:
+            verify_token(auth_header.removeprefix("Bearer ").strip())
+        except Exception:
+            raise HTTPException(status_code=401, detail="Token d'autorisation invalide.")
+    elif not auth_header:
+        logger.warning(f"⚠️ DEPRECATED: Introspection interne sans Authorization depuis {client_ip}")
     try:
         payload = verify_token(token)
         jti = payload.get("jti")

@@ -100,34 +100,64 @@ class TestSecrets:
 
 
 class TestPasswords:
-    GOOD = dict(
+    PROD = dict(
         app_env="production",
         allowed_origins="https://hub.local",
         secrets_encryption_key="jUjf0DHpQW3QM5eofdrp_6FEvSr9pI43P-Y33o9Y-TA=",
         admin_password="aStrongAdminPass1",
         database_url="postgresql+asyncpg://hubadmin:aStrongDbPass1@db:5432/hub_auth",
     )
+    DEV = dict(
+        app_env="development",
+        admin_password="aStrongAdminPass1",
+        database_url="postgresql+asyncpg://hubadmin:aStrongDbPass1@db:5432/hub_auth",
+        secrets_encryption_key="",
+        allowed_origins="https://hub.local",
+    )
 
-    @pytest.mark.parametrize("weak", ["admin", "password", "admin123", "CHANGEZ_MOI", "short"])
-    def test_weak_admin_password_warns(self, weak):
-        opts = dict(self.GOOD, admin_password=weak)
+    @pytest.mark.parametrize("weak", ["admin", "password", "admin123", "CHANGEZ_MOI", "short", "hub_secure_password_2025"])
+    def test_weak_admin_password_warns_in_dev(self, weak):
+        opts = dict(self.DEV, admin_password=weak)
         warns = validate_security_config(make_settings(**opts))
         assert any("ADMIN_PASSWORD" in w for w in warns)
 
-    def test_strong_admin_password_silent(self):
-        warns = validate_security_config(make_settings(**self.GOOD))
+    @pytest.mark.parametrize("weak", ["admin", "password", "admin123", "short", "hub_secure_password_2025"])
+    def test_weak_admin_password_blocks_in_production(self, weak):
+        opts = dict(self.PROD, admin_password=weak)
+        with pytest.raises(ConfigValidationError, match="ADMIN_PASSWORD"):
+            validate_security_config(make_settings(**opts))
+
+    def test_strong_passwords_silent_in_production(self):
+        warns = validate_security_config(make_settings(**self.PROD))
         assert not warns
 
-    def test_weak_db_password_warns(self):
+    def test_weak_db_password_warns_in_dev(self):
         opts = dict(
-            self.GOOD,
+            self.DEV,
             database_url="postgresql+asyncpg://hubadmin:CHANGEZ_MOI_mot_de_passe_securise@db:5432/hub_auth",
         )
         warns = validate_security_config(make_settings(**opts))
         assert any("base de données" in w for w in warns)
 
+    def test_weak_db_password_blocks_in_production(self):
+        opts = dict(
+            self.PROD,
+            database_url="postgresql+asyncpg://hubadmin:short@db:5432/hub_auth",
+        )
+        with pytest.raises(ConfigValidationError, match="base de données"):
+            validate_security_config(make_settings(**opts))
+
+    def test_default_compromised_db_password_blocks_in_production(self):
+        opts = dict(
+            self.PROD,
+            database_url="postgresql+asyncpg://hubadmin:hub_secure_password_2025@db:5432/hub_auth",
+        )
+        with pytest.raises(ConfigValidationError):
+            validate_security_config(make_settings(**opts))
+
     def test_skip_password_check_silences_all(self):
-        opts = dict(self.GOOD, admin_password="admin", skip_password_check=True,
-                    database_url="postgresql+asyncpg://hubadmin:password@db:5432/hub_auth")
+        opts = dict(self.DEV, admin_password="admin", skip_password_check=True,
+                    database_url="postgresql+asyncpg://hubadmin:password@db:5432/hub_auth",
+                    secrets_encryption_key="jUjf0DHpQW3QM5eofdrp_6FEvSr9pI43P-Y33o9Y-TA=")
         warns = validate_security_config(make_settings(**opts))
         assert not warns
