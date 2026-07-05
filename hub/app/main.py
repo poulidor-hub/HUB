@@ -14,7 +14,7 @@ from app.database import init_db, async_session_maker, apply_migrations
 from app.outbox import outbox_service
 from app.models import User, ErrorLog, utcnow
 from app.auth import get_password_hash, cleanup_expired_tokens
-from app.config import get_settings
+from app.config import get_settings, build_cors_config
 from app.routes import auth, users, apps, service_accounts, audit, docs, events, app_backups, profiles, apps_health, messages, account_requests, snapshots, vpn
 from app.routes import settings as settings_routes
 
@@ -450,19 +450,14 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# CORS - origines autorisées (source unique : Settings.allowed_origins).
-# Configurer ALLOWED_ORIGINS dans .env (origines séparées par des virgules).
-# Ex: "https://hub.local,https://192.0.2.10:4241"
-# ALLOWED_ORIGIN_REGEX permet d'ouvrir tout un sous-réseau LAN (toutes IP/ports).
-_allowed_origins = settings.allowed_origins_list
-_allowed_origin_regex = settings.allowed_origin_regex.strip() or None
-_cors_enabled = bool(_allowed_origins or _allowed_origin_regex)
+# CORS - configuration centralisée via build_cors_config (voir app/config.py).
+_cors_origins, _cors_regex, _cors_credentials = build_cors_config(settings)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=_allowed_origins if _allowed_origins else ["http://localhost"],
-    allow_origin_regex=_allowed_origin_regex,
-    allow_credentials=_cors_enabled,  # True seulement si origines/regex explicites
+    allow_origins=_cors_origins,
+    allow_origin_regex=_cors_regex,
+    allow_credentials=_cors_credentials,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type", "X-Slug", "X-Request-ID"],
     expose_headers=["X-Request-ID"],

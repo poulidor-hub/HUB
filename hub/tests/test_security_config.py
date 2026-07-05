@@ -161,3 +161,48 @@ class TestPasswords:
                     secrets_encryption_key="jUjf0DHpQW3QM5eofdrp_6FEvSr9pI43P-Y33o9Y-TA=")
         warns = validate_security_config(make_settings(**opts))
         assert not warns
+
+
+from types import SimpleNamespace
+
+
+def test_build_cors_config_regex_only_does_not_inject_localhost():
+    """P3: config regex-only ne doit jamais injecter localhost."""
+    from app.config import build_cors_config
+    s = SimpleNamespace(
+        allowed_origins="",
+        allowed_origin_regex=r"^https?://192\.168\.1\.\d{1,3}(:\d+)?$",
+        allowed_origins_list=[],
+    )
+    origins, regex, creds = build_cors_config(s)
+    assert "http://localhost" not in origins
+    assert origins == []
+    assert regex is not None
+    assert creds is True
+
+
+def test_build_cors_config_dev_fallback_allows_localhost_without_credentials():
+    """P3: dev (rien configuré) -> localhost mais credentials désactivés."""
+    from app.config import build_cors_config
+    s = SimpleNamespace(
+        allowed_origins="",
+        allowed_origin_regex="",
+        allowed_origins_list=[],
+    )
+    origins, regex, creds = build_cors_config(s)
+    assert origins == ["http://localhost"]
+    assert regex is None
+    assert creds is False
+
+
+def test_build_cors_config_explicit_origins_enable_credentials():
+    """P3: origines explicites -> credentials activés."""
+    from app.config import build_cors_config
+    s = SimpleNamespace(
+        allowed_origins="https://hub.local,https://192.168.1.10",
+        allowed_origin_regex="",
+        allowed_origins_list=["https://hub.local", "https://192.168.1.10"],
+    )
+    origins, regex, creds = build_cors_config(s)
+    assert origins == ["https://hub.local", "https://192.168.1.10"]
+    assert creds is True
