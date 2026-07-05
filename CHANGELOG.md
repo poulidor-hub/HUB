@@ -5,6 +5,29 @@
 
 ---
 
+## [3.9.2] - 6 juillet 2026
+
+### 🔒 Durcissement sécurité & robustesse (audit)
+
+- **P1 — Reset token rejeté comme access token** : `verify_token()` rejette
+  désormais tout token portant `scope="pwd_reset"`. Les reset tokens
+  n'avaient ni `jti` ni `type` et pouvaient contourner la vérification de
+  révocation (`verify_token_not_revoked`), servant de Bearer sur les
+  endpoints protégés pendant `recovery_token_ttl_minutes`. Le flow légitime
+  (`decode_reset_token`) n'est pas affecté.
+
+- **P3 — CORS : plus d'injection de localhost** : la configuration CORS est
+  extraite dans `build_cors_config()` (testable). En production avec
+  uniquement `ALLOWED_ORIGIN_REGEX` (recommandé pour un LAN), `localhost`
+  n'est plus injecté dans les origines autorisées. En mode dev (rien
+  configuré), `localhost` reste autorisé mais sans credentials.
+
+- **P3 — `except:` nus remplacés** : 3 `except:` nus dans
+  `routes/auth.py` (logout, introspect) remplacés par `except Exception:`
+  pour laisser `KeyboardInterrupt`/`SystemExit` se propager proprement.
+
+---
+
 ## [3.9.1] - 5 juillet 2026
 
 ### 🔒 Sécurité — install & secrets (audit)
