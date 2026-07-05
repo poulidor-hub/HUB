@@ -306,3 +306,25 @@ class TestTokenCleanup:
         # Le token doit encore être valide
         refresh_obj = await verify_refresh_token(async_session, token)
         assert refresh_obj is not None
+
+
+def test_verify_token_rejects_reset_scope_token():
+    """P1: un reset token (scope=pwd_reset) ne doit pas servir d'access token."""
+    from app.auth import create_reset_token, verify_token
+    from fastapi import HTTPException
+
+    reset_token = create_reset_token("alice", "$2b$12$fakehashfor-testing-only")
+    with pytest.raises(HTTPException) as exc_info:
+        verify_token(reset_token)
+    assert exc_info.value.status_code == 401
+    assert "invalide" in exc_info.value.detail.lower()
+
+
+def test_verify_token_still_accepts_user_access_token():
+    """Garde-regression: un access token user normal reste accepté."""
+    from app.auth import verify_token
+
+    token, _, _ = create_access_token(username="alice", apps={"app": "user"})
+    payload = verify_token(token)
+    assert payload["sub"] == "alice"
+    assert payload.get("scope") is None
