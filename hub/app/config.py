@@ -421,3 +421,20 @@ def validate_security_config(settings: "Settings") -> list[str]:
     warnings_out += _check_secrets(settings)
     warnings_out += _check_passwords(settings)
     return warnings_out
+
+
+def build_cors_config(settings: "Settings") -> tuple[list[str], "str | None", bool]:
+    """Calcule la configuration CORS depuis les settings.
+
+    Retourne (allow_origins, allow_origin_regex, allow_credentials).
+    - origines explicites (+ regex optionnelle) : credentials activés.
+    - regex seule (prod LAN) : pas d'injection de localhost, credentials activés.
+    - rien configuré (dev) : localhost sans credentials.
+    """
+    origins = list(settings.allowed_origins_list)
+    regex = settings.allowed_origin_regex.strip() or None
+    if origins:
+        return origins, regex, True
+    if regex:
+        return [], regex, True
+    return ["http://localhost"], None, False

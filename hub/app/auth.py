@@ -265,7 +265,6 @@ def verify_token(token: str) -> dict:
             settings.jwt_public_key,
             algorithms=[settings.jwt_algorithm]
         )
-        return payload
     except jwt.ExpiredSignatureError:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -276,6 +275,14 @@ def verify_token(token: str) -> dict:
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Token invalide"
         )
+
+    if payload.get("scope") == "pwd_reset":
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token invalide"
+        )
+
+    return payload
 
 
 async def verify_token_not_revoked(
