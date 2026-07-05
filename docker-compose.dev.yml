@@ -32,3 +32,9 @@ services:
       - ./hub/pytest.ini:/code/pytest.ini
       # Socket Docker (dev uniquement) pour le scan des conteneurs
       - /var/run/docker.sock:/var/run/docker.sock:ro
+
+  hub-frontend:
+    # Volume mount des fichiers statiques pour hot-reload en dev
+    # Changements HTML/CSS/JS visibles instantanément (F5 dans le navigateur)
+    volumes:
+      - ./frontend/public:/usr/share/nginx/html
