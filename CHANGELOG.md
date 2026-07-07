@@ -5,6 +5,21 @@
 
 ---
 
+## [3.9.5] - 7 juillet 2026
+
+### 🔒 /me/regenerate-secret : token M2M obligatoire (H9)
+
+- **`POST /api/apps/me/regenerate-secret`** acceptait l'authentification par IP
+  Docker + header `X-Slug`/`X-Client-ID` sans token M2M. N'importe quel
+  conteneur sur le réseau Docker pouvait régénérer le secret M2M d'une autre
+  app → **lockout + usurpation d'identité M2M** (H9).
+- **Fix** : suppression du fallback IP+header. Un token M2M valide
+  (`Authorization: Bearer`) est désormais obligatoire pour cette opération
+  destructive. L'endpoint est protégé par `verify_token_not_revoked` qui
+  valide le token + son jti.
+
+---
+
 ## [3.9.4] - 7 juillet 2026
 
 ### 🔒 Sécurité auth — injection install.sh + spoofing IP (Lot 3)
