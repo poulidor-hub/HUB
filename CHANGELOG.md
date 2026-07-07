@@ -5,6 +5,31 @@
 
 ---
 
+## [3.9.4] - 7 juillet 2026
+
+### 🔒 Sécurité auth — injection install.sh + spoofing IP (Lot 3)
+
+- **install.sh (C6)** : le code Python inline faisait `open('$PROFILE')` avec
+  interpolation bash du chemin. Un nom de fichier contenant une apostrophe
+  permettait l'injection de code Python arbitraire (RCE) au moment de
+  l'install. Fix : lecture via `sys.stdin` + redirection `< "$PROFILE"`, le
+  chemin n'est plus interpolé dans le code.
+- **_get_client_ip / auth.py (H7 + H8)** : trustait `X-Forwarded-For` /
+  `X-Real-IP` inconditionnellement. Comme l'API est publiée directement sur
+  `:8000` (uvicorn sans `--proxy-headers`), un client externe pouvait spoof
+  son IP pour :
+  - **H7** : forger une IP fraîche à chaque tentative → bypass du rate-limit
+    de login (5/min) → brute-force online.
+  - **H8** : spoof une IP Docker (`172.17.0.x`) pour passer
+    `is_docker_network_ip()` dans `/token/introspect` → court-circuiter le
+    Bearer → introspection non authentifiée (fuite `sub`, `apps`, `jti`).
+- **Fix** : n'honorer les headers de proxy que si l'IP TCP directe
+  (`request.client.host`) est un proxy de confiance (`is_docker_network_ip` =
+  réseau Docker = frontend nginx). Cohérent avec `apps.py` qui utilise déjà
+  `request.client.host`. Compatibilité préservée pour les déploiements
+  standards (accès direct :8000 ou via nginx — dans les deux cas le
+  comportement est inchangé pour les clients légitimes).
+
 ## [3.9.3] - 7 juillet 2026
 
 ### ⚡ Correctif scheduler backups planifiés (C4)
