@@ -2016,9 +2016,7 @@ async def regenerate_app_secret(
     """
     Regénère le client_secret d'une application.
 
-    Authentification (par priorité) :
-    1. Token M2M valide (recommandé) — header Authorization: Bearer <token>
-    2. IP whitelist + X-Slug/X-Client-ID (déprécié)
+    Authentification : Token M2M valide obligatoire — header Authorization: Bearer <token>
 
     ⚠️ L'ancien secret sera IMMÉDIATEMENT invalidé !
 
@@ -2064,66 +2062,11 @@ async def regenerate_app_secret(
                 detail="Token M2M invalide ou expiré"
             )
     else:
-        if not is_docker_network_ip(client_ip):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Accès autorisé uniquement depuis le réseau Docker ou avec un token M2M (IP: {client_ip})"
-            )
-
-        if not client_id and not app_slug:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Header X-Client-ID ou X-Slug requis"
-            )
-
-        logger.warning(
-            "⏳ DEPRECATION: regenerate-secret appelé sans token M2M (IP=%s, X-Slug=%s, X-Client-ID=%s). "
-            "Cette application doit migrer vers l'authentification par token M2M.",
-            client_ip, app_slug or "N/A", client_id or "N/A"
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token M2M (Authorization: Bearer) requis pour régénérer le secret. "
+                   "L'authentification par IP+header est supprimée."
         )
-
-        if client_id:
-            result = await db.execute(
-                select(ServiceAccount)
-                .options(selectinload(ServiceAccount.applications))
-                .where(ServiceAccount.client_id == client_id)
-            )
-            sa = result.scalar_one_or_none()
-            app = sa.applications[0] if sa and sa.applications else None
-        else:
-            result = await db.execute(
-                select(Application)
-                .options(
-                    selectinload(Application.service_accounts)
-                    .selectinload(ServiceAccount.applications)
-                )
-                .where(Application.slug == app_slug)
-            )
-            app = result.scalar_one_or_none()
-            if not app:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail=f"Application '{app_slug}' non trouvée"
-                )
-            sa = _get_owner_service_account_for_app(app)
-
-        if not sa:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Service account non trouvé"
-            )
-
-        if not app:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Aucune application associée à ce service account"
-            )
-
-        if client_id and not sa.applications:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Aucune application associée à ce service account"
-            )
 
     new_secret = ServiceAccount.generate_client_secret()
     sa.client_secret_hash = get_password_hash(new_secret)
