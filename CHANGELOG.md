@@ -5,6 +5,17 @@
 
 ---
 
+## [3.9.6] - 7 juillet 2026
+
+### 🛠 Makefile — ajout du target `build` (Lot 2)
+
+- **Makefile** : ajout du target `build` (`docker compose build`). Nécessaire
+  pour le flux de mise à jour séquentiel de `hubctl update hub`
+  (stop → pull → **build** → up → health). Sans ce target, `make build`
+  échouait et déclenchait un rollback à chaque mise à jour du Hub.
+
+---
+
 ## [3.9.5] - 7 juillet 2026
 
 ### 🔒 /me/regenerate-secret : token M2M obligatoire (H9)
