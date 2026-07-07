@@ -60,13 +60,26 @@ _RATE_LIMIT_MAX = 5  # max tentatives par fenêtre
 
 
 def _get_client_ip(request: Request) -> str:
-    forwarded = request.headers.get("X-Forwarded-For")
-    if forwarded:
-        return forwarded.split(",")[0].strip()
-    real_ip = request.headers.get("X-Real-IP")
-    if real_ip:
-        return real_ip.strip()
-    return request.client.host if request.client else "unknown"
+    """Retourne l'IP du client, en ne faisant confiance aux headers de proxy
+    (X-Forwarded-For / X-Real-IP) que si la requête vient d'un proxy de confiance
+    (réseau Docker = frontend nginx).
+
+    Sans cette restriction, un client externe peut spoof son IP via ces headers
+    pour bypasser le rate-limit de login (H7) et la décision interne/externe de
+    /token/introspect qui exempte les apps internes du Bearer (H8).
+    """
+    from app.routes.apps import is_docker_network_ip
+
+    direct_ip = request.client.host if request.client else "unknown"
+    if direct_ip != "unknown" and is_docker_network_ip(direct_ip):
+        # Requête venant d'un proxy de confiance (frontend nginx) : honorer le header.
+        forwarded = request.headers.get("X-Forwarded-For")
+        if forwarded:
+            return forwarded.split(",")[0].strip()
+        real_ip = request.headers.get("X-Real-IP")
+        if real_ip:
+            return real_ip.strip()
+    return direct_ip
 
 
 def _check_rate_limit(ip: str) -> None:

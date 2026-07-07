@@ -143,10 +143,12 @@ if $INTERACTIVE; then
 else
     # --- Mode profil (non-interactif) ---
 
+    # Lecture du profil via stdin (json.load(sys.stdin) + redirection) plutôt
+    # que par interpolation du chemin dans le code Python, pour éviter
+    # l'injection de commande si le chemin contient une apostrophe (C6).
     VALUES=$($PYTHON_CMD -c "
 import json, sys
-with open('$PROFILE') as f:
-    p = json.load(f)
+p = json.load(sys.stdin)
 
 c = p.get('client', {})
 s = p.get('server', {})
@@ -169,7 +171,7 @@ print(po.get('https',443))
 print(po.get('api',8000))
 print(str(o.get('https_enabled',True)).lower())
 print(o.get('docker_scan_enabled',False))
-" 2>/dev/null) || err "Erreur de lecture du profil JSON '${PROFILE}'"
+" < "$PROFILE" 2>/dev/null) || err "Erreur de lecture du profil JSON '${PROFILE}'"
 
     CLIENT_NAME=$(echo "$VALUES"    | sed -n '1p')
     CLIENT_CONTACT=$(echo "$VALUES"  | sed -n '2p')
