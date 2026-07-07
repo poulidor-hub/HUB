@@ -189,7 +189,7 @@ async def periodic_backup_scheduler():
     from croniter import croniter
     from sqlalchemy import select
     from app.models import Application
-    from app.routes.app_backups import perform_app_backup, BackupExecutionError
+    from app.routes.app_backups import perform_app_backup, BackupExecutionError, _naive_utc
     from datetime import datetime, timezone
     
     logger.info("📅 Scheduler de backups démarré")
@@ -213,8 +213,11 @@ async def periodic_backup_scheduler():
                 
                 for app in apps:
                     try:
-                        # Vérifier si c'est l'heure du backup
-                        if app.next_backup_at and app.next_backup_at <= now:
+                        # Vérifier si c'est l'heure du backup.
+                        # _naive_utc : next_backup_at est lu aware depuis TIMESTAMPTZ
+                        # par asyncpg, alors que now (utcnow) est naive → TypeError sans normalisation.
+                        nb = _naive_utc(app.next_backup_at)
+                        if nb and nb <= now:
                             logger.info(f"📦 Déclenchement backup planifié pour {app.slug}")
 
                             # Marquer comme en cours et calculer le prochain créneau
