@@ -5,6 +5,24 @@
 
 ---
 
+## [3.9.8] - 7 juillet 2026
+
+### 🩺 Correction vue santé des apps — NaNh + faux « Degraded »
+
+- **Backend (apps_health.py)** : la sonde de santé marquait toute réponse HTTP
+  ≥400 comme « degraded ». Les apps sans endpoint `/health` standard (ex:
+  Vaultwarden) renvoyaient 404 → faussement « degraded » alors que le serveur
+  répond en 9-16ms. Désormais : 5xx = degraded, 3xx/4xx = online (serveur
+  joignable).
+- **Frontend (apps-health.js)** : le timestamp `checked_at` est déjà envoyé
+  au format ISO8601 avec `Z`. Le `+ 'Z'` côté JS créait une date invalide
+  `"2025-07-07...ZZ"` → `NaNh` affiché pour toutes les apps.
+- **Affichage** : quand une app est online sans endpoint santé, une note
+  « Serveur joignable — pas d'endpoint /health standard » remplace les
+  champs vides. Version et latence affichées seulement si disponibles.
+
+---
+
 ## [3.9.7] - 7 juillet 2026
 
 ### 🔧 Quick wins — conventions + sécurité (B7/B8/B10)
