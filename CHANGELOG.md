@@ -5,6 +5,26 @@
 
 ---
 
+## [3.9.3] - 7 juillet 2026
+
+### ⚡ Correctif scheduler backups planifiés (C4)
+
+- **scheduler backups** : `periodic_backup_scheduler` (`app/main.py`) comparait
+  `app.next_backup_at` avec `now = utcnow()`. En production (PostgreSQL +
+  asyncpg), `next_backup_at` est lu depuis une colonne `TIMESTAMPTZ` → asyncpg
+  retourne une datetime **aware**, alors que `utcnow()` (`models.py`) retourne
+  une datetime **naive** (`replace(tzinfo=None)`). Cette comparaison levait
+  `TypeError: can't compare offset-naive and offset-aware datetimes` à chaque
+  itération (toutes les 60 s), silencieusement attrapée par le `except Exception`
+  du scheduler → **aucun backup planifié (cron) ne se déclenchait jamais**.
+- **Fix** : normalisation de `next_backup_at` via le helper `_naive_utc`
+  (`app/routes/app_backups.py`) qui existait déjà et documentait le piège —
+  le scheduler était le seul à l'avoir oublié. Ajout de 4 tests de régression
+  (`hub/tests/test_backup_scheduler.py`).
+- **Racine non traitée** (Lot 5) : le modèle SQLAlchemy `Column(DateTime)` naïf
+  vs migration `TIMESTAMPTZ`. Le fix `_naive_utc` est défensif et cohérent avec
+  le reste de `app_backups.py`.
+
 ## [3.9.2] - 6 juillet 2026
 
 ### 🔒 Durcissement sécurité & robustesse (audit)
