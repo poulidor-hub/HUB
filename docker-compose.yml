@@ -5,6 +5,7 @@ services:
     container_name: hub-db
     restart: unless-stopped
     environment:
+      TZ: UTC
       POSTGRES_USER: ${POSTGRES_USER:-hubadmin}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Définir POSTGRES_PASSWORD dans .env (généré par install.sh)}
       POSTGRES_DB: ${POSTGRES_DB:-hub_auth}
@@ -165,6 +166,8 @@ services:
     image: linuxserver/wireguard:latest
     container_name: hub-wireguard
     network_mode: host
+    profiles:
+      - wireguard
     cap_add:
       - NET_ADMIN
       - SYS_MODULE
