@@ -52,10 +52,16 @@ function renderAppCard(app) {
     var color = escapeHtml(app.color || '#6c757d');
     var name = escapeHtml(app.name);
     var slug = escapeHtml(app.slug);
-    var latency = app.latency_ms ? app.latency_ms + 'ms' : '—';
-    var version = app.version || '—';
+    var latency = app.latency_ms ? app.latency_ms + 'ms' : '';
+    var version = app.version || '';
     var error = app.error
         ? '<div style="font-size:11px;color:#dc2626;margin-top:4px;">' + escapeHtml(app.error.substring(0, 100)) + '</div>'
+        : '';
+
+    // L'app est joignable mais sans health endpoint standard (pas d'erreur, pas de version)
+    var noHealth = (app.status === 'online' && !version && !error);
+    var healthNote = noHealth
+        ? '<div style="font-size:11px;color:#94a3b8;margin-top:4px;"><i class="bi bi-info-circle me-1"></i>Serveur joignable — pas d\'endpoint /health standard</div>'
         : '';
 
     var degradedInfo = '';
@@ -77,9 +83,10 @@ function renderAppCard(app) {
                 '<span style="background:' + statusStyle.bg + ';color:white;font-size:11px;padding:3px 8px;border-radius:12px;font-weight:500;flex-shrink:0;">' + statusStyle.text + degradedInfo + '</span>' +
             '</div>' +
             '<div style="display:flex;gap:20px;font-size:12px;color:#64748b;border-top:1px solid #f1f5f9;padding-top:10px;">' +
-                '<span>' + '📡 ' + latency + '</span>' +
-                '<span>' + '🏷 ' + version + '</span>' +
+                (latency ? '<span>' + '📡 ' + latency + '</span>' : '') +
+                (version ? '<span>' + '🏷 ' + escapeHtml(version) + '</span>' : '') +
             '</div>' +
+            healthNote +
             error +
             '<div style="display:flex;justify-content:space-between;align-items:center;border-top:1px solid ' + statusStyle.border + ';padding-top:8px;margin-top:auto;">' +
                 '<span style="font-size:11px;color:#94a3b8;">' +
@@ -121,7 +128,7 @@ function updateAppsHealthTimestamps() {
     for (var i = 0; i < els.length; i++) {
         var ts = els[i].dataset.ts;
         if (!ts) continue;
-        var then = new Date(ts + 'Z').getTime();
+        var then = new Date(ts).getTime();
         var diff = Math.max(0, Math.floor((now - then) / 1000));
         if (diff < 60) els[i].textContent = diff + 's';
         else if (diff < 3600) els[i].textContent = Math.floor(diff / 60) + 'min';

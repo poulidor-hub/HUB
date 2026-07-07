@@ -129,9 +129,13 @@ async def get_apps_health(
                                 version = body.get("version")
                         except Exception:
                             pass
-                    elif resp.status_code >= 400:
+                    elif resp.status_code >= 500:
                         status = "degraded"
                         error = f"HTTP {resp.status_code} {resp.reason_phrase or ''}".strip()
+                    else:
+                        # 3xx/4xx = le serveur repond mais pas de health endpoint standard.
+                        # L'app est joignable, juste sans endpoint sante conventionnel.
+                        status = "online"
                     break
                 except Exception as e:
                     error = str(e)[:200]
