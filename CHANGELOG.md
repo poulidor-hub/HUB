@@ -5,6 +5,19 @@
 
 ---
 
+## [3.9.7] - 7 juillet 2026
+
+### 🔧 Quick wins — conventions + sécurité (B7/B8/B10)
+
+- **TZ=UTC postgres** : le conteneur `db` n'avait pas `TZ: UTC` (convention
+  obligatoire du parc). Ajouté dans l'environnement du service.
+- **Wireguard auto-off** : le service `wireguard-client` démarrait avec
+  `network_mode: host` + `NET_ADMIN` + `SYS_MODULE` même quand
+  `WG_ENABLED=false`. Ajout d'un profil `wireguard` — démarrage uniquement
+  via `docker compose --profile wireguard up`.
+
+---
+
 ## [3.9.6] - 7 juillet 2026
 
 ### 🛠 Makefile — ajout du target `build` (Lot 2)
