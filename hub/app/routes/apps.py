@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Request
+from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
@@ -7,6 +8,8 @@ from datetime import datetime, timezone
 import re
 import asyncio
 import ipaddress
+import json
+import io
 
 from pathlib import Path
 import logging
@@ -34,6 +37,7 @@ from app.routes.service_accounts import save_service_account_credentials, delete
 from app.routes.audit import log_action
 from app.docker_scanner import docker_scanner
 from app.port_allocator import allocate_ports_for_app, docker_occupied_ports, release_ports_for_app, PortPoolExhausted
+from app.m2m_catalog_export import build_m2m_catalog_export
 
 router = APIRouter(prefix="/api/apps", tags=["Applications"])
 settings = get_settings()
@@ -385,6 +389,42 @@ async def discover_shared_services(
     return DiscoverResponse(
         shared_services=shared_services,
         total_shared=len(shared_services)
+    )
+
+
+@router.get("/m2m-catalog/export")
+async def export_m2m_catalog(
+    db: AsyncSession = Depends(get_db),
+    _admin: User = Depends(get_current_admin),
+):
+    """
+    Exporte le catalogue M2M complet du parc (admin-only).
+
+    Agrège la surface d'API de toutes les apps partagées (is_shared_service=True)
+    en un fichier JSON auto-suffisant, destiné à être filé à une IA de dev pour
+    générer/injecter des fausses données en environnement dev/test.
+
+    Le fichier ne contient aucun secret.
+    """
+    catalog = await build_m2m_catalog_export(db)
+
+    # Renseigner les métadonnées temporelles
+    now = datetime.now(timezone.utc)
+    catalog["export_metadata"]["generated_at"] = now.isoformat()
+    try:
+        from app.utils import get_hub_version
+        catalog["export_metadata"]["hub_version"] = get_hub_version()
+    except Exception:
+        catalog["export_metadata"]["hub_version"] = None
+
+    payload = json.dumps(catalog, ensure_ascii=False, indent=2, default=str)
+    date_tag = now.strftime("%Y%m%d")
+    return StreamingResponse(
+        io.BytesIO(payload.encode("utf-8")),
+        media_type="application/json",
+        headers={
+            "Content-Disposition": f'attachment; filename="m2m-catalog-{date_tag}.json"'
+        },
     )
 
 
