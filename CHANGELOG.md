@@ -5,6 +5,15 @@
 
 ---
 
+## [3.9.9] - 10 juillet 2026
+
+### ⚡ Pool SQLAlchemy réduit et aligné sur le template
+
+- **Corrigé** : `database.py` — pool_size réduit de 10→5, max_overflow de 20→10 (15 connexions max au lieu de 30).
+- Élimine le risque `too many clients` PostgreSQL, aligne la config avec `HUBapp_TEMPLATE_base`.
+
+---
+
 ## [3.9.8] - 7 juillet 2026
 
 ### 🩺 Correction vue santé des apps — NaNh + faux « Degraded »
