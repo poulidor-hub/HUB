@@ -412,7 +412,7 @@ async def export_m2m_catalog(
     now = datetime.now(timezone.utc)
     catalog["export_metadata"]["generated_at"] = now.isoformat()
     try:
-        from app.utils import get_hub_version
+        from app.routes.docs import get_hub_version
         catalog["export_metadata"]["hub_version"] = get_hub_version()
     except Exception:
         catalog["export_metadata"]["hub_version"] = None

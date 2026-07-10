@@ -45,6 +45,21 @@ M2M_USAGE_NOTES = {
 }
 
 
+def _normalize_request_body(op):
+    rb = op.get("requestBody")
+    if not rb:
+        return None
+    json_media = rb.get("content", {}).get("application/json", {})
+    return {"required": rb.get("required", False), "content_type": "application/json", "schema": json_media.get("schema")}
+
+
+def _normalize_responses(op):
+    out = {}
+    for code, resp in op.get("responses", {}).items():
+        out[code] = {"description": resp.get("description", ""), "schema": resp.get("content", {}).get("application/json", {}).get("schema")}
+    return out
+
+
 def apply_heuristic(openapi_spec: dict, slug: str) -> dict:
     """
     Transforme un spec OpenAPI brut en catalogue app avec tagging heuristique.
@@ -78,8 +93,8 @@ def apply_heuristic(openapi_spec: dict, slug: str) -> dict:
                 "tags": op.get("tags", []),
                 "path_params": [],
                 "query_params": [],
-                "request_body": op.get("requestBody"),
-                "responses": op.get("responses", {}),
+                "request_body": _normalize_request_body(op),
+                "responses": _normalize_responses(op),
             })
     return {
         "slug": slug,
@@ -128,36 +143,51 @@ async def _fetch_app_openapi(
 
 async def _build_one(client: httpx.AsyncClient, app: Application) -> dict:
     """Construit le catalogue d'une app : préférée -> fallback -> unreachable."""
-    # 1. Chemin préféré : /api/m2m/catalog (tagging fiable)
-    catalog = await _fetch_app_catalog(client, app.api_url, app.slug)
-    if catalog is not None:
-        catalog.setdefault("slug", app.slug)
-        catalog["name"] = app.name
-        catalog["description"] = app.description
-        catalog["version"] = getattr(app, "version", None)
-        catalog["is_shared"] = app.is_shared_service
-        catalog["introspection_source"] = "m2m-catalog"
-        return catalog
+    try:
+        # 1. Chemin préféré : /api/m2m/catalog (tagging fiable)
+        catalog = await _fetch_app_catalog(client, app.api_url, app.slug)
+        if catalog is not None:
+            catalog.setdefault("slug", app.slug)
+            catalog["name"] = app.name
+            catalog["description"] = app.description
+            catalog["version"] = getattr(app, "version", None)
+            catalog["is_shared"] = app.is_shared_service
+            catalog["introspection_source"] = "m2m-catalog"
+            return catalog
 
-    # 2. Fallback : /api/openapi.json (heuristique)
-    openapi_spec = await _fetch_app_openapi(client, app.api_url)
-    if openapi_spec is not None:
-        heuristic = apply_heuristic(openapi_spec, app.slug)
-        heuristic["name"] = app.name
-        heuristic["description"] = app.description
-        heuristic["version"] = getattr(app, "version", None)
-        heuristic["is_shared"] = app.is_shared_service
-        return heuristic
+        # 2. Fallback : /api/openapi.json (heuristique)
+        openapi_spec = await _fetch_app_openapi(client, app.api_url)
+        if openapi_spec is not None:
+            heuristic = apply_heuristic(openapi_spec, app.slug)
+            heuristic["name"] = app.name
+            heuristic["description"] = app.description
+            heuristic["version"] = getattr(app, "version", None)
+            heuristic["is_shared"] = app.is_shared_service
+            return heuristic
 
-    # 3. Injoignable
-    return {
-        "slug": app.slug,
-        "name": app.name,
-        "is_shared": app.is_shared_service,
-        "introspection_source": "unreachable",
-        "error": "catalog et openapi injoignables",
-        "endpoints": [],
-    }
+        # 3. Injoignable
+        return {
+            "slug": app.slug,
+            "name": app.name,
+            "description": app.description,
+            "version": getattr(app, "version", None),
+            "is_shared": app.is_shared_service,
+            "introspection_source": "unreachable",
+            "error": "catalog et openapi injoignables",
+            "endpoints": [],
+        }
+    except Exception as e:
+        logger.exception("Erreur inattendue lors de l'introspection de %s", app.slug)
+        return {
+            "slug": app.slug,
+            "name": app.name,
+            "description": app.description,
+            "version": getattr(app, "version", None),
+            "is_shared": app.is_shared_service,
+            "introspection_source": "unreachable",
+            "error": str(e),
+            "endpoints": [],
+        }
 
 
 async def build_m2m_catalog_export(db: AsyncSession) -> dict:
@@ -177,10 +207,28 @@ async def build_m2m_catalog_export(db: AsyncSession) -> dict:
 
     apps_catalogs = []
     async with httpx.AsyncClient(verify=False) as client:
-        apps_catalogs = await asyncio.gather(
+        raw_results = await asyncio.gather(
             *[_build_one(client, app) for app in apps],
-            return_exceptions=False,
+            return_exceptions=True,
         )
+
+    # Une app qui échoue ne doit pas faire planter tout l'export
+    apps_catalogs = []
+    for item in raw_results:
+        if isinstance(item, Exception):
+            logger.error("Échec d'introspection d'une app: %s", item)
+            apps_catalogs.append({
+                "slug": "unknown",
+                "name": None,
+                "description": None,
+                "version": None,
+                "is_shared": None,
+                "introspection_source": "unreachable",
+                "error": str(item),
+                "endpoints": [],
+            })
+        else:
+            apps_catalogs.append(item)
 
     # Compteurs
     endpoints_count = sum(len(c.get("endpoints", [])) for c in apps_catalogs)
