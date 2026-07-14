@@ -5,6 +5,19 @@
 
 ---
 
+---
+
+## [3.11.1] - 14 juillet 2026
+
+### 🔐 Fix permissions SSL — server.key lisible par le frontend nginx
+
+- **pki.py** : `server.key` désormais générée en `0o644` (était `0o600`).
+  Le conteneur frontend (nginx, user non-root, montage `./certs` en `:ro`)
+  ne pouvait pas lire la clé, causant un crash-loop sur chaque installation
+  fraîche. La `ca.key` reste en `0o600` (seul le hub-api en a besoin).
+
+---
+
 ## [3.11.0] - 14 juillet 2026
 
 ### 🔒 Cycle de vie du conteneur WireGuard — ne persiste plus seul
@@ -32,7 +45,6 @@
 
 - **Corrigé** : `database.py` — pool_size réduit de 10→5, max_overflow de 20→10 (15 connexions max au lieu de 30).
 - Élimine le risque `too many clients` PostgreSQL, aligne la config avec `HUBapp_TEMPLATE_base`.
-
 ---
 
 ## [3.9.8] - 7 juillet 2026
