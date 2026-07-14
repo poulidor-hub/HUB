@@ -178,7 +178,9 @@ services:
       - WG_ENABLED=${WG_ENABLED:-false}
     volumes:
       - vpn-config:/config
-    restart: unless-stopped
+    # Cycle de vie géré par hubctl vpn + boot hook (côté POULIDOR).
+    # Ne pas remettre unless-stopped : le conteneur tournait à vide tant que vpn_enabled=false.
+    restart: "no"
 
 # ===== VOLUMES =====
 volumes:
