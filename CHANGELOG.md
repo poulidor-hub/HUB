@@ -5,6 +5,16 @@
 
 ---
 
+## [3.11.0] - 14 juillet 2026
+
+### 🔒 Cycle de vie du conteneur WireGuard — ne persiste plus seul
+
+- **Modifié** : `wireguard-client.restart` passe de `unless-stopped` à `"no"` — le conteneur ne survit plus aux reboots tout seul (il tournait à vide tant que `vpn_enabled=false`, consommant RAM + exposant une surface `NET_ADMIN`/`SYS_MODULE` inutile).
+- **Ajouté** : bandeau informatif (`alert-info`) sur l'onglet VPN — précise que le conteneur démarre au prochain boot du Hub ou via `hubctl vpn sync`, et que le toggle UI exprime l'intention (l'application effective se fait côté hôte).
+- **Pourquoi** : le cycle de vie du conteneur est désormais géré au niveau hôte par `hubctl vpn` (côté POULIDOR) + un hook de boot, sans donner le socket Docker à `hub-api` (durcissement préservé).
+
+---
+
 ## [3.10.0] - 10 juillet 2026
 
 ### ⚡ Export global du catalogue M2M du parc
