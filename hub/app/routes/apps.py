@@ -1239,10 +1239,23 @@ async def register_app(
             existing_app = result_sa.scalar_one()
             sa = next((sa for sa in existing_app.service_accounts), None)
             
+            # Régénérer le secret M2M : l'app qui se ré-enregistre provient du
+            # réseau Docker (trusted) et a probablement perdu ses credentials
+            # (nouveau conteneur, volume non persistant). Sans ce régénération,
+            # l'app est bloquée : register ne retourne pas le secret, et
+            # regenerate-secret exige un token M2M qu'elle n'a pas.
+            if sa:
+                client_secret = ServiceAccount.generate_client_secret()
+                sa.client_secret_hash = get_password_hash(client_secret)
+                await db.commit()
+                logger.info(f"🔑 Secret M2M régénéré pour '{app_data.slug}' (ré-enregistrement)")
+            else:
+                client_secret = None
+            
             return AppRegisterResponse(
                 message=message,
                 application=AppResponse.model_validate(existing_app),
-                credentials={"client_id": sa.client_id} if sa else None,
+                credentials={"client_id": sa.client_id, "client_secret": client_secret} if sa else None,
                 is_new=False
             )
     
