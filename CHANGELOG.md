@@ -7,6 +7,15 @@
 
 ---
 
+## [3.11.2] - 16 juillet 2026
+
+### ⚡ Correctifs
+
+- **SSE** : le endpoint `/api/events/stream` rejetait tous les tokens JWT avec 401. Le code cherchait `payload.user_id` (absent du JWT, qui ne contient que `sub`). Corrigé en résolvant `sub` → `user_id` via DB lookup, comme le fait `get_current_user`.
+- **Register M2M** : une app qui se ré-enregistrait (nouveau conteneur) perdait ses credentials M2M. Le register ne retournait que `client_id`, l'app appelait `regenerate-secret` → 401 (poule-et-œuf). Corrigé en régénérant le secret directement dans le register.
+
+---
+
 ## [3.11.1] - 14 juillet 2026
 
 ### 🔐 Fix permissions SSL — server.key lisible par le frontend nginx
