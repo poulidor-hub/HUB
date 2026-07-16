@@ -12,11 +12,12 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Request, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.health_checker import start_health_checker, stop_health_checker, is_health_checker_running
-from app.models import utcnow
+from app.models import utcnow, User
 
 import logging
 logger = logging.getLogger(__name__)
@@ -377,7 +378,12 @@ async def event_stream(request: Request):
                 async with async_session_maker() as db:
                     payload = await verify_token_not_revoked(token, db)
                     if payload.get("type") == "user":
-                        user_id = payload.get("user_id")
+                        username = payload.get("sub")
+                        if username:
+                            result = await db.execute(select(User).where(User.username == username))
+                            user = result.scalar_one_or_none()
+                            if user and user.is_active:
+                                user_id = user.id
                     authenticated = user_id is not None
         except Exception as e:
             logger.warning(f"SSE: token Bearer invalide: {e}")
@@ -392,7 +398,12 @@ async def event_stream(request: Request):
                 async with async_session_maker() as db:
                     payload = await verify_token_not_revoked(token_param, db)
                     if payload.get("type") == "user":
-                        user_id = payload.get("user_id")
+                        username = payload.get("sub")
+                        if username:
+                            result = await db.execute(select(User).where(User.username == username))
+                            user = result.scalar_one_or_none()
+                            if user and user.is_active:
+                                user_id = user.id
                     authenticated = user_id is not None
             except Exception as e:
                 logger.warning(f"SSE: token URL invalide: {e}")
