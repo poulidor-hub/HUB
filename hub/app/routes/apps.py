@@ -3888,8 +3888,12 @@ async def push_app_dependencies(
     if not isinstance(entity, ServiceAccount):
         raise HTTPException(status_code=403, detail="Cet endpoint est réservé aux service accounts (M2M)")
 
-    source_slug = request.headers.get("x-slug") or (
-        entity.applications[0].slug if entity.applications else None
+    from app.m2m_authorization import authorize_service_account_slug
+    source_slug = await authorize_service_account_slug(
+        request=request,
+        service_account=entity,
+        requested_slug=request.headers.get("x-slug"),
+        db=db,
     )
     if not source_slug:
         raise HTTPException(status_code=400, detail="X-Slug header requis (ou app associée au SA)")
@@ -3939,8 +3943,12 @@ async def report_app_sync(
     if not isinstance(entity, ServiceAccount):
         raise HTTPException(status_code=403, detail="Cet endpoint est réservé aux service accounts (M2M)")
 
-    source_slug = request.headers.get("x-slug") or (
-        entity.applications[0].slug if entity.applications else None
+    from app.m2m_authorization import authorize_service_account_slug
+    source_slug = await authorize_service_account_slug(
+        request=request,
+        service_account=entity,
+        requested_slug=request.headers.get("x-slug"),
+        db=db,
     )
     if not source_slug:
         raise HTTPException(status_code=400, detail="X-Slug header requis")

@@ -146,6 +146,27 @@ async def test_app(async_session: AsyncSession) -> Application:
 
 
 @pytest.fixture
+async def other_app(async_session: AsyncSession) -> Application:
+    """Seconde application de test pour les scenarios multi-apps."""
+    app = Application(
+        name="Other App",
+        slug="other-app",
+        description="Deuxieme application",
+        icon="bi-gear",
+        color="#6c757d",
+        api_url="http://localhost:8002",
+        frontend_url="http://localhost:3002",
+        callback_url="http://localhost:3002/callback",
+        is_active=True,
+        requires_auth=True,
+    )
+    async_session.add(app)
+    await async_session.commit()
+    await async_session.refresh(app)
+    return app
+
+
+@pytest.fixture
 async def user_with_app_access(
     async_session: AsyncSession,
     test_user: User,

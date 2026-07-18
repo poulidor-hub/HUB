@@ -194,6 +194,7 @@ class Application(Base):
     frontend_https_port = Column(Integer, nullable=True)  # Port HTTPS du frontend (si HTTPS activé)
     is_active = Column(Boolean, default=True)
     requires_auth = Column(Boolean, default=True)
+    m2m_enforcement_mode = Column(String(16), default='compat', nullable=False)  # 'compat' ou 'enforced'
     is_shared_service = Column(Boolean, default=False)  # Si True, accessible par tous les service accounts
     is_system_app = Column(Boolean, default=False, nullable=False)  # Application interne du Hub
     

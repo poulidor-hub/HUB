@@ -287,6 +287,7 @@ class AppUpdate(BaseModel):
     is_active: Optional[bool] = None
     requires_auth: Optional[bool] = None
     is_shared_service: Optional[bool] = None
+    m2m_enforcement_mode: Optional[str] = None  # 'compat' ou 'enforced'
 
 
 
@@ -297,6 +298,7 @@ class AppResponse(AppBase):
     is_shared_service: bool
     is_system_app: bool = False
     is_remote: bool = False  # True si hébergée sur un serveur distant
+    m2m_enforcement_mode: str = "compat"  # 'compat' ou 'enforced'
     registered_from_ip: Optional[str] = None  # IP source lors de l'auto-enregistrement
     frontend_https_port: Optional[int] = None  # Port HTTPS du frontend (si HTTPS activé)
     approval_status: ApprovalStatusEnum = ApprovalStatusEnum.approved
@@ -346,6 +348,7 @@ class AppResponseWithMyRole(AppResponse):
             is_shared_service=app.is_shared_service,
             is_system_app=bool(getattr(app, 'is_system_app', False)),
             is_remote=getattr(app, 'is_remote', False) or False,
+            m2m_enforcement_mode=getattr(app, 'm2m_enforcement_mode', 'compat') or 'compat',
             registered_from_ip=getattr(app, 'registered_from_ip', None),
             frontend_https_port=getattr(app, 'frontend_https_port', None),
             approval_status=approval_status,
