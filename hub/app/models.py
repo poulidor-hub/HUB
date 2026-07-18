@@ -703,6 +703,29 @@ class PortAllocation(Base):
     allocated_at = Column(DateTime, default=utcnow)
 
 
+class AppDependency(Base):
+    """Dépendance déclarée entre deux apps (M2M).
+
+    Pilote : (1) les suggestions de groupe atelier côté hubctl (lecture disque
+    du depends.yaml), (2) l'affichage dashboard avec last_sync_at.
+
+    Clé d'idempotence : (source_slug, target_slug). Les slugs sont stockés
+    en String (pas de FK vers applications.id) car l'app cible peut ne pas
+    être encore enregistrée au moment du register().
+    """
+    __tablename__ = "app_dependencies"
+    __table_args__ = (
+        UniqueConstraint('source_slug', 'target_slug', name='uq_app_dep_pair'),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    source_slug = Column(String(100), index=True, nullable=False)
+    target_slug = Column(String(100), index=True, nullable=False)
+    note = Column(Text, nullable=True)
+    declared_at = Column(DateTime, default=utcnow)
+    last_sync_at = Column(DateTime, nullable=True)
+
+
 class OutboxMessage(Base):
     """Message en attente de livraison différée (Transactional Outbox)."""
     __tablename__ = "outbox"
