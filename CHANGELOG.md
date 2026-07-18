@@ -7,6 +7,20 @@
 
 ---
 
+## [3.12.0] - 18 juillet 2026
+
+### ⚡ Dépendances inter-applications et maintenance admin
+
+- **Ajouté** : modèle `AppDependency` et migration `037_add_app_dependencies.sql` pour stocker les déclarations M2M entre applications.
+- **Ajouté** : `POST /api/apps/dependencies` (service account), avec conservation de `last_sync_at` pour les relations existantes.
+- **Ajouté** : `POST /api/apps/sync-report` (service account) pour remonter la dernière synchronisation, y compris pour une relation encore orpheline.
+- **Ajouté** : `GET /api/apps/dependencies` réservé aux administrateurs, pour consulter le graphe complet du parc.
+- **Ajouté** : section de maintenance admin dans la SPA et navigation dédiée.
+- **Sécurité** : la clé TLS `server.key` passe en `0640` avec groupe hôte partagé ; la CA reste en `0600` et le frontend nginx perd les capacités excessives de contournement des permissions.
+- **Tests** : couverture des déclarations, mises à jour, accès service account et consultation admin du graphe.
+
+---
+
 ## [3.11.2] - 16 juillet 2026
 
 ### ⚡ Correctifs

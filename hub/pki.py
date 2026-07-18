@@ -135,9 +135,9 @@ def create_server_cert(name: str = "hub", force: bool = False) -> None:
         .add_extension(x509.ExtendedKeyUsage([ExtendedKeyUsageOID.SERVER_AUTH]), critical=False)
         .sign(ca_key, hashes.SHA256())
     )
-    # server.key doit etre lisible par le conteneur frontend nginx (montage :ro).
+    # server.key est lisible par le groupe partagé avec le frontend nginx.
     # La ca_key reste en 0o600 car seul le hub-api en a besoin.
-    _write_key(srv_key, key, 0o644)
+    _write_key(srv_key, key, 0o640)
     _write_cert(srv_crt, cert)
 
 

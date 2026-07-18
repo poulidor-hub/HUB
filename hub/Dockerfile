@@ -7,6 +7,7 @@ WORKDIR /code
 
 # UID de l'utilisateur hôte pour matcher les permissions des volumes montés
 ARG HOST_UID=1000
+ARG HOST_GID=1000
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
@@ -22,9 +23,11 @@ COPY ./app /code/app
 COPY ./migrations /code/migrations
 COPY pki.py /code/pki.py
 
-# Creer l'utilisateur appuser avec le même UID que l'utilisateur hôte
-# Cela permet d'accéder aux fichiers des volumes montés (ex: certs/ca/ca.key)
-RUN adduser --disabled-password --gecos '' --uid ${HOST_UID} appuser
+# Creer appuser avec l'UID/GID de l'hôte pour les volumes montés.
+# Le GID est aussi accordé au frontend pour lire uniquement server.key.
+RUN if ! getent group "${HOST_GID}" >/dev/null; then groupadd --gid "${HOST_GID}" appuser; fi \
+    && APP_GROUP=$(getent group "${HOST_GID}" | cut -d: -f1) \
+    && useradd --uid "${HOST_UID}" --gid "${APP_GROUP}" --create-home --shell /bin/bash appuser
 
 # Copier et configurer l'entrypoint
 COPY entrypoint.sh /code/entrypoint.sh
@@ -33,7 +36,7 @@ RUN chmod +x /code/entrypoint.sh
 # Créer les dossiers nécessaires avec les bonnes permissions
 RUN mkdir -p /code/certs/ca /code/certs/server /code/certs/export \
     /code/secrets/service_accounts /code/storage/backups \
-    && chown -R appuser:appuser /code
+    && chown -R appuser:"$(id -gn appuser)" /code
 
 EXPOSE 8000
 

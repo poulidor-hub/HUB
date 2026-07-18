@@ -14,14 +14,14 @@ mkdir -p /code/secrets/service_accounts /code/storage/backups /code/storage/snap
 # Ajuster les permissions du dossier secrets (lecture/écriture owner uniquement)
 if [ -d "/code/secrets" ]; then
     echo "🔑 Ajustement des permissions des secrets..."
-    chown -R appuser:appuser /code/secrets 2>/dev/null || true
+    chown -R appuser:"$(id -gn appuser)" /code/secrets 2>/dev/null || true
     chmod -R u+rwX,go-rwx /code/secrets 2>/dev/null || true
 fi
 
 # Ajuster les permissions du dossier storage
 if [ -d "/code/storage" ]; then
     echo "💾 Ajustement des permissions du stockage..."
-    chown -R appuser:appuser /code/storage 2>/dev/null || true
+    chown -R appuser:"$(id -gn appuser)" /code/storage 2>/dev/null || true
     chmod -R u+rw /code/storage 2>/dev/null || true
 fi
 
@@ -48,7 +48,11 @@ fi
 # Bootstrap HTTPS : générer CA + cert serveur si absents (mode hybride)
 if [ "${HUB_HTTPS_ENABLED:-true}" = "true" ]; then
     mkdir -p /code/certs/ca /code/certs/server/hub
-    chown -R appuser:appuser /code/certs 2>/dev/null || true
+    chown -R appuser:"$(id -gn appuser)" /code/certs 2>/dev/null || true
+    chmod 0710 /code/certs /code/certs/server /code/certs/server/hub 2>/dev/null || true
+    chmod 0700 /code/certs/ca 2>/dev/null || true
+    [ ! -f /code/certs/ca/ca.key ] || chmod 0600 /code/certs/ca/ca.key
+    [ ! -f /code/certs/server/hub/server.key ] || chmod 0640 /code/certs/server/hub/server.key
     if [ ! -f /code/certs/server/hub/server.crt ]; then
         echo "🔐 HTTPS activé, certificats absents → génération via pki.py..."
         [ -f /code/certs/ca/ca.crt ] || gosu appuser python pki.py init

@@ -38,8 +38,8 @@ def test_create_server_cert_signed_by_ca_with_san(certs, monkeypatch):
     srv_crt = certs / "server" / "hub" / "server.crt"
     srv_key = certs / "server" / "hub" / "server.key"
     assert srv_crt.exists() and srv_key.exists()
-    # Clé privée TLS restrictive (0o600 : owner-only)
-    assert oct(srv_key.stat().st_mode & 0o777) == "0o600"
+    # Clé privée TLS : propriétaire RW, groupe lecture Nginx, jamais world-readable.
+    assert oct(srv_key.stat().st_mode & 0o777) == "0o640"
 
     ca = x509.load_pem_x509_certificate((certs / "ca" / "ca.crt").read_bytes())
     srv = x509.load_pem_x509_certificate(srv_crt.read_bytes())
@@ -69,5 +69,4 @@ def test_cli_init_then_cert(certs, monkeypatch, capsys):
     pki.main(["info"])
     out = capsys.readouterr().out
     assert "ca.crt" in out
-
 

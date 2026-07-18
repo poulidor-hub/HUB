@@ -8,6 +8,22 @@ Le Hub fonctionne en **dual-stack** : HTTP et HTTPS coexistent. Les apps legacy 
 - `HUB_HTTPS_ENABLED=false` : fonctionnement strictement HTTP (identique à l'historique).
 - Si vous déposez vos propres `certs/server/hub/server.crt` et `server.key`, ils sont respectés (pas de régénération).
 
+## Permissions des clés
+
+Le frontend nginx lit uniquement la clé serveur via le groupe hôte configuré par `HOST_GID`.
+
+- `certs/ca/ca.key` : `0600`, inaccessible au frontend.
+- `certs/server/hub/server.key` : `0640`, lisible par le groupe `HOST_GID` mais jamais par les autres utilisateurs.
+- Les répertoires `certs/`, `certs/server/` et `certs/server/hub/` sont `0710`; `certs/ca/` est `0700`.
+
+Pour un certificat fourni manuellement, utilisez `HOST_UID`/`HOST_GID` de `.env`, puis :
+
+```bash
+chown "${HOST_UID}:${HOST_GID}" certs/server/hub/server.key
+chmod 0640 certs/server/hub/server.key
+chmod 0600 certs/ca/ca.key
+```
+
 ## Importer la CA sur les postes
 
 Pour supprimer l'avertissement navigateur, importez le certificat racine `certs/ca/ca.crt` :
