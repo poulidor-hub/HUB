@@ -1944,3 +1944,7 @@ class DependenciesPush(BaseModel):
 class DependenciesPushResponse(BaseModel):
     stored: int
     source_slug: str
+
+
+class SyncReport(BaseModel):
+    target: str = Field(..., min_length=1, max_length=100, pattern=r'^[a-zA-Z0-9_-]+$')

@@ -32,6 +32,7 @@ from app.schemas import (
     AllocatePortsRequest, AllocatePortsResponse,
     PortsStatusResponse, PortAllocationItem,
     DependencyEntry, DependenciesPush, DependenciesPushResponse,
+    SyncReport,
 )
 from app.auth import get_current_admin, get_current_user, get_password_hash, get_settings, verify_token_not_revoked, oauth2_scheme, optional_oauth2_scheme, get_current_entity
 from app.routes.service_accounts import save_service_account_credentials, delete_service_account_credentials
@@ -3900,3 +3901,45 @@ async def push_app_dependencies(
 
     await db.commit()
     return DependenciesPushResponse(stored=len(body.depends_on), source_slug=source_slug)
+
+
+@router.post("/sync-report")
+async def report_app_sync(
+    body: SyncReport,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    entity: Union[User, ServiceAccount] = Depends(get_current_entity),
+):
+    """Une app signale qu'elle vient de synchro avec ``target``.
+
+    Met à jour ``last_sync_at``. Si la paire (source, target) n'existe pas,
+    crée une ligne orpheline (cas où le depends.yaml n'a pas encore été reçu).
+    Best-effort : ne lève jamais côté appelant (cf. hub_client.report_sync).
+    """
+    if not isinstance(entity, ServiceAccount):
+        raise HTTPException(status_code=403, detail="Cet endpoint est réservé aux service accounts (M2M)")
+
+    source_slug = request.headers.get("x-slug") or (
+        entity.applications[0].slug if entity.applications else None
+    )
+    if not source_slug:
+        raise HTTPException(status_code=400, detail="X-Slug header requis")
+
+    existing = (await db.execute(
+        select(AppDependency).where(
+            AppDependency.source_slug == source_slug,
+            AppDependency.target_slug == body.target,
+        )
+    )).scalar_one_or_none()
+
+    now = utcnow()
+    if existing:
+        existing.last_sync_at = now
+    else:
+        db.add(AppDependency(
+            source_slug=source_slug,
+            target_slug=body.target,
+            last_sync_at=now,
+        ))
+    await db.commit()
+    return {"ok": True, "source": source_slug, "target": body.target, "last_sync_at": now.isoformat()}

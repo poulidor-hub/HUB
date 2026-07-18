@@ -121,3 +121,54 @@ async def test_post_dependencies_clears_when_empty_list(client: AsyncClient, tes
         select(AppDependency).where(AppDependency.source_slug == test_app.slug)
     )).scalars().all()
     assert rows == []
+
+
+@pytest.mark.asyncio
+async def test_sync_report_updates_existing_row(client: AsyncClient, test_app, service_account, async_session):
+    dep = AppDependency(source_slug=test_app.slug, target_slug="exemple-app-2")
+    async_session.add(dep)
+    await async_session.commit()
+    assert dep.last_sync_at is None
+
+    r = await client.post(
+        "/api/apps/sync-report",
+        json={"target": "exemple-app-2"},
+        headers={**_sa_headers(service_account), "X-Slug": test_app.slug},
+    )
+    assert r.status_code == 200
+
+    await async_session.refresh(dep)
+    assert dep.last_sync_at is not None
+
+
+@pytest.mark.asyncio
+async def test_sync_report_creates_orphan_row_if_missing(client: AsyncClient, test_app, service_account, async_session):
+    r = await client.post(
+        "/api/apps/sync-report",
+        json={"target": "FutureApp"},
+        headers={**_sa_headers(service_account), "X-Slug": test_app.slug},
+    )
+    assert r.status_code == 200
+
+    from sqlalchemy import select
+    rows = (await async_session.execute(
+        select(AppDependency).where(
+            AppDependency.source_slug == test_app.slug,
+            AppDependency.target_slug == "FutureApp",
+        )
+    )).scalars().all()
+    assert len(rows) == 1
+    assert rows[0].last_sync_at is not None
+    assert rows[0].note is None
+
+
+@pytest.mark.asyncio
+async def test_sync_report_rejects_non_service_account(client: AsyncClient, test_user):
+    from app.auth import create_access_token
+    token, _, _ = create_access_token(username=test_user.username, apps={})
+    r = await client.post(
+        "/api/apps/sync-report",
+        json={"target": "X"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert r.status_code == 403
