@@ -169,6 +169,7 @@ function showPage(page) {
     document.getElementById('adminSection').classList.add('d-none');
     document.getElementById('messagesSection').classList.add('d-none');
     document.getElementById('userInboxSection')?.classList.add('d-none');
+    document.getElementById('guideSection')?.classList.add('d-none');
     _clearInboxMarkReadTimer();
     _resetInboxDetailView();
     
@@ -241,6 +242,20 @@ function showPage(page) {
             document.getElementById('userInboxSection').classList.remove('d-none');
             loadInboxPage();
             break;
+        case 'guide':
+            if (!currentUser?.is_admin) {
+                showToast('Accès refusé', 'Vous devez être administrateur', 'danger');
+                return;
+            }
+            document.getElementById('guideSection').classList.remove('d-none');
+            document.getElementById('navGuide')?.classList.add('active');
+            // Charger la version du hub
+            fetch('/health').then(r => r.json()).then(d => {
+                const v = d?.version || '';
+                const el = document.getElementById('guideHubVersion');
+                if (el && v) el.textContent = v;
+            }).catch(() => {});
+            break;
     }
 }
 
@@ -296,6 +311,7 @@ function showLoginScreen() {
     document.getElementById('adminNavigation').classList.add('d-none');
     document.getElementById('messagesSection').classList.add('d-none');
     document.getElementById('userInboxSection')?.classList.add('d-none');
+    document.getElementById('guideSection')?.classList.add('d-none');
     document.getElementById('messageBellContainer')?.classList.add('d-none');
     document.getElementById('loginForm').reset();
     _clearInboxMarkReadTimer();
