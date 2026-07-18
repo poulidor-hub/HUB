@@ -3,7 +3,7 @@ import asyncio
 import time
 import uuid
 import traceback
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Depends
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -13,7 +13,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from app.database import init_db, async_session_maker, apply_migrations
 from app.outbox import outbox_service
 from app.models import User, ErrorLog, utcnow
-from app.auth import get_password_hash, cleanup_expired_tokens
+from app.auth import get_password_hash, cleanup_expired_tokens, get_current_admin
 from app.config import get_settings, build_cors_config
 from app.routes import auth, users, apps, service_accounts, audit, docs, events, app_backups, profiles, apps_health, messages, account_requests, snapshots, vpn
 from app.routes import settings as settings_routes
@@ -740,7 +740,7 @@ async def root():
 # ============================================================
 
 @app.get("/api/outbox/stats", tags=["Admin"])
-async def outbox_stats(request: Request):
+async def outbox_stats(request: Request, current_user: User = Depends(get_current_admin)):
     """Statistiques de la file outbox."""
     return await outbox_service.get_stats()
 
@@ -749,6 +749,7 @@ async def outbox_stats(request: Request):
 async def outbox_retry(
     msg_id: int,
     request: Request,
+    current_user: User = Depends(get_current_admin),
 ):
     """Force le retry d'un message outbox en échec."""
     success = await outbox_service.retry_failed_message(msg_id)
@@ -759,7 +760,7 @@ async def outbox_retry(
 
 
 @app.post("/api/outbox/cleanup", tags=["Admin"])
-async def outbox_cleanup(request: Request):
+async def outbox_cleanup(request: Request, current_user: User = Depends(get_current_admin)):
     """Purge les vieux messages outbox (delivered > 7j, failed > 30j)."""
-    await outbox_service.cleanup_old_messages()
-    return {"success": True, "message": "Nettoyage effectué"}
+    deleted = await outbox_service.cleanup_old_messages()
+    return {"success": True, "deleted": deleted, "message": "Nettoyage effectué"}
