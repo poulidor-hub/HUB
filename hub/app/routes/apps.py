@@ -32,6 +32,7 @@ from app.schemas import (
     AllocatePortsRequest, AllocatePortsResponse,
     PortsStatusResponse, PortAllocationItem,
     DependencyEntry, DependenciesPush, DependenciesPushResponse,
+    DependencyOut, DependenciesGraph,
     SyncReport,
 )
 from app.auth import get_current_admin, get_current_user, get_password_hash, get_settings, verify_token_not_revoked, oauth2_scheme, optional_oauth2_scheme, get_current_entity
@@ -2782,6 +2783,25 @@ async def delete_pending_app(
 
 
 # ===== Endpoints avec {app_id} =====
+
+@router.get("/dependencies", response_model=DependenciesGraph)
+async def get_app_dependencies(
+    db: AsyncSession = Depends(get_db),
+    current_admin: User = Depends(get_current_admin),
+):
+    """Retourne le graphe complet des dépendances inter-apps (admin)."""
+    rows = (await db.execute(select(AppDependency))).scalars().all()
+    return DependenciesGraph(dependencies=[
+        DependencyOut(
+            source=r.source_slug,
+            target=r.target_slug,
+            note=r.note,
+            declared_at=r.declared_at.isoformat() if r.declared_at else None,
+            last_sync_at=r.last_sync_at.isoformat() if r.last_sync_at else None,
+        )
+        for r in rows
+    ])
+
 
 @router.get("/{app_id}", response_model=AppWithUsers)
 async def get_app(

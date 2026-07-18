@@ -172,3 +172,33 @@ async def test_sync_report_rejects_non_service_account(client: AsyncClient, test
         headers={"Authorization": f"Bearer {token}"},
     )
     assert r.status_code == 403
+
+
+def _admin_headers(admin_user) -> dict:
+    from app.auth import create_access_token
+    token, _, _ = create_access_token(username=admin_user.username, apps={})
+    return {"Authorization": f"Bearer {token}"}
+
+
+@pytest.mark.asyncio
+async def test_get_dependencies_requires_admin(client: AsyncClient):
+    r = await client.get("/api/apps/dependencies")
+    assert r.status_code in (401, 403)
+
+
+@pytest.mark.asyncio
+async def test_get_dependencies_returns_full_graph(client: AsyncClient, admin_user, async_session):
+    async_session.add_all([
+        AppDependency(source_slug="A", target_slug="B", note="x"),
+        AppDependency(source_slug="A", target_slug="C", last_sync_at=utcnow()),
+    ])
+    await async_session.commit()
+
+    r = await client.get("/api/apps/dependencies", headers=_admin_headers(admin_user))
+    assert r.status_code == 200
+    body = r.json()
+    pairs = {(d["source"], d["target"]) for d in body["dependencies"]}
+    assert pairs == {("A", "B"), ("A", "C")}
+    by_pair = {(d["source"], d["target"]): d for d in body["dependencies"]}
+    assert by_pair[("A", "C")]["last_sync_at"] is not None
+    assert by_pair[("A", "B")]["last_sync_at"] is None

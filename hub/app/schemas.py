@@ -1946,5 +1946,17 @@ class DependenciesPushResponse(BaseModel):
     source_slug: str
 
 
+class DependencyOut(BaseModel):
+    source: str
+    target: str
+    note: Optional[str] = None
+    declared_at: Optional[str] = None
+    last_sync_at: Optional[str] = None
+
+
+class DependenciesGraph(BaseModel):
+    dependencies: List[DependencyOut]
+
+
 class SyncReport(BaseModel):
     target: str = Field(..., min_length=1, max_length=100, pattern=r'^[a-zA-Z0-9_-]+$')
