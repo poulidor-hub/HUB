@@ -232,6 +232,12 @@ async def service_account(async_session: AsyncSession, test_app: Application) ->
         )
     )
     await async_session.commit()
+
+    # Reload avec eager loading pour que sa.applications soit disponible
+    result = await async_session.execute(
+        select(ServiceAccount).options(selectinload(ServiceAccount.applications)).where(ServiceAccount.id == sa.id)
+    )
+    sa = result.scalar_one()
     
     return sa
 

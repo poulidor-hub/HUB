@@ -1926,3 +1926,21 @@ class HubSnapshotCreateResponse(BaseModel):
     snapshot_id: str
     status: str
     message: str
+
+
+# ===== App Dependency Schemas =====
+
+
+class DependencyEntry(BaseModel):
+    slug: str = Field(..., min_length=1, max_length=100, pattern=r'^[a-zA-Z0-9_-]+$')
+    note: Optional[str] = None
+
+
+class DependenciesPush(BaseModel):
+    """Body de POST /api/apps/dependencies — graphe complet déclaré par l'app appelante."""
+    depends_on: List[DependencyEntry] = Field(default_factory=list)
+
+
+class DependenciesPushResponse(BaseModel):
+    stored: int
+    source_slug: str

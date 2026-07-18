@@ -18,7 +18,7 @@ from app.routes.events import notify_event, notify_stats_update
 from app.routes.app_backups import reassociate_orphan_backups
 
 from app.database import get_db
-from app.models import Application, User, ServiceAccount, UserAppRole, ApprovalStatus, service_account_app_access, DEFAULT_ROLES, UserFavorite, utcnow
+from app.models import Application, User, ServiceAccount, UserAppRole, ApprovalStatus, service_account_app_access, DEFAULT_ROLES, UserFavorite, utcnow, AppDependency
 from app.schemas import (
     AppCreate, AppCreateSimplified, AppUpdate, AppResponse, AppWithUsers, AppWithUsersAndDocker,
     AppResponseWithMyRole,
@@ -31,8 +31,9 @@ from app.schemas import (
     AppOpenApiPush, AppOpenApiResponse,
     AllocatePortsRequest, AllocatePortsResponse,
     PortsStatusResponse, PortAllocationItem,
+    DependencyEntry, DependenciesPush, DependenciesPushResponse,
 )
-from app.auth import get_current_admin, get_current_user, get_password_hash, get_settings, verify_token_not_revoked, oauth2_scheme, optional_oauth2_scheme
+from app.auth import get_current_admin, get_current_user, get_password_hash, get_settings, verify_token_not_revoked, oauth2_scheme, optional_oauth2_scheme, get_current_entity
 from app.routes.service_accounts import save_service_account_credentials, delete_service_account_credentials
 from app.routes.audit import log_action
 from app.docker_scanner import docker_scanner
@@ -3849,3 +3850,53 @@ async def remove_favorite(
 
     await db.delete(fav)
     await db.commit()
+
+
+@router.post("/dependencies", response_model=DependenciesPushResponse)
+async def push_app_dependencies(
+    body: DependenciesPush,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    entity: Union[User, ServiceAccount] = Depends(get_current_entity),
+):
+    """Une app pousse son graphe de dépendances (contenu de son depends.yaml).
+
+    Remplace toutes les lignes ``source_slug = <caller>`` par les nouvelles.
+    Préserve ``last_sync_at`` pour les paires (source, target) qui existaient déjà.
+    """
+    if not isinstance(entity, ServiceAccount):
+        raise HTTPException(status_code=403, detail="Cet endpoint est réservé aux service accounts (M2M)")
+
+    source_slug = request.headers.get("x-slug") or (
+        entity.applications[0].slug if entity.applications else None
+    )
+    if not source_slug:
+        raise HTTPException(status_code=400, detail="X-Slug header requis (ou app associée au SA)")
+
+    # Capturer les last_sync_at existants pour préservation
+    existing = (await db.execute(
+        select(AppDependency).where(AppDependency.source_slug == source_slug)
+    )).scalars().all()
+    sync_map = {row.target_slug: row.last_sync_at for row in existing}
+
+    # Supprimer les anciennes lignes
+    for row in existing:
+        await db.delete(row)
+    await db.flush()
+
+    # Insérer les nouvelles (préserver last_sync_at si la paire existait)
+    now = utcnow()
+    for entry in body.depends_on:
+        if entry.slug == source_slug:
+            continue  # pas d'auto-dépendance
+        dep = AppDependency(
+            source_slug=source_slug,
+            target_slug=entry.slug,
+            note=entry.note,
+            declared_at=now,
+            last_sync_at=sync_map.get(entry.slug),  # None si nouvelle
+        )
+        db.add(dep)
+
+    await db.commit()
+    return DependenciesPushResponse(stored=len(body.depends_on), source_slug=source_slug)
