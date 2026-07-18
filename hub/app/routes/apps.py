@@ -47,6 +47,26 @@ settings = get_settings()
 logger = logging.getLogger(__name__)
 
 
+async def _service_account_from_m2m_token(token: str, db: AsyncSession) -> ServiceAccount:
+    """Résout un Bearer M2M valide en ServiceAccount chargé avec ses apps."""
+    try:
+        payload = await verify_token_not_revoked(token, db)
+    except Exception as exc:
+        logger.warning("Token M2M invalide pour auto-registration: %s", exc)
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token M2M invalide ou expiré")
+    if payload.get("type") != "service_account":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Token M2M requis")
+    result = await db.execute(
+        select(ServiceAccount)
+        .options(selectinload(ServiceAccount.applications))
+        .where(ServiceAccount.client_id == payload.get("sub"))
+    )
+    service_account = result.scalar_one_or_none()
+    if service_account is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Service account non trouvé")
+    return service_account
+
+
 def normalize_frontend_url(url: str) -> str:
     """
     Normalise une URL frontend pour toujours utiliser HTTP.
@@ -1064,7 +1084,8 @@ async def delete_port_allocation(
 async def register_app(
     app_data: AppRegisterRequest,
     request: Request,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    token: Optional[str] = Depends(optional_oauth2_scheme),
 ):
     """
     Auto-enregistrement d'une application depuis le réseau Docker.
@@ -1104,11 +1125,22 @@ async def register_app(
         .where(Application.slug == app_data.slug)
     )
     existing_app = result.scalar_one_or_none()
+    registration_sa = await _service_account_from_m2m_token(token, db) if token else None
     
     replaced = False
     old_app_info = None
     
     if existing_app:
+        if registration_sa and existing_app not in registration_sa.applications:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Le service account ne peut pas réinscrire cette application",
+            )
+        if existing_app.m2m_enforcement_mode == "enforced" and registration_sa is None:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Token M2M requis pour réinscrire cette application",
+            )
         # Application existante - vérifier si on doit la remplacer ou mettre à jour
         if settings.force_replace_app:
             logger.info(f"🔄 Remplacement automatique de l'application '{app_data.slug}' (FORCE_REPLACE_APP=true)")
@@ -1124,6 +1156,9 @@ async def register_app(
             logger.info(f"⚠️ Application '{app_data.slug}' déjà enregistrée, vérification des mises à jour...")
             
             updated_fields = []
+            if registration_sa and existing_app.m2m_enforcement_mode != "enforced":
+                existing_app.m2m_enforcement_mode = "enforced"
+                updated_fields.append("m2m_enforcement_mode: compat → enforced")
             # Utiliser custom_host si fourni (app distante), sinon le host du HUB
             if app_data.custom_host:
                 host = app_data.custom_host
@@ -1232,6 +1267,31 @@ async def register_app(
             else:
                 message = f"Application '{app_data.slug}' déjà enregistrée (aucune modification nécessaire). Utilisez /api/apps/me/credentials pour récupérer vos credentials."
                 logger.info(f"✅ {message}")
+
+            if registration_sa is None:
+                await log_action(
+                    db=db,
+                    user_id=None,
+                    service_account_id=None,
+                    action="legacy_reregistration",
+                    target=app_data.slug,
+                    request=request,
+                    response_status=status.HTTP_200_OK,
+                    details="Réinscription legacy autorisée en mode compatibilité",
+                )
+                await db.commit()
+            else:
+                await log_action(
+                    db=db,
+                    user_id=None,
+                    service_account_id=registration_sa.id,
+                    action="m2m_reregistration_enforced",
+                    target=app_data.slug,
+                    request=request,
+                    response_status=status.HTTP_200_OK,
+                    details="Réinscription authentifiée par service account",
+                )
+                await db.commit()
             
             # Trouver le service account associé (rechargement explicite après refresh)
             result_sa = await db.execute(

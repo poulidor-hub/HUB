@@ -167,6 +167,74 @@ class TestAppAutoReplace:
         # Pas de client_secret fourni (seulement client_id si SA existe)
         if data.get("credentials"):
             assert "client_secret" not in data["credentials"]
+
+    @pytest.mark.asyncio
+    async def test_legacy_reregistration_stays_compat_and_is_audited(
+        self, client: AsyncClient, async_session: AsyncSession, test_app
+    ):
+        """Sans Bearer, la compatibilite est preservee avec audit sans secret."""
+        with patch('app.routes.apps.is_docker_network_ip', return_value=True), \
+             patch('app.routes.apps.settings.force_replace_app', False):
+            response = await client.post(
+                "/api/apps/register",
+                json={"slug": test_app.slug, "api_port": 8081, "frontend_port": 3001},
+            )
+
+        assert response.status_code == 200
+        await async_session.refresh(test_app)
+        assert test_app.m2m_enforcement_mode == "compat"
+        audit = await async_session.execute(
+            select(AuditLog).where(
+                AuditLog.action == "legacy_reregistration",
+                AuditLog.target == test_app.slug,
+            )
+        )
+        entry = audit.scalar_one()
+        assert "secret" not in (entry.details or "").lower()
+
+    @pytest.mark.asyncio
+    async def test_owned_m2m_reregistration_enforces_target_app(
+        self, client: AsyncClient, async_session: AsyncSession, test_app, service_account
+    ):
+        """Un SA associe au slug peut basculer sa propre app en enforced."""
+        token, _, _ = create_access_token(
+            username=service_account.client_id,
+            apps={test_app.slug: "service"},
+            is_service_account=True,
+        )
+        with patch('app.routes.apps.is_docker_network_ip', return_value=True), \
+             patch('app.routes.apps.settings.force_replace_app', False):
+            response = await client.post(
+                "/api/apps/register",
+                json={"slug": test_app.slug, "api_port": 8081, "frontend_port": 3001},
+                headers={"Authorization": f"Bearer {token}"},
+            )
+
+        assert response.status_code == 200
+        await async_session.refresh(test_app)
+        assert test_app.m2m_enforcement_mode == "enforced"
+
+    @pytest.mark.asyncio
+    async def test_foreign_m2m_reregistration_is_rejected_without_mode_change(
+        self, client: AsyncClient, async_session: AsyncSession, test_app, other_app, service_account
+    ):
+        """Un SA d’une autre app ne peut pas activer enforced sur une cible tierce."""
+        token, _, _ = create_access_token(
+            username=service_account.client_id,
+            apps={test_app.slug: "service"},
+            is_service_account=True,
+        )
+        with patch('app.routes.apps.is_docker_network_ip', return_value=True), \
+             patch('app.routes.apps.settings.force_replace_app', False):
+            response = await client.post(
+                "/api/apps/register",
+                json={"slug": other_app.slug, "api_port": 8082, "frontend_port": 3002},
+                headers={"Authorization": f"Bearer {token}"},
+            )
+
+        assert response.status_code == 403
+        await async_session.refresh(other_app)
+        assert other_app.m2m_enforcement_mode == "compat"
     
     @pytest.mark.asyncio
     async def test_replace_creates_audit_log(self, client: AsyncClient, async_session: AsyncSession):
