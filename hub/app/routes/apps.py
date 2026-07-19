@@ -1089,7 +1089,12 @@ async def register_app(
 ):
     """
     Auto-enregistrement d'une application depuis le réseau Docker.
-    
+
+    🔶 LEGACY : l'authentification par IP Docker sera supprimée après migration
+    complète des applications vers le mode M2M enforced. Les nouvelles apps
+    doivent fournir un token service account (Bearer) pour bénéficier du mode
+    renforcé et de l'audit complet.
+
     ⚠️ Accessible UNIQUEMENT depuis les réseaux Docker (IP whitelist).
     ⚠️ SÉCURITÉ : Les apps auto-enregistrées sont en statut "pending" et
        nécessitent une approbation admin via /api/apps/{slug}/approve
