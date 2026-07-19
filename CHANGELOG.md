@@ -7,6 +7,21 @@
 
 ---
 
+## [3.12.1] - 19 juillet 2026
+
+### ⚡ Sécurité M2M et outbox — mode enforcement par application
+
+- **Ajouté** : colonne `m2m_enforcement_mode` sur `applications` (`compat` par défaut, `enforced` opt-in).
+- **Ajouté** : garde `authorize_service_account_slug()` — les slugs non possédés sont audités en `compat`, refusés en `enforced`.
+- **Ajouté** : réinscription avec preuve M2M optionnelle (Bearer token). Sans preuve, le comportement legacy est conservé et audité. Avec preuve, l'app passe en `enforced`.
+- **Corrigé** : outbox Hub — les routes `/api/outbox/*` exigent le rôle admin.
+- **Corrigé** : outbox Hub — seules les réponses HTTP `2xx` sont considérées livrées ; les `4xx` restent en `failed` pour retry.
+- **Corrigé** : `cleanup_old_messages()` commit désormais la purge.
+- **Marquage** : chemins legacy tagués `🔶 LEGACY` dans `routes/apps.py` pour suppression après migration complète.
+- **Tests** : +7 tests (M2M slug enforcement, outbox admin) ; 498 passed, 1 skipped.
+
+---
+
 ## [3.12.0] - 18 juillet 2026
 
 ### ⚡ Dépendances inter-applications et maintenance admin
