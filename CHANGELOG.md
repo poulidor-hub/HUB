@@ -7,6 +7,18 @@
 
 ---
 
+## [3.12.2] - 21 juillet 2026
+
+### ⚡ Sécurité M2M — extension du garde SA/slug à 3 routes supplémentaires
+
+- **Sécurité** : le garde `authorize_service_account_slug()` est désormais appliqué à `PUT /api/apps/me/shared`, `POST /api/apps/me/openapi` et `POST /api/messages/m2m/send` (partage, spec OpenAPI, synchronisation). Les slugs non possédés sont audités en mode `compat` (défaut) et refusés en `enforced` (403) — conformément au design Lot 1 « Autorisation M2M centralisée ».
+- **Sécurité** : `/messages/m2m/send` ne retombe plus sur `entity.name` comme slug quand le SA n'a aucune application ; un SA sans app ne peut plus émettre de message sous un slug arbitraire.
+- **Corrigé** : `POST /me/openapi` respecte désormais le `X-Slug` fourni (quand il appartient au SA) au lieu de toujours cibler la première application du SA.
+- **Non couvert (volontaire)** : `/me/credentials` (le `X-Slug` n'est pas utilisé en branche token, pas de fuite cross-app) et `POST /api/apps/{slug}/backup` (déjà protégé strictement par `check_backup_entity_access`, sans mode compat).
+- **Tests** : +6 tests (nominal possédé + rejet en enforced pour chaque nouvelle route gardée). 504 passed, 1 échec préexistant non lié (PKI/HTTPS dépendant de l'environnement).
+
+---
+
 ## [3.12.1] - 19 juillet 2026
 
 ### ⚡ Sécurité M2M et outbox — mode enforcement par application

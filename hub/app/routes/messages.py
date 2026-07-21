@@ -1330,10 +1330,14 @@ async def m2m_send_message(
     if not isinstance(entity, ServiceAccount):
         raise HTTPException(status_code=403, detail="Cet endpoint est réservé aux service accounts (M2M)")
 
-    # Résoudre le app_slug : header X-Slug > première application associée > nom du SA
-    sender_app_slug = request.headers.get("x-slug") or (
-        entity.applications[0].slug if entity.applications else None
-    ) or entity.name
+    # Résoudre le app_slug via le garde M2M (ownership + mode compat/enforced).
+    from app.m2m_authorization import authorize_service_account_slug
+    sender_app_slug = await authorize_service_account_slug(
+        request=request,
+        service_account=entity,
+        requested_slug=request.headers.get("x-slug"),
+        db=db,
+    )
 
     # Résoudre l'URL frontale de l'app expéditrice pour enrichir une `action_url` relative.
     sender_app_frontend_url: Optional[str] = None

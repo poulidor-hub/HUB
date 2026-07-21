@@ -77,3 +77,86 @@ async def test_missing_x_slug_falls_back_to_first_owned_app(
         headers=_sa_headers_for_sa(service_account),
     )
     assert r.status_code == 200
+
+
+# =============================================================================
+# Extension du garde aux routes /me/shared, /me/openapi et messages m2m/send
+# (partage, spec OpenAPI, synchronisation — cf. design Lot 1)
+# =============================================================================
+
+@pytest.mark.asyncio
+async def test_me_shared_accepts_owned_slug(client: AsyncClient, test_app, service_account):
+    """PUT /me/shared accepte un X-Slug possédé par le SA (token M2M)."""
+    r = await client.put(
+        "/api/apps/me/shared?is_shared=true",
+        headers=_sa_headers_for_sa(service_account, slug_override=test_app.slug),
+    )
+    assert r.status_code == 200, r.text
+
+
+@pytest.mark.asyncio
+async def test_me_shared_rejects_unowned_slug_in_enforced(
+    client: AsyncClient, other_app, service_account, async_session
+):
+    """PUT /me/shared refuse un X-Slug d'autrui quand l'app cible est enforced."""
+    other_app.m2m_enforcement_mode = "enforced"
+    await async_session.flush()
+    r = await client.put(
+        "/api/apps/me/shared?is_shared=true",
+        headers=_sa_headers_for_sa(service_account, slug_override=other_app.slug),
+    )
+    assert r.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_me_openapi_accepts_owned_slug(client: AsyncClient, test_app, service_account):
+    """POST /me/openapi accepte un X-Slug possédé (token M2M)."""
+    r = await client.post(
+        "/api/apps/me/openapi",
+        json={"openapi_spec": {"openapi": "3.0.0", "paths": {}}},
+        headers=_sa_headers_for_sa(service_account, slug_override=test_app.slug),
+    )
+    assert r.status_code == 200, r.text
+
+
+@pytest.mark.asyncio
+async def test_me_openapi_rejects_unowned_slug_in_enforced(
+    client: AsyncClient, other_app, service_account, async_session
+):
+    """POST /me/openapi refuse un X-Slug d'autrui quand l'app cible est enforced."""
+    other_app.m2m_enforcement_mode = "enforced"
+    await async_session.flush()
+    r = await client.post(
+        "/api/apps/me/openapi",
+        json={"openapi_spec": {"openapi": "3.0.0", "paths": {}}},
+        headers=_sa_headers_for_sa(service_account, slug_override=other_app.slug),
+    )
+    assert r.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_m2m_send_accepts_owned_slug(
+    client: AsyncClient, test_user, test_app, service_account
+):
+    """POST /messages/m2m/send accepte un X-Slug possédé (token M2M)."""
+    r = await client.post(
+        "/api/messages/m2m/send",
+        json={"title": "Test garde M2M", "target_usernames": [test_user.username]},
+        headers=_sa_headers_for_sa(service_account, slug_override=test_app.slug),
+    )
+    assert r.status_code == 200, r.text
+
+
+@pytest.mark.asyncio
+async def test_m2m_send_rejects_unowned_slug_in_enforced(
+    client: AsyncClient, test_user, other_app, service_account, async_session
+):
+    """POST /messages/m2m/send refuse un X-Slug d'autrui quand l'app cible est enforced."""
+    other_app.m2m_enforcement_mode = "enforced"
+    await async_session.flush()
+    r = await client.post(
+        "/api/messages/m2m/send",
+        json={"title": "Test garde M2M", "target_usernames": [test_user.username]},
+        headers=_sa_headers_for_sa(service_account, slug_override=other_app.slug),
+    )
+    assert r.status_code == 403

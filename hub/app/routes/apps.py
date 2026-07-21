@@ -2271,7 +2271,13 @@ async def update_app_shared(
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail="Service account ou application non trouvé"
                 )
-            app_slug = app_slug or (sa.applications[0].slug if sa.applications else None)
+            from app.m2m_authorization import authorize_service_account_slug
+            app_slug = await authorize_service_account_slug(
+                request=request,
+                service_account=sa,
+                requested_slug=app_slug,
+                db=db,
+            )
         except HTTPException:
             raise
         except Exception as e:
@@ -2508,8 +2514,15 @@ async def push_openapi_spec(
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail="Service account ou application non trouvé"
                 )
-            app = sa.applications[0]
-            app_slug = app_slug or app.slug
+            from app.m2m_authorization import authorize_service_account_slug
+            app_slug = await authorize_service_account_slug(
+                request=request,
+                service_account=sa,
+                requested_slug=app_slug,
+                db=db,
+            )
+            # Ne pas présélectionner app ici : le bloc commun plus bas recharge
+            # l'application correspondant au slug résolu/validé par le garde.
         except HTTPException:
             raise
         except Exception as e:
