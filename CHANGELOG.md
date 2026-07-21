@@ -7,6 +7,16 @@
 
 ---
 
+## [3.12.3] - 21 juillet 2026
+
+### 🐛 Fix — fresh install cassé par NotNullViolation sur m2m_enforcement_mode
+
+- **Corrigé** : le fresh install (DB vierge) échouait sur la migration `026_add_backup_clusters_and_system_app.sql` avec `NotNullViolationError: null value in column "m2m_enforcement_mode"`. Cause : la colonne était déclarée `nullable=False` avec un `default='compat'` Python uniquement (pas de `server_default`), donc `Base.metadata.create_all()` (qui tourne avant les migrations) créait la colonne NOT NULL **sans default SQL** ; la migration 026 (INSERT de l'app système "Hub") ne fournissait pas cette colonne → violation. Le bug n'apparaissait pas sur DB existante (la migration 038 `ADD COLUMN ... DEFAULT 'compat'` s'y appliquait), uniquement sur DB vierge.
+- **Fix** : ajout de `server_default='compat'` sur `models.Application.m2m_enforcement_mode`. `create_all()` crée désormais la colonne avec un default SQL ; la migration 026 et tous les INSERT SQL directs fonctionnent.
+- **Note** : d'autres colonnes NOT NULL (`is_system_app`, `backup_quiesce`) ont le même pattern (`default=` Python sans `server_default`) mais sont systématiquement fournies dans les INSERT existants → non impactées. À surveiller pour toute nouvelle migration INSERT.
+
+---
+
 ## [3.12.2] - 21 juillet 2026
 
 ### ⚡ Sécurité M2M — extension du garde SA/slug à 3 routes supplémentaires
