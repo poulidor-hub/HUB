@@ -30,9 +30,33 @@ def reset_rate_limiter():
     _login_attempts.clear()
 
 
+# Champs OIDC mutés par certains tests ; sauvegardés puis restaurés par la fixture `settings`.
+_OIDC_FIELDS_TO_SNAPSHOT = (
+    "oidc_issuer",
+    "oidc_email_template",
+    "oidc_id_token_ttl_minutes",
+    "oidc_access_token_ttl_minutes",
+    "oidc_backchannel_logout_enabled",
+)
+
+
+@pytest.fixture
+def settings():
+    """Expose le singleton get_settings() et restaure les champs mutés par les tests.
+
+    Les tests OIDC modifient en place des attributs (oidc_issuer, oidc_email_template,
+    etc.) sur le singleton lru_cache. On snapshot ces champs avant le test et on les
+    restaure après pour éviter toute fuite d'état entre tests.
+    """
+    s = get_settings()
+    snapshot = {field: getattr(s, field) for field in _OIDC_FIELDS_TO_SNAPSHOT}
+    yield s
+    for field, original in snapshot.items():
+        setattr(s, field, original)
+
+
 # Configuration de test
 TEST_DATABASE_URL = "sqlite+aiosqlite:///:memory:"
-settings = get_settings()
 
 
 @pytest.fixture(scope="session")
