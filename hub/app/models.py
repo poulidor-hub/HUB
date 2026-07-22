@@ -1,6 +1,6 @@
 from sqlalchemy import Column, Integer, BigInteger, String, Boolean, DateTime, ForeignKey, Text, Table, Enum as SQLEnum, JSON, UniqueConstraint
 from sqlalchemy.orm import relationship
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Optional
 import secrets
 import enum
@@ -750,3 +750,111 @@ class OutboxMessage(Base):
     def __repr__(self):
         slug = self.target_slug or self.target_url
         return f"<OutboxMessage(id={self.id}, target='{slug}', status='{self.status}')>"
+
+
+# ============================================================
+# OIDC Provider - Bridge OIDC pour apps externes (Vikunja, etc.)
+# ============================================================
+
+class OAuthClient(Base):
+    """Client OIDC : apps externe qui consomme le SSO HUB via OIDC (ex: Vikunja)."""
+    __tablename__ = "oauth_clients"
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(String(100), unique=True, index=True, nullable=False)
+    client_secret_hash = Column(String(255), nullable=False)
+    name = Column(String(100), nullable=False)
+    redirect_uris = Column(JSON, nullable=False, default=list)  # ["https://.../cb"]
+    scopes = Column(JSON, nullable=False, default=lambda: ["openid", "profile", "email"])
+    is_active = Column(Boolean, default=True)
+    auto_approve = Column(Boolean, default=True)
+    backchannel_logout_uri = Column(String(500), nullable=True)
+    app_id = Column(Integer, ForeignKey('applications.id', ondelete='SET NULL'), nullable=True)
+    created_at = Column(DateTime, default=utcnow)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
+
+    # Relations (lazy='raise' pour async)
+    application = relationship("Application", lazy="raise")
+
+    # --- Methods required by OIDC flow ---
+    def check_client_secret(self, plain_secret: str) -> bool:
+        from app.auth import verify_password
+        return verify_password(plain_secret, self.client_secret_hash)
+
+    def check_redirect_uri(self, uri: str) -> bool:
+        return uri in (self.redirect_uris or [])
+
+    def get_allowed_scopes(self, requested: list) -> list:
+        allowed = set(self.scopes or [])
+        return [s for s in (requested or []) if s in allowed]
+
+    @staticmethod
+    def generate_client_id() -> str:
+        return f"oc_{secrets.token_hex(16)}"
+
+    @staticmethod
+    def generate_client_secret() -> str:
+        return secrets.token_urlsafe(32)
+
+    def __repr__(self):
+        return f"<OAuthClient {self.client_id}>"
+
+
+class OAuthAuthorizationCode(Base):
+    """Code OIDC one-shot émis par /oidc/launch, échangé à /oidc/token."""
+    __tablename__ = "oauth_authorization_codes"
+
+    id = Column(Integer, primary_key=True, index=True)
+    code_hash = Column(String(100), unique=True, index=True, nullable=False)
+    client_id = Column(String(100), ForeignKey('oauth_clients.client_id', ondelete='CASCADE'), nullable=False)
+    user_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
+    redirect_uri = Column(String(500), nullable=False)
+    scope = Column(String(200), nullable=False)
+    code_challenge = Column(String(200), nullable=True)
+    code_challenge_method = Column(String(10), nullable=True)
+    nonce = Column(String(100), nullable=True)
+    expires_at = Column(DateTime, nullable=False, default=lambda: utcnow() + timedelta(minutes=10))
+    used_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=utcnow)
+
+    client = relationship("OAuthClient", lazy="raise")
+    user = relationship("User", lazy="raise")
+
+    @property
+    def is_expired(self) -> bool:
+        return self.expires_at <= utcnow()
+
+    @property
+    def is_used(self) -> bool:
+        return self.used_at is not None
+
+    def __repr__(self):
+        return f"<OAuthAuthorizationCode {self.client_id} user={self.user_id}>"
+
+
+class OAuthRefreshToken(Base):
+    """Refresh token OIDC persistant et révocable (mirroir apps hub)."""
+    __tablename__ = "oauth_refresh_tokens"
+
+    id = Column(Integer, primary_key=True, index=True)
+    token_hash = Column(String(100), unique=True, index=True, nullable=False)
+    client_id = Column(String(100), ForeignKey('oauth_clients.client_id', ondelete='CASCADE'), nullable=False)
+    user_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
+    scope = Column(String(200), nullable=False)
+    expires_at = Column(DateTime, nullable=True)  # NULL = pas d'expiration
+    revoked_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=utcnow)
+
+    client = relationship("OAuthClient", lazy="raise")
+    user = relationship("User", lazy="raise")
+
+    @property
+    def is_valid(self) -> bool:
+        if self.revoked_at is not None:
+            return False
+        if self.expires_at is not None and self.expires_at <= utcnow():
+            return False
+        return True
+
+    def __repr__(self):
+        return f"<OAuthRefreshToken {self.client_id} user={self.user_id} valid={self.is_valid}>"
