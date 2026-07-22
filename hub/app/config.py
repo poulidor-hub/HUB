@@ -207,7 +207,17 @@ class Settings(BaseSettings):
 
     # Mode développement - Génération automatique des clés JWT
     auto_generate_keys: bool = False  # True uniquement en DEV !
-    
+
+    # ===== OIDC Provider (bridge OIDC pour apps externes) =====
+    oidc_enabled: bool = True
+    oidc_issuer: str = ""  # ex: "https://hub.example.com" - URL publique du HUB (base pour discovery + iss)
+    oidc_email_template: str = "{username}@hub.internal"
+    oidc_code_ttl_seconds: int = 30
+    oidc_id_token_ttl_minutes: int = 10
+    oidc_access_token_ttl_minutes: int = 15
+    oidc_refresh_token_days: int = 30
+    oidc_backchannel_logout_enabled: bool = True
+
     # Auto-remplacement des applications existantes lors de l'enregistrement
     # Si True : l'ancienne app et son M2M sont supprimés automatiquement
     force_replace_app: bool = False
