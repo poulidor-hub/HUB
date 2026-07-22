@@ -1,6 +1,6 @@
 from sqlalchemy import Column, Integer, BigInteger, String, Boolean, DateTime, ForeignKey, Text, Table, Enum as SQLEnum, JSON, UniqueConstraint
 from sqlalchemy.orm import relationship
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from typing import Optional
 import secrets
 import enum
@@ -813,7 +813,7 @@ class OAuthAuthorizationCode(Base):
     code_challenge = Column(String(200), nullable=True)
     code_challenge_method = Column(String(10), nullable=True)
     nonce = Column(String(100), nullable=True)
-    expires_at = Column(DateTime, nullable=False, default=lambda: utcnow() + timedelta(minutes=10))
+    expires_at = Column(DateTime, nullable=False)
     used_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=utcnow)
 

@@ -1,6 +1,5 @@
 # HUB_base/hub/tests/test_oidc_models.py
 import pytest
-from sqlalchemy import select
 from app.models import OAuthClient, OAuthAuthorizationCode, OAuthRefreshToken
 from app.auth import get_password_hash, hash_token
 
@@ -63,12 +62,15 @@ class TestOAuthAuthorizationCodeModel:
         async_session.add(client)
         await async_session.flush()
 
+        from datetime import timedelta
+        from app.models import utcnow
         code = OAuthAuthorizationCode(
             code_hash=hash_token("the-code"),
             client_id="t",
             user_id=test_user.id,
             redirect_uri="https://app.example.com/cb",
             scope="openid profile",
+            expires_at=utcnow() + timedelta(seconds=30),
         )
         async_session.add(code)
         await async_session.commit()
