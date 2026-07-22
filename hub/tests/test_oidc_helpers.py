@@ -5,6 +5,7 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.backends import default_backend
 from app.oidc_helpers import (
     create_id_token,
+    create_access_token_jwt,
     validate_pkce,
     generate_authorization_code,
     generate_logout_token,
@@ -87,6 +88,24 @@ class TestCreateIdToken:
             audience="client",
         )
         assert claims["sub"] == "bob"
+
+
+class TestCreateAccessToken:
+
+    def test_access_token_jwt_structure(self, settings):
+        settings.oidc_issuer = "https://hub.example.com"
+        token = create_access_token_jwt("alice", "vikunja", "openid profile", settings)
+        claims = pyjwt.decode(
+            token, options={"verify_signature": False}, audience="vikunja"
+        )
+        assert claims["sub"] == "alice"
+        assert claims["aud"] == "vikunja"
+        assert claims["token_type"] == "OIDC_ACCESS"
+        assert claims["scope"] == "openid profile"
+        # Header kid
+        header = pyjwt.get_unverified_header(token)
+        assert header["kid"] == "hub-jwt-key-1"
+        assert header["alg"] == "RS256"
 
 
 class TestGenerateAuthorizationCode:

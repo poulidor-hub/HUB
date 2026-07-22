@@ -4,9 +4,10 @@ Approche C : implémentation from-scratch avec pyjwt[crypto] déjà présent.
 Réutilise settings.jwt_private_key, JWKS endpoint, hash_token(), get_password_hash().
 """
 from datetime import timedelta
+from typing import Optional
 from urllib.parse import urlencode
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request, status
 from fastapi.responses import RedirectResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -14,8 +15,21 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth import hash_token, utcnow, verify_token
 from app.config import get_settings
 from app.database import get_db
-from app.models import Application, OAuthAuthorizationCode, OAuthClient, User
-from app.oidc_helpers import build_oidc_metadata, generate_authorization_code
+from app.models import (
+    Application,
+    OAuthAuthorizationCode,
+    OAuthClient,
+    OAuthRefreshToken,
+    User,
+)
+from app.oidc_helpers import (
+    build_oidc_metadata,
+    create_access_token_jwt,
+    create_id_token,
+    generate_authorization_code,
+    generate_refresh_token,
+    validate_pkce,
+)
 from app.routes.audit import log_action
 
 router = APIRouter(tags=["OIDC"])
@@ -157,3 +171,231 @@ async def launch_oidc(
         url=f"{redirect_uri}{separator}{urlencode(params)}",
         status_code=302,
     )
+
+
+# =============================================================================
+# /api/oidc/token : échange code (ou refresh) contre tokens OIDC
+# =============================================================================
+
+def _decode_basic_auth(request: Request) -> tuple[Optional[str], Optional[str]]:
+    """Extrait client_id/client_secret depuis Authorization Basic header."""
+    auth = request.headers.get("Authorization", "")
+    if not auth.startswith("Basic "):
+        return None, None
+    import base64
+    try:
+        decoded = base64.b64decode(auth[6:]).decode("utf-8")
+        cid, _, csec = decoded.partition(":")
+        return cid, csec
+    except Exception:
+        return None, None
+
+
+async def _authenticate_client(
+    request: Request, db: AsyncSession,
+    client_id_form: Optional[str], client_secret_form: Optional[str]
+) -> OAuthClient:
+    """Authentifie le client via Basic header ou form body. Retourne le OAuthClient."""
+    # Priorité : form body > Basic header
+    client_id = client_id_form
+    client_secret = client_secret_form or ""
+    if not client_id:
+        cid_basic, csec_basic = _decode_basic_auth(request)
+        client_id = cid_basic
+        client_secret = csec_basic or ""
+    if not client_id:
+        raise HTTPException(401, "client_id manquant")
+
+    result = await db.execute(
+        select(OAuthClient).where(OAuthClient.client_id == client_id)
+    )
+    oauth_client = result.scalar_one_or_none()
+    if not oauth_client or not oauth_client.is_active:
+        raise HTTPException(401, "Client inconnu ou inactif")
+    if not oauth_client.check_client_secret(client_secret):
+        raise HTTPException(401, "client_secret invalide")
+    return oauth_client
+
+
+@router.post("/api/oidc/token")
+async def token_endpoint(
+    request: Request,
+    grant_type: str = Form(...),
+    code: Optional[str] = Form(None),
+    redirect_uri: Optional[str] = Form(None),
+    client_id: Optional[str] = Form(None),
+    client_secret: Optional[str] = Form(None),
+    code_verifier: Optional[str] = Form(None),
+    refresh_token: Optional[str] = Form(None),
+    db: AsyncSession = Depends(get_db),
+):
+    """Endpoint standard OAuth2/OIDC token : échange code ou refresh contre tokens."""
+    oauth_client = await _authenticate_client(
+        request, db, client_id, client_secret
+    )
+
+    if grant_type == "authorization_code":
+        return await _handle_authorization_code_grant(
+            request, db, oauth_client, code, redirect_uri, code_verifier
+        )
+    elif grant_type == "refresh_token":
+        return await _handle_refresh_token_grant(
+            request, db, oauth_client, refresh_token
+        )
+    else:
+        raise HTTPException(400, f"grant_type '{grant_type}' non supporté")
+
+
+async def _handle_authorization_code_grant(
+    request, db, oauth_client, code, redirect_uri, code_verifier
+):
+    if not code or not redirect_uri:
+        raise HTTPException(400, "code et redirect_uri requis")
+
+    # 1. Lookup code par hash
+    code_hash = hash_token(code)
+    result = await db.execute(
+        select(OAuthAuthorizationCode).where(
+            OAuthAuthorizationCode.code_hash == code_hash,
+            OAuthAuthorizationCode.client_id == oauth_client.client_id,
+        )
+    )
+    auth_code = result.scalar_one_or_none()
+    if not auth_code:
+        raise HTTPException(400, "code invalide ou inconnu")
+    if auth_code.is_used:
+        raise HTTPException(400, "code déjà utilisé (one-shot)")
+    if auth_code.is_expired:
+        raise HTTPException(400, "code expiré")
+    if auth_code.redirect_uri != redirect_uri:
+        raise HTTPException(400, "redirect_uri mismatch")
+
+    # 2. PKCE
+    if not validate_pkce(
+        code_verifier, auth_code.code_challenge, auth_code.code_challenge_method
+    ):
+        raise HTTPException(400, "PKCE validation échouée")
+
+    # 3. Marquer code comme utilisé
+    auth_code.used_at = utcnow()
+
+    # 4. Lookup user
+    user_result = await db.execute(
+        select(User).where(User.id == auth_code.user_id)
+    )
+    user = user_result.scalar_one()
+
+    # 5. Générer tokens
+    id_token = create_id_token(
+        username=user.username,
+        client_id=oauth_client.client_id,
+        nonce=auth_code.nonce,
+        scope=auth_code.scope,
+        settings=settings,
+    )
+    access_token = create_access_token_jwt(
+        username=user.username,
+        client_id=oauth_client.client_id,
+        scope=auth_code.scope,
+        settings=settings,
+    )
+    raw_refresh = generate_refresh_token()
+    refresh_hash = hash_token(raw_refresh)
+    new_rt = OAuthRefreshToken(
+        token_hash=refresh_hash,
+        client_id=oauth_client.client_id,
+        user_id=user.id,
+        scope=auth_code.scope,
+        expires_at=utcnow() + timedelta(days=settings.oidc_refresh_token_days),
+    )
+    db.add(new_rt)
+
+    # 6. Audit + commit
+    await log_action(
+        db=db,
+        user_id=user.id,
+        action="oidc_token",
+        target=oauth_client.client_id,
+        request=request,
+        response_status=200,
+        details=f"Tokens OIDC émis (grant=authorization_code)",
+    )
+    await db.commit()
+
+    return {
+        "access_token": access_token,
+        "token_type": "Bearer",
+        "expires_in": settings.oidc_access_token_ttl_minutes * 60,
+        "refresh_token": raw_refresh,
+        "id_token": id_token,
+        "scope": auth_code.scope,
+    }
+
+
+async def _handle_refresh_token_grant(
+    request, db, oauth_client, refresh_token
+):
+    if not refresh_token:
+        raise HTTPException(400, "refresh_token requis")
+
+    rt_hash = hash_token(refresh_token)
+    result = await db.execute(
+        select(OAuthRefreshToken).where(
+            OAuthRefreshToken.token_hash == rt_hash,
+            OAuthRefreshToken.client_id == oauth_client.client_id,
+        )
+    )
+    rt = result.scalar_one_or_none()
+    if not rt or not rt.is_valid:
+        raise HTTPException(400, "refresh_token invalide ou révoqué")
+
+    # Lookup user
+    user_result = await db.execute(select(User).where(User.id == rt.user_id))
+    user = user_result.scalar_one()
+
+    # Rotation : révoquer l'ancien, créer un nouveau
+    rt.revoked_at = utcnow()
+
+    new_raw = generate_refresh_token()
+    new_rt = OAuthRefreshToken(
+        token_hash=hash_token(new_raw),
+        client_id=oauth_client.client_id,
+        user_id=user.id,
+        scope=rt.scope,
+        expires_at=utcnow() + timedelta(days=settings.oidc_refresh_token_days),
+    )
+    db.add(new_rt)
+
+    # Nouveaux access + id tokens
+    id_token = create_id_token(
+        username=user.username,
+        client_id=oauth_client.client_id,
+        nonce=None,  # pas de nonce au refresh
+        scope=rt.scope,
+        settings=settings,
+    )
+    access_token = create_access_token_jwt(
+        username=user.username,
+        client_id=oauth_client.client_id,
+        scope=rt.scope,
+        settings=settings,
+    )
+
+    await log_action(
+        db=db,
+        user_id=user.id,
+        action="oidc_token_refresh",
+        target=oauth_client.client_id,
+        request=request,
+        response_status=200,
+    )
+    await db.commit()
+
+    return {
+        "access_token": access_token,
+        "token_type": "Bearer",
+        "expires_in": settings.oidc_access_token_ttl_minutes * 60,
+        "refresh_token": new_raw,
+        "id_token": id_token,
+        "scope": rt.scope,
+    }
