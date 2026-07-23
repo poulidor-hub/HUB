@@ -7,6 +7,52 @@
 
 ---
 
+## [3.13.0] - 23 juillet 2026
+
+### 🆕 Feat — Bridge OIDC Provider (SSO pour apps externes type Vikunja)
+
+- **Ajouté** : module OIDC Provider dans `HUB_base` permettant aux apps externes (Vikunja, Nextcloud, Grafana, etc.) de consommer le SSO HUB via OIDC standard, **sans modifier le SSO JWT maison** existant pour les apps template. Implémentation from-scratch avec `pyjwt[crypto]` déjà présent (pas de nouvelle dépendance).
+- **Modèle de données** : 3 nouvelles tables via migrations `039_add_oauth_clients.sql`, `040_add_oauth_authorization_codes.sql`, `041_add_oauth_refresh_tokens.sql` :
+  - `oauth_clients` : clients OIDC (client_id, client_secret_hash bcrypt, redirect_uris whitelist, scopes, backchannel_logout_uri, FK optionnelle vers applications).
+  - `oauth_authorization_codes` : codes one-shot (TTL 30s, hash SHA256, PKCE, nonce).
+  - `oauth_refresh_tokens` : refresh tokens persistants et **révocables** (mirroir du mécanisme apps hub pour le DC passif).
+- **Endpoints** (`hub/app/routes/oidc.py`) :
+  - `GET /.well-known/openid-configuration` : discovery document OIDC standard.
+  - `GET /api/oidc/launch/{client_id}` : **shortcut spécifique HUB** — valide un JWT HUB (query string), vérifie `UserAppRole`, génère un code OIDC one-shot, redirige 302 vers `redirect_uri`. Évite l'ajout d'un cookie de session navigateur au dashboard.
+  - `POST /api/oidc/token` : échange code → `id_token` + `access_token` + `refresh_token` (grants `authorization_code` avec PKCE S256 + `refresh_token` avec rotation). Auth client via `client_secret_basic` (Authorization header) OU `client_secret_post` (form body).
+  - `GET/POST /api/oidc/userinfo` : claims filtrés par scope (`sub` toujours ; `preferred_username`/`name` sur `profile` ; `email`/`email_verified` sur `email`).
+  - `POST /api/oidc/backchannel-logout/{client_id}` : **admin HUB only** — révoque tous les refresh tokens d'un user pour ce client + envoie un `logout_token` JWT signé au `backchannel_logout_uri` du client (OIDC Back-Channel Logout 1.0).
+  - CRUD `/api/oidc/clients` (admin only) : list/create/update/toggle-active/regenerate-secret/delete. Le `client_secret` brut est retourné **une seule fois** à la création/régénération (jamais persisté en clair, hash bcrypt en base).
+- **Helpers** (`hub/app/oidc_helpers.py`) : `create_id_token`, `create_access_token_jwt`, `generate_authorization_code`, `generate_refresh_token`, `generate_logout_token`, `validate_pkce` (S256), `compute_email_claim` (template `{username}@hub.internal`), `build_oidc_metadata`. Tous signent JWKS RS256 avec `kid="hub-jwt-key-1"` (cohérent avec l'endpoint JWKS existant).
+- **Sécurité** :
+  - `client_secret` hashé bcrypt (`get_password_hash()`), jamais sérialisé en API.
+  - Codes OIDC one-shot (`used_at` + TTL 30s), stockés uniquement par hash SHA256.
+  - PKCE S256 obligatoire côté validation (optionnel si absent côté client).
+  - `id_token`/`access_token` stateless signés RS256 (court TTL).
+  - Refresh tokens persistants, **révocables** (DC passif) + rotation à chaque usage.
+  - Back-channel logout avec `logout_token` signé (claims `iss/aud/iat/jti/events`, pas de `nonce`).
+  - **Rate limiting** sur `/api/oidc/token` : 10 req/min/IP (anti brute-force `client_secret`) → 429 si dépassé.
+  - `redirect_uri` validé strictement (whitelist par client, égalité exacte).
+- **Claims mapping** : `sub` = `User.username` (stable), `email` = synthétique `{username}@hub.internal` (configurable via `OIDC_EMAIL_TEMPLATE`), `preferred_username`/`name` = `username`, `email_verified` = `true`.
+- **Settings** : 8 nouveaux attributs `oidc_*` dans `Settings` (`oidc_enabled`, `oidc_issuer`, `oidc_email_template`, `oidc_code_ttl_seconds=30`, `oidc_id_token_ttl_minutes=10`, `oidc_access_token_ttl_minutes=15`, `oidc_refresh_token_days=30`, `oidc_backchannel_logout_enabled`) + section correspondante dans `.env.example`.
+- **Frontend** : nouvelle page admin `admin-oidc-clients.js` (vanilla JS + Bootstrap 5, pattern `admin-service-accounts.js`) intégrée au menu admin (onglet « Clients OIDC »). CRUD complet + modal credentials avec secret one-shot display + boutons copie namespacés (`copyOidcValue` pour éviter la collision avec la globale `copyToClipboard`).
+- **Tests** : 558 tests au total (suite HUB_base + OIDC). Couverture OIDC : modèles (5), helpers (12), discovery (2), launch (7), token (10 dont 5 security branches : basic auth, expired code, redirect mismatch, PKCE fail/optional), userinfo (4), backchannel-logout (3), clients CRUD (6).
+- **Documentation** : design spec détaillé dans `docs/superpowers/specs/2026-07-22-vikunja-hub-integration-design.md` (14 sections), plan d'implémentation dans `docs/superpowers/plans/2026-07-22-plan-1-bridge-oidc-hub-base.md` (11 tâches TDD).
+
+### 🔧 Tech — conventions et réutilisation
+
+- **Aucune nouvelle dépendance Python** : réutilisation de `pyjwt[crypto]`, `cryptography`, `bcrypt` (déjà présents). Approche C (from-scratch) préférée à authlib après découverte qu'authlib n'a pas d'intégration FastAPI provider native (aurait requis un adaptateur Starlette + `run_in_threadpool` + 2 dépendances pour le back-channel logout manuel de toute façon).
+- **Réutilisation du socle** : `verify_token()`, `get_current_admin`, `hash_token()` (SHA256), `get_password_hash()`/`verify_password()` (bcrypt), `settings.jwt_private_key`/`jwt_public_key`/`kid="hub-jwt-key-1"`, JWKS endpoint existant, `log_action()` + commit explicite.
+- **Conventions parc respectées** : `DateTime`+`utcnow` (pas TIMESTAMPTZ), `TIMESTAMP`+`DEFAULT CURRENT_TIMESTAMP` en SQL, `IF NOT EXISTS` idempotent, `lazy="raise"` sur les relations, migrations numérotées 039/040/041.
+
+### ⚠️ Notes de migration
+
+- **Pas de modification** du modèle `User` existant ni des apps template actuelles. Le bridge OIDC est purement additif.
+- **Config requise en prod** : renseigner `OIDC_ISSUER=https://hub.tondomaine.tld` dans le `.env` (vide par défaut, bloque la signature des id_tokens si absent — le claim `iss` serait vide).
+- **Follow-ups non-bloquants** (trackés pour Plan 2 / cleanup) : unify messages 401 (anti client-enumeration), `log_action` sur update/toggle-active, tests 404/update endpoint, cleanup `generate_logout_token` hygiene, wire `oidc_enabled` (kill-switch global), POST userinfo test, redaction `access_token=` des access logs `/launch` (pré-existant).
+
+---
+
 ## [3.12.3] - 21 juillet 2026
 
 ### 🐛 Fix — fresh install cassé par NotNullViolation sur m2m_enforcement_mode
