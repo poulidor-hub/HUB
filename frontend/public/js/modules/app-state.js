@@ -16,6 +16,7 @@ let beaconToken = null;   // Token HMAC éphémère pour sécuriser beacon-logou
 // ===== Catalogue d'apps & comptes de service =====
 let allApps = [];
 let allServiceAccounts = [];
+let allOidcClients = [];
 
 // ===== Filtres admin apps =====
 let adminAppsSearchQuery = '';
@@ -34,6 +35,7 @@ let errorsLastAcknowledgedAt = localStorage.getItem('errorsLastAcknowledgedAt') 
 
 // ===== Bootstrap modals & toast (instanciés au DOMContentLoaded) =====
 let appFormModal, userFormModal, serviceAccountFormModal, saCredentialsModal, toast;
+let oidcClientFormModal, oidcClientCredentialsModal;
 
 // ===== SSE: état de connexion et debounces =====
 let eventSource = null;

@@ -11,6 +11,8 @@ document.addEventListener('DOMContentLoaded', () => {
     userFormModal = new bootstrap.Modal(document.getElementById('userFormModal'));
     serviceAccountFormModal = new bootstrap.Modal(document.getElementById('serviceAccountFormModal'));
     saCredentialsModal = new bootstrap.Modal(document.getElementById('saCredentialsModal'));
+    oidcClientFormModal = new bootstrap.Modal(document.getElementById('oidcClientFormModal'));
+    oidcClientCredentialsModal = new bootstrap.Modal(document.getElementById('oidcClientCredentialsModal'));
     toast = new bootstrap.Toast(document.getElementById('toast'));
 
     // Mettre à jour le preview quand la couleur change
@@ -36,6 +38,9 @@ document.addEventListener('DOMContentLoaded', () => {
                     refreshServiceAccountsStatus();
                 } else if (targetId === '#tabAppBackups') {
                     currentPage = 'app-backups';
+                } else if (targetId === '#tabOidcClients') {
+                    currentPage = 'oidc-clients';
+                    loadOidcClients();
                 }
             }
         });

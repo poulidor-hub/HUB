@@ -964,6 +964,11 @@
                         <i class="bi bi-shield-lock me-1"></i>VPN
                     </button>
                 </li>
+                <li class="nav-item">
+                    <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tabOidcClients">
+                        <i class="bi bi-shield-lock me-1"></i>Clients OIDC
+                    </button>
+                </li>
             </ul>
 
             <div class="tab-content">
@@ -1038,6 +1043,19 @@
                     <div id="serviceAccountsTable" class="table-responsive">
                         <!-- Table loaded dynamically -->
                     </div>
+                </div>
+                <!-- OIDC Clients Tab -->
+                <div class="tab-pane fade" id="tabOidcClients">
+                    <div class="d-flex justify-content-between align-items-center mb-3">
+                        <div>
+                            <h5 class="mb-0">Clients OIDC</h5>
+                            <small class="text-muted">Clients OpenID Connect pour le SSO tiers (Vikunja, Nextcloud...)</small>
+                        </div>
+                        <button class="btn btn-primary btn-sm" data-action="showAddOidcClientForm">
+                            <i class="bi bi-plus-lg me-1"></i>Ajouter
+                        </button>
+                    </div>
+                    <div id="oidcClientsTable" class="table-responsive"></div>
                 </div>
                 <!-- App Backups Tab - Sauvegardes des Applications -->
                 <div class="tab-pane fade" id="tabAppBackups">
@@ -2265,6 +2283,81 @@
                 </div>
             </div>
         </div>
+    </div>
+
+    <!-- OIDC Client Form Modal -->
+    <div class="modal fade" id="oidcClientFormModal" tabindex="-1">
+      <div class="modal-dialog"><div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title"><i class="bi bi-shield-lock me-2"></i><span id="oidcFormTitle">Nouveau Client OIDC</span></h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <form id="oidcClientForm">
+          <div class="modal-body">
+            <input type="hidden" id="oidcClientIdPk">
+            <div class="mb-3">
+              <label class="form-label">Nom</label>
+              <input type="text" class="form-control" id="oidcName" required>
+            </div>
+            <div class="mb-3">
+              <label class="form-label">Redirect URIs (une par ligne)</label>
+              <textarea class="form-control font-monospace" id="oidcRedirectUris" rows="3" required></textarea>
+            </div>
+            <div class="mb-3">
+              <label class="form-label">Scopes (séparés par virgule)</label>
+              <input type="text" class="form-control" id="oidcScopes" value="openid,profile,email">
+            </div>
+            <div class="mb-3">
+              <label class="form-label">Backchannel Logout URI (optionnel)</label>
+              <input type="url" class="form-control" id="oidcBackchannelLogoutUri">
+            </div>
+            <div class="form-check form-switch">
+              <input class="form-check-input" type="checkbox" id="oidcAutoApprove" checked>
+              <label class="form-check-label">Auto-approve (pas de consent screen)</label>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuler</button>
+            <button type="submit" class="btn btn-primary">Enregistrer</button>
+          </div>
+        </form>
+      </div></div>
+    </div>
+
+    <!-- OIDC Client Credentials Modal (one-shot secret display) -->
+    <div class="modal fade" id="oidcClientCredentialsModal" tabindex="-1" data-bs-backdrop="static">
+      <div class="modal-dialog"><div class="modal-content">
+        <div class="modal-header bg-warning">
+          <h5 class="modal-title"><i class="bi bi-exclamation-triangle me-2"></i>Credentials du Client OIDC</h5>
+        </div>
+        <div class="modal-body">
+          <div class="alert alert-warning">
+            <strong>Important !</strong> Le <code>client_secret</code> ne sera plus jamais affiché.
+            Copiez-le maintenant et stockez-le dans le coffre Fernet.
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Client ID</label>
+            <div class="input-group">
+              <input type="text" class="form-control font-monospace" id="oidcCredClientId" readonly>
+              <button class="btn btn-outline-secondary" data-action="copyToClipboard" data-args="oidcCredClientId">
+                <i class="bi bi-clipboard"></i>
+              </button>
+            </div>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Client Secret</label>
+            <div class="input-group">
+              <input type="text" class="form-control font-monospace" id="oidcCredClientSecret" readonly>
+              <button class="btn btn-outline-secondary" data-action="copyToClipboard" data-args="oidcCredClientSecret">
+                <i class="bi bi-clipboard"></i>
+              </button>
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-primary" data-bs-dismiss="modal">J'ai copié les credentials</button>
+        </div>
+      </div></div>
     </div>
 
     <!-- Docker Scan Modal -->
@@ -3504,6 +3597,7 @@ docker compose exec db pg_dump -U hubadmin hub_auth > backup.sql</code></pre>
     <script src="js/modules/toasts-modals.js?v=3.12.3"></script>
     <script src="js/modules/admin-app-approval.js?v=3.12.3"></script>
     <script src="js/modules/admin-service-accounts.js?v=3.12.3"></script>
+    <script src="js/modules/admin-oidc-clients.js?v=3.12.3"></script>
     <script src="js/modules/audit.js?v=3.12.3"></script>
     <script src="js/modules/admin-docker-scanner.js?v=3.12.3"></script>
     <script src="js/modules/admin-ports.js?v=3.12.3"></script>

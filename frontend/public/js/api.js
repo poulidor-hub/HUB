@@ -641,6 +641,14 @@ class HubAPI {
         });
     }
 
+    // ===== OIDC Clients =====
+    async getOidcClients()               { return this.request('/oidc/clients'); }
+    async createOidcClient(data)         { return this.request('/oidc/clients', { method: 'POST', body: JSON.stringify(data) }); }
+    async updateOidcClient(id, data)     { return this.request(`/oidc/clients/${id}`, { method: 'PUT', body: JSON.stringify(data) }); }
+    async toggleOidcClientActive(id)     { return this.request(`/oidc/clients/${id}/toggle-active`, { method: 'PATCH' }); }
+    async regenerateOidcClientSecret(id) { return this.request(`/oidc/clients/${id}/regenerate-secret`, { method: 'POST' }); }
+    async deleteOidcClient(id)           { return this.request(`/oidc/clients/${id}`, { method: 'DELETE' }); }
+
     // Audit
     async getActiveSessions() {
         return this.request('/audit/sessions/active');
