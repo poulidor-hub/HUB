@@ -7,6 +7,15 @@
 
 ---
 
+## [3.13.3] - 23 juillet 2026
+
+### 🐛 Fix — cookie `hub_oidc_session` ignoré en HTTP dev (Secure flag)
+
+- **Problème** : le cookie était posé avec `secure=settings.hub_https_enabled` (défaut `true`), mais en environnement dev HTTP, un cookie `Secure` n'est **jamais stocké** par le navigateur → le cookie n'était jamais envoyé à `/oidc/authorize` → erreur 401 "Session HUB requise".
+- **Fix** : `secure=(request.url.scheme == "https")` détecte le transport réel. Le cookie est `Secure` seulement si la connexion est HTTPS. En dev HTTP, le cookie est posé normalement et envoyé par le navigateur.
+
+---
+
 ## [3.13.2] - 23 juillet 2026
 
 ### 🐛 Fix — launch shortcut devient redirecteur (corrige "State does not match" Vikunja)
