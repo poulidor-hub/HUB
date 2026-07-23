@@ -7,6 +7,25 @@
 
 ---
 
+## [3.13.4] - 23 juillet 2026
+
+### 🐛 Fix — lazy=raise sur User.app_roles dans /oidc/authorize (500 en prod)
+
+- **Problème** : user.get_role_for_app() accédait à User.app_roles (lazy="raise" en async) → InvalidRequestError 500.
+- **Fix** : requête directe sur UserAppRole (select + user_id + application_id), évite le lazy loading.
+
+
+### 🆕 Nouvelle version
+
+> ⚠️ Cette entrée a été créée automatiquement par `sync_version.py`.
+> Veuillez compléter les détails des modifications.
+
+| Fonctionnalité | Description |
+|----------------|-------------|
+| **À compléter** | Décrivez les changements de cette version |
+
+---
+
 ## [3.13.3] - 23 juillet 2026
 
 ### 🐛 Fix — cookie `hub_oidc_session` ignoré en HTTP dev (Secure flag)
