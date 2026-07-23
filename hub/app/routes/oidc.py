@@ -196,13 +196,16 @@ async def _authenticate_client(
     client_id_form: Optional[str], client_secret_form: Optional[str]
 ) -> OAuthClient:
     """Authentifie le client via Basic header ou form body. Retourne le OAuthClient."""
-    # Priorité : form body > Basic header
+    # Form body prioritaire ; Basic header en fallback pour chaque champ manquant
+    # (RFC 6749 §2.3.1 : client_secret_basic utilisable même si client_id est
+    # fourni dans le corps).
     client_id = client_id_form
-    client_secret = client_secret_form or ""
-    if not client_id:
+    client_secret = client_secret_form
+    if not client_id or not client_secret:
         cid_basic, csec_basic = _decode_basic_auth(request)
-        client_id = cid_basic
-        client_secret = csec_basic or ""
+        client_id = client_id or cid_basic
+        client_secret = client_secret or csec_basic
+    client_secret = client_secret or ""
     if not client_id:
         raise HTTPException(401, "client_id manquant")
 
