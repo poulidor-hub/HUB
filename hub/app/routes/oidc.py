@@ -31,6 +31,7 @@ from app.oidc_helpers import (
     build_oidc_metadata,
     create_access_token_jwt,
     create_id_token,
+    decode_oidc_session_cookie,
     generate_authorization_code,
     generate_logout_token,
     generate_refresh_token,
@@ -70,6 +71,133 @@ def _check_oidc_token_rate_limit(request: Request) -> None:
 async def openid_configuration():
     """Document de discovery OIDC standard (public)."""
     return build_oidc_metadata(settings)
+
+
+# ============================================================================
+# /oidc/authorize : endpoint standard OIDC Authorization (consommé par Vikunja)
+# ============================================================================
+# Flow standard : Vikunja génère state/nonce, redirige vers /oidc/authorize.
+# On lit le cookie hub_oidc_session (posé au login HUB) pour identifier l'user.
+# Si user valide + a accès à l'app → génère code → redirige vers redirect_uri.
+
+@router.get("/oidc/authorize")
+async def authorize_oidc(
+    request: Request,
+    client_id: str = Query(...),
+    redirect_uri: str = Query(...),
+    response_type: str = Query("code"),
+    scope: str = Query("openid profile email"),
+    state: Optional[str] = Query(None),
+    nonce: Optional[str] = Query(None),
+    code_challenge: Optional[str] = Query(None),
+    code_challenge_method: Optional[str] = Query(None),
+    db: AsyncSession = Depends(get_db),
+):
+    """OIDC Authorization Endpoint standard (RFC 6749 §4.1.1 + OIDC Core §3.1.2).
+
+    Identifie l'user via le cookie hub_oidc_session posé au login HUB.
+    Si valide : génère un code OIDC one-shot et redirige vers redirect_uri.
+    """
+    # 1. Valider response_type
+    if response_type != "code":
+        raise HTTPException(400, f"response_type '{response_type}' non supporté (attendu: code)")
+
+    # 2. Lookup client
+    result = await db.execute(
+        select(OAuthClient).where(OAuthClient.client_id == client_id)
+    )
+    oauth_client = result.scalar_one_or_none()
+    if not oauth_client:
+        raise HTTPException(404, f"Client OIDC '{client_id}' introuvable")
+    if not oauth_client.is_active:
+        raise HTTPException(403, f"Client OIDC '{client_id}' désactivé")
+
+    # 3. Valider redirect_uri (whitelist stricte)
+    if not oauth_client.check_redirect_uri(redirect_uri):
+        raise HTTPException(400, "redirect_uri non autorisé pour ce client")
+
+    # 4. Filtrer les scopes (openid obligatoire)
+    requested_scopes = (scope or "").split()
+    allowed_scopes = oauth_client.get_allowed_scopes(requested_scopes)
+    if "openid" not in allowed_scopes:
+        raise HTTPException(400, "Le scope 'openid' est obligatoire")
+    final_scope = " ".join(allowed_scopes)
+
+    # 5. Identifier l'user via le cookie de session OIDC
+    cookie_value = request.cookies.get("hub_oidc_session")
+    if not cookie_value:
+        raise HTTPException(
+            401,
+            "Session HUB requise. Connectez-vous au dashboard HUB d'abord, "
+            "puis relancez Vikunja depuis le dashboard."
+        )
+    username = decode_oidc_session_cookie(cookie_value, settings)
+    if not username:
+        raise HTTPException(
+            401,
+            "Session HUB expirée ou invalide. Reconnectez-vous au dashboard HUB."
+        )
+
+    # 6. Lookup user + vérifier accès app
+    user_result = await db.execute(select(User).where(User.username == username))
+    user = user_result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(401, f"Utilisateur '{username}' introuvable")
+    if not user.is_active:
+        raise HTTPException(403, "Utilisateur désactivé")
+
+    # Vérifier l'accès app (admin global OU UserAppRole explicite)
+    # On lit app_id (colonne directe) au lieu de oauth_client.application (lazy='raise').
+    if oauth_client.app_id:
+        app_result = await db.execute(
+            select(Application).where(Application.id == oauth_client.app_id)
+        )
+        linked_app = app_result.scalar_one_or_none()
+        app_slug = linked_app.slug if linked_app else oauth_client.client_id
+        user_role = user.get_role_for_app(app_slug)
+        if not user.is_admin and not user_role:
+            raise HTTPException(
+                403,
+                f"Accès refusé à l'app '{app_slug}' (rôle manquant)"
+            )
+
+    # 7. Générer le code OIDC one-shot
+    raw_code = generate_authorization_code()
+    code_hash = hash_token(raw_code)
+    new_code = OAuthAuthorizationCode(
+        code_hash=code_hash,
+        client_id=client_id,
+        user_id=user.id,
+        redirect_uri=redirect_uri,
+        scope=final_scope,
+        code_challenge=code_challenge,
+        code_challenge_method=code_challenge_method,
+        nonce=nonce,
+        expires_at=utcnow() + timedelta(seconds=settings.oidc_code_ttl_seconds),
+    )
+    db.add(new_code)
+
+    # 8. Audit + commit
+    await log_action(
+        db=db,
+        user_id=user.id,
+        action="oidc_authorize",
+        target=client_id,
+        request=request,
+        response_status=302,
+        details=f"Authorize OIDC client={client_id} scope={final_scope}",
+    )
+    await db.commit()
+
+    # 9. Rediriger vers redirect_uri avec code + state
+    params = {"code": raw_code}
+    if state is not None:
+        params["state"] = state
+    separator = "&" if "?" in redirect_uri else "?"
+    return RedirectResponse(
+        url=f"{redirect_uri}{separator}{urlencode(params)}",
+        status_code=302,
+    )
 
 
 def _verify_launch_access_token(access_token: str) -> tuple[str, dict]:

@@ -310,6 +310,20 @@ async def login_for_token(
     notify_stats_update()
     notify_event("audit_updated", {"action": "login", "username": user.username})
     
+    # Poser le cookie de session OIDC (permet à /oidc/authorize d'identifier
+    # l'user sans re-login, pour le SSO OIDC standard type Vikunja).
+    # Import lazy pour éviter boucle circulaire (oidc_helpers importe app.auth).
+    from app.oidc_helpers import create_oidc_session_cookie
+    response.set_cookie(
+        key="hub_oidc_session",
+        value=create_oidc_session_cookie(user.username, settings),
+        httponly=True,
+        samesite="lax",
+        secure=settings.hub_https_enabled,
+        max_age=8 * 3600,  # 8h, aligné sur session Vikunja
+        path="/",
+    )
+    
     return Token(
         access_token=token,
         expires_at=expire,

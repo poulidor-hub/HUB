@@ -157,9 +157,7 @@ def build_oidc_metadata(settings) -> dict:
     issuer = settings.oidc_issuer.rstrip("/")
     return {
         "issuer": issuer,
-        # Note: authorization_endpoint utilise notre shortcut /oidc/launch/{client_id}
-        # plutôt que le /authorize standard (différé V2).
-        "authorization_endpoint": f"{issuer}/api/oidc/launch/{{client_id}}",
+        "authorization_endpoint": f"{issuer}/oidc/authorize",
         "token_endpoint": f"{issuer}/api/oidc/token",
         "userinfo_endpoint": f"{issuer}/api/oidc/userinfo",
         "jwks_uri": f"{issuer}/api/auth/.well-known/jwks.json",
@@ -178,3 +176,47 @@ def build_oidc_metadata(settings) -> dict:
         "backchannel_logout_supported": settings.oidc_backchannel_logout_enabled,
         "backchannel_logout_session_supported": settings.oidc_backchannel_logout_enabled,
     }
+
+
+# ============================================================
+# Session cookie OIDC (pour /oidc/authorize sans session navigateur)
+# ============================================================
+
+def create_oidc_session_cookie(username: str, settings) -> str:
+    """Génère un JWT court (8h) signé RS256 servant de cookie de session OIDC.
+
+    Permet à /oidc/authorize de savoir qui est connecté sans session cookie
+    dédiée au HUB (qui utilise JWT localStorage). Posé au login password.
+    """
+    now = utcnow()
+    expire = now + timedelta(hours=8)
+    claims = {
+        "sub": username,
+        "iat": now,
+        "exp": expire,
+        "type": "oidc_session",
+    }
+    headers = {"kid": "hub-jwt-key-1"}
+    return pyjwt.encode(
+        claims, settings.jwt_private_key, algorithm="RS256", headers=headers
+    )
+
+
+def decode_oidc_session_cookie(token: str, settings) -> Optional[str]:
+    """Décode un cookie de session OIDC. Retourne le username si valide, None sinon.
+
+    Valide signature RS256 (clé publique HUB), type=oidc_session, expiration.
+    """
+    try:
+        payload = pyjwt.decode(
+            token,
+            settings.jwt_public_key,
+            algorithms=["RS256"],
+            options={"verify_aud": False},
+        )
+        if payload.get("type") != "oidc_session":
+            return None
+        sub = payload.get("sub")
+        return sub if sub else None
+    except pyjwt.PyJWTError:
+        return None

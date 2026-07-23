@@ -149,7 +149,7 @@ class TestBuildOidcMetadata:
         settings.oidc_issuer = "https://hub.example.com"
         meta = build_oidc_metadata(settings)
         assert meta["issuer"] == "https://hub.example.com"
-        assert meta["authorization_endpoint"] == "https://hub.example.com/api/oidc/launch/{client_id}"
+        assert meta["authorization_endpoint"] == "https://hub.example.com/oidc/authorize"
         assert meta["token_endpoint"] == "https://hub.example.com/api/oidc/token"
         assert meta["userinfo_endpoint"] == "https://hub.example.com/api/oidc/userinfo"
         assert meta["jwks_uri"] == "https://hub.example.com/api/auth/.well-known/jwks.json"
