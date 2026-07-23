@@ -162,6 +162,19 @@ async function deleteOidcClient(id, name) {
     }
 }
 
+function copyOidcValue(elementId) {
+    const input = document.getElementById(elementId);
+    if (input && input.value) {
+        navigator.clipboard.writeText(input.value).then(() => {
+            showToast('Copié', 'Valeur copiée dans le presse-papier', 'success');
+        }).catch(() => {
+            input.select();
+            document.execCommand('copy');
+            showToast('Copié', 'Valeur copiée dans le presse-papier', 'success');
+        });
+    }
+}
+
 // Brancher le formulaire au chargement
 document.addEventListener('DOMContentLoaded', () => {
     const form = document.getElementById('oidcClientForm');

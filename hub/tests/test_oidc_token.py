@@ -302,3 +302,36 @@ class TestTokenEndpointSecurityBranches:
         )
         assert response.status_code == 200
         assert "access_token" in response.json()
+
+
+class TestTokenEndpointRateLimit:
+    @pytest.mark.asyncio
+    async def test_rate_limit_after_10_attempts(self, client, setup_code):
+        """11e requête dans la même minute → 429 (spec §8.1 : 10 req/min/IP)."""
+        # Les 10 premières passent le rate-limit (client valide via setup_code)
+        # puis échouent sur un code inconnu → 400.
+        for i in range(10):
+            response = await client.post(
+                "/api/oidc/token",
+                data={
+                    "grant_type": "authorization_code",
+                    "code": f"invalid-{i}",
+                    "redirect_uri": "https://vikunja.example.com/auth/openid/auth",
+                    "client_id": "vikunja",
+                    "client_secret": "vike-secret",
+                },
+            )
+            # Soit 400 (code invalide) soit 401 — mais on est sous la limite
+            assert response.status_code in (400, 401)
+        # 11e requête → 429
+        response = await client.post(
+            "/api/oidc/token",
+            data={
+                "grant_type": "authorization_code",
+                "code": "one-more",
+                "redirect_uri": "https://vikunja.example.com/auth/openid/auth",
+                "client_id": "vikunja",
+                "client_secret": "vike-secret",
+            },
+        )
+        assert response.status_code == 429
