@@ -7,14 +7,16 @@ from datetime import timedelta
 from typing import Optional
 from urllib.parse import urlencode
 
+import httpx
 import jwt as pyjwt
-from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request, status
+from fastapi import APIRouter, Body, Depends, Form, HTTPException, Query, Request, status
 from fastapi.responses import RedirectResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth import hash_token, utcnow, verify_token
+from app.auth import get_current_admin, hash_token, utcnow, verify_token
 from app.config import get_settings
 from app.database import get_db
 from app.models import (
@@ -29,6 +31,7 @@ from app.oidc_helpers import (
     create_access_token_jwt,
     create_id_token,
     generate_authorization_code,
+    generate_logout_token,
     generate_refresh_token,
     validate_pkce,
 )
@@ -454,3 +457,96 @@ async def userinfo_endpoint(
         claims["email"] = compute_email_claim(username, settings)
         claims["email_verified"] = True
     return claims
+
+
+# =============================================================================
+# /api/oidc/backchannel-logout : Back-Channel Logout OIDC (admin HUB only)
+# =============================================================================
+
+class BackchannelLogoutRequest(BaseModel):
+    sub: str
+
+
+@router.post("/api/oidc/backchannel-logout/{client_id}")
+async def trigger_backchannel_logout(
+    client_id: str,
+    payload: BackchannelLogoutRequest = Body(...),
+    admin_user: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+    request: Request = None,
+):
+    """Déclenche un Back-Channel Logout OIDC vers un client (admin HUB only).
+
+    1. Révoque tous les refresh tokens OIDC de l'user pour ce client.
+    2. Envoie un logout_token JWT signé au backchannel_logout_uri du client.
+    """
+    if not settings.oidc_backchannel_logout_enabled:
+        raise HTTPException(501, "Back-Channel Logout désactivé (OIDC_BACKCHANNEL_LOGOUT_ENABLED=false)")
+
+    # 1. Lookup client
+    result = await db.execute(
+        select(OAuthClient).where(OAuthClient.client_id == client_id)
+    )
+    oauth_client = result.scalar_one_or_none()
+    if not oauth_client:
+        raise HTTPException(404, "Client OIDC introuvable")
+    if not oauth_client.backchannel_logout_uri:
+        raise HTTPException(400, "Client n'a pas de backchannel_logout_uri configuré")
+
+    # 2. Lookup user (par sub = username)
+    user_result = await db.execute(
+        select(User).where(User.username == payload.sub)
+    )
+    user = user_result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(404, f"Utilisateur '{payload.sub}' introuvable")
+
+    # 3. Révoquer tous les refresh tokens OIDC de l'user pour ce client
+    rt_result = await db.execute(
+        select(OAuthRefreshToken).where(
+            OAuthRefreshToken.client_id == client_id,
+            OAuthRefreshToken.user_id == user.id,
+            OAuthRefreshToken.revoked_at.is_(None),
+        )
+    )
+    rts = rt_result.scalars().all()
+    for rt in rts:
+        rt.revoked_at = utcnow()
+
+    # 4. Générer + envoyer le logout_token
+    logout_token = generate_logout_token(
+        client_id=client_id,
+        sub=user.username,
+        settings=settings,
+    )
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as http:
+            resp = await http.post(
+                oauth_client.backchannel_logout_uri,
+                data={"logout_token": logout_token},
+            )
+        delivered = resp.status_code < 400
+        delivery_status = resp.status_code
+    except Exception as e:
+        delivered = False
+        delivery_status = f"error: {e}"
+
+    # 5. Audit + commit
+    await log_action(
+        db=db,
+        user_id=admin_user.id,
+        action="oidc_backchannel_logout",
+        target=client_id,
+        request=request,
+        response_status=200,
+        details=f"Back-channel logout sub={payload.sub} delivered={delivered} status={delivery_status}",
+    )
+    await db.commit()
+
+    return {
+        "client_id": client_id,
+        "sub": payload.sub,
+        "refresh_tokens_revoked": len(rts),
+        "logout_token_delivered": delivered,
+        "delivery_status": delivery_status,
+    }
