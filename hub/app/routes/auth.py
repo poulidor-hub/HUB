@@ -319,7 +319,7 @@ async def login_for_token(
         value=create_oidc_session_cookie(user.username, settings),
         httponly=True,
         samesite="lax",
-        secure=settings.hub_https_enabled,
+        secure=(request.url.scheme == "https"),  # Secure seulement si HTTPS réel (sinon cookie ignoré en HTTP dev)
         max_age=8 * 3600,  # 8h, aligné sur session Vikunja
         path="/",
     )
