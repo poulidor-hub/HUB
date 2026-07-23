@@ -7,6 +7,22 @@
 
 ---
 
+## [3.13.2] - 23 juillet 2026
+
+### 🐛 Fix — launch shortcut devient redirecteur (corrige "State does not match" Vikunja)
+
+- **Problème** : le dashboard HUB ajoute toujours `?access_token=<jwt>` au `callback_url` de l'app au clic. Quand `callback_url` pointait vers la page de login Vikunja (`/auth/openid/auth`), Vikunja recevait `?access_token=...` et l'interprétait comme un retour de flow OIDC → erreur "State does not match" (pas de `state`/`code` dans l'URL).
+- **Fix** : `/api/oidc/launch/{client_id}` ne génère plus de code OIDC. Il valide le JWT HUB, lookup l'app liée, et **redirige 302 vers le `frontend_url`** de l'app (page de login Vikunja) **SANS `access_token`** dans l'URL finale. L'user arrive proprement sur la page de login Vikunja, clique le provider HUB, et Vikunja initie le flow OIDC standard via `/oidc/authorize` (qui lit le cookie `hub_oidc_session`).
+- **Tests** : 6 tests du launch shortcut réécrits pour le nouveau comportement redirecteur. Suite OIDC complète : 47/47.
+
+### 📋 Configuration attendue des apps OIDC
+
+- `callback_url` de l'app HUB → `http://<hub_host>:<hub_port>/api/oidc/launch/<client_id>` (le redirecteur).
+- `frontend_url` de l'app HUB → page de login OIDC de l'app externe (ex: `http://vikunja.../auth/openid/auth`).
+- `redirect_uris` du client OIDC → callback réel de l'app externe (ex: `http://vikunja.../auth/openid/hub/callback`).
+
+---
+
 ## [3.13.1] - 23 juillet 2026
 
 ### 🆕 Feat — `/oidc/authorize` standard + cookie session HUB pour SSO OIDC complet
