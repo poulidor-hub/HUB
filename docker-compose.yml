@@ -83,6 +83,15 @@ services:
       - SECRETS_ENCRYPTION_KEY=${SECRETS_ENCRYPTION_KEY:?Définir SECRETS_ENCRYPTION_KEY dans .env (générée via Fernet.generate_key())}
       - ALLOW_PLAINTEXT_SECRETS=${ALLOW_PLAINTEXT_SECRETS:-false}
       - SKIP_PASSWORD_CHECK=${SKIP_PASSWORD_CHECK:-false}
+      # OIDC Provider (bridge OIDC pour apps externes - v3.13.0)
+      - OIDC_ENABLED=${OIDC_ENABLED:-true}
+      - OIDC_ISSUER=${OIDC_ISSUER:-}
+      - OIDC_EMAIL_TEMPLATE=${OIDC_EMAIL_TEMPLATE:-{username}@hub.internal}
+      - OIDC_CODE_TTL_SECONDS=${OIDC_CODE_TTL_SECONDS:-30}
+      - OIDC_ID_TOKEN_TTL_MINUTES=${OIDC_ID_TOKEN_TTL_MINUTES:-10}
+      - OIDC_ACCESS_TOKEN_TTL_MINUTES=${OIDC_ACCESS_TOKEN_TTL_MINUTES:-15}
+      - OIDC_REFRESH_TOKEN_DAYS=${OIDC_REFRESH_TOKEN_DAYS:-30}
+      - OIDC_BACKCHANNEL_LOGOUT_ENABLED=${OIDC_BACKCHANNEL_LOGOUT_ENABLED:-true}
     volumes:
       # Secrets et clés JWT
       - ./secrets:/code/secrets:rw
