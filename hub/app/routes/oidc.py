@@ -26,6 +26,7 @@ from app.models import (
     OAuthClient,
     OAuthRefreshToken,
     User,
+    UserAppRole,
 )
 from app.oidc_helpers import (
     build_oidc_metadata,
@@ -153,13 +154,19 @@ async def authorize_oidc(
             select(Application).where(Application.id == oauth_client.app_id)
         )
         linked_app = app_result.scalar_one_or_none()
-        app_slug = linked_app.slug if linked_app else oauth_client.client_id
-        user_role = user.get_role_for_app(app_slug)
-        if not user.is_admin and not user_role:
-            raise HTTPException(
-                403,
-                f"Accès refusé à l'app '{app_slug}' (rôle manquant)"
+        if not user.is_admin:
+            # Vérifier UserAppRole directement (évite lazy='raise' sur User.app_roles)
+            role_result = await db.execute(
+                select(UserAppRole).where(
+                    UserAppRole.user_id == user.id,
+                    UserAppRole.application_id == linked_app.id
+                )
             )
+            if not role_result.scalar_one_or_none():
+                raise HTTPException(
+                    403,
+                    f"Accès refusé à l'app '{linked_app.slug}' (rôle manquant)"
+                )
 
     # 7. Générer le code OIDC one-shot
     raw_code = generate_authorization_code()
