@@ -226,19 +226,17 @@ def _verify_launch_access_token(access_token: str) -> tuple[str, dict]:
 async def launch_oidc(
     client_id: str,
     request: Request,
-    redirect_uri: str = Query(...),
-    state: str = Query(None),
-    nonce: str = Query(None),
-    scope: str = Query("openid profile email"),
-    code_challenge: str = Query(None),
-    code_challenge_method: str = Query(None),
     access_token: str = Query(...),
     db: AsyncSession = Depends(get_db),
 ):
-    """Shortcut OIDC : valide un JWT HUB, génère un code OIDC one-shot, redirige.
+    """Redirecteur OIDC : valide un JWT HUB, redirige vers la page de login de l'app externe.
 
-    Spécifique au HUB : exploite le JWT HUB déjà détenu par le dashboard
-    plutôt qu'une session cookie navigateur (le HUB n'a pas de cookie session).
+    Le dashboard HUB ouvre toujours `{callback_url}?access_token=<jwt>` au clic
+    sur une app. Pour les apps OIDC (Vikunja), ce endpoint sert de tampon :
+    il valide le JWT (audit + contrôle d'accès), puis redirige vers le
+    `frontend_url` de l'app liée (page de login OIDC du client externe) SANS
+    l'access_token. L'user clique alors sur le provider OIDC côté app externe,
+    qui initie le flow standard via /oidc/authorize.
     """
     # 1. Valider le JWT HUB (verify_token synchrone)
     username, payload = _verify_launch_access_token(access_token)
@@ -254,61 +252,36 @@ async def launch_oidc(
     if not oauth_client.is_active:
         raise HTTPException(403, f"Client OIDC '{client_id}' désactivé")
 
-    # 3. Vérifier l'accès user (rôle app via token HUB).
-    # Convention : un client OIDC est lié à une app HUB via app_id. Quand c'est
-    # le cas, on résout le slug de cette app séparément (la relation
-    # OAuthClient.application est lazy="raise", donc non navigable en async).
-    # Quand app_id est None, le client_id sert de slug de référence (cas Vikunja
-    # où client_id == slug app). Dans les deux cas, ce slug doit être une clé du
-    # dict apps du JWT HUB.
-    if oauth_client.app_id:
-        app_result = await db.execute(
-            select(Application).where(Application.id == oauth_client.app_id)
+    # 3. Lookup app liée + récupérer frontend_url (page de login du client externe)
+    if not oauth_client.app_id:
+        raise HTTPException(
+            400,
+            f"Le client OIDC '{client_id}' n'est pas lié à une app HUB "
+            f"(app_id requis pour la redirection de lancement)."
         )
-        linked_app = app_result.scalar_one_or_none()
-        app_slug = linked_app.slug if linked_app else oauth_client.client_id
-    else:
-        app_slug = oauth_client.client_id
+    app_result = await db.execute(
+        select(Application).where(Application.id == oauth_client.app_id)
+    )
+    linked_app = app_result.scalar_one_or_none()
+    if not linked_app:
+        raise HTTPException(404, f"App HUB liée (id={oauth_client.app_id}) introuvable")
+    if not linked_app.frontend_url:
+        raise HTTPException(500, f"L'app '{linked_app.slug}' n'a pas de frontend_url configuré")
 
+    # 4. Vérifier l'accès user (admin global OU rôle explicite sur l'app)
+    app_slug = linked_app.slug
     if app_slug not in apps_in_token:
         raise HTTPException(
             403, f"Accès refusé à l'app '{app_slug}' (rôle manquant)"
         )
 
-    # 4. Valider redirect_uri (whitelist stricte)
-    if not oauth_client.check_redirect_uri(redirect_uri):
-        raise HTTPException(400, "redirect_uri non autorisé pour ce client")
-
-    # 5. Filtrer les scopes demandés vs autorisés
-    requested_scopes = (scope or "").split()
-    allowed_scopes = oauth_client.get_allowed_scopes(requested_scopes)
-    if "openid" not in allowed_scopes:
-        raise HTTPException(400, "Le scope 'openid' est obligatoire")
-    final_scope = " ".join(allowed_scopes)
-
-    # 6. Récupérer le user en DB (pour user_id)
+    # 5. Lookup user (pour audit)
     user_result = await db.execute(select(User).where(User.username == username))
     user = user_result.scalar_one_or_none()
     if not user:
         raise HTTPException(401, f"Utilisateur '{username}' introuvable")
 
-    # 7. Générer code OIDC one-shot
-    raw_code = generate_authorization_code()
-    code_hash = hash_token(raw_code)
-    new_code = OAuthAuthorizationCode(
-        code_hash=code_hash,
-        client_id=client_id,
-        user_id=user.id,
-        redirect_uri=redirect_uri,
-        scope=final_scope,
-        code_challenge=code_challenge,
-        code_challenge_method=code_challenge_method,
-        nonce=nonce,
-        expires_at=utcnow() + timedelta(seconds=settings.oidc_code_ttl_seconds),
-    )
-    db.add(new_code)
-
-    # 8. Audit + commit (log_action ne commit pas, l'appelant le fait)
+    # 6. Audit + commit
     await log_action(
         db=db,
         user_id=user.id,
@@ -316,19 +289,13 @@ async def launch_oidc(
         target=client_id,
         request=request,
         response_status=302,
-        details=f"Launch OIDC client={client_id} scope={final_scope}",
+        details=f"Launch OIDC client={client_id} -> redirect to {linked_app.frontend_url}",
     )
     await db.commit()
 
-    # 9. Rediriger avec code + state
-    params = {"code": raw_code}
-    if state:
-        params["state"] = state
-    separator = "&" if "?" in redirect_uri else "?"
-    return RedirectResponse(
-        url=f"{redirect_uri}{separator}{urlencode(params)}",
-        status_code=302,
-    )
+    # 7. Rediriger vers le frontend_url de l'app (page login OIDC externe)
+    # SANS access_token (sinon l'app externe l'interprète comme un retour de flow).
+    return RedirectResponse(url=str(linked_app.frontend_url), status_code=302)
 
 
 # =============================================================================
