@@ -41,6 +41,19 @@ function renderAppsHealth(data) {
     updateAppsHealthTimestamps();
 }
 
+function formatUptime(seconds) {
+    if (seconds == null || isNaN(seconds)) return '';
+    var s = Math.floor(seconds);
+    if (s < 60) return s + 's';
+    if (s < 3600) return Math.floor(s / 60) + 'min';
+    if (s < 86400) {
+        var h = Math.floor(s / 3600);
+        var m = Math.floor((s % 3600) / 60);
+        return m > 0 ? h + 'h ' + m + 'min' : h + 'h';
+    }
+    return Math.floor(s / 86400) + 'j';
+}
+
 function renderAppCard(app) {
     var statusStyle = {
         online:   { bg: '#16a34a', text: 'Online', cardBg: '#fff', border: '#e2e8f0' },
@@ -54,12 +67,38 @@ function renderAppCard(app) {
     var slug = escapeHtml(app.slug);
     var latency = app.latency_ms ? app.latency_ms + 'ms' : '';
     var version = app.version || '';
+    var uptime = formatUptime(app.uptime_seconds);
     var error = app.error
         ? '<div style="font-size:11px;color:#dc2626;margin-top:4px;">' + escapeHtml(app.error.substring(0, 100)) + '</div>'
         : '';
 
-    // L'app est joignable mais sans health endpoint standard (pas d'erreur, pas de version)
-    var noHealth = (app.status === 'online' && !version && !error);
+    // Ligne metriques : latence, version, uptime
+    var metrics = [];
+    if (latency) metrics.push('📡 ' + latency);
+    if (version) metrics.push('🏷 ' + escapeHtml(version));
+    if (uptime) metrics.push('⏱ ' + uptime);
+    var metricsRow = metrics.length
+        ? '<div style="display:flex;gap:20px;flex-wrap:wrap;font-size:12px;color:#64748b;border-top:1px solid #f1f5f9;padding-top:10px;">' +
+          metrics.map(function (m) { return '<span>' + m + '</span>'; }).join('') + '</div>'
+        : '';
+
+    // Ligne integration : statut connexion Hub + services decouverts
+    var integrationBadges = [];
+    if (app.hub_connected === true) {
+        integrationBadges.push('<span style="background:#dcfce7;color:#16a34a;font-size:11px;padding:2px 8px;border-radius:10px;font-weight:500;">✓ Hub connecté</span>');
+    } else if (app.hub_connected === false) {
+        integrationBadges.push('<span style="background:#fee2e2;color:#dc2626;font-size:11px;padding:2px 8px;border-radius:10px;font-weight:500;">✗ Hub déconnecté</span>');
+    }
+    if (app.services_count != null) {
+        integrationBadges.push('<span style="background:#eff6ff;color:#2563eb;font-size:11px;padding:2px 8px;border-radius:10px;font-weight:500;">🔌 ' + app.services_count + ' service' + (app.services_count > 1 ? 's' : '') + '</span>');
+    }
+    var integrationRow = integrationBadges.length
+        ? '<div style="display:flex;gap:6px;flex-wrap:wrap;">' + integrationBadges.join('') + '</div>'
+        : '';
+
+    // L'app est joignable mais sans aucune donnee sante (ni version, ni uptime,
+    // ni integration Hub, ni erreur) → vraiment aucun endpoint /health exploitable.
+    var noHealth = (app.status === 'online' && !version && !uptime && !integrationBadges.length && !error);
     var healthNote = noHealth
         ? '<div style="font-size:11px;color:#94a3b8;margin-top:4px;"><i class="bi bi-info-circle me-1"></i>Serveur joignable — pas d\'endpoint /health standard</div>'
         : '';
@@ -82,10 +121,8 @@ function renderAppCard(app) {
                 '</div>' +
                 '<span style="background:' + statusStyle.bg + ';color:white;font-size:11px;padding:3px 8px;border-radius:12px;font-weight:500;flex-shrink:0;">' + statusStyle.text + degradedInfo + '</span>' +
             '</div>' +
-            '<div style="display:flex;gap:20px;font-size:12px;color:#64748b;border-top:1px solid #f1f5f9;padding-top:10px;">' +
-                (latency ? '<span>' + '📡 ' + latency + '</span>' : '') +
-                (version ? '<span>' + '🏷 ' + escapeHtml(version) + '</span>' : '') +
-            '</div>' +
+            metricsRow +
+            integrationRow +
             healthNote +
             error +
             '<div style="display:flex;justify-content:space-between;align-items:center;border-top:1px solid ' + statusStyle.border + ';padding-top:8px;margin-top:auto;">' +
