@@ -7,8 +7,10 @@ from datetime import timedelta
 from typing import Optional
 from urllib.parse import urlencode
 
+import jwt as pyjwt
 from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request, status
 from fastapi.responses import RedirectResponse
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -402,3 +404,53 @@ async def _handle_refresh_token_grant(
         "id_token": id_token,
         "scope": rt.scope,
     }
+
+
+# =============================================================================
+# /api/oidc/userinfo : UserInfo OIDC (Bearer access_token)
+# =============================================================================
+
+bearer_scheme = HTTPBearer(auto_error=False)
+
+
+async def _decode_oidc_access_token(
+    credentials: HTTPAuthorizationCredentials,
+) -> dict:
+    """Décode et valide un access_token OIDC signé par le HUB."""
+    try:
+        payload = pyjwt.decode(
+            credentials.credentials,
+            settings.jwt_public_key,
+            algorithms=["RS256"],
+            options={"verify_aud": False},
+        )
+        if payload.get("token_type") != "OIDC_ACCESS":
+            raise HTTPException(401, "Token n'est pas un access_token OIDC")
+        return payload
+    except pyjwt.PyJWTError as e:
+        raise HTTPException(401, f"Token invalide: {e}")
+
+
+@router.get("/api/oidc/userinfo")
+@router.post("/api/oidc/userinfo")
+async def userinfo_endpoint(
+    credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme),
+):
+    """OIDC UserInfo : retourne les claims de l'utilisateur selon le scope du token."""
+    if not credentials:
+        raise HTTPException(401, "Authorization Bearer requis")
+    payload = await _decode_oidc_access_token(credentials)
+
+    username = payload.get("sub")
+    scope_str = payload.get("scope", "")
+    scopes = set(scope_str.split())
+
+    from app.oidc_helpers import compute_email_claim
+    claims = {"sub": username}
+    if "profile" in scopes:
+        claims["preferred_username"] = username
+        claims["name"] = username
+    if "email" in scopes:
+        claims["email"] = compute_email_claim(username, settings)
+        claims["email_verified"] = True
+    return claims
