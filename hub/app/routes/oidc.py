@@ -4,7 +4,7 @@ Approche C : implémentation from-scratch avec pyjwt[crypto] déjà présent.
 Réutilise settings.jwt_private_key, JWKS endpoint, hash_token(), get_password_hash().
 """
 from datetime import timedelta
-from typing import Optional
+from typing import List, Optional
 from urllib.parse import urlencode
 
 import httpx
@@ -550,3 +550,177 @@ async def trigger_backchannel_logout(
         "logout_token_delivered": delivered,
         "delivery_status": delivery_status,
     }
+
+
+# =============================================================================
+# /api/oidc/clients : CRUD admin des clients OIDC (secret one-shot display)
+# =============================================================================
+
+class OAuthClientCreate(BaseModel):
+    name: str
+    client_id: Optional[str] = None  # auto-généré si non fourni
+    redirect_uris: List[str]
+    scopes: List[str] = ["openid", "profile", "email"]
+    auto_approve: bool = True
+    backchannel_logout_uri: Optional[str] = None
+    app_id: Optional[int] = None
+
+
+class OAuthClientUpdate(BaseModel):
+    name: Optional[str] = None
+    redirect_uris: Optional[List[str]] = None
+    scopes: Optional[List[str]] = None
+    auto_approve: Optional[bool] = None
+    backchannel_logout_uri: Optional[str] = None
+    app_id: Optional[int] = None
+
+
+def _serialize_client(c: OAuthClient) -> dict:
+    """Sérialise un OAuthClient SANS exposer le secret hash."""
+    return {
+        "id": c.id,
+        "client_id": c.client_id,
+        "name": c.name,
+        "redirect_uris": c.redirect_uris,
+        "scopes": c.scopes,
+        "is_active": c.is_active,
+        "auto_approve": c.auto_approve,
+        "backchannel_logout_uri": c.backchannel_logout_uri,
+        "app_id": c.app_id,
+        "created_at": c.created_at.isoformat() if c.created_at else None,
+        "updated_at": c.updated_at.isoformat() if c.updated_at else None,
+    }
+
+
+@router.get("/api/oidc/clients")
+async def list_oidc_clients(
+    admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(select(OAuthClient).order_by(OAuthClient.created_at.desc()))
+    clients = result.scalars().all()
+    return [_serialize_client(c) for c in clients]
+
+
+@router.post("/api/oidc/clients", status_code=201)
+async def create_oidc_client(
+    payload: OAuthClientCreate,
+    admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+    request: Request = None,
+):
+    from app.auth import get_password_hash
+    raw_secret = OAuthClient.generate_client_secret()
+    client = OAuthClient(
+        client_id=payload.client_id or OAuthClient.generate_client_id(),
+        client_secret_hash=get_password_hash(raw_secret),
+        name=payload.name,
+        redirect_uris=payload.redirect_uris,
+        scopes=payload.scopes,
+        auto_approve=payload.auto_approve,
+        backchannel_logout_uri=payload.backchannel_logout_uri,
+        app_id=payload.app_id,
+    )
+    db.add(client)
+    await log_action(
+        db=db, user_id=admin.id, action="oidc_client_create",
+        target=client.client_id, request=request, response_status=201,
+    )
+    await db.commit()
+    await db.refresh(client)
+    data = _serialize_client(client)
+    data["client_secret"] = raw_secret  # affiché UNE SEULE FOIS
+    return data
+
+
+@router.put("/api/oidc/clients/{client_id_pk}")
+async def update_oidc_client(
+    client_id_pk: int,
+    payload: OAuthClientUpdate,
+    admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(OAuthClient).where(OAuthClient.id == client_id_pk)
+    )
+    client = result.scalar_one_or_none()
+    if not client:
+        raise HTTPException(404, "Client OIDC introuvable")
+
+    if payload.name is not None: client.name = payload.name
+    if payload.redirect_uris is not None: client.redirect_uris = payload.redirect_uris
+    if payload.scopes is not None: client.scopes = payload.scopes
+    if payload.auto_approve is not None: client.auto_approve = payload.auto_approve
+    if payload.backchannel_logout_uri is not None: client.backchannel_logout_uri = payload.backchannel_logout_uri
+    if payload.app_id is not None: client.app_id = payload.app_id
+    await db.commit()
+    await db.refresh(client)
+    return _serialize_client(client)
+
+
+@router.patch("/api/oidc/clients/{client_id_pk}/toggle-active")
+async def toggle_oidc_client_active(
+    client_id_pk: int,
+    admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(OAuthClient).where(OAuthClient.id == client_id_pk)
+    )
+    client = result.scalar_one_or_none()
+    if not client:
+        raise HTTPException(404, "Client OIDC introuvable")
+    client.is_active = not client.is_active
+    await db.commit()
+    await db.refresh(client)
+    return _serialize_client(client)
+
+
+@router.post("/api/oidc/clients/{client_id_pk}/regenerate-secret")
+async def regenerate_oidc_client_secret(
+    client_id_pk: int,
+    admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+    request: Request = None,
+):
+    from app.auth import get_password_hash
+    result = await db.execute(
+        select(OAuthClient).where(OAuthClient.id == client_id_pk)
+    )
+    client = result.scalar_one_or_none()
+    if not client:
+        raise HTTPException(404, "Client OIDC introuvable")
+    raw_secret = OAuthClient.generate_client_secret()
+    client.client_secret_hash = get_password_hash(raw_secret)
+    await log_action(
+        db=db, user_id=admin.id, action="oidc_client_regenerate_secret",
+        target=client.client_id, request=request, response_status=200,
+    )
+    await db.commit()
+    return {
+        "client_id": client.client_id,
+        "client_secret": raw_secret,  # affiché UNE SEULE FOIS
+    }
+
+
+@router.delete("/api/oidc/clients/{client_id_pk}", status_code=204)
+async def delete_oidc_client(
+    client_id_pk: int,
+    admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+    request: Request = None,
+):
+    result = await db.execute(
+        select(OAuthClient).where(OAuthClient.id == client_id_pk)
+    )
+    client = result.scalar_one_or_none()
+    if not client:
+        raise HTTPException(404, "Client OIDC introuvable")
+    client_id_value = client.client_id
+    await db.delete(client)
+    await log_action(
+        db=db, user_id=admin.id, action="oidc_client_delete",
+        target=client_id_value, request=request, response_status=204,
+    )
+    await db.commit()
+    return None
