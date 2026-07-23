@@ -7,6 +7,23 @@
 
 ---
 
+## [3.13.1] - 23 juillet 2026
+
+### 🆕 Feat — `/oidc/authorize` standard + cookie session HUB pour SSO OIDC complet
+
+- **Ajouté** : endpoint `GET /oidc/authorize` (RFC 6749 §4.1.1 + OIDC Core §3.1.2) — le vrai endpoint OIDC Authorization standard que les clients type Vikunja attendent. Identifie l'user via un cookie `hub_oidc_session` (et non plus via le JWT HUB en query string), génère un code OIDC one-shot lié au state/nonce/PKCE fournis par le client, redirige vers `redirect_uri?code=...&state=...`.
+- **Ajouté** : cookie de session `hub_oidc_session` posé au login (grant_type=password) — JWT RS256 court (8h, type `oidc_session`, signé clé HUB), httpOnly, samesite=lax, secure selon `HUB_HTTPS_ENABLED`. Permet à `/oidc/authorize` de savoir qui est connecté sans re-login, comblant le gap « pas de session cookie navigateur » du HUB.
+- **Corrigé** : `authorization_endpoint` dans le document discovery pointe désormais vers `/oidc/authorize` (standard) au lieu du shortcut `/api/oidc/launch/{client_id}` qui était incompatible avec le flow OIDC standard de Vikunja (elle génère son propre state/nonce et initie le flow elle-même — le shortcut court-circuitait ces étapes).
+- **Ajouté** : variables `OIDC_*` exposées au conteneur `hub-api` dans `docker-compose.yml` (8 vars d'interpolation `${OIDC_*}` depuis `.env`), sans lesquelles `settings.oidc_*` restait vide en runtime.
+- **Tests** : 12 nouveaux tests (8 endpoint authorize + 4 cookie session helpers). Suite OIDC complète : 48/48.
+
+### ⚠️ Notes
+
+- Le shortcut `/api/oidc/launch/{client_id}` reste disponible pour les clients OIDC custom qui l'appellent consciemment, mais **n'est plus le chemin recommandé** pour les apps OIDC standard. Les apps comme Vikunja doivent utiliser `/oidc/authorize` (découvert automatiquement via `/.well-known/openid-configuration`).
+- Le `callback_url` des apps HUB existantes pointant vers le shortcut `/api/oidc/launch/...` doit être updaté pour pointer vers la page de login de l'app externe (ex: `http://vikunja.../auth/openid/auth`) afin que l'user déclenche le flow OIDC standard.
+
+---
+
 ## [3.13.0] - 23 juillet 2026
 
 ### 🆕 Feat — Bridge OIDC Provider (SSO pour apps externes type Vikunja)
