@@ -7,6 +7,22 @@
 
 ---
 
+## [3.14.0] - 23 juillet 2026
+
+### ⚡ Dashboard de santé — sonde enrichie + UI détaillée
+
+- **feat(probe)** : refonte de la logique de sonde dans `apps_health.py`. L'ordre des paths est inversé (`/api/health` d'abord, standard du parc), et un **4xx n'interrompt plus le parcours** — il indique juste que le serveur est joignable, et on continue vers le path suivant (fin du bug « note grise pour toutes les apps template »).
+- **feat(detailed)** : phase 2 de sonde — si l'app est joignable, le Hub interroge `/api/health/detailed` pour collecter `uptime_seconds`, `hub.connected`, `services.discovered_count`, `m2m_token_available`, et `app.version` (fallback si absent du `/api/health` basique).
+- **feat(UI)** : enrichissement de la carte `renderAppCard` avec ⏱ uptime formaté, badge vert/rouge « Hub connecté/déconnecté », et compteur 🔌 services découverts. Le message « pas d'endpoint /health standard » ne s'affiche plus que s'il n'y a **vraiment** aucune donnée collectée.
+- **tests** : 8 nouveaux tests unitaires (`test_api_apps_health.py`) couvrant la continuation sur 4xx, l'extraction version (top-level + fallback detailed), les données riches, et les statuts offline/degraded.
+- **schema** : `AppHealthItem` enrichi avec `uptime_seconds`, `hub_connected`, `services_count`, `m2m_token_available` (tous `Optional`, rétrocompatibles).
+
+### 🔗 OIDC — endpoint /authorize + admin clients (v3.13.x, portage depuis branche feature)
+
+- L'ensemble des features OIDC développées sur la branche `feat/oidc-bridge-v3.13` est intégré : endpoint `/oidc/authorize`, gestion admin des clients OAuth, sessions cookie `hub_oidc_session`, discovery, backchannel logout, helpers JWT. (Détails complets dans les entrées v3.13.1 → v3.13.4 ci-dessous.)
+
+---
+
 ## [3.13.4] - 23 juillet 2026
 
 ### 🐛 Fix — lazy=raise sur User.app_roles dans /oidc/authorize (500 en prod)
