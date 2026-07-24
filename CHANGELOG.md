@@ -7,6 +7,13 @@
 
 ---
 
+## [3.17.1] - 24 juillet 2026
+
+### 🔧 Corrigé
+- **Session multi-utilisateur Vikunja** : le launch OIDC redirige désormais vers `/logout` de l'app avant d'afficher la page de login. Cela purge le cookie de session Vikunja et empêche l'utilisateur suivant de voir les données du précédent. Le flow est fiable (302 direct) et ne dépend pas d'iframes JavaScript.
+
+---
+
 ## [3.17.0] - 24 juillet 2026
 
 ### ⚡ Notes cumulatives — toutes les versions intermédiaires affichées
