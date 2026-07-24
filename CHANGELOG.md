@@ -7,6 +7,18 @@
 
 ---
 
+## [3.16.0] - 24 juillet 2026
+
+### ⚡ Changelog — navigateur d'historique + visualiseur de code modifié
+
+- **feat(releases)** : endpoint `GET /api/apps/{slug}/releases` interroge l'API GitHub et retourne la liste structurée des releases (tag, date, notes, URL). La modale changelog affiche désormais un **sélecteur de version** pour naviguer dans tout l'historique.
+- **feat(diff)** : endpoint `GET /api/apps/{slug}/diff?from=X&to=Y` utilise l'API GitHub `compare` et retourne les fichiers modifiés avec leurs patches unifiés (`additions`, `deletions`, `patch`). Plafonné à 50 fichiers.
+- **feat(UI code)** : onglet « Code » dans la modale changelog — affiche la liste des fichiers modifiés (avec icônes 🟢 ajout / 🟡 modif / 🔴 suppression, compteurs +/−), chacun **expandable** pour révéler le diff colorisé (vert/rouge/hunk headers). Lien vers la comparaison GitHub complète.
+- **feat(UI notes)** : onglet « Notes » affichant le body de la release sélectionnée. Fallback automatique sur le `CHANGELOG.md` brut si aucune release GitHub n'est trouvée.
+- **tests** : +4 tests (parsing releases, parsing diff, cas repo non configuré). Total : 12 tests passent.
+
+---
+
 ## [3.15.0] - 24 juillet 2026
 
 ### ⚡ Dashboard santé — pilotage des apps + mise à jour + changelog
