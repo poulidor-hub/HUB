@@ -7,6 +7,16 @@
 
 ---
 
+## [3.17.0] - 24 juillet 2026
+
+### ⚡ Notes cumulatives — toutes les versions intermédiaires affichées
+
+- **feat(cumul)** : quand la modale changelog est ouverte depuis le badge de mise à jour, l'onglet Notes affiche désormais **toutes** les releases entre la version actuelle déployée et la dernière disponible. Chaque version intermédiaire est présentée dans une carte dédiée (tag, date, body). Un header indique la plage (ex: « 1.0.0 → 1.3.0 · 3 versions »).
+- **comportement** : le sélecteur de version permet toujours d'afficher les notes d'une version spécifique (mode normal). Revenir sur la dernière version via le sélecteur réactive le mode cumulatif.
+- **tech** : fonctions `_renderCumulativeNotes`, `_versionNewer`, `_parseVersion` pour la comparaison semver et le rendu multi-sections.
+
+---
+
 ## [3.16.0] - 24 juillet 2026
 
 ### ⚡ Changelog — navigateur d'historique + visualiseur de code modifié

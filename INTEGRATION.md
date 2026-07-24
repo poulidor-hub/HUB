@@ -1,6 +1,6 @@
 # Guide d'Intégration - Hub d'Authentification
 
-> **Version** : 3.16.0
+> **Version** : 3.17.0
 > **Dernière mise à jour** : 24 juillet 2026
 > **Auteur** : Équipe Hub
 
