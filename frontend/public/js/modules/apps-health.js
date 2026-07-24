@@ -226,15 +226,15 @@ function renderUpdateBadge(slug, update) {
     badge.style.display = 'block';
     badge.style.marginTop = '6px';
     badge.innerHTML =
-        '<button onclick="showChangelog(\'' + slug + '\')" ' +
+        '<button onclick="showChangelog(\'' + slug + '\', \'' + escapeHtml(update.current_version || '') + '\')" ' +
         'style="background:#fef3c7;color:#92400e;border:1px solid #fcd34d;font-size:11px;padding:3px 10px;border-radius:6px;cursor:pointer;display:inline-block;width:100%;text-align:left;">' +
         '🔄 Mise à jour disponible : <strong>' + escapeHtml(update.current_version) + '</strong> → <strong>' + escapeHtml(update.latest_version) + '</strong>' +
         ' <span style="float:right;color:#b45309;">📋 Voir le changelog</span>' +
         '</button>';
 }
 
-async function showChangelog(slug) {
-    _changelogState = { slug: slug, releases: [], selectedIndex: 0, tab: 'notes' };
+async function showChangelog(slug, currentVersion) {
+    _changelogState = { slug: slug, releases: [], selectedIndex: 0, tab: 'notes', currentVersion: currentVersion || null };
     var modal = _showModal('Changelog — ' + slug,
         '<div class="text-center py-4"><div class="spinner-border spinner-border-sm"></div> Chargement des releases…</div>');
     try {
@@ -307,10 +307,77 @@ function _renderChangelogBody(modal) {
 function _renderNotesTab(release) {
     var el = document.getElementById('changelogTabContent');
     if (!el) return;
+
+    // Mode cumulatif : afficher les notes de TOUTES les versions
+    // entre la version actuelle (depuis le badge) et la derniere release.
+    var s = _changelogState;
+    // Mode cumulatif : uniquement depuis le badge (currentVersion fourni)
+    // et quand on regarde la derniere version (selectedIndex === 0).
+    if (s.currentVersion && s.selectedIndex === 0) {
+        var newerReleases = s.releases.filter(function (r) {
+            return _versionNewer(r.tag, s.currentVersion);
+        });
+        // Si au moins 2 releases plus recentes (ou 1 mais differente de la selection),
+        // on affiche le cumul. Sinon on tombe sur le mode normal.
+        if (newerReleases.length >= 1) {
+            _renderCumulativeNotes(newerReleases, s.currentVersion);
+            return;
+        }
+    }
+
+    // Mode normal : notes d'une seule version
+    _renderSingleNotes(release);
+}
+
+function _renderSingleNotes(release) {
+    var el = document.getElementById('changelogTabContent');
+    if (!el) return;
     var body = release.body ? escapeHtml(release.body) : '(pas de notes pour cette version)';
     el.innerHTML =
         '<pre style="font-size:12px;line-height:1.5;max-height:55vh;overflow:auto;background:#f8fafc;color:#334155;padding:16px;border-radius:6px;white-space:pre-wrap;font-family:system-ui,-apple-system,sans-serif;">' +
         body + '</pre>';
+}
+
+function _renderCumulativeNotes(newerReleases, fromVersion) {
+    var el = document.getElementById('changelogTabContent');
+    if (!el) return;
+
+    var toVersion = newerReleases[0].tag;
+    var header = '<div style="font-size:13px;color:#6366f1;margin-bottom:10px;font-weight:600;">' +
+        '📋 Notes cumulatives : <strong>' + escapeHtml(fromVersion) + '</strong> → <strong>' + escapeHtml(toVersion) + '</strong> ' +
+        '(' + newerReleases.length + ' version' + (newerReleases.length > 1 ? 's' : '') + ')' +
+        '</div>';
+
+    var sections = newerReleases.map(function (r) {
+        var body = r.body ? escapeHtml(r.body) : '(pas de notes)';
+        return '<div style="border:1px solid #e2e8f0;border-radius:6px;margin-bottom:10px;padding:12px;background:#fff;">' +
+            '<div style="font-weight:600;font-size:13px;color:#0f172a;margin-bottom:6px;">' +
+            escapeHtml(r.tag) + (r.published_at ? ' — <span style="color:#94a3b8;font-weight:400;">' + _formatDate(r.published_at) + '</span>' : '') +
+            '</div>' +
+            '<pre style="font-size:12px;line-height:1.5;background:#f8fafc;color:#334155;padding:10px;border-radius:4px;white-space:pre-wrap;font-family:system-ui,-apple-system,sans-serif;margin:0;">' +
+            body + '</pre>' +
+            '</div>';
+    }).join('');
+
+    el.innerHTML =
+        '<div style="max-height:55vh;overflow:auto;">' +
+        header +
+        sections +
+        '<div style="font-size:11px;color:#94a3b8;margin-top:8px;">Utilisez le selecteur de version ci-dessus pour voir les details d\'une version specifique.</div>' +
+        '</div>';
+}
+
+function _parseVersion(v) {
+    return (v || '0').split('.').map(function (p) { return parseInt(p, 10) || 0; });
+}
+
+function _versionNewer(a, b) {
+    var pa = _parseVersion(a), pb = _parseVersion(b);
+    for (var i = 0; i < 3; i++) {
+        if (pa[i] > pb[i]) return true;
+        if (pa[i] < pb[i]) return false;
+    }
+    return false;
 }
 
 async function _loadDiffTab(slug, fromTag, toTag) {
