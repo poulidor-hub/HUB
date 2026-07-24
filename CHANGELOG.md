@@ -7,6 +7,19 @@
 
 ---
 
+## [3.15.0] - 24 juillet 2026
+
+### ⚡ Dashboard santé — pilotage des apps + mise à jour + changelog
+
+- **feat(start/stop)** : nouveaux endpoints `POST /api/apps/{slug}/start` et `/stop` qui wrappent `hubctl start/stop {slug}` en subprocess. Boutons ▶ Démarrer et ■ Arrêter sur chaque carte, avec confirmation navigateur.
+- **feat(logs)** : endpoint `GET /api/apps/{slug}/logs?tail=150&service=api` retourne les logs Docker Compose récents. Bouton 📋 Logs avec affichage dans une modale (fond sombre, scrollable).
+- **feat(update-check)** : endpoint `GET /api/apps/{slug}/update-check` interroge l'API GitHub (`/repos/{owner}/{repo}/releases/latest`) et compare la version actuelle (sonde `/api/health`) avec la dernière release. Un badge 🔄 « Mise à jour disponible : X → Y » apparaît sur la carte quand une version supérieure est détectée.
+- **feat(changelog)** : endpoint `GET /api/apps/{slug}/changelog` récupère le `CHANGELOG.md` brut depuis GitHub (`raw.githubusercontent.com`). Affichage dans une modale dédiée au clic sur le badge de mise à jour.
+- **model** : nouveau champ `git_repo_url` (nullable) sur le modèle `Application` + migration 042. Requis pour activer update-check et changelog par app.
+- **UI** : refonte du footer des cartes — 4 boutons d'action (Start/Stop/Redémarrer/Logs) en groupe compact. Le badge de mise à jour s'affiche en arrière-plan après le rendu (non-bloquant).
+
+---
+
 ## [3.14.0] - 23 juillet 2026
 
 ### ⚡ Dashboard de santé — sonde enrichie + UI détaillée
