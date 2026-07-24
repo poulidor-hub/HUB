@@ -11,7 +11,7 @@ import time
 import httpx
 import jwt as pyjwt
 from fastapi import APIRouter, Body, Depends, Form, HTTPException, Query, Request, status
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, HTMLResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel
 from sqlalchemy import select
@@ -295,14 +295,22 @@ async def launch_oidc(
         action="oidc_launch",
         target=client_id,
         request=request,
-        response_status=302,
-        details=f"Launch OIDC client={client_id} -> redirect to {linked_app.frontend_url}",
+        response_status=200,
+        details=f"Launch OIDC client={client_id} -> auto-logout + redirect to authorize",
     )
     await db.commit()
 
-    # 7. Rediriger vers le frontend_url de l'app (page login OIDC externe)
-    # SANS access_token (sinon l'app externe l'interprète comme un retour de flow).
-    return RedirectResponse(url=str(linked_app.frontend_url), status_code=302)
+    # 7. Rediriger vers la page de logout de Vikunja, qui efface
+    #    le cookie de session avant d'afficher la page de login.
+    #    L'utilisateur clique ensuite sur « HUB POULIDOR » pour un
+    #    flux OIDC frais avec le bon compte.
+    #
+    #    NOTE : on utilise une redirection directe (302) plutôt qu'un
+    #    iframe JS car Vikunja ne purge pas sa session via iframe.
+    #    Le ?provider=hub tente un auto-déclenchement si Vikunja le supporte.
+    base_url = str(linked_app.frontend_url).rstrip("/")
+    logout_url = f"{base_url}/logout?provider=hub"
+    return RedirectResponse(url=logout_url, status_code=302)
 
 
 # =============================================================================
