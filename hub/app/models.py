@@ -189,6 +189,7 @@ class Application(Base):
     color = Column(String(7), default="#0d6efd")  # Couleur hex
     category = Column(String(100), nullable=True)  # Catégorie (RH, SI, Communication, etc.)
     api_url = Column(String(255), nullable=False)  # URL de l'API backend
+    git_repo_url = Column(String(512), nullable=True)  # URL du dépôt Git (GitHub) pour update-check et changelog
     frontend_url = Column(String(255))  # URL du frontend
     callback_url = Column(String(255))  # URL de callback pour le token
     frontend_https_port = Column(Integer, nullable=True)  # Port HTTPS du frontend (si HTTPS activé)

@@ -39,6 +39,11 @@ function renderAppsHealth(data) {
     grid.innerHTML = data.apps.map(app => renderAppCard(app)).join('');
 
     updateAppsHealthTimestamps();
+
+    // Lance la verification des mises a jour en arriere-plan
+    if (data.apps && data.apps.length) {
+        checkAllUpdates(data.apps);
+    }
 }
 
 function formatUptime(seconds) {
@@ -123,15 +128,19 @@ function renderAppCard(app) {
             '</div>' +
             metricsRow +
             integrationRow +
+            '<div id="update-badge-' + slug + '" style="display:none;"></div>' +
             healthNote +
             error +
             '<div style="display:flex;justify-content:space-between;align-items:center;border-top:1px solid ' + statusStyle.border + ';padding-top:8px;margin-top:auto;">' +
                 '<span style="font-size:11px;color:#94a3b8;">' +
                     'Verifie il y a <span class="apps-health-timestamp" data-ts="' + (app.checked_at || '') + '">…</span>' +
                 '</span>' +
-                '<button onclick="restartApp(\'' + slug + '\')" class="btn btn-sm btn-outline-secondary py-0" style="font-size:11px;" id="restartBtn_' + slug + '">' +
-                    '⟳ Restart' +
-                '</button>' +
+                '<div style="display:flex;gap:4px;">' +
+                    '<button onclick="startApp(\'' + slug + '\')" class="btn btn-sm btn-outline-success py-0 px-2" style="font-size:11px;" title="Demarrer">▶</button>' +
+                    '<button onclick="stopApp(\'' + slug + '\')" class="btn btn-sm btn-outline-danger py-0 px-2" style="font-size:11px;" title="Arreter">■</button>' +
+                    '<button onclick="restartApp(\'' + slug + '\')" class="btn btn-sm btn-outline-secondary py-0 px-2" style="font-size:11px;" id="restartBtn_' + slug + '" title="Redemarrer">⟳</button>' +
+                    '<button onclick="showLogs(\'' + slug + '\')" class="btn btn-sm btn-outline-secondary py-0 px-2" style="font-size:11px;" title="Logs">📋</button>' +
+                '</div>' +
             '</div>' +
         '</div>' +
         '</div>'
@@ -153,8 +162,119 @@ async function restartApp(slug) {
     } catch (error) {
         showToast('Erreur', error.message, 'danger');
         btn.disabled = false;
-        btn.innerHTML = '⟳ Restart';
+        btn.innerHTML = '⟳';
     }
+}
+
+// ─── Start / Stop / Logs ──────────────────────────────────────────────
+
+async function startApp(slug) {
+    if (!confirm('Demarrer ' + slug + ' ?')) return;
+    showToast('Demarrage', 'Demarrage de ' + slug + ' en cours…', 'info');
+    try {
+        var result = await api.startApp(slug);
+        showToast('Demarrage', result.message, result.ok ? 'success' : 'danger');
+        if (result.ok) setTimeout(function() { loadAppsHealth(); }, 3000);
+    } catch (error) {
+        showToast('Erreur', error.message, 'danger');
+    }
+}
+
+async function stopApp(slug) {
+    if (!confirm('Arreter ' + slug + ' ? Cette action rendra l\'application indisponible.')) return;
+    showToast('Arret', 'Arret de ' + slug + ' en cours…', 'info');
+    try {
+        var result = await api.stopApp(slug);
+        showToast('Arret', result.message, result.ok ? 'success' : 'danger');
+        if (result.ok) setTimeout(function() { loadAppsHealth(); }, 3000);
+    } catch (error) {
+        showToast('Erreur', error.message, 'danger');
+    }
+}
+
+async function showLogs(slug) {
+    var modal = _showModal('Logs — ' + slug, '<div class="text-center py-4"><div class="spinner-border spinner-border-sm"></div> Chargement…</div>');
+    try {
+        var result = await api.getAppLogs(slug, 150, 'api');
+        var lines = result.lines || '(aucun log)';
+        modal.querySelector('.modal-body').innerHTML =
+            '<pre style="font-size:11px;line-height:1.4;max-height:60vh;overflow:auto;background:#1e293b;color:#e2e8f0;padding:12px;border-radius:6px;">' + escapeHtml(lines) + '</pre>';
+    } catch (error) {
+        modal.querySelector('.modal-body').innerHTML =
+            '<div class="alert alert-danger">Erreur: ' + escapeHtml(error.message) + '</div>';
+    }
+}
+
+// ─── Update check + Changelog ─────────────────────────────────────────
+
+async function checkAllUpdates(apps) {
+    for (var i = 0; i < apps.length; i++) {
+        try {
+            var update = await api.checkUpdate(apps[i].slug);
+            if (update.update_available && update.repo_configured) {
+                renderUpdateBadge(apps[i].slug, update);
+            }
+        } catch (e) {
+            // Silencieux — le check de mise a jour est non-bloquant
+        }
+    }
+}
+
+function renderUpdateBadge(slug, update) {
+    var badge = document.getElementById('update-badge-' + slug);
+    if (!badge) return;
+    badge.style.display = 'block';
+    badge.style.marginTop = '6px';
+    badge.innerHTML =
+        '<button onclick="showChangelog(\'' + slug + '\')" ' +
+        'style="background:#fef3c7;color:#92400e;border:1px solid #fcd34d;font-size:11px;padding:3px 10px;border-radius:6px;cursor:pointer;display:inline-block;width:100%;text-align:left;">' +
+        '🔄 Mise à jour disponible : <strong>' + escapeHtml(update.current_version) + '</strong> → <strong>' + escapeHtml(update.latest_version) + '</strong>' +
+        ' <span style="float:right;color:#b45309;">📋 Voir le changelog</span>' +
+        '</button>';
+}
+
+async function showChangelog(slug) {
+    var modal = _showModal('Changelog — ' + slug,
+        '<div class="text-center py-4"><div class="spinner-border spinner-border-sm"></div> Chargement du changelog…</div>');
+    try {
+        var result = await api.getChangelog(slug);
+        if (!result.ok || !result.markdown) {
+            modal.querySelector('.modal-body').innerHTML =
+                '<div class="alert alert-warning">Aucun changelog disponible pour ' + escapeHtml(slug) + ' (repo non configure ou inaccessible).</div>';
+            return;
+        }
+        modal.querySelector('.modal-body').innerHTML =
+            '<pre style="font-size:12px;line-height:1.5;max-height:60vh;overflow:auto;background:#f8fafc;color:#334155;padding:16px;border-radius:6px;white-space:pre-wrap;font-family:system-ui,-apple-system,sans-serif;">' +
+            escapeHtml(result.markdown) +
+            '</pre>';
+    } catch (error) {
+        modal.querySelector('.modal-body').innerHTML =
+            '<div class="alert alert-danger">Erreur: ' + escapeHtml(error.message) + '</div>';
+    }
+}
+
+// ─── Modal utilitaire ─────────────────────────────────────────────────
+
+function _showModal(title, bodyHtml) {
+    // Supprime un eventuel modal precedent
+    var existing = document.getElementById('appsHealthModal');
+    if (existing) existing.remove();
+
+    var html =
+        '<div class="modal fade" id="appsHealthModal" tabindex="-1" style="display:block;background:rgba(0,0,0,0.5);">' +
+        '<div class="modal-dialog modal-lg modal-dialog-scrollable">' +
+        '<div class="modal-content">' +
+        '<div class="modal-header">' +
+        '<h5 class="modal-title">' + escapeHtml(title) + '</h5>' +
+        '<button type="button" class="btn-close" onclick="document.getElementById(\'appsHealthModal\').remove()"></button>' +
+        '</div>' +
+        '<div class="modal-body">' + bodyHtml + '</div>' +
+        '</div></div></div>';
+
+    var div = document.createElement('div');
+    div.innerHTML = html;
+    document.body.appendChild(div.firstElementChild);
+    return document.getElementById('appsHealthModal');
 }
 
 // ─── Timestamps relatifs ──────────────────────────────────────────────

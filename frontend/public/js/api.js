@@ -992,6 +992,57 @@ class HubAPI {
             method: 'POST'
         });
     }
+
+    /**
+     * Demarre une application via hubctl
+     * @param {string} slug
+     */
+    async startApp(slug) {
+        return this.request(`/apps/${encodeURIComponent(slug)}/start`, {
+            method: 'POST'
+        });
+    }
+
+    /**
+     * Arrete une application via hubctl
+     * @param {string} slug
+     */
+    async stopApp(slug) {
+        return this.request(`/apps/${encodeURIComponent(slug)}/stop`, {
+            method: 'POST'
+        });
+    }
+
+    /**
+     * Recupere les logs recents d'une app
+     * @param {string} slug
+     * @param {number} [tail=100]
+     * @param {string} [service='api']
+     */
+    async getAppLogs(slug, tail, service) {
+        var params = new URLSearchParams();
+        if (tail) params.set('tail', tail);
+        if (service) params.set('service', service);
+        return this.request(`/apps/${encodeURIComponent(slug)}/logs?${params.toString()}`);
+    }
+
+    /**
+     * Verifie si une mise a jour est disponible (GitHub)
+     * @param {string} slug
+     * @returns {Promise<{update_available, current_version, latest_version, release_url, published_at, repo_configured}>}
+     */
+    async checkUpdate(slug) {
+        return this.request(`/apps/${encodeURIComponent(slug)}/update-check`);
+    }
+
+    /**
+     * Recupere le CHANGELOG.md depuis GitHub
+     * @param {string} slug
+     * @returns {Promise<{ok, markdown, repo_configured}>}
+     */
+    async getChangelog(slug) {
+        return this.request(`/apps/${encodeURIComponent(slug)}/changelog`);
+    }
     
     // ===== Backup/Restore API =====
 
