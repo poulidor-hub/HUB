@@ -1043,6 +1043,27 @@ class HubAPI {
     async getChangelog(slug) {
         return this.request(`/apps/${encodeURIComponent(slug)}/changelog`);
     }
+
+    /**
+     * Liste l'historique des releases GitHub
+     * @param {string} slug
+     * @returns {Promise<{ok, releases: Array<{tag, name, published_at, body, html_url}>, repo_configured}>}
+     */
+    async getReleases(slug) {
+        return this.request(`/apps/${encodeURIComponent(slug)}/releases`);
+    }
+
+    /**
+     * Compare deux tags via GitHub (fichiers modifies + patches)
+     * @param {string} slug
+     * @param {string} fromTag
+     * @param {string} toTag
+     * @returns {Promise<{ok, from_tag, to_tag, total_commits, files: Array<{filename, status, additions, deletions, patch}>, html_url}>}
+     */
+    async getDiff(slug, fromTag, toTag) {
+        var params = new URLSearchParams({ from: fromTag, to: toTag });
+        return this.request(`/apps/${encodeURIComponent(slug)}/diff?${params.toString()}`);
+    }
     
     // ===== Backup/Restore API =====
 

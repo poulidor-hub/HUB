@@ -136,6 +136,37 @@ class ChangelogResponse(BaseModel):
     markdown: Optional[str] = None
     repo_configured: bool = False
 
+
+class ReleaseItem(BaseModel):
+    tag: str
+    name: str = ""
+    published_at: str = ""
+    body: str = ""
+    html_url: str = ""
+
+
+class ReleasesResponse(BaseModel):
+    ok: bool
+    releases: List[ReleaseItem] = []
+    repo_configured: bool = False
+
+
+class FileChange(BaseModel):
+    filename: str
+    status: str  # added, modified, removed, renamed
+    additions: int = 0
+    deletions: int = 0
+    patch: Optional[str] = None
+
+
+class DiffResponse(BaseModel):
+    ok: bool
+    from_tag: str
+    to_tag: str
+    total_commits: int = 0
+    files: List[FileChange] = []
+    html_url: Optional[str] = None
+
 # ─── Helpers ──────────────────────────────────────────────────────────
 
 def _get_httpx_client():
@@ -494,6 +525,84 @@ async def get_changelog(
         ok=markdown is not None,
         markdown=markdown,
         repo_configured=True,
+    )
+
+
+@router.get("/{slug}/releases", response_model=ReleasesResponse)
+async def get_releases(
+    slug: str,
+    per_page: int = Query(default=30, ge=1, le=100),
+    current_admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Liste l'historique des releases GitHub (tag, date, notes)."""
+    app = await _get_app_or_404(db, slug)
+    parsed = _parse_github_url(app.git_repo_url)
+    if not parsed:
+        return ReleasesResponse(ok=False, repo_configured=False)
+
+    owner, repo = parsed
+    data = await _fetch_github(
+        f"https://api.github.com/repos/{owner}/{repo}/releases?per_page={per_page}"
+    )
+    if data is None or not isinstance(data, list):
+        return ReleasesResponse(ok=False, repo_configured=True)
+
+    releases = [
+        ReleaseItem(
+            tag=(r.get("tag_name") or "").lstrip("v"),
+            name=r.get("name") or r.get("tag_name") or "",
+            published_at=r.get("published_at") or r.get("created_at") or "",
+            body=r.get("body") or "",
+            html_url=r.get("html_url") or "",
+        )
+        for r in data
+    ]
+    return ReleasesResponse(ok=True, releases=releases, repo_configured=True)
+
+
+@router.get("/{slug}/diff", response_model=DiffResponse)
+async def get_diff(
+    slug: str,
+    from_tag: str = Query(..., alias="from", description="Tag de base (ex: v1.21.2)"),
+    to_tag: str = Query(..., alias="to", description="Tag cible (ex: v1.21.3)"),
+    current_admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Compare deux tags via GitHub et retourne les fichiers modifies + patches."""
+    app = await _get_app_or_404(db, slug)
+    parsed = _parse_github_url(app.git_repo_url)
+    if not parsed:
+        return DiffResponse(ok=False, from_tag=from_tag, to_tag=to_tag)
+
+    owner, repo = parsed
+    # Normaliser les tags avec un prefix v si absent
+    base = from_tag if from_tag.startswith("v") else "v" + from_tag
+    head = to_tag if to_tag.startswith("v") else "v" + to_tag
+
+    data = await _fetch_github(
+        f"https://api.github.com/repos/{owner}/{repo}/compare/{base}...{head}"
+    )
+    if data is None:
+        return DiffResponse(ok=False, from_tag=from_tag, to_tag=to_tag)
+
+    files = [
+        FileChange(
+            filename=f.get("filename") or "?",
+            status=f.get("status") or "modified",
+            additions=f.get("additions") or 0,
+            deletions=f.get("deletions") or 0,
+            patch=f.get("patch"),  # None si diff trop grand (GitHub tronque)
+        )
+        for f in (data.get("files") or [])[:50]  # plafonner a 50 fichiers
+    ]
+    return DiffResponse(
+        ok=True,
+        from_tag=from_tag,
+        to_tag=to_tag,
+        total_commits=data.get("total_commits") or 0,
+        files=files,
+        html_url=data.get("html_url"),
     )
 
 

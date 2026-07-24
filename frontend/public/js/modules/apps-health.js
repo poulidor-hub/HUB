@@ -234,22 +234,183 @@ function renderUpdateBadge(slug, update) {
 }
 
 async function showChangelog(slug) {
+    _changelogState = { slug: slug, releases: [], selectedIndex: 0, tab: 'notes' };
     var modal = _showModal('Changelog — ' + slug,
-        '<div class="text-center py-4"><div class="spinner-border spinner-border-sm"></div> Chargement du changelog…</div>');
+        '<div class="text-center py-4"><div class="spinner-border spinner-border-sm"></div> Chargement des releases…</div>');
+    try {
+        var result = await api.getReleases(slug);
+        if (!result.ok || !result.releases || !result.releases.length) {
+            return await _showRawChangelog(modal, slug);
+        }
+        _changelogState.releases = result.releases;
+        _renderChangelogBody(modal);
+    } catch (error) {
+        modal.querySelector('.modal-body').innerHTML =
+            '<div class="alert alert-danger">Erreur: ' + escapeHtml(error.message) + '</div>';
+    }
+}
+
+var _changelogState = { slug: null, releases: [], selectedIndex: 0, tab: 'notes' };
+
+async function _showRawChangelog(modal, slug) {
     try {
         var result = await api.getChangelog(slug);
         if (!result.ok || !result.markdown) {
             modal.querySelector('.modal-body').innerHTML =
-                '<div class="alert alert-warning">Aucun changelog disponible pour ' + escapeHtml(slug) + ' (repo non configure ou inaccessible).</div>';
+                '<div class="alert alert-warning">Aucun changelog disponible (repo non configuré ou inaccessible).</div>';
             return;
         }
         modal.querySelector('.modal-body').innerHTML =
             '<pre style="font-size:12px;line-height:1.5;max-height:60vh;overflow:auto;background:#f8fafc;color:#334155;padding:16px;border-radius:6px;white-space:pre-wrap;font-family:system-ui,-apple-system,sans-serif;">' +
-            escapeHtml(result.markdown) +
-            '</pre>';
+            escapeHtml(result.markdown) + '</pre>';
     } catch (error) {
         modal.querySelector('.modal-body').innerHTML =
             '<div class="alert alert-danger">Erreur: ' + escapeHtml(error.message) + '</div>';
+    }
+}
+
+function _renderChangelogBody(modal) {
+    var s = _changelogState;
+    var options = s.releases.map(function (r, i) {
+        return '<option value="' + i + '"' + (i === s.selectedIndex ? ' selected' : '') + '>' +
+            escapeHtml(r.tag) + (r.published_at ? ' — ' + _formatDate(r.published_at) : '') +
+            '</option>';
+    }).join('');
+
+    var release = s.releases[s.selectedIndex];
+    var prevTag = (s.selectedIndex + 1 < s.releases.length) ? s.releases[s.selectedIndex + 1].tag : null;
+    var notesBtn = s.tab === 'notes' ? 'btn-primary' : 'btn-outline-secondary';
+    var codeBtn = s.tab === 'code' ? 'btn-primary' : 'btn-outline-secondary';
+
+    modal.querySelector('.modal-body').innerHTML =
+        '<div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;flex-wrap:wrap;">' +
+            '<select onchange="_changelogSelectVersion(this.value)" class="form-select form-select-sm" style="width:auto;">' +
+                options +
+            '</select>' +
+            (release.html_url ? '<a href="' + escapeHtml(release.html_url) + '" target="_blank" style="font-size:12px;color:#6366f1;text-decoration:none;">GitHub ↗</a>' : '') +
+            '<div style="margin-left:auto;">' +
+                '<button onclick="_changelogTab(\'notes\')" class="btn btn-sm ' + notesBtn + '">📖 Notes</button> ' +
+                '<button onclick="_changelogTab(\'code\')" class="btn btn-sm ' + codeBtn + '"' +
+                    (prevTag ? '' : ' disabled title="Première version : pas de comparaison"') +
+                '> Code</button>' +
+            '</div>' +
+        '</div>' +
+        '<div id="changelogTabContent"></div>';
+
+    if (s.tab === 'notes') {
+        _renderNotesTab(release);
+    } else {
+        _loadDiffTab(s.slug, prevTag, release.tag);
+    }
+}
+
+function _renderNotesTab(release) {
+    var el = document.getElementById('changelogTabContent');
+    if (!el) return;
+    var body = release.body ? escapeHtml(release.body) : '(pas de notes pour cette version)';
+    el.innerHTML =
+        '<pre style="font-size:12px;line-height:1.5;max-height:55vh;overflow:auto;background:#f8fafc;color:#334155;padding:16px;border-radius:6px;white-space:pre-wrap;font-family:system-ui,-apple-system,sans-serif;">' +
+        body + '</pre>';
+}
+
+async function _loadDiffTab(slug, fromTag, toTag) {
+    var el = document.getElementById('changelogTabContent');
+    if (!el) return;
+    el.innerHTML = '<div class="text-center py-3"><div class="spinner-border spinner-border-sm"></div> Chargement du diff…</div>';
+    try {
+        var result = await api.getDiff(slug, fromTag, toTag);
+        if (!result.ok || !result.files || !result.files.length) {
+            el.innerHTML = '<div class="alert alert-warning">Aucun fichier modifié trouvé (comparaison ' +
+                escapeHtml(fromTag) + ' → ' + escapeHtml(toTag) + ').</div>';
+            return;
+        }
+        _renderDiffTab(result);
+    } catch (error) {
+        el.innerHTML = '<div class="alert alert-danger">Erreur: ' + escapeHtml(error.message) + '</div>';
+    }
+}
+
+function _renderDiffTab(diff) {
+    var el = document.getElementById('changelogTabContent');
+    if (!el) return;
+
+    var totalAdd = 0, totalDel = 0;
+    diff.files.forEach(function (f) { totalAdd += f.additions; totalDel += f.deletions; });
+
+    var summary = diff.total_commits + ' commit' + (diff.total_commits !== 1 ? 's' : '') +
+        ' · ' + diff.files.length + ' fichier' + (diff.files.length !== 1 ? 's' : '') +
+        ' · <span style="color:#16a34a;">+' + totalAdd + '</span>' +
+        ' <span style="color:#dc2626;">-' + totalDel + '</span>';
+
+    var fileList = diff.files.map(function (f, i) {
+        var icon = f.status === 'added' ? '🟢' : f.status === 'removed' ? '🔴' : f.status === 'renamed' ? '🔄' : '🟡';
+        var toggleBtn = f.patch
+            ? '<button onclick="_toggleDiff(\'diff-' + i + '\', this)" class="btn btn-sm btn-outline-secondary py-0 px-1" style="font-size:11px;">▸</button>'
+            : '<span style="font-size:11px;color:#94a3b8;">(diff trop grand)</span>';
+        var patchHtml = f.patch
+            ? '<div id="diff-' + i + '" style="display:none;margin-top:6px;">' + _colorizeDiff(f.patch) + '</div>'
+            : '';
+        return '<div style="padding:5px 0;border-bottom:1px solid #f1f5f9;">' +
+            '<div style="display:flex;align-items:center;gap:8px;font-size:12px;">' +
+                '<span>' + icon + '</span>' +
+                '<span style="flex:1;font-family:monospace;color:#334155;word-break:break-all;">' + escapeHtml(f.filename) + '</span>' +
+                '<span style="color:#16a34a;font-size:11px;white-space:nowrap;">+' + f.additions + '</span>' +
+                '<span style="color:#dc2626;font-size:11px;white-space:nowrap;">-' + f.deletions + '</span>' +
+                toggleBtn +
+            '</div>' +
+            patchHtml +
+        '</div>';
+    }).join('');
+
+    el.innerHTML =
+        '<div style="font-size:12px;color:#64748b;margin-bottom:8px;">' + summary + '</div>' +
+        '<div style="max-height:55vh;overflow:auto;">' + fileList + '</div>' +
+        (diff.html_url ? '<div style="margin-top:8px;"><a href="' + escapeHtml(diff.html_url) + '" target="_blank" style="font-size:12px;color:#6366f1;">Voir la comparaison complète sur GitHub ↗</a></div>' : '');
+}
+
+function _colorizeDiff(patch) {
+    var lines = escapeHtml(patch).split('\n');
+    return '<pre style="font-size:11px;line-height:1.4;background:#1e293b;color:#cbd5e1;padding:10px;border-radius:4px;overflow-x:auto;white-space:pre-wrap;">' +
+        lines.map(function (line) {
+            if (line.charAt(0) === '+') return '<span style="color:#4ade80;">' + line + '</span>';
+            if (line.charAt(0) === '-') return '<span style="color:#f87171;">' + line + '</span>';
+            if (line.substring(0, 2) === '@@') return '<span style="color:#818cf8;">' + line + '</span>';
+            return line;
+        }).join('\n') + '</pre>';
+}
+
+function _toggleDiff(id, btn) {
+    var el = document.getElementById(id);
+    if (!el) return;
+    if (el.style.display === 'none') {
+        el.style.display = 'block';
+        btn.textContent = '▾';
+    } else {
+        el.style.display = 'none';
+        btn.textContent = '▸';
+    }
+}
+
+function _changelogSelectVersion(index) {
+    _changelogState.selectedIndex = parseInt(index, 10);
+    _changelogState.tab = 'notes';
+    var modal = document.getElementById('appsHealthModal');
+    if (modal) _renderChangelogBody(modal);
+}
+
+function _changelogTab(tab) {
+    _changelogState.tab = tab;
+    var modal = document.getElementById('appsHealthModal');
+    if (modal) _renderChangelogBody(modal);
+}
+
+function _formatDate(iso) {
+    if (!iso) return '';
+    try {
+        var d = new Date(iso);
+        return d.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: 'numeric' });
+    } catch (e) {
+        return iso.substring(0, 10);
     }
 }
 

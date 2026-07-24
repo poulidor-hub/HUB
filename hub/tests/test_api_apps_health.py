@@ -240,3 +240,99 @@ async def test_summary_counts(client, admin_token, async_session):
     summary = resp.json()["summary"]
     assert summary["online"] >= 1
     assert summary["offline"] >= 1
+
+
+# ─── Tests releases / diff (GitHub API) ────────────────────────────────
+
+async def _create_github_app(session, slug="gh-app"):
+    """Cree une app avec git_repo_url configure."""
+    from app.models import Application
+    app = Application(
+        name="GitHub App", slug=slug,
+        api_url="http://localhost:9999",
+        git_repo_url="https://github.com/test-org/test-repo.git",
+        is_active=True, requires_auth=True,
+    )
+    session.add(app)
+    await session.commit()
+    return app
+
+
+async def test_releases_returns_parsed_list(client, admin_token, async_session):
+    """L'endpoint /releases parse correctement les releases GitHub."""
+    from unittest.mock import AsyncMock
+    await _create_github_app(async_session)
+
+    mock_releases = [
+        {"tag_name": "v1.2.0", "name": "Release 1.2", "published_at": "2026-07-20T10:00:00Z",
+         "body": "### Notes\n- Fix A\n- Add B", "html_url": "https://github.com/test-org/test-repo/releases/tag/v1.2.0"},
+        {"tag_name": "v1.1.0", "name": "Release 1.1", "published_at": "2026-06-15T10:00:00Z",
+         "body": "First stable", "html_url": "https://github.com/test-org/test-repo/releases/tag/v1.1.0"},
+    ]
+    with patch.object(apps_health, "_fetch_github", new_callable=AsyncMock, return_value=mock_releases):
+        resp = await client.get(
+            "/api/apps/gh-app/releases",
+            headers={"Authorization": f"Bearer {admin_token}"},
+        )
+
+    data = resp.json()
+    assert data["ok"] is True
+    assert data["repo_configured"] is True
+    assert len(data["releases"]) == 2
+    assert data["releases"][0]["tag"] == "1.2.0"  # prefix v stripped
+    assert data["releases"][0]["body"] == "### Notes\n- Fix A\n- Add B"
+    assert data["releases"][1]["tag"] == "1.1.0"
+
+
+async def test_releases_no_repo_configured(client, admin_token, test_app):
+    """Sans git_repo_url, retourne repo_configured=False."""
+    resp = await client.get(
+        "/api/apps/test-app/releases",
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    data = resp.json()
+    assert data["ok"] is False
+    assert data["repo_configured"] is False
+
+
+async def test_diff_returns_parsed_files(client, admin_token, async_session):
+    """L'endpoint /diff parse les fichiers modifies + patches."""
+    from unittest.mock import AsyncMock
+    await _create_github_app(async_session)
+
+    mock_compare = {
+        "total_commits": 3,
+        "html_url": "https://github.com/test-org/test-repo/compare/v1.1.0...v1.2.0",
+        "files": [
+            {"filename": "main.py", "status": "modified", "additions": 5, "deletions": 2,
+             "patch": "@@ -1,3 +1,6 @@\n import os\n+import sys\n def main():\n-    pass\n+    return 0"},
+            {"filename": "README.md", "status": "added", "additions": 10, "deletions": 0,
+             "patch": None},  # gros fichier, pas de patch
+        ],
+    }
+    with patch.object(apps_health, "_fetch_github", new_callable=AsyncMock, return_value=mock_compare):
+        resp = await client.get(
+            "/api/apps/gh-app/diff?from=v1.1.0&to=v1.2.0",
+            headers={"Authorization": f"Bearer {admin_token}"},
+        )
+
+    data = resp.json()
+    assert data["ok"] is True
+    assert data["total_commits"] == 3
+    assert len(data["files"]) == 2
+    assert data["files"][0]["filename"] == "main.py"
+    assert data["files"][0]["additions"] == 5
+    assert data["files"][0]["patch"] is not None
+    assert "+import sys" in data["files"][0]["patch"]
+    assert data["files"][1]["filename"] == "README.md"
+    assert data["files"][1]["patch"] is None  # tronque par GitHub
+
+
+async def test_diff_no_repo_configured(client, admin_token, test_app):
+    """Sans git_repo_url, le diff retourne ok=False."""
+    resp = await client.get(
+        "/api/apps/test-app/diff?from=1.0&to=1.1",
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    data = resp.json()
+    assert data["ok"] is False
