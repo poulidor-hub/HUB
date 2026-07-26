@@ -1223,6 +1223,14 @@ async def register_app(
                 updated_fields.append(f"is_remote: {old_remote} → {is_now_remote}")
                 logger.info(f"🔄 Mise à jour is_remote: {old_remote} → {is_now_remote}")
             
+            # Recalculer is_workshop depuis le slug
+            is_now_workshop = app_data.slug.endswith("-ws")
+            if existing_app.is_workshop != is_now_workshop:
+                old_workshop = existing_app.is_workshop
+                existing_app.is_workshop = is_now_workshop
+                updated_fields.append(f"is_workshop: {old_workshop} → {is_now_workshop}")
+                logger.info(f"🔄 Mise à jour is_workshop: {old_workshop} → {is_now_workshop}")
+            
             # Mettre à jour le nom si fourni et différent
             if app_data.name and existing_app.name != app_data.name:
                 old_value = existing_app.name
