@@ -17,6 +17,7 @@ async function loadApps() {
             dashboardApps = apps;
             buildCategoryFilters(apps);
             filterDashboardApps();
+            updateModeIndicator();
         } else {
             console.error('loadApps: réponse inattendue (pas un tableau):', apps);
             dashboardApps = [];
@@ -164,7 +165,7 @@ function renderAppsGrid(apps) {
                             <i class="${app.icon}"></i>
                         </div>
                         <div class="app-card-info">
-                            <h6>${escapeHtml(app.name)}</h6>
+                            <h6>${escapeHtml(app.name)}${app.is_workshop ? '<span class="badge bg-warning text-dark ms-2" style="font-size:0.65em">ATELIER</span>' : ''}</h6>
                             <p>${escapeHtml(app.description || 'Aucune description')}</p>
                         </div>
                     </div>
@@ -397,4 +398,26 @@ function closeAllAppWindows() {
     }
     openedAppWindows.clear();
     return closedCount;
+}
+
+async function updateModeIndicator() {
+    try {
+        const mode = await api.getMode();
+        const bar = document.getElementById('modeIndicatorBar');
+        const indicator = document.getElementById('modeIndicator');
+        if (!bar || !indicator) return;
+        
+        bar.classList.remove('d-none');
+        if (mode.is_development) {
+            indicator.style.backgroundColor = '#fd7e14';
+            indicator.style.color = '#fff';
+            indicator.innerHTML = '<i class="bi bi-tools me-1"></i>Mode Développement (Ateliers)';
+        } else {
+            indicator.style.backgroundColor = '#198754';
+            indicator.style.color = '#fff';
+            indicator.innerHTML = '<i class="bi bi-shield-check me-1"></i>Mode Production';
+        }
+    } catch (e) {
+        // Silencieux — le mode indicator est non critique
+    }
 }
