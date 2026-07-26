@@ -1365,6 +1365,8 @@ async def register_app(
         else:
             description = f"Application {app_data.slug} (auto-enregistrée, en attente d'approbation)"
     
+    is_workshop = app_data.slug.endswith("-ws")
+    
     app = Application(
         name=app_data.name or app_data.slug.replace("-", " ").title(),
         slug=app_data.slug,
@@ -1379,7 +1381,8 @@ async def register_app(
         registered_from_ip=client_ip,  # Enregistrer l'IP source
         version=app_data.version,  # Version de l'app, capturée à l'enregistrement
         approval_status=ApprovalStatus.pending,  # En attente d'approbation admin
-        is_active=False  # Inactive jusqu'à approbation
+        is_active=False,  # Inactive jusqu'à approbation
+        is_workshop=is_workshop
     )
     
     # Stocker la spec OpenAPI si fournie (avec filtrage automatique)
