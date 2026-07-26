@@ -727,6 +727,20 @@ async def get_hub_host():
     }
 
 
+@app.get("/api/config/mode")
+async def get_app_mode():
+    """Retourne le mode actuel du Hub (development ou production).
+
+    Endpoint public (pas d'auth) pour que le frontend puisse afficher
+    l'indicateur de mode sans token.
+    """
+    return {
+        "app_env": settings.app_env,
+        "is_development": settings.app_env.strip().lower() == "development",
+        "is_production": settings.app_env.strip().lower() == "production",
+    }
+
+
 @app.get("/")
 async def root():
     return {
