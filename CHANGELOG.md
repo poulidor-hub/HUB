@@ -7,6 +7,16 @@
 
 ---
 
+## [3.17.2] - 27 juillet 2026
+
+### 🐛 Fix — logs, start, stop restaurés (Docker socket)
+
+- **fix(logs)** : l'endpoint `GET /api/apps/{slug}/logs` utilise désormais `container.logs()` (docker-py) au lieu de `docker compose logs` (qui nécessitait les fichiers compose absents du conteneur). Corrige l'erreur 404 « docker-compose.yml introuvable ».
+- **fix(start/stop)** : les endpoints `POST /{slug}/start` et `/stop` utilisent `container.start()`/`container.stop()` (docker-py) au lieu d'appeler `hubctl` (inaccessible depuis le conteneur).
+- **fix(docker-compose)** : ajout du mount `/var/run/docker.sock:ro` et `group_add: ["128"]` (groupe docker) au service `hub-api`. Sans ce mount, `docker_scanner` ne pouvait pas se connecter et aucune action de pilotage (restart/logs/start/stop) ne fonctionnait.
+
+---
+
 ## [3.17.1] - 24 juillet 2026
 
 ### 🔧 Corrigé
