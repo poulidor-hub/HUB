@@ -489,7 +489,7 @@ function _showModal(title, bodyHtml) {
     if (existing) existing.remove();
 
     var html =
-        '<div class="modal fade" id="appsHealthModal" tabindex="-1" style="display:block;background:rgba(0,0,0,0.5);">' +
+        '<div class="modal fade show" id="appsHealthModal" tabindex="-1" style="display:block;background:rgba(0,0,0,0.5);">' +
         '<div class="modal-dialog modal-lg modal-dialog-scrollable">' +
         '<div class="modal-content">' +
         '<div class="modal-header">' +
