@@ -502,6 +502,10 @@ class HubAPI {
         return this.request('/system/time');
     }
 
+    async getMode() {
+        return this.request('/config/mode');
+    }
+
     // Apps
     async getApps() {
         return this.request('/apps/');
