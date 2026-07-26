@@ -221,11 +221,14 @@ async def login_for_token(
         
         # Service accounts ont accès "service" aux apps (accès M2M)
         apps = {app.slug: "service" for app in service_account.applications}
+        # Déterminer si ce SA est un SA d'atelier (toutes ses apps sont -ws)
+        is_workshop = all(getattr(app, 'is_workshop', False) for app in service_account.applications) if service_account.applications else False
         
         token, expire, jti = create_access_token(
             username=client_id,
             apps=apps,
-            is_service_account=True
+            is_service_account=True,
+            is_workshop=is_workshop,
         )
         
         # Log

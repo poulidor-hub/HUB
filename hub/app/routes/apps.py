@@ -111,10 +111,15 @@ async def add_shared_service_to_all_service_accounts(db: AsyncSession, app: Appl
     updated_count = 0
     for sa in service_accounts:
         # Vérifier si l'app n'est pas déjà dans les permissions du SA
-        if app not in sa.applications:
-            sa.applications.append(app)
-            updated_count += 1
-            logger.info(f"🔗 Service partagé '{app.slug}' ajouté aux permissions de SA '{sa.name}'")
+        if app in sa.applications:
+            continue
+        # Isolation atelier : ne propager qu'aux SAs du même contexte
+        sa_is_workshop = any(getattr(sa_app, 'is_workshop', False) for sa_app in sa.applications) if sa.applications else False
+        if sa_is_workshop != bool(getattr(app, 'is_workshop', False)):
+            continue
+        sa.applications.append(app)
+        updated_count += 1
+        logger.info(f"🔗 Service partagé '{app.slug}' ajouté aux permissions de SA '{sa.name}'")
     
     if updated_count > 0:
         logger.info(f"✅ Service partagé '{app.slug}' ajouté à {updated_count} Service Account(s)")
@@ -384,12 +389,16 @@ async def discover_shared_services(
             detail="Cet endpoint est réservé aux Service Accounts (authentification M2M)"
         )
     
-    # Récupérer toutes les apps partagées actives
+    # Déterminer le contexte atelier du SA appelant
+    caller_is_workshop = payload.get("is_workshop", False)
+    
+    # Récupérer toutes les apps partagées actives du même contexte atelier
     result = await db.execute(
         select(Application)
         .where(
             Application.is_shared_service == True,
-            Application.is_active == True
+            Application.is_active == True,
+            Application.is_workshop == caller_is_workshop,
         )
         .order_by(Application.name)
     )

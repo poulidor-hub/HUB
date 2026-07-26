@@ -35,6 +35,12 @@ async def authorize_service_account_slug(
     if target_app is None or target_app.m2m_enforcement_mode == "enforced":
         raise HTTPException(status_code=403, detail="Service account not authorized for this application")
 
+    # Isolation atelier : bloquer les appels cross-workshop
+    sa_is_workshop = any(getattr(app, 'is_workshop', False) for app in service_account.applications) if service_account.applications else False
+    target_is_workshop = bool(getattr(target_app, 'is_workshop', False))
+    if sa_is_workshop != target_is_workshop:
+        raise HTTPException(status_code=403, detail="Cross-workshop M2M access denied")
+
     # Mode compat : accepter avec audit
     from app.models import AuditLog, utcnow
     db.add(AuditLog(
