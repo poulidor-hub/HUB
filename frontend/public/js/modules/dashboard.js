@@ -7,10 +7,13 @@
 
 // ===== Applications Dashboard =====
 
+// Filtre atelier : 'false' (prod), 'true' (ateliers), 'all' (tout)
+let workshopFilter = 'false';
+
 async function loadApps() {
-    console.log('📱 loadApps() appelé, currentPage:', currentPage);
+    console.log('📱 loadApps() appelé, currentPage:', currentPage, 'workshopFilter:', workshopFilter);
     try {
-        const apps = await api.getApps();
+        const apps = await api.getApps(workshopFilter);
         console.log('📱 loadApps: réponse reçue, nombre d\'apps:', Array.isArray(apps) ? apps.length : 'pas un tableau');
         // S'assurer que apps est un tableau
         if (Array.isArray(apps)) {
@@ -38,6 +41,14 @@ async function loadApps() {
         }
         showToast('Erreur', 'Impossible de charger les applications', 'danger');
     }
+}
+
+function setWorkshopFilter(filter) {
+    workshopFilter = filter;
+    document.querySelectorAll('.workshop-filter-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.getAttribute('data-wfilter') === filter);
+    });
+    loadApps();
 }
 
 function buildCategoryFilters(apps) {
@@ -401,23 +412,22 @@ function closeAllAppWindows() {
 }
 
 async function updateModeIndicator() {
-    try {
-        const mode = await api.getMode();
-        const bar = document.getElementById('modeIndicatorBar');
-        const indicator = document.getElementById('modeIndicator');
-        if (!bar || !indicator) return;
-        
+    const bar = document.getElementById('modeIndicatorBar');
+    const indicator = document.getElementById('modeIndicator');
+    if (!bar || !indicator) return;
+    
+    // Afficher uniquement quand les ateliers sont visibles (jamais en PROD)
+    if (workshopFilter === 'true') {
         bar.classList.remove('d-none');
-        if (mode.is_development) {
-            indicator.style.backgroundColor = '#fd7e14';
-            indicator.style.color = '#fff';
-            indicator.innerHTML = '<i class="bi bi-tools me-1"></i>Mode Développement (Ateliers)';
-        } else {
-            indicator.style.backgroundColor = '#198754';
-            indicator.style.color = '#fff';
-            indicator.innerHTML = '<i class="bi bi-shield-check me-1"></i>Mode Production';
-        }
-    } catch (e) {
-        // Silencieux — le mode indicator est non critique
+        indicator.style.backgroundColor = '#fd7e14';
+        indicator.style.color = '#fff';
+        indicator.innerHTML = '<i class="bi bi-tools me-1"></i>Mode Atelier';
+    } else if (workshopFilter === 'all') {
+        bar.classList.remove('d-none');
+        indicator.style.backgroundColor = '#6f42c1';
+        indicator.style.color = '#fff';
+        indicator.innerHTML = '<i class="bi bi-funnel me-1"></i>Toutes les applications (Prod + Atelier)';
+    } else {
+        bar.classList.add('d-none');
     }
 }

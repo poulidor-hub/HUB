@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Request
+from fastapi import APIRouter, Depends, HTTPException, status, Request, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -550,15 +550,20 @@ async def get_apps_status(
 @router.get("/", response_model=List[AppResponseWithMyRole])
 async def list_apps(
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
+    workshop_filter: str = Query("false", description="Filtre atelier: 'false' (prod uniquement, défaut), 'true' (ateliers uniquement), 'all' (tout)"),
 ):
     """Liste les applications (admin voit tout, user voit les siennes)
     
     Retourne également le rôle de l'utilisateur courant sur chaque app (my_role).
     Les indicateurs Docker/health ne sont plus inclus ici pour une réponse instantanée.
     Les changements de statut arrivent en temps réel via SSE.
+    
+    Paramètre workshop_filter (admin uniquement, ignoré pour les users) :
+    - false (défaut) : apps production uniquement
+    - true : apps atelier uniquement  
+    - all : toutes les apps
     """
-    settings = get_settings()
     logger.debug(f"list_apps appelé par {current_user.username} (is_admin={current_user.is_admin})")
     
     # Charger les rôles de l'utilisateur courant
@@ -576,16 +581,20 @@ async def list_apps(
     )
     favorite_app_ids = {row[0] for row in fav_result}
     
+    # Appliquer le filtre atelier (admin uniquement ; pour les users, toujours prod)
+    _apply_workshop_query = lambda query: (
+        query.where(Application.is_workshop == True) if workshop_filter == "true"
+        else query if workshop_filter == "all"
+        else query.where(Application.is_workshop == False)
+    )
+    
     if current_user.is_admin:
         # Tri alphabétique par nom pour un ordre stable et prévisible
         query = select(Application).where(Application.is_system_app == False)
-        if settings.app_env.strip().lower() == "development":
-            query = query.where(Application.is_workshop == True)
-        else:
-            query = query.where(Application.is_workshop == False)
+        query = _apply_workshop_query(query)
         result = await db.execute(query.order_by(Application.name))
         apps = result.scalars().all()
-        logger.debug(f"Admin {current_user.username}: {len(apps)} applications trouvées")
+        logger.debug(f"Admin {current_user.username}: {len(apps)} applications trouvées (filter={workshop_filter})")
         return [
             AppResponseWithMyRole.from_app_with_role(
                 app, 
@@ -597,14 +606,13 @@ async def list_apps(
         ]
     else:
         # Retourne uniquement les apps de l'utilisateur via app_roles
-        # Tri alphabétique par nom pour un ordre stable et prévisible
+        # Les utilisateurs non-admin ne voient jamais les ateliers
         apps_count = len(user.app_roles)
         logger.debug(f"User {current_user.username}: {apps_count} applications accessibles")
         visible_roles = [ar for ar in user.app_roles if not getattr(ar.application, "is_system_app", False)]
-        # Filtrer selon le mode
-        filter_workshop = (settings.app_env.strip().lower() == "development")
+        # Toujours exclure les ateliers pour les non-admins
         visible_roles = [ar for ar in visible_roles
-                         if getattr(ar.application, "is_workshop", False) == filter_workshop]
+                         if not getattr(ar.application, "is_workshop", False)]
         sorted_roles = sorted(visible_roles, key=lambda ar: ar.application.name.lower())
         return [
             AppResponseWithMyRole.from_app_with_role(

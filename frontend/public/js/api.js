@@ -507,8 +507,8 @@ class HubAPI {
     }
 
     // Apps
-    async getApps() {
-        return this.request('/apps/');
+    async getApps(workshopFilter = 'false') {
+        return this.request(`/apps/?workshop_filter=${encodeURIComponent(workshopFilter)}`);
     }
 
     async getAllApps() {

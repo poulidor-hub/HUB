@@ -263,6 +263,10 @@
                 <button class="btn btn-sm dash-filter-btn" data-filter="favorites"data-action="setDashboardFilter" data-args="favorites">
                     <i class="bi bi-star-fill text-warning me-1"></i>Favoris
                 </button>
+                <span class="text-muted mx-1">|</span>
+                <button class="btn btn-sm dash-filter-btn workshop-filter-btn active" data-wfilter="false" onclick="setWorkshopFilter('false')" title="Apps production uniquement">Prod</button>
+                <button class="btn btn-sm dash-filter-btn workshop-filter-btn" data-wfilter="true" onclick="setWorkshopFilter('true')" title="Apps atelier uniquement">Atelier</button>
+                <button class="btn btn-sm dash-filter-btn workshop-filter-btn" data-wfilter="all" onclick="setWorkshopFilter('all')" title="Toutes les apps">Prod + Atelier</button>
                 <div id="categoryFilters" class="d-flex gap-1 flex-wrap"></div>
             </div>
         </div>
