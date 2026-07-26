@@ -303,6 +303,7 @@ class AppResponse(AppBase):
     frontend_https_port: Optional[int] = None  # Port HTTPS du frontend (si HTTPS activé)
     approval_status: ApprovalStatusEnum = ApprovalStatusEnum.approved
     created_at: datetime
+    is_workshop: bool = False
     
     @field_validator('is_remote', mode='before')
     @classmethod
@@ -353,6 +354,7 @@ class AppResponseWithMyRole(AppResponse):
             frontend_https_port=getattr(app, 'frontend_https_port', None),
             approval_status=approval_status,
             created_at=app.created_at,
+            is_workshop=bool(getattr(app, 'is_workshop', False)),
             my_role=my_role,
             app_version=app_version,
             is_favorite=is_favorite,
