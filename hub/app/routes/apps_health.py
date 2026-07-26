@@ -2,11 +2,8 @@
 Apps Health Dashboard — monitoring et actions admin sur les apps enregistrees.
 """
 import re
-import sys
 import time
 import logging
-import subprocess
-from pathlib import Path
 from typing import Optional, List
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -31,39 +28,6 @@ HEALTH_PATHS = ["/api/health", "/health", "/"]
 DETAILED_PATH = "/api/health/detailed"
 PROBE_TIMEOUT = 5
 
-# Racine du parc POULIDOR (la ou hubctl_cli/ resume)
-POULIDOR_ROOT = Path(__file__).resolve().parent.parent.parent.parent.parent
-HUBCTL_TIMEOUT = 120  # secondes pour les operations longues (start/stop/update)
-
-
-def _run_hubctl(action: str, slug: str, *extra_args: str) -> dict:
-    """Execute une commande hubctl dans le parc POULIDOR et retourne {ok, stdout, stderr}."""
-    cmd = [sys.executable, "-m", "hubctl_cli", action, slug, *extra_args]
-    try:
-        result = subprocess.run(
-            cmd,
-            cwd=str(POULIDOR_ROOT),
-            capture_output=True,
-            text=True,
-            timeout=HUBCTL_TIMEOUT,
-        )
-        ok = result.returncode == 0
-        logger.info(
-            f"hubctl {action} {slug} -> {'OK' if ok else 'FAIL'} "
-            f"(exit={result.returncode})"
-        )
-        return {
-            "ok": ok,
-            "stdout": result.stdout[-3000:] if result.stdout else "",
-            "stderr": result.stderr[-1000:] if result.stderr else "",
-        }
-    except subprocess.TimeoutExpired:
-        logger.warning(f"hubctl {action} {slug} timeout apres {HUBCTL_TIMEOUT}s")
-        return {"ok": False, "stdout": "", "stderr": f"Timeout ({HUBCTL_TIMEOUT}s)"}
-    except Exception as e:
-        logger.error(f"hubctl {action} {slug} erreur: {e}")
-        return {"ok": False, "stdout": "", "stderr": str(e)[:500]}
-
 
 def _parse_github_url(git_repo_url: str) -> Optional[tuple[str, str]]:
     """Parse une URL GitHub en (owner, repo). Retourne None si non parsee."""
@@ -71,6 +35,7 @@ def _parse_github_url(git_repo_url: str) -> Optional[tuple[str, str]]:
         return None
     m = re.search(r'github\.com[:/]([^/]+)/([^/]+?)(?:\.git)?$', git_repo_url)
     return (m.group(1), m.group(2)) if m else None
+
 
 # ─── Schemas ──────────────────────────────────────────────────────────
 
@@ -369,13 +334,30 @@ async def start_app(
     db: AsyncSession = Depends(get_db),
 ):
     app = await _get_app_or_404(db, slug)
-    result = _run_hubctl("start", slug)
-    return HubctlActionResponse(
-        ok=result["ok"],
-        action="start",
-        message=f"Demarrage de {app.name} {'reussi' if result['ok'] else 'echoue'}",
-        detail=result["stderr"] if not result["ok"] else None,
-    )
+    container = _find_container_for_app(slug)
+    if not container:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Aucun conteneur Docker trouve pour '{slug}'. "
+                   f"Verifiez que le conteneur a APP_SLUG={slug}.",
+        )
+    try:
+        container.start()
+        container.reload()
+        logger.info(f"Start {container.name} (app: {slug}) par {current_admin.username}")
+        return HubctlActionResponse(
+            ok=True,
+            action="start",
+            message=f"Demarrage de {app.name} reussi ({container.name})",
+        )
+    except Exception as e:
+        logger.error(f"Echec start {container.name}: {e}")
+        return HubctlActionResponse(
+            ok=False,
+            action="start",
+            message=f"Echec du demarrage de {app.name}",
+            detail=str(e)[:300],
+        )
 
 
 @router.post("/{slug}/stop", response_model=HubctlActionResponse)
@@ -385,42 +367,76 @@ async def stop_app(
     db: AsyncSession = Depends(get_db),
 ):
     app = await _get_app_or_404(db, slug)
-    result = _run_hubctl("stop", slug)
-    return HubctlActionResponse(
-        ok=result["ok"],
-        action="stop",
-        message=f"Arret de {app.name} {'reussi' if result['ok'] else 'echoue'}",
-        detail=result["stderr"] if not result["ok"] else None,
-    )
+    container = _find_container_for_app(slug)
+    if not container:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Aucun conteneur Docker trouve pour '{slug}'. "
+                   f"Verifiez que le conteneur a APP_SLUG={slug}.",
+        )
+    try:
+        container.stop(timeout=10)
+        container.reload()
+        logger.info(f"Stop {container.name} (app: {slug}) par {current_admin.username}")
+        return HubctlActionResponse(
+            ok=True,
+            action="stop",
+            message=f"Arret de {app.name} reussi ({container.name})",
+        )
+    except Exception as e:
+        logger.error(f"Echec stop {container.name}: {e}")
+        return HubctlActionResponse(
+            ok=False,
+            action="stop",
+            message=f"Echec de l'arret de {app.name}",
+            detail=str(e)[:300],
+        )
 
 
 @router.get("/{slug}/logs", response_model=AppLogsResponse)
 async def get_app_logs(
     slug: str,
     tail: int = Query(default=100, ge=10, le=2000),
-    service: str = Query(default="api", description="api, frontend, postgres, ou empty pour tous"),
+    service: str = Query(default="api", description="api, frontend, postgres, db, ou empty pour tous"),
     current_admin: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db),
 ):
     app = await _get_app_or_404(db, slug)
-    compose_file = POULIDOR_ROOT / "APPS" / slug / "docker-compose.yml"
-    if not compose_file.exists():
-        raise HTTPException(status_code=404, detail=f"docker-compose.yml introuvable pour '{slug}'")
 
-    svc_args = [service] if service else []
+    # Trouver le conteneur cible via l'API Docker (docker-py, pas CLI)
+    container = None
+    if service:
+        # Chercher un conteneur dont le nom contient {slug}-{service}
+        try:
+            if docker_scanner.is_available:
+                all_containers = docker_scanner.client.containers.list(all=True)
+                for c in all_containers:
+                    if c.name and (slug + "-" + service) in c.name:
+                        container = c
+                        break
+        except Exception:
+            pass
+
+    # Fallback : utiliser le conteneur trouve par APP_SLUG (generalement l'API)
+    if not container:
+        container = _find_container_for_app(slug)
+
+    if not container:
+        svc_label = service or "tous"
+        raise HTTPException(
+            status_code=404,
+            detail=f"Aucun conteneur trouve pour '{slug}' (service={svc_label}). "
+                   f"Verifiez que le conteneur a APP_SLUG={slug}.",
+        )
+
     try:
-        result = subprocess.run(
-            ["docker", "compose", "-f", str(compose_file), "logs", "--tail", str(tail), "--no-color", *svc_args],
-            capture_output=True, text=True, timeout=20,
-        )
-        lines = result.stdout if result.returncode == 0 else result.stderr
+        logs_bytes = container.logs(tail=tail, stdout=True, stderr=True)
+        lines = logs_bytes.decode("utf-8", errors="replace")
         return AppLogsResponse(
-            ok=result.returncode == 0,
+            ok=True,
             lines=lines[-10000:],
-            service=service or "all",
+            service=service or container.name,
         )
-    except subprocess.TimeoutExpired:
-        raise HTTPException(status_code=504, detail="Timeout lors de la recuperation des logs")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erreur logs: {e}")
 
