@@ -22,6 +22,7 @@ let allOidcClients = [];
 let adminAppsSearchQuery = '';
 let adminAppsStatusFilter = 'all';
 let adminAppsCategoryFilter = 'all';
+let adminAppsWorkshopFilter = 'false';  // 'false' (prod), 'true' (ateliers), 'all' (tout)
 
 // ===== Dashboard utilisateur =====
 let dashboardFilter = 'all';   // 'all' | 'favorites' | catégorie

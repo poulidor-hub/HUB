@@ -11,7 +11,7 @@ async function loadAdminData() {
     console.log('loadAdminData: Chargement des données admin...');
     try {
         const [apps, serviceAccounts] = await Promise.all([
-            api.getAllApps(),
+            api.getAllApps(adminAppsWorkshopFilter),
             api.getServiceAccounts()
         ]);
         
@@ -117,6 +117,14 @@ function getFilteredAdminApps() {
             return false;
         }
 
+        if (adminAppsWorkshopFilter === 'true' && !app.is_workshop) {
+            return false;
+        }
+
+        if (adminAppsWorkshopFilter === 'false' && app.is_workshop) {
+            return false;
+        }
+
         return true;
     });
 }
@@ -125,6 +133,7 @@ function filterAdminApps() {
     adminAppsSearchQuery = document.getElementById('adminAppsSearch')?.value || '';
     adminAppsStatusFilter = document.getElementById('adminAppsStatusFilter')?.value || 'all';
     adminAppsCategoryFilter = document.getElementById('adminAppsCategoryFilter')?.value || 'all';
+    adminAppsWorkshopFilter = document.getElementById('adminAppsWorkshopFilter')?.value || 'false';
 
     syncAdminAppsFilterControls();
     renderAppsTable(getFilteredAdminApps());
@@ -145,6 +154,7 @@ function resetAdminAppsFilters() {
     adminAppsSearchQuery = '';
     adminAppsStatusFilter = 'all';
     adminAppsCategoryFilter = 'all';
+    adminAppsWorkshopFilter = 'false';
     syncAdminAppsFilterControls();
     renderAppsTable(getFilteredAdminApps());
 }
@@ -406,7 +416,7 @@ function renderAppsTable(apps) {
     const container = document.getElementById('appsTable');
     const sortedApps = [...apps].sort(compareAdminAppsByName);
     const totalApps = allApps.length;
-    const hasActiveFilters = Boolean(adminAppsSearchQuery.trim()) || adminAppsStatusFilter !== 'all' || adminAppsCategoryFilter !== 'all';
+    const hasActiveFilters = Boolean(adminAppsSearchQuery.trim()) || adminAppsStatusFilter !== 'all' || adminAppsCategoryFilter !== 'all' || adminAppsWorkshopFilter !== 'false';
 
     syncAdminAppsFilterControls();
 
@@ -522,6 +532,7 @@ function renderAppsTable(apps) {
                                 <div>
                                     <strong>${escapeHtml(app.name)}</strong>
                                     ${app.is_shared_service ? '<span class="badge bg-info ms-1" title="API partagée accessible par tous les SA"><i class="bi bi-share"></i></span>' : ''}
+                                    ${app.is_workshop ? '<span class="badge bg-warning text-dark ms-1" title="Application atelier (APP_Workshop/)"><i class="bi bi-tools"></i> ATELIER</span>' : ''}
                                     ${approvalBadge}
                                 </div>
                             </div>

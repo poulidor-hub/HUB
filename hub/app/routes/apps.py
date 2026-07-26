@@ -792,18 +792,28 @@ async def update_my_role(
 @router.get("/all")
 async def list_all_apps_with_users(
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_admin)
+    _: User = Depends(get_current_admin),
+    workshop_filter: str = Query("false", description="Filtre atelier: 'false' (prod uniquement, défaut), 'true' (ateliers uniquement), 'all' (tout)"),
 ):
     """Liste toutes les applications avec leurs utilisateurs (admin uniquement)
     
     Les indicateurs Docker/health arrivent via SSE en temps réel.
+    
+    Paramètre workshop_filter :
+    - false (défaut) : apps production uniquement
+    - true : apps atelier uniquement  
+    - all : toutes les apps
     """
-    result = await db.execute(
-        select(Application).options(
-            selectinload(Application.user_roles).selectinload(UserAppRole.user)
-        )
-        .where(Application.is_system_app == False)
-    )
+    query = select(Application).options(
+        selectinload(Application.user_roles).selectinload(UserAppRole.user)
+    ).where(Application.is_system_app == False)
+    
+    if workshop_filter == "true":
+        query = query.where(Application.is_workshop == True)
+    elif workshop_filter != "all":
+        query = query.where(Application.is_workshop == False)
+    
+    result = await db.execute(query)
     apps = result.scalars().all()
     return [
         AppWithUsersAndDocker.from_orm_model_with_docker(app)
