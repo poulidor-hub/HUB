@@ -558,6 +558,7 @@ async def list_apps(
     Les indicateurs Docker/health ne sont plus inclus ici pour une réponse instantanée.
     Les changements de statut arrivent en temps réel via SSE.
     """
+    settings = get_settings()
     logger.debug(f"list_apps appelé par {current_user.username} (is_admin={current_user.is_admin})")
     
     # Charger les rôles de l'utilisateur courant
@@ -577,11 +578,12 @@ async def list_apps(
     
     if current_user.is_admin:
         # Tri alphabétique par nom pour un ordre stable et prévisible
-        result = await db.execute(
-            select(Application)
-            .where(Application.is_system_app == False)
-            .order_by(Application.name)
-        )
+        query = select(Application).where(Application.is_system_app == False)
+        if settings.app_env.strip().lower() == "development":
+            query = query.where(Application.is_workshop == True)
+        else:
+            query = query.where(Application.is_workshop == False)
+        result = await db.execute(query.order_by(Application.name))
         apps = result.scalars().all()
         logger.debug(f"Admin {current_user.username}: {len(apps)} applications trouvées")
         return [
@@ -599,6 +601,10 @@ async def list_apps(
         apps_count = len(user.app_roles)
         logger.debug(f"User {current_user.username}: {apps_count} applications accessibles")
         visible_roles = [ar for ar in user.app_roles if not getattr(ar.application, "is_system_app", False)]
+        # Filtrer selon le mode
+        filter_workshop = (settings.app_env.strip().lower() == "development")
+        visible_roles = [ar for ar in visible_roles
+                         if getattr(ar.application, "is_workshop", False) == filter_workshop]
         sorted_roles = sorted(visible_roles, key=lambda ar: ar.application.name.lower())
         return [
             AppResponseWithMyRole.from_app_with_role(
