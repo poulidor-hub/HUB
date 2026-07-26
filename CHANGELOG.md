@@ -9,14 +9,9 @@
 
 ## [3.17.3] - 27 juillet 2026
 
-### 🆕 Nouvelle version
+### 🐛 Fix — modales invisibles (classe `show` manquante)
 
-> ⚠️ Cette entrée a été créée automatiquement par `sync_version.py`.
-> Veuillez compléter les détails des modifications.
-
-| Fonctionnalité | Description |
-|----------------|-------------|
-| **À compléter** | Décrivez les changements de cette version |
+- Bootstrap `.fade:not(.show) { opacity: 0 }` rendait les modales logs et changelog complètement transparentes. L'overlay sombre (lui aussi invisible) bloquait tous les clics, donnant l'impression d'un « hang » de la page. Ajout de la classe `show` dans `_showModal()`.
 
 ---
 
