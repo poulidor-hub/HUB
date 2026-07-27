@@ -5,6 +5,25 @@
  * Fonctions globales pour compatibilite avec les handlers HTML inline.
  */
 
+// Garde cote client : ne pas refresh plus d'une fois / 30s
+var _lastGithubSync = 0;
+
+async function refreshGithubCache() {
+    var now = Date.now();
+    if (now - _lastGithubSync < 30000) return;
+    _lastGithubSync = now;
+    try {
+        var r = await api.refreshGithubRepos();
+        if (!r.token_configured) {
+            // silencieux : l'admin est informe via la vue Apps GitHub
+        } else if (r.error) {
+            console.warn('GitHub cache sync:', r.error);
+        }
+    } catch (e) {
+        // silencieux, non-bloquant
+    }
+}
+
 // ─── Chargement principal ─────────────────────────────────────────────
 
 async function loadAppsHealth() {
@@ -14,7 +33,7 @@ async function loadAppsHealth() {
 
     try {
         const result = await api.getAppsHealth();
-        renderAppsHealth(result);
+        await renderAppsHealth(result);
     } catch (error) {
         console.error('Erreur chargement health:', error);
         showToast('Erreur', 'Impossible de sonder les applications', 'danger');
@@ -26,7 +45,7 @@ async function loadAppsHealth() {
 
 // ─── Rendu ────────────────────────────────────────────────────────────
 
-function renderAppsHealth(data) {
+async function renderAppsHealth(data) {
     const summary = data.summary;
     const sumEl = document.getElementById('appsHealthSummary');
     sumEl.innerHTML =
@@ -42,6 +61,7 @@ function renderAppsHealth(data) {
 
     // Lance la verification des mises a jour en arriere-plan
     if (data.apps && data.apps.length) {
+        await refreshGithubCache();
         checkAllUpdates(data.apps);
     }
 }
