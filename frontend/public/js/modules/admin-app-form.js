@@ -500,6 +500,7 @@ async function handleSaveApp(event) {
             // Le M2M sera créé automatiquement quand l'app s'auto-enregistre
             const customHost = document.getElementById('appCustomHost').checked;
             const isSharedService = document.getElementById('appIsSharedService')?.checked || false;
+            const gitRepoUrl = document.getElementById('appGitRepoUrl')?.value?.trim() || null;
             const data = {
                 name: document.getElementById('appName').value,
                 slug: document.getElementById('appSlug').value,
@@ -514,6 +515,7 @@ async function handleSaveApp(event) {
                 is_shared_service: isSharedService,
                 create_service_account: false  // L'app créera son M2M en s'auto-enregistrant
             };
+            if (gitRepoUrl) data.git_repo_url = gitRepoUrl;
             
             await api.createApp(data);
             appFormModal.hide();
@@ -738,6 +740,47 @@ function filterIcons() {
             item.classList.add('hidden');
         }
     });
+}
+
+function openAppFormPrefilled(prepared) {
+    showAddAppForm();
+
+    setTimeout(() => {
+        const set = (id, val) => { const el = document.getElementById(id); if (el) el.value = val; };
+        set('appName', prepared.name);
+        set('appSlug', prepared.slug);
+        set('appApiPort', prepared.api_port);
+        if (prepared.frontend_port) set('appFrontendPort', prepared.frontend_port);
+        set('appGitRepoUrl', prepared.git_repo_url || '');
+
+        if (typeof updateUrlPreview === 'function') updateUrlPreview();
+
+        const modalBody = document.querySelector('#appFormModal .modal-body');
+        if (modalBody && !document.getElementById('prefilledEnvBanner')) {
+            const envBlock = [
+                'APP_SLUG=' + prepared.slug,
+                'API_PORT=' + prepared.api_port
+            ];
+            if (prepared.frontend_port) envBlock.push('FRONTEND_PORT=' + prepared.frontend_port);
+            if (prepared.frontend_https_port) envBlock.push('FRONTEND_HTTPS_PORT=' + prepared.frontend_https_port);
+            const envStr = envBlock.join('\n');
+
+            const banner = document.createElement('div');
+            banner.id = 'prefilledEnvBanner';
+            banner.className = 'alert alert-success';
+            banner.style.cssText = 'border-left:4px solid #16a34a;';
+            banner.innerHTML = ''
+                + '<div class="d-flex justify-content-between align-items-center mb-2">'
+                + '<strong>📋 Valeurs à reporter dans l\'app (le HUB décide, l\'app suit)</strong>'
+                + '<button class="btn btn-sm btn-success" onclick="navigator.clipboard.writeText(atob(\'' + btoa(envStr) + '\')).then(function(){showToast(\'Copié\',\'Bloc .env copié\',\'success\')})">📋 Copier le .env</button>'
+                + '</div>'
+                + '<pre class="mb-0" style="background:#1e293b;color:#e2e8f0;padding:10px;border-radius:6px;font-size:11px;">' + escapeHtml(envStr) + '</pre>'
+                + '<small class="text-muted">↑ Copiez ce bloc dans le .env de l\'app déployée avant de la (re)démarrer.</small>';
+            modalBody.insertBefore(banner, modalBody.firstChild);
+        }
+
+        showToast('Pré-rempli', 'Slug "' + prepared.slug + '" + ports alloués', 'info');
+    }, 150);
 }
 
 // Fermer le picker si on clique en dehors

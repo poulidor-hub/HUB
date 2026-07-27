@@ -135,8 +135,5 @@ function formatRelative(iso) {
     return 'il y a ' + Math.floor(secs / 86400) + ' j';
 }
 
-// Stub temporaire — sera remplacé en Task 9
-function openAppFormPrefilled(prepared) {
-    console.log('TODO Task 9', prepared);
-    showToast('Info', 'Formulaire pré-rempli à implémenter (Task 9)', 'info');
-}
+// (empty after stub removal in Task 9)
+
