@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, BigInteger, String, Boolean, DateTime, ForeignKey, Text, Table, Enum as SQLEnum, JSON, UniqueConstraint
+from sqlalchemy import Column, Integer, BigInteger, String, Boolean, DateTime, ForeignKey, Text, Table, Enum as SQLEnum, JSON, UniqueConstraint, func
 from sqlalchemy.orm import relationship
 from datetime import datetime, timezone
 from typing import Optional
@@ -861,3 +861,28 @@ class OAuthRefreshToken(Base):
 
     def __repr__(self):
         return f"<OAuthRefreshToken {self.client_id} user={self.user_id} valid={self.is_valid}>"
+
+
+class GithubRepoCache(Base):
+    """Cache persistant des repos GitHub accessibles au PAT configuré.
+
+    Peuplé par POST /api/apps/github/repos/refresh (upsert par repo_id).
+    Lu par GET /api/apps/github/repos (zéro appel GitHub).
+    """
+
+    __tablename__ = "github_repo_cache"
+
+    id = Column(Integer, primary_key=True)
+    repo_id = Column(BigInteger, unique=True, index=True, nullable=False)
+    name = Column(String(255), nullable=False)
+    full_name = Column(String(512), nullable=False, index=True)
+    owner = Column(String(255), nullable=False, index=True)
+    html_url = Column(String(1024), nullable=False)
+    clone_url = Column(String(1024), nullable=False)
+    description = Column(Text, nullable=True)
+    default_branch = Column(String(255), nullable=True)
+    fork = Column(Boolean, default=False, nullable=False)
+    archived = Column(Boolean, default=False, nullable=False)
+    private = Column(Boolean, default=False, nullable=False)
+    updated_at_github = Column(DateTime(timezone=True), nullable=True)
+    fetched_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
