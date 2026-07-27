@@ -4,7 +4,7 @@ from httpx import AsyncClient
 from sqlalchemy import select
 
 from app.auth import create_access_token
-from app.models import GithubRepoCache
+from app.models import GithubRepoCache, Application
 from tests.conftest import get_auth_header
 
 
@@ -88,3 +88,51 @@ class TestGithubCatalogSchemas:
         from app.schemas import AppCreateSimplified
         data = AppCreateSimplified(name="Xx", slug="xx", api_port=8000)
         assert data.git_repo_url is None
+
+
+class TestListRepos:
+    """Tests de GET /api/apps/github/repos (Task 4)."""
+
+    @pytest.mark.asyncio
+    async def test_list_empty_cache(self, client: AsyncClient, admin_user):
+        """Cache vide → liste vide + fetched_at None."""
+        token, _, _ = create_access_token(username=admin_user.username, apps={})
+        r = await client.get("/api/apps/github/repos", headers=get_auth_header(token))
+        assert r.status_code == 200
+        body = r.json()
+        assert body["repos"] == []
+        assert body["total"] == 0
+        assert body["fetched_at"] is None
+
+    @pytest.mark.asyncio
+    async def test_list_with_cache_and_integration_flag(self, client: AsyncClient, admin_user, async_session):
+        """already_integrated calculé depuis git_repo_url des apps."""
+        async_session.add(GithubRepoCache(
+            repo_id=1, name="thetipitap", full_name="MYCOMPANY/thetipitap",
+            owner="MYCOMPANY", html_url="https://github.com/MYCOMPANY/thetipitap",
+            clone_url="https://github.com/MYCOMPANY/thetipitap.git",
+        ))
+        async_session.add(GithubRepoCache(
+            repo_id=2, name="catalog", full_name="MYCOMPANY/catalog",
+            owner="MYCOMPANY", html_url="https://github.com/MYCOMPANY/catalog",
+            clone_url="https://github.com/MYCOMPANY/catalog.git",
+        ))
+        async_session.add(Application(
+            name="Catalog", slug="catalog", api_url="http://h:8100",
+            git_repo_url="https://github.com/MYCOMPANY/catalog.git",
+        ))
+        await async_session.commit()
+
+        token, _, _ = create_access_token(username=admin_user.username, apps={})
+        r = await client.get("/api/apps/github/repos", headers=get_auth_header(token))
+        body = r.json()
+        by_name = {x["name"]: x for x in body["repos"]}
+        assert by_name["thetipitap"]["already_integrated"] is False
+        assert by_name["catalog"]["already_integrated"] is True
+
+    @pytest.mark.asyncio
+    async def test_list_requires_admin(self, client: AsyncClient, test_user):
+        """Non-admin → 403."""
+        token, _, _ = create_access_token(username=test_user.username, apps={})
+        r = await client.get("/api/apps/github/repos", headers=get_auth_header(token))
+        assert r.status_code == 403
