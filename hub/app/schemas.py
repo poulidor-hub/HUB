@@ -269,6 +269,7 @@ class AppCreateSimplified(BaseModel):
     requires_auth: bool = True
     create_service_account: bool = Field(False, description="Créer un service account M2M pour cette application")
     is_shared_service: bool = Field(False, description="Si True, cette app est accessible par tous les service accounts (M2M)")
+    git_repo_url: Optional[str] = Field(None, max_length=512, description="URL du dépôt Git (GitHub) pour le changelog et la détection de mises à jour")
 
 
 class AppCreate(AppBase):
@@ -1965,3 +1966,52 @@ class DependenciesGraph(BaseModel):
 
 class SyncReport(BaseModel):
     target: str = Field(..., min_length=1, max_length=100, pattern=r'^[a-zA-Z0-9_-]+$')
+
+
+# ===== GitHub Catalog Schemas =====
+
+class GithubRepo(BaseModel):
+    """Repo GitHub tel qu'exposé par GET /api/apps/github/repos."""
+    name: str
+    full_name: str
+    owner: str
+    html_url: str
+    git_url: str  # ATTENTION : contient le clone_url HTTPS (clonable avec PAT), pas le git:// nu
+    description: Optional[str] = None
+    default_branch: Optional[str] = None
+    fork: bool
+    archived: bool
+    private: bool
+    updated_at: Optional[str] = None  # ISO
+    already_integrated: bool = False  # croisé avec git_repo_url des apps existantes
+
+
+class GithubRepoListResponse(BaseModel):
+    repos: list[GithubRepo]
+    total: int
+    fetched_at: Optional[str] = None  # ISO, dernière sync du cache
+    token_configured: bool
+
+
+class GithubRepoPrepareRequest(BaseModel):
+    repo_full_name: str  # "owner/repo"
+
+
+class GithubRepoPrepareResponse(BaseModel):
+    slug: str
+    name: str
+    git_repo_url: str
+    api_port: int
+    frontend_port: int
+    frontend_https_port: int
+    host: str
+    ports_reused: bool
+
+
+class GithubRepoRefreshResponse(BaseModel):
+    synced: int
+    total: int
+    fetched_at: str
+    token_configured: bool
+    error: Optional[str] = None
+    skipped: bool = False  # True si garde d'âge < 30s
