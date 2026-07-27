@@ -7,6 +7,26 @@
 
 ---
 
+## [3.18.0] - 27 juillet 2026
+
+### 📣 Pour les utilisateurs
+
+- **Ajouté** : un nouvel onglet « Apps GitHub » dans la page Admin. Si un token GitHub est configuré, vous pouvez voir vos dépôts, identifier ceux déjà intégrés au HUB, et ajouter une app en un clic — le HUB pré-remplit le formulaire à votre place (nom, slug, ports). Un bloc `.env` copiable vous rappelle les valeurs à reporter dans l'app déployée.
+
+### ⚡ Découverte visuelle d'apps GitHub
+
+- **Ajout** : nouvel onglet Admin « Apps GitHub » — grille de cartes listant les dépôts GitHub accessibles au PAT configuré (`GITHUB_TOKEN` env + `github_token` dans les settings), avec badges 🟢 Dispo / 🔵 Intégré / 📦 Archivé. Sélection au clic pour pré-remplir le formulaire d'ajout d'app (slug dérivé + ports alloués par le HUB, principe « le HUB décide, l'app suit »). Cache persistant `github_repo_cache` synchronisé via le bouton « Rafraîchir » du dashboard santé (garde d'âge 30s) + bouton dédié dans la vue.
+- **Ajout** : 3 nouveaux endpoints admin-only sous `/api/apps/github/` :
+  - `GET /repos` — lit le cache (0 appel GitHub) avec filtre `search`/`owner`/forks/archiveds et calcul `already_integrated` (croisé avec `git_repo_url` des apps existantes).
+  - `POST /repos/refresh` — synchronise le cache depuis GitHub `/user/repos` paginé (upsert par `repo_id`), avec gestion rate-limit/401/timeout (cache jamais vidé sur erreur).
+  - `POST /prepare` — slug dérivé + ports alloués via `allocate_ports_for_app` (idempotent), 409 sur collision de slug.
+- **Ajout** : modal d'ajout d'app pré-rempli avec encart `.env` copiable (`APP_SLUG`, ports) + champ `git_repo_url` optionnel dans `POST /api/apps/` (option α).
+- **Refactor** : extraction du client GitHub (`_github_headers`, `_load_db_token`, `_fetch_github`, `_parse_github_url`, `_fetch_github_raw`) de `apps_health.py` vers `app/github_client.py` + nouvelle fonction `slugify_repo`.
+- **Ajout** : migration `044_create_github_repo_cache.sql` (cache persistant des repos).
+- **Ajout** : 65 nouveaux tests backend (`test_github_catalog.py`, `test_github_client.py`, extension `test_api_apps.py`) — couvre tous les endpoints, la matrice d'erreurs et la non-régression.
+
+---
+
 ## [3.17.3] - 27 juillet 2026
 
 ### 🐛 Fix — modales invisibles (classe `show` manquante)
