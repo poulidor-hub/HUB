@@ -305,6 +305,7 @@ class AppResponse(AppBase):
     approval_status: ApprovalStatusEnum = ApprovalStatusEnum.approved
     created_at: datetime
     is_workshop: bool = False
+    git_repo_url: Optional[str] = None
     
     @field_validator('is_remote', mode='before')
     @classmethod
@@ -359,7 +360,8 @@ class AppResponseWithMyRole(AppResponse):
             my_role=my_role,
             app_version=app_version,
             is_favorite=is_favorite,
-            category=getattr(app, 'category', None)
+            category=getattr(app, 'category', None),
+            git_repo_url=getattr(app, 'git_repo_url', None),
         )
 
 

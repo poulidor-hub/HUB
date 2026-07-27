@@ -888,7 +888,8 @@ async def create_app(
         callback_url=callback_url,
         frontend_https_port=frontend_https_port,
         requires_auth=app_data.requires_auth,
-        is_shared_service=app_data.is_shared_service
+        is_shared_service=app_data.is_shared_service,
+        git_repo_url=app_data.git_repo_url,
     )
     db.add(app)
     await db.flush()  # Pour obtenir l'ID de l'app

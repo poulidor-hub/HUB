@@ -402,3 +402,24 @@ class TestIsSharedService:
         data = response.json()
         assert data["application"]["slug"] == "auto-shared-test"
         assert data["application"]["is_shared_service"] is True
+
+
+class TestCreateAppGitRepoUrl:
+    """Test de persistence git_repo_url via POST /api/apps/"""
+
+    @pytest.mark.asyncio
+    async def test_create_app_with_git_repo_url(self, client: AsyncClient, admin_user):
+        """POST /api/apps/ persiste git_repo_url quand fourni (option α)."""
+        token, _, _ = create_access_token(username=admin_user.username, apps={})
+        payload = {
+            "name": "Mon App",
+            "slug": "mon-app-gh",
+            "api_port": 8201,
+            "git_repo_url": "https://github.com/MYCOMPANY/mon-app.git",
+        }
+        r = await client.post("/api/apps/", headers=get_auth_header(token), json=payload)
+        assert r.status_code == 201
+        rget = await client.get("/api/apps/", headers=get_auth_header(token))
+        apps = {a["slug"]: a for a in rget.json()}
+        assert apps["mon-app-gh"].get("git_repo_url") == "https://github.com/MYCOMPANY/mon-app.git"
+        await client.delete(f"/api/apps/{apps['mon-app-gh']['id']}", headers=get_auth_header(token))
