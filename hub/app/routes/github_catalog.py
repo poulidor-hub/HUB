@@ -17,7 +17,7 @@ from app.auth import get_current_admin
 from app.config import get_settings
 from app.database import get_db
 from app.github_client import parse_github_url, load_db_token, slugify_repo
-from app.models import Application, GithubRepoCache, User
+from app.models import Application, GithubRepoCache, User, utcnow
 from app.port_allocator import allocate_ports_for_app, PortPoolExhausted
 from app.schemas import (
     GithubRepo,
@@ -114,9 +114,14 @@ def _parse_link_next(link_header: str) -> Optional[str]:
 
 
 def _parse_iso(s: str) -> Optional[datetime]:
-    """Parse une date ISO GitHub (ex: 2026-07-20T00:00:00Z)."""
+    """Parse une date ISO GitHub (ex: 2026-07-20T00:00:00Z) en datetime naïf UTC.
+
+    GitHub renvoie des dates avec 'Z' (UTC). On retourne un datetime naïf
+    (tzinfo=None) pour rester cohérent avec le helper utcnow() du codebase
+    et les colonnes DateTime (sans timezone=True).
+    """
     try:
-        return datetime.fromisoformat(s.replace("Z", "+00:00"))
+        return datetime.fromisoformat(s.replace("Z", "+00:00")).replace(tzinfo=None)
     except Exception:
         return None
 
@@ -140,7 +145,7 @@ async def refresh_github_repos(
         select(GithubRepoCache).order_by(GithubRepoCache.fetched_at.desc()).limit(1)
     )).scalar_one_or_none()
     if latest and latest.fetched_at:
-        age = (datetime.now(timezone.utc) - latest.fetched_at.replace(tzinfo=timezone.utc)).total_seconds()
+        age = (utcnow() - latest.fetched_at).total_seconds()
         if age < REFRESH_MIN_AGE_SECONDS:
             return GithubRepoRefreshResponse(
                 synced=0, total=0, fetched_at=_iso(latest.fetched_at),
@@ -198,7 +203,7 @@ async def refresh_github_repos(
             token_configured=True, error=f"GitHub inaccessible ({e})",
         )
 
-    now = datetime.now(timezone.utc)
+    now = utcnow()
     synced = 0
     for r in all_repos:
         repo_id = r.get("id")

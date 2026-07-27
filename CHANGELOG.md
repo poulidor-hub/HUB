@@ -7,6 +7,16 @@
 
 ---
 
+## [3.18.1] - 27 juillet 2026
+
+### ⚡ Fix timezone `github_repo_cache`
+
+- **Corrigé** : `GithubRepoCache.updated_at_github` et `fetched_at` utilisaient `DateTime(timezone=True)` (timezone-aware) en Python, mais la migration 044 crée `TIMESTAMP` (sans fuseau). Incohérence qui causait un `TypeError: can't subtract offset-naive and offset-aware datetimes` dans la garde d'âge du refresh.
+- **Alignement** : le modèle utilise maintenant `DateTime` naïf (sans `timezone=True`), cohérent avec toutes les autres colonnes du codebase et le helper `utcnow()`.
+- **Nettoyage** : `_parse_iso()` retourne du naïf UTC (`.replace(tzinfo=None)`), la garde d'âge utilise `utcnow()` au lieu d'un hack `.replace(tzinfo=timezone.utc)`, et l'assignation `now` dans le refresh utilise `utcnow()`.
+
+---
+
 ## [3.18.0] - 27 juillet 2026
 
 ### 📣 Pour les utilisateurs

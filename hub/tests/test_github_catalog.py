@@ -1,13 +1,12 @@
 """Tests pour l'endpoint /api/apps/github/* et le cache des repos."""
 import pytest
 from datetime import datetime, timedelta, timezone
-from unittest.mock import MagicMock, AsyncMock, patch
-
 from httpx import AsyncClient
 from sqlalchemy import select
+from unittest.mock import MagicMock, AsyncMock, patch
 
 from app.auth import create_access_token
-from app.models import GithubRepoCache, Application
+from app.models import GithubRepoCache, Application, utcnow
 from tests.conftest import get_auth_header
 
 
@@ -204,7 +203,7 @@ class TestRefresh:
         async_session.add(GithubRepoCache(
             repo_id=99, name="existing", full_name="MYCOMPANY/existing",
             owner="MYCOMPANY", html_url="x", clone_url="x.git",
-            fetched_at=datetime.now(timezone.utc) - timedelta(minutes=5),
+            fetched_at=utcnow() - timedelta(minutes=5),
         ))
         await async_session.commit()
 
@@ -235,7 +234,7 @@ class TestRefresh:
         recent = GithubRepoCache(
             repo_id=1, name="x", full_name="o/x", owner="o",
             html_url="x", clone_url="x.git",
-            fetched_at=datetime.now(timezone.utc),
+            fetched_at=utcnow(),
         )
         async_session.add(recent)
         await async_session.commit()
