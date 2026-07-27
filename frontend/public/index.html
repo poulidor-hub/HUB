@@ -978,6 +978,11 @@
                         <i class="bi bi-shield-lock me-1"></i>Clients OIDC
                     </button>
                 </li>
+                <li class="nav-item" role="presentation">
+                    <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tabGithubApps" data-action="loadGithubApps" id="navGithubApps">
+                        <i class="bi bi-github me-1"></i>Apps GitHub
+                    </button>
+                </li>
             </ul>
 
             <div class="tab-content">
@@ -1073,6 +1078,25 @@
                         </button>
                     </div>
                     <div id="oidcClientsTable" class="table-responsive"></div>
+                </div>
+                <!-- GitHub Apps Tab -->
+                <div class="tab-pane fade" id="tabGithubApps" role="tabpanel">
+                    <div class="d-flex justify-content-between align-items-center mb-3">
+                        <div>
+                            <h4 class="mb-0">Apps GitHub</h4>
+                            <small class="text-muted" id="githubAppsSummary"></small>
+                        </div>
+                        <button class="btn btn-primary" id="githubSyncBtn" onclick="syncGithubRepos()">
+                            <i class="bi bi-arrow-clockwise me-1"></i>Synchroniser
+                        </button>
+                    </div>
+                    <div class="d-flex gap-2 mb-3 flex-wrap">
+                        <input type="text" class="form-control" id="githubSearchInput" placeholder="🔎 Rechercher un repo…" style="max-width:300px;" oninput="onGithubFilterChange()">
+                        <select class="form-select" id="githubOwnerSelect" style="max-width:180px;" onchange="onGithubFilterChange()">
+                            <option value="">Tous les owners</option>
+                        </select>
+                    </div>
+                    <div id="githubAppsGrid" class="row row-cols-1 row-cols-md-2 row-cols-lg-3 g-3"></div>
                 </div>
                 <!-- App Backups Tab - Sauvegardes des Applications -->
                 <div class="tab-pane fade" id="tabAppBackups">
@@ -3628,6 +3652,7 @@ docker compose exec db pg_dump -U hubadmin hub_auth > backup.sql</code></pre>
     <script src="js/modules/bulk-users-csv.js?v=3.17.3"></script>
     <script src="js/modules/messages-inbox.js?v=3.17.3"></script>
     <script src="js/modules/account-requests.js?v=3.17.3"></script>
+    <script src="js/modules/admin-apps-github.js?v=3.17.3"></script>
     <script src="js/app.js?v=3.17.3"></script>
     <script src="js/modules/init.js?v=3.17.3"></script>
     <script src="js/modules/admin-vpn.js?v=3.17.3"></script>

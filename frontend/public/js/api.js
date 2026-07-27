@@ -1587,6 +1587,29 @@ class HubAPI {
         });
     }
 
+    // ===== GitHub Apps =====
+
+    async listGithubRepos(params = {}) {
+        let qs = new URLSearchParams();
+        if (params.search) qs.set('search', params.search);
+        if (params.owner) qs.set('owner', params.owner);
+        if (params.include_forks) qs.set('include_forks', 'true');
+        if (params.include_archived) qs.set('include_archived', 'true');
+        return this.request(`/apps/github/repos${qs.toString() ? '?' + qs.toString() : ''}`);
+    }
+
+    async refreshGithubRepos() {
+        return this.request('/apps/github/repos/refresh', { method: 'POST' });
+    }
+
+    async prepareAppFromRepo(repoFullName) {
+        return this.request('/apps/github/prepare', {
+            method: 'POST',
+            body: JSON.stringify({ repo_full_name: repoFullName }),
+            headers: { 'Content-Type': 'application/json' },
+        });
+    }
+
     // Settings
     async getSetting(key) {
         const resp = await fetch(`${API_BASE}/settings/${encodeURIComponent(key)}`);
