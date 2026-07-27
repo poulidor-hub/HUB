@@ -269,7 +269,7 @@ async def test_releases_returns_parsed_list(client, admin_token, async_session):
         {"tag_name": "v1.1.0", "name": "Release 1.1", "published_at": "2026-06-15T10:00:00Z",
          "body": "First stable", "html_url": "https://github.com/test-org/test-repo/releases/tag/v1.1.0"},
     ]
-    with patch.object(apps_health, "_fetch_github", new_callable=AsyncMock, return_value=mock_releases):
+    with patch.object(apps_health, "fetch_github_json", new_callable=AsyncMock, return_value=(mock_releases, 200)):
         resp = await client.get(
             "/api/apps/gh-app/releases",
             headers={"Authorization": f"Bearer {admin_token}"},
@@ -310,7 +310,7 @@ async def test_diff_returns_parsed_files(client, admin_token, async_session):
              "patch": None},  # gros fichier, pas de patch
         ],
     }
-    with patch.object(apps_health, "_fetch_github", new_callable=AsyncMock, return_value=mock_compare):
+    with patch.object(apps_health, "fetch_github_json", new_callable=AsyncMock, return_value=(mock_compare, 200)):
         resp = await client.get(
             "/api/apps/gh-app/diff?from=v1.1.0&to=v1.2.0",
             headers={"Authorization": f"Bearer {admin_token}"},

@@ -1,7 +1,6 @@
 """
 Apps Health Dashboard — monitoring et actions admin sur les apps enregistrees.
 """
-import re
 import time
 import logging
 from typing import Optional, List
@@ -15,6 +14,10 @@ from app.auth import get_current_admin
 from app.database import get_db
 from app.models import Application, User
 from app.docker_scanner import docker_scanner
+from app.github_client import (
+    github_headers, load_db_token, invalidate_token_cache,
+    fetch_github_json, fetch_github_raw, parse_github_url,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -27,14 +30,6 @@ router = APIRouter(prefix="/api/apps", tags=["apps-health"])
 HEALTH_PATHS = ["/api/health", "/health", "/"]
 DETAILED_PATH = "/api/health/detailed"
 PROBE_TIMEOUT = 5
-
-
-def _parse_github_url(git_repo_url: str) -> Optional[tuple[str, str]]:
-    """Parse une URL GitHub en (owner, repo). Retourne None si non parsee."""
-    if not git_repo_url:
-        return None
-    m = re.search(r'github\.com[:/]([^/]+)/([^/]+?)(?:\.git)?$', git_repo_url)
-    return (m.group(1), m.group(2)) if m else None
 
 
 # ─── Schemas ──────────────────────────────────────────────────────────
@@ -443,32 +438,6 @@ async def get_app_logs(
 
 # ─── GitHub update check + changelog ──────────────────────────────────
 
-async def _fetch_github(url: str) -> Optional[dict]:
-    """GET JSON depuis l'API GitHub. Retourne None si erreur."""
-    import httpx
-    try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(10), verify=False) as client:
-            resp = await client.get(url, headers={"Accept": "application/vnd.github+json"})
-            if 200 <= resp.status_code < 300:
-                return resp.json()
-            return None
-    except Exception:
-        return None
-
-
-async def _fetch_github_raw(url: str) -> Optional[str]:
-    """GET contenu brut depuis raw.githubusercontent.com."""
-    import httpx
-    try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(10), verify=False) as client:
-            resp = await client.get(url)
-            if 200 <= resp.status_code < 300:
-                return resp.text
-            return None
-    except Exception:
-        return None
-
-
 @router.get("/{slug}/update-check", response_model=UpdateCheckResponse)
 async def check_update(
     slug: str,
@@ -476,7 +445,7 @@ async def check_update(
     db: AsyncSession = Depends(get_db),
 ):
     app = await _get_app_or_404(db, slug)
-    parsed = _parse_github_url(app.git_repo_url)
+    parsed = parse_github_url(app.git_repo_url)
     if not parsed:
         return UpdateCheckResponse(update_available=False, repo_configured=False)
 
@@ -486,8 +455,8 @@ async def check_update(
     current_version = await _quick_probe_version(app)
 
     # Interroger la derniere release GitHub
-    release = await _fetch_github(
-        f"https://api.github.com/repos/{owner}/{repo}/releases/latest"
+    release, _ = await fetch_github_json(
+        f"https://api.github.com/repos/{owner}/{repo}/releases/latest", db
     )
     if not release:
         return UpdateCheckResponse(
@@ -524,17 +493,17 @@ async def get_changelog(
     db: AsyncSession = Depends(get_db),
 ):
     app = await _get_app_or_404(db, slug)
-    parsed = _parse_github_url(app.git_repo_url)
+    parsed = parse_github_url(app.git_repo_url)
     if not parsed:
         return ChangelogResponse(ok=False, repo_configured=False)
 
     owner, repo = parsed
-    markdown = await _fetch_github_raw(
-        f"https://raw.githubusercontent.com/{owner}/{repo}/main/CHANGELOG.md"
+    markdown = await fetch_github_raw(
+        f"https://raw.githubusercontent.com/{owner}/{repo}/main/CHANGELOG.md", db
     )
     if not markdown:
-        markdown = await _fetch_github_raw(
-            f"https://raw.githubusercontent.com/{owner}/{repo}/master/CHANGELOG.md"
+        markdown = await fetch_github_raw(
+            f"https://raw.githubusercontent.com/{owner}/{repo}/master/CHANGELOG.md", db
         )
 
     return ChangelogResponse(
@@ -553,13 +522,13 @@ async def get_releases(
 ):
     """Liste l'historique des releases GitHub (tag, date, notes)."""
     app = await _get_app_or_404(db, slug)
-    parsed = _parse_github_url(app.git_repo_url)
+    parsed = parse_github_url(app.git_repo_url)
     if not parsed:
         return ReleasesResponse(ok=False, repo_configured=False)
 
     owner, repo = parsed
-    data = await _fetch_github(
-        f"https://api.github.com/repos/{owner}/{repo}/releases?per_page={per_page}"
+    data, _ = await fetch_github_json(
+        f"https://api.github.com/repos/{owner}/{repo}/releases?per_page={per_page}", db
     )
     if data is None or not isinstance(data, list):
         return ReleasesResponse(ok=False, repo_configured=True)
@@ -587,7 +556,7 @@ async def get_diff(
 ):
     """Compare deux tags via GitHub et retourne les fichiers modifies + patches."""
     app = await _get_app_or_404(db, slug)
-    parsed = _parse_github_url(app.git_repo_url)
+    parsed = parse_github_url(app.git_repo_url)
     if not parsed:
         return DiffResponse(ok=False, from_tag=from_tag, to_tag=to_tag)
 
@@ -596,8 +565,8 @@ async def get_diff(
     base = from_tag if from_tag.startswith("v") else "v" + from_tag
     head = to_tag if to_tag.startswith("v") else "v" + to_tag
 
-    data = await _fetch_github(
-        f"https://api.github.com/repos/{owner}/{repo}/compare/{base}...{head}"
+    data, _ = await fetch_github_json(
+        f"https://api.github.com/repos/{owner}/{repo}/compare/{base}...{head}", db
     )
     if data is None:
         return DiffResponse(ok=False, from_tag=from_tag, to_tag=to_tag)

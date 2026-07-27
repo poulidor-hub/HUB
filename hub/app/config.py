@@ -245,6 +245,9 @@ class Settings(BaseSettings):
     # Activer le scan Docker (socket requis). False = aucun accès au socket (production).
     docker_scan_enabled: bool = False
     
+    # Token API GitHub (optionnel, évite la rate-limit sur les appels publics)
+    github_token: str = ""
+
     # Cooldown pour les notifications SSE d'audit (en secondes)
     # Évite les rafraîchissements trop fréquents de la page audit
     audit_sse_cooldown: float = 5.0
