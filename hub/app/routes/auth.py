@@ -168,6 +168,11 @@ async def login_for_token(
             # Mettre à jour l'activité de la session (le refresh = activité)
             from app.routes.audit import update_session_activity
             await update_session_activity(db, user.id)
+
+            # Re-poser le cookie OIDC pour garder le SSO OIDC synchronisé avec
+            # la session dashboard (sinon expiration après 8h malgré refresh 7j).
+            from app.oidc_helpers import attach_oidc_session_cookie
+            attach_oidc_session_cookie(response, user.username, request, settings)
         else:
             sa = refresh_obj.service_account
             # Service accounts ont accès "service" aux apps
@@ -315,17 +320,8 @@ async def login_for_token(
     
     # Poser le cookie de session OIDC (permet à /oidc/authorize d'identifier
     # l'user sans re-login, pour le SSO OIDC standard type Vikunja).
-    # Import lazy pour éviter boucle circulaire (oidc_helpers importe app.auth).
-    from app.oidc_helpers import create_oidc_session_cookie
-    response.set_cookie(
-        key="hub_oidc_session",
-        value=create_oidc_session_cookie(user.username, settings),
-        httponly=True,
-        samesite="lax",
-        secure=(request.url.scheme == "https"),  # Secure seulement si HTTPS réel (sinon cookie ignoré en HTTP dev)
-        max_age=8 * 3600,  # 8h, aligné sur session Vikunja
-        path="/",
-    )
+    from app.oidc_helpers import attach_oidc_session_cookie
+    attach_oidc_session_cookie(response, user.username, request, settings)
     
     return Token(
         access_token=token,
@@ -890,6 +886,7 @@ async def introspect_token(
 @router.post("/token/refresh", response_model=Token)
 async def refresh_access_token(
     request: Request,
+    response: Response,
     refresh_data: RefreshTokenRequest,
     db: AsyncSession = Depends(get_db)
 ):
@@ -918,6 +915,11 @@ async def refresh_access_token(
         sub = user.username
         is_sa = False
         beacon_token = generate_beacon_token(user.id)
+
+        # Re-poser le cookie OIDC pour garder le SSO OIDC synchronisé avec
+        # la session dashboard (sinon expiration après 8h malgré refresh 7j).
+        from app.oidc_helpers import attach_oidc_session_cookie
+        attach_oidc_session_cookie(response, user.username, request, settings)
     else:
         sa = refresh_obj.service_account
         # Service accounts ont accès "service" aux apps

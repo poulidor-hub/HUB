@@ -138,6 +138,126 @@ class TestAuthEndpoints:
         )
         
         assert response.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_login_poses_oidc_session_cookie(self, client: AsyncClient, test_user: User):
+        """Sanity check : le login password pose le cookie hub_oidc_session."""
+        response = await client.post(
+            "/api/auth/token",
+            data={
+                "grant_type": "password",
+                "username": "testuser",
+                "password": "testpass123",
+            },
+        )
+        assert response.status_code == 200
+        set_cookie = response.headers.get("set-cookie", "")
+        assert "hub_oidc_session=" in set_cookie, (
+            "Le login password doit poser le cookie hub_oidc_session pour le SSO OIDC"
+        )
+
+    @pytest.mark.asyncio
+    async def test_refresh_token_reposits_oidc_session_cookie(
+        self, client: AsyncClient, test_user: User
+    ):
+        """Le refresh token doit re-poser le cookie hub_oidc_session.
+
+        Contexte : le cookie OIDC (TTL 8h) expire plus vite que la session dashboard
+        (refresh token 7j). Si le refresh ne re-pose pas le cookie, l'utilisateur reste
+        connecté au dashboard mais OIDC le considère déconnecté après 8h →
+        erreur 401 "Session HUB requise" au lancement de Vikunja.
+        """
+        # 1. Login initial → récupère un refresh_token
+        login = await client.post(
+            "/api/auth/token",
+            data={
+                "grant_type": "password",
+                "username": "testuser",
+                "password": "testpass123",
+            },
+        )
+        assert login.status_code == 200
+        refresh_token = login.json()["refresh_token"]
+
+        # 2. On vide le cookie jar pour s'assurer qu'on mesure UNIQUEMENT le Set-Cookie
+        #    de la réponse refresh (et pas un résidu du login).
+        client.cookies.clear()
+
+        # 3. Refresh
+        refresh_response = await client.post(
+            "/api/auth/token",
+            data={
+                "grant_type": "refresh_token",
+                "refresh_token": refresh_token,
+            },
+        )
+        assert refresh_response.status_code == 200
+        set_cookie = refresh_response.headers.get("set-cookie", "")
+        assert "hub_oidc_session=" in set_cookie, (
+            "Le refresh token doit re-poser le cookie hub_oidc_session pour maintenir "
+            "le SSO OIDC synchronisé avec la session dashboard."
+        )
+
+    @pytest.mark.asyncio
+    async def test_token_refresh_endpoint_reposits_oidc_session_cookie(
+        self, client: AsyncClient, test_user: User
+    ):
+        """L'endpoint dédié /api/auth/token/refresh (JSON) doit aussi re-poser le cookie.
+
+        Variante du test précédent pour le second endpoint de refresh qui partage
+        la même cause racine.
+        """
+        # 1. Login initial
+        login = await client.post(
+            "/api/auth/token",
+            data={
+                "grant_type": "password",
+                "username": "testuser",
+                "password": "testpass123",
+            },
+        )
+        assert login.status_code == 200
+        refresh_token = login.json()["refresh_token"]
+        client.cookies.clear()
+
+        # 2. Refresh via l'endpoint dédié (JSON body)
+        refresh_response = await client.post(
+            "/api/auth/token/refresh",
+            json={"refresh_token": refresh_token},
+        )
+        assert refresh_response.status_code == 200
+        set_cookie = refresh_response.headers.get("set-cookie", "")
+        assert "hub_oidc_session=" in set_cookie, (
+            "/api/auth/token/refresh doit aussi re-poser le cookie hub_oidc_session."
+        )
+
+    @pytest.mark.asyncio
+    async def test_refresh_token_for_service_account_does_not_reposit_oidc_cookie(
+        self, client: AsyncClient, service_account, async_session
+    ):
+        """Non-régression : un service account (M2M) ne reçoit pas le cookie OIDC.
+
+        Les SAs n'ont pas de session navigateur ; leur poser un cookie OIDC n'a aucun
+        sens et polluerait des clients HTTP headless. Le fix ne doit s'appliquer
+        qu'à la branche refresh_obj.user.
+        """
+        from app.auth import create_refresh_token
+
+        rt = await create_refresh_token(
+            async_session,
+            service_account_id=service_account.id,
+        )
+
+        client.cookies.clear()
+        response = await client.post(
+            "/api/auth/token",
+            data={"grant_type": "refresh_token", "refresh_token": rt},
+        )
+        assert response.status_code == 200
+        set_cookie = response.headers.get("set-cookie", "")
+        assert "hub_oidc_session=" not in set_cookie, (
+            "Un service account ne doit PAS recevoir le cookie OIDC."
+        )
     
     @pytest.mark.asyncio
     async def test_get_public_key(self, client: AsyncClient):

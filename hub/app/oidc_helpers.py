@@ -220,3 +220,30 @@ def decode_oidc_session_cookie(token: str, settings) -> Optional[str]:
         return sub if sub else None
     except pyjwt.PyJWTError:
         return None
+
+
+# Aucune dépendance FastAPI au niveau module : on type le Response en duck-typing
+# (n'importe quel objet exposant .set_cookie fonctionne, notamment starlette).
+def attach_oidc_session_cookie(response, username: str, request, settings) -> None:
+    """Pose le cookie hub_oidc_session sur la response donnée.
+
+    Centralise les flags du cookie OIDC (httpOnly, samesite=lax, secure selon le
+    schéma réel de la requête, TTL 8h, path=/). À appeler :
+      - au login password (POST /api/auth/token grant_type=password)
+      - à chaque refresh token (POST /api/auth/token grant_type=refresh_token
+        ET POST /api/auth/token/refresh)
+
+    Sans re-pose au refresh, le cookie expire (TTL 8h) alors que la session
+    dashboard continue via le refresh token (7j) → l'utilisateur reste connecté
+    au dashboard mais OIDC le considère déconnecté → erreur 401 "Session HUB
+    requise" au lancement des apps OIDC (Vikunja, etc.).
+    """
+    response.set_cookie(
+        key="hub_oidc_session",
+        value=create_oidc_session_cookie(username, settings),
+        httponly=True,
+        samesite="lax",
+        secure=(request.url.scheme == "https"),
+        max_age=8 * 3600,
+        path="/",
+    )

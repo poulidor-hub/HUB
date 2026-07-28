@@ -7,6 +7,20 @@
 
 ---
 
+## [3.18.2] - 28 juillet 2026
+
+### 📣 Pour les utilisateurs
+
+- **Corrigé** : après plusieurs heures d'utilisation du HUB, les apps externes (Vikunja) ne demandaient plus de reconnexion au dashboard. La session reste désormais active en continu, sans interruption du SSO.
+
+### 🐛 Fix — cookie OIDC non rafraîchi au refresh token (SSO Vikunja cassé après 8h)
+
+- **Problème** : le cookie `hub_oidc_session` (TTL 8h) n'était posé qu'au login password (`POST /api/auth/token` grant_type=password). Les endpoints de refresh (`grant_type=refresh_token` et `/token/refresh`) renouvellent le JWT dashboard (refresh token 7j) mais ne re-posaient pas le cookie OIDC → après 8h, l'utilisateur restait connecté au dashboard mais `/oidc/authorize` renvoyait 401 "Session HUB requise" → apps OIDC (Vikunja) inaccessibles.
+- **Fix** : nouveau helper `attach_oidc_session_cookie()` dans `oidc_helpers.py` (unique source de vérité pour les flags httpOnly/samesite/secure/TTL 8h), appelé dans les 3 sites : login password, refresh via `/api/auth/token` grant_type=refresh_token, et `/api/auth/token/refresh`. Appel uniquement dans la branche `refresh_obj.user` (pas les service accounts).
+- **Tests** : 4 nouveaux tests d'intégration dans `test_api_auth.py` — login sanity, refresh `/token` + `/token/refresh` re-posent le cookie, non-régression SA. Suite OIDC complète inchangée (115+/116).
+
+---
+
 ## [3.18.1] - 27 juillet 2026
 
 ### ⚡ Fix timezone `github_repo_cache`
