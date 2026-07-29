@@ -175,6 +175,7 @@ async def get_apps_health(
     result = await db.execute(
         select(Application)
         .where(Application.is_active == True)
+        .where(Application.is_unmanaged == False)
         .order_by(Application.name)
     )
     apps = result.scalars().all()

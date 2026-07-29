@@ -163,7 +163,9 @@ async def run_health_checks():
         async with async_session_maker() as db:
             # Récupérer toutes les applications actives
             result = await db.execute(
-                select(Application).where(Application.is_active == True)
+                select(Application)
+                .where(Application.is_active == True)
+                .where(Application.is_unmanaged == False)
             )
             apps = result.scalars().all()
             
