@@ -1327,6 +1327,9 @@ async def perform_app_backup(
         raise BackupExecutionError(message, status_code=status_code)
 
     try:
+        if getattr(app, "is_unmanaged", False):
+            await _fail("Cette application est non gérée (lien only) — sauvegarde indisponible", status_code=400)
+
         if app.backup_mode == "disabled":
             await _fail("Les sauvegardes sont désactivées pour cette application", status_code=400)
 
@@ -1728,6 +1731,12 @@ async def trigger_backup(
     Retourne 409 Conflict si un backup est déjà en cours pour cette app.
     """
     app = await get_app_or_404(db, slug)
+
+    if getattr(app, "is_unmanaged", False):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cette application est non gérée (lien only) — sauvegarde indisponible",
+        )
 
     if app.backup_mode == "disabled":
         raise HTTPException(

@@ -206,6 +206,7 @@ async def periodic_backup_scheduler():
                     .where(Application.backup_mode == "scheduled")
                     .where(Application.backup_cron.isnot(None))
                     .where(Application.is_active == True)
+                    .where(Application.is_unmanaged == False)
                 )
                 apps = result.scalars().all()
                 

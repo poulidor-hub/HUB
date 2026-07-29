@@ -86,3 +86,21 @@ async def test_health_excludes_unmanaged_apps(client, admin_token, async_session
     slugs = [a.get("slug") for a in apps_list]
     assert "managed-app" in slugs
     assert "unmanaged-app" not in slugs
+
+
+@pytest.mark.asyncio
+async def test_backup_trigger_rejects_unmanaged(client, admin_token, async_session):
+    """POST /api/apps/{slug}/backup/trigger → 400 pour une app is_unmanaged."""
+    app = Application(
+        name="Unmanaged", slug="unmanaged-bkp", api_url="http://u:8000",
+        is_active=True, is_unmanaged=True,
+    )
+    async_session.add(app)
+    await async_session.commit()
+
+    resp = await client.post(
+        "/api/apps/unmanaged-bkp/backup/trigger",
+        headers=get_auth_header(admin_token),
+    )
+    assert resp.status_code == 400, resp.text
+    assert "non gérée" in resp.json()["detail"].lower()

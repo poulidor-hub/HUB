@@ -117,6 +117,7 @@ async def run_app_backups(db: AsyncSession, temp_dir: Path, snapshot: HubSnapsho
         select(Application)
         .where(Application.is_active == True)
         .where(Application.backup_mode != "disabled")
+        .where(Application.is_unmanaged == False)
         .options(selectinload(Application.backups))
     )
     apps = result.scalars().all()
