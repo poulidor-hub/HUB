@@ -200,6 +200,8 @@ class Application(Base):
     is_system_app = Column(Boolean, default=False, nullable=False)  # Application interne du Hub
     is_workshop = Column(Boolean, default=False, nullable=False,
                          comment="True si l'app est un atelier (APP_Workshop/)")
+    is_unmanaged = Column(Boolean, default=False, nullable=False,
+                          comment="True si app non gérée (launcher-only) : présente/lancable mais exclue du health-check, backup et sync Docker")
     
     # Informations sur l'hébergement de l'application
     is_remote = Column(Boolean, default=False)  # True si hébergée sur un serveur distant (pas le même que le HUB)
