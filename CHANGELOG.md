@@ -7,6 +7,16 @@
 
 ---
 
+## [3.19.1] - 30 juillet 2026
+
+### 🐛 Fix — migrations 026 et 042 cassées sur fresh install
+
+- **Migration 026** (`INSERT` app système Hub) : ajout des colonnes `is_workshop` et `is_unmanaged` dans la liste explicite de colonnes. Sans ces colonnes, l'INSERT échouait avec `NotNullViolation` sur base fraîche car `create_all()` matérialise toutes les colonnes `NOT NULL` du modèle avant l'exécution des migrations.
+- **Migration 042** (`ALTER TABLE ADD COLUMN git_repo_url`) : ajout de `IF NOT EXISTS`. Sans cette garde, la migration échouait avec `DuplicateColumnError` car le modèle SQLAlchemy contient déjà la colonne.
+- **Test** : nouveau garde-fou `test_migration_026_insert_covers_all_required_columns` — vérifie dynamiquement que l'INSERT de la migration 026 couvre toutes les colonnes `NOT NULL` sans `server_default` du modèle `Application`. Toute future colonne ajoutée au modèle sera détectée automatiquement, empêchant cette classe de bug à la source.
+
+---
+
 ## [3.19.0] - 29 juillet 2026
 
 ### 📣 Pour les utilisateurs
