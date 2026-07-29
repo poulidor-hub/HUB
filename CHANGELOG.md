@@ -7,6 +7,25 @@
 
 ---
 
+## [3.19.0] - 29 juillet 2026
+
+### 📣 Pour les utilisateurs
+
+- **Ajouté** : nouvelle option « Non gérée (lien only) » dans les paramètres d'une application. Permet de déclarer qu'une app est pilotée par un proxy externe (ex. Vikunja piloté par exemple-app) — le HUB ne la sonde plus (santé, backup, sync) mais elle reste visible et cliquable dans le launcher.
+- **Ajouté** : filtre « Gestion » (Toutes / Gérées / Non gérées) dans la vue admin des applications, pour distinguer les apps pilotées directement par le HUB de celles pilotées par un proxy.
+- **Amélioré** : badge visuel « Non gérée » sur les apps concernées, avec une icône dédiée.
+
+### ⚡ Apps non gérées — `is_unmanaged`
+
+- Ajout de la colonne `is_unmanaged` sur `applications` (migration 045) — flag pour les apps « launcher-only » : présentes/lancables mais exclues de la gestion technique.
+- **Health-check** : exclusion des apps `is_unmanaged=True` du checker périodique et du dashboard santé.
+- **Backup** : refus du backup manuel (HTTP 400) et exclusion du scheduler planifié et du snapshot global pour les apps non gérées.
+- **Sync Docker** : exclusion des apps non gérées du repositionnement automatique de `is_active`.
+- **Frontend admin** : toggle « Non gérée » dans le formulaire, badge « Non gérée » sur les lignes, filtre « Gestion » (Toutes/Gérées/Non gérées) dans la toolbar.
+- **Vikunja (id=6)** : flaggée `is_unmanaged=True, backup_mode=disabled` — l'app Docker Vikunja pilotée par `exemple-app` (id=5) n'est plus health-checkée ni backupée.
+
+---
+
 ## [3.18.2] - 28 juillet 2026
 
 ### 📣 Pour les utilisateurs
