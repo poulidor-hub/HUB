@@ -269,6 +269,7 @@ class AppCreateSimplified(BaseModel):
     requires_auth: bool = True
     create_service_account: bool = Field(False, description="Créer un service account M2M pour cette application")
     is_shared_service: bool = Field(False, description="Si True, cette app est accessible par tous les service accounts (M2M)")
+    is_unmanaged: bool = Field(False, description="App non gérée (launcher-only) : présente/lancable mais exclue du health-check, backup et sync Docker")
     git_repo_url: Optional[str] = Field(None, max_length=512, description="URL du dépôt Git (GitHub) pour le changelog et la détection de mises à jour")
 
 
@@ -289,6 +290,7 @@ class AppUpdate(BaseModel):
     requires_auth: Optional[bool] = None
     is_shared_service: Optional[bool] = None
     m2m_enforcement_mode: Optional[str] = None  # 'compat' ou 'enforced'
+    is_unmanaged: Optional[bool] = None  # True = launcher-only (non gérée)
 
 
 
@@ -305,6 +307,7 @@ class AppResponse(AppBase):
     approval_status: ApprovalStatusEnum = ApprovalStatusEnum.approved
     created_at: datetime
     is_workshop: bool = False
+    is_unmanaged: bool = False  # True si app non gérée (launcher-only)
     git_repo_url: Optional[str] = None
     
     @field_validator('is_remote', mode='before')
@@ -351,6 +354,7 @@ class AppResponseWithMyRole(AppResponse):
             is_shared_service=app.is_shared_service,
             is_system_app=bool(getattr(app, 'is_system_app', False)),
             is_remote=getattr(app, 'is_remote', False) or False,
+            is_unmanaged=bool(getattr(app, 'is_unmanaged', False)),
             m2m_enforcement_mode=getattr(app, 'm2m_enforcement_mode', 'compat') or 'compat',
             registered_from_ip=getattr(app, 'registered_from_ip', None),
             frontend_https_port=getattr(app, 'frontend_https_port', None),
