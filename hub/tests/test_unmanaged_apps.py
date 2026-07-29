@@ -4,6 +4,7 @@ from unittest.mock import patch
 
 from app.models import Application
 from app.routes import apps_health
+from app.routes.apps import auto_sync_docker_applications
 from tests.conftest import get_auth_header
 
 
@@ -104,3 +105,31 @@ async def test_backup_trigger_rejects_unmanaged(client, admin_token, async_sessi
     )
     assert resp.status_code == 400, resp.text
     assert "non gérée" in resp.json()["detail"].lower()
+
+
+class _FakeScanner:
+    """Scanner factif : aucun conteneur running (aucun port actif)."""
+    is_available = True
+    last_error = None
+
+    def scan_containers(self, include_stopped=False):
+        return []
+
+
+@pytest.mark.asyncio
+async def test_auto_sync_skips_unmanaged_apps(async_session, monkeypatch):
+    """auto_sync ne désactive pas une app is_unmanaged même si son port n'est pas running."""
+    unmanaged = Application(
+        name="Unmanaged", slug="unmanaged-sync", api_url="http://h:3456",
+        is_active=True, is_unmanaged=True,
+    )
+    async_session.add(unmanaged)
+    await async_session.commit()
+
+    import app.docker_scanner as ds
+    monkeypatch.setattr(ds, "docker_scanner", _FakeScanner())
+
+    await auto_sync_docker_applications(async_session)
+
+    await async_session.refresh(unmanaged)
+    assert unmanaged.is_active is True, "une app is_unmanaged ne doit pas être désactivée par la sync"

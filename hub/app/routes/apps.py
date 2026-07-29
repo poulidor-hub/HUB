@@ -3773,6 +3773,7 @@ async def sync_docker_applications(
     # Récupérer toutes les applications en base
     result = await db.execute(
         select(Application)
+        .where(Application.is_unmanaged == False)
     )
     apps = result.scalars().all()
     
@@ -3898,7 +3899,9 @@ async def auto_sync_docker_applications(db: AsyncSession) -> dict:
     
     # Récupérer toutes les applications en base
     result = await db.execute(
-        select(Application).where(Application.is_system_app == False)
+        select(Application)
+        .where(Application.is_system_app == False)
+        .where(Application.is_unmanaged == False)
     )
     apps = result.scalars().all()
     
