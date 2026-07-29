@@ -21,7 +21,7 @@ from sqlalchemy.ext.asyncio import create_async_engine
 
 from app import database as db_module
 from app.database import MigrationError, apply_migrations
-from app.models import user_profiles
+from app.models import Application, user_profiles
 
 
 @pytest.fixture
@@ -381,3 +381,76 @@ def test_migration_011_adds_unique_index_before_on_conflict():
     assert unique_index_pos != -1
     assert on_conflict_pos != -1
     assert unique_index_pos < on_conflict_pos
+
+
+# ---------------------------------------------------------------------------
+# Non-régression : l'INSERT explicite de la migration 026 (app système Hub)
+# doit inclure toutes les colonnes NOT NULL sans server_default du modèle
+# Application.  Toute nouvelle colonne NOT NULL ajoutée ultérieurement
+# (ex: is_workshop mig 043, is_unmanaged mig 045) casse cet INSERT et
+# provoque un NotNullViolation sur fresh install.
+# ---------------------------------------------------------------------------
+
+
+def test_migration_026_insert_covers_all_required_columns():
+    """Chaque colonne NOT NULL sans server_default du modèle Application
+    doit apparaître dans l'INSERT de la migration 026."""
+    import re
+
+    # Colonnes NOT NULL sans server_default (exclut id auto, PK)
+    required = {
+        col.name
+        for col in Application.__table__.columns
+        if not col.nullable
+        and col.server_default is None
+        and not col.primary_key
+        and not col.autoincrement  # au cas où
+    }
+
+    sql = (_REPO_MIGRATIONS_DIR / "026_add_backup_clusters_and_system_app.sql").read_text()
+
+    # Extraire la liste entre "INSERT INTO applications (" et ") VALUES"
+    match = re.search(
+        r"INSERT\s+INTO\s+applications\s*\((.*?)\)\s*VALUES",
+        sql,
+        re.DOTALL | re.IGNORECASE,
+    )
+    assert match, (
+        "Migration 026: impossible de parser la liste des colonnes de l'INSERT"
+    )
+
+    columns_text = match.group(1)
+    insert_columns = {
+        col.strip().lower() for col in columns_text.split(",") if col.strip()
+    }
+
+    # Vérifier que le nombre de colonnes et de VALUES correspondent
+    values_match = re.search(
+        r"VALUES\s*\((.*?)\)\s*\n?\s*ON\s+CONFLICT",
+        sql,
+        re.DOTALL | re.IGNORECASE,
+    )
+    if values_match:
+        values_text = values_match.group(1)
+        # Compter les valeurs (split par virgule, en gérant les chaînes entre quotes)
+        value_count = len(re.findall(r"(?:[^,'\"]|'(?:[^']|'')*'|\"(?:[^\"]|\"\")*\")+", values_text))
+        assert value_count == len(insert_columns), (
+            f"Migration 026: mismatch colonnes/VALUES — "
+            f"{len(insert_columns)} colonnes mais {value_count} valeurs"
+        )
+
+    missing = required - insert_columns
+    assert not missing, (
+        f"Migration 026: l'INSERT INTO applications omet des colonnes "
+        f"NOT NULL sans server_default : {sorted(missing)}. "
+        f"Sur fresh install, create_all() crée ces colonnes avant la "
+        f"migration, et l'INSERT échoue avec NotNullViolation."
+    )
+
+    # Vérifie aussi que chaque colonne de l'INSERT existe bien dans le modèle
+    model_columns = {col.name for col in Application.__table__.columns}
+    unknown = insert_columns - model_columns
+    assert not unknown, (
+        f"Migration 026: l'INSERT référence des colonnes inconnues "
+        f"du modèle Application : {sorted(unknown)}."
+    )
