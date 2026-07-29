@@ -1039,7 +1039,15 @@
                                         <option value="all">Tout</option>
                                     </select>
                                 </div>
-                                <div class="col-xl-2 col-md-6 d-grid">
+                                <div class="col-xl-2 col-md-6">
+                                    <label class="form-label small mb-1">Gestion</label>
+                                    <select class="form-select form-select-sm" id="adminAppsUnmanagedFilter" data-action="filterAdminApps">
+                                        <option value="all" selected>Toutes</option>
+                                        <option value="managed">Gérées</option>
+                                        <option value="unmanaged">Non gérées</option>
+                                    </select>
+                                </div>
+                                <div class="col-xl-1 col-md-6 d-grid">
                                     <button class="btn btn-outline-secondary btn-sm" type="button"data-action="resetAdminAppsFilters" title="Réinitialiser les filtres">
                                         <i class="bi bi-arrow-counterclockwise"></i>
                                     </button>
@@ -2032,6 +2040,12 @@
                                     <i class="bi bi-share text-primary me-1"></i>Service partagé (M2M)
                                 </label>
                             </div>
+    <div class="form-check form-switch">
+        <input class="form-check-input" type="checkbox" id="appIsUnmanaged">
+        <label class="form-check-label" for="appIsUnmanaged">
+            <i class="bi bi-exclamation-octagon text-secondary me-1"></i>Non gérée (lien only)
+        </label>
+    </div>
                         </div>
 
                         <!-- Info M2M (création uniquement) -->

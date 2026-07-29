@@ -74,6 +74,9 @@ function syncAdminAppsFilterControls() {
     if (clearBtn) {
         clearBtn.classList.toggle('d-none', !adminAppsSearchQuery.trim());
     }
+
+    const unmanagedSelect = document.getElementById('adminAppsUnmanagedFilter');
+    if (unmanagedSelect) unmanagedSelect.value = adminAppsUnmanagedFilter;
 }
 
 function getFilteredAdminApps() {
@@ -125,6 +128,13 @@ function getFilteredAdminApps() {
             return false;
         }
 
+        if (adminAppsUnmanagedFilter === 'unmanaged' && !app.is_unmanaged) {
+            return false;
+        }
+        if (adminAppsUnmanagedFilter === 'managed' && app.is_unmanaged) {
+            return false;
+        }
+
         return true;
     });
 }
@@ -134,6 +144,7 @@ function filterAdminApps() {
     adminAppsStatusFilter = document.getElementById('adminAppsStatusFilter')?.value || 'all';
     adminAppsCategoryFilter = document.getElementById('adminAppsCategoryFilter')?.value || 'all';
     adminAppsWorkshopFilter = document.getElementById('adminAppsWorkshopFilter')?.value || 'false';
+    adminAppsUnmanagedFilter = document.getElementById('adminAppsUnmanagedFilter')?.value || 'all';
 
     syncAdminAppsFilterControls();
     renderAppsTable(getFilteredAdminApps());
@@ -155,6 +166,7 @@ function resetAdminAppsFilters() {
     adminAppsStatusFilter = 'all';
     adminAppsCategoryFilter = 'all';
     adminAppsWorkshopFilter = 'false';
+    adminAppsUnmanagedFilter = 'all';
     syncAdminAppsFilterControls();
     renderAppsTable(getFilteredAdminApps());
 }
@@ -416,7 +428,7 @@ function renderAppsTable(apps) {
     const container = document.getElementById('appsTable');
     const sortedApps = [...apps].sort(compareAdminAppsByName);
     const totalApps = allApps.length;
-    const hasActiveFilters = Boolean(adminAppsSearchQuery.trim()) || adminAppsStatusFilter !== 'all' || adminAppsCategoryFilter !== 'all' || adminAppsWorkshopFilter !== 'false';
+    const hasActiveFilters = Boolean(adminAppsSearchQuery.trim()) || adminAppsStatusFilter !== 'all' || adminAppsCategoryFilter !== 'all' || adminAppsWorkshopFilter !== 'false' || adminAppsUnmanagedFilter !== 'all';
 
     syncAdminAppsFilterControls();
 
@@ -533,6 +545,7 @@ function renderAppsTable(apps) {
                                     <strong>${escapeHtml(app.name)}</strong>
                                     ${app.is_shared_service ? '<span class="badge bg-info ms-1" title="API partagée accessible par tous les SA"><i class="bi bi-share"></i></span>' : ''}
                                     ${app.is_workshop ? '<span class="badge bg-warning text-dark ms-1" title="Application atelier (APP_Workshop/)"><i class="bi bi-tools"></i> ATELIER</span>' : ''}
+                                    ${app.is_unmanaged ? '<span class="badge bg-secondary ms-1" title="Application non gérée par le HUB (launcher-only)"><i class="bi bi-exclamation-octagon"></i> Non gérée</span>' : ''}
                                     ${approvalBadge}
                                 </div>
                             </div>

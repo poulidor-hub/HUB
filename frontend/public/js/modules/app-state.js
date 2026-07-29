@@ -23,6 +23,7 @@ let adminAppsSearchQuery = '';
 let adminAppsStatusFilter = 'all';
 let adminAppsCategoryFilter = 'all';
 let adminAppsWorkshopFilter = 'false';  // 'false' (prod), 'true' (ateliers), 'all' (tout)
+let adminAppsUnmanagedFilter = 'all';  // 'all' (défaut, rien de caché), 'managed', 'unmanaged'
 
 // ===== Dashboard utilisateur =====
 let dashboardFilter = 'all';   // 'all' | 'favorites' | catégorie

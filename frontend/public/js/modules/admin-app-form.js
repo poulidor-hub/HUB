@@ -29,6 +29,7 @@ async function showAddAppForm() {
     document.getElementById('appActive').checked = true;
     document.getElementById('appRequiresAuth').checked = true;
     document.getElementById('appCustomHost').checked = false;
+    document.getElementById('appIsUnmanaged').checked = false;
     document.getElementById('customHostGroup').classList.add('d-none');
     document.getElementById('appSlug').readOnly = true;
     document.getElementById('slugHint').textContent = 'Généré automatiquement';
@@ -402,6 +403,7 @@ async function editApp(id) {
     document.getElementById('appActive').checked = app.is_active;
     document.getElementById('appRequiresAuth').checked = app.requires_auth;
     document.getElementById('appIsSharedService').checked = app.is_shared_service || false;
+    document.getElementById('appIsUnmanaged').checked = app.is_unmanaged || false;
     
     // Mode édition : URLs directes
     document.getElementById('simplePortsSection').classList.add('d-none');
@@ -476,7 +478,8 @@ async function handleSaveApp(event) {
                 color: document.getElementById('appColor').value,
                 is_active: document.getElementById('appActive').checked,
                 requires_auth: document.getElementById('appRequiresAuth').checked,
-                is_shared_service: document.getElementById('appIsSharedService').checked
+                is_shared_service: document.getElementById('appIsSharedService').checked,
+                is_unmanaged: document.getElementById('appIsUnmanaged').checked
             };
             
             // Ajouter les URLs seulement si elles sont renseignées
@@ -500,6 +503,7 @@ async function handleSaveApp(event) {
             // Le M2M sera créé automatiquement quand l'app s'auto-enregistre
             const customHost = document.getElementById('appCustomHost').checked;
             const isSharedService = document.getElementById('appIsSharedService')?.checked || false;
+            const isUnmanaged = document.getElementById('appIsUnmanaged')?.checked || false;
             const gitRepoUrl = document.getElementById('appGitRepoUrl')?.value?.trim() || null;
             const data = {
                 name: document.getElementById('appName').value,
@@ -513,6 +517,7 @@ async function handleSaveApp(event) {
                 custom_host: customHost ? document.getElementById('appCustomHostValue').value : null,
                 requires_auth: document.getElementById('appRequiresAuth').checked,
                 is_shared_service: isSharedService,
+                is_unmanaged: isUnmanaged,
                 create_service_account: false  // L'app créera son M2M en s'auto-enregistrant
             };
             if (gitRepoUrl) data.git_repo_url = gitRepoUrl;
