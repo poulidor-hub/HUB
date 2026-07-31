@@ -7,6 +7,18 @@
 
 ---
 
+## [3.20.0] - 1 août 2026
+
+### ⚡ Workshop auto-approval + token GitHub + fix backup_mode
+
+- **Workshop DEV auto-approval** : en mode DEV (`hubctl --dev`), les apps atelier (`slug-ws`) sont auto-approuvées si l'app de base (sans `-ws`) est déjà approuvée en base. Élimine la friction d'approbation admin pour les clones de développement. S'applique à la création ET au ré-enregistrement (re-register d'un atelier précédemment pending).
+- **Token GitHub** : formulaire de saisie du token GitHub directement dans l'interface admin (onglet Apps → GitHub). Le token est stocké via l'endpoint `PUT /api/settings/{key}` (upsert), avec validation basique du format (`ghp_` / `github_pat_`). Badge visuel indiquant l'état du token.
+- **Settings upsert** : `PUT /api/settings/{key}` accepte désormais les chaînes quelconques (plus limité aux booléens) et crée le paramètre s'il n'existe pas (upsert). Invalidation du cache `github_token` à la mise à jour.
+- **Fix `_safe_backup_mode()`** : corrige un crash 500 sur `GET /api/admin/backups` quand une app a `backup_mode = "none"` en base. Le nouveau helper valide contre les valeurs connues (`disabled`, `manual`, `scheduled`) avec fallback `"manual"`. Appliqué aux 4 endpoints lecture + `ensure_hub_system_application`.
+- **Tests** : settings — upsert, chaînes GitHub, valeurs numériques rejetées ; backup — 23/23 passent.
+
+---
+
 ## [3.19.1] - 30 juillet 2026
 
 ### 🐛 Fix — migrations 026 et 042 cassées sur fresh install

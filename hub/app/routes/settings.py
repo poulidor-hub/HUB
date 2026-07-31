@@ -57,15 +57,17 @@ async def update_setting(
             detail="Le champ 'value' est requis"
         )
 
-    # Normaliser : accepter booléen JSON ou chaîne, stocker "true"/"false"
+    # Normaliser : booléens → "true"/"false", chaînes → telles quelles
     if isinstance(raw_value, bool):
         value = "true" if raw_value else "false"
     elif isinstance(raw_value, str) and raw_value.lower() in ("true", "false"):
         value = raw_value.lower()
+    elif isinstance(raw_value, str):
+        value = raw_value
     else:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="La valeur doit être 'true' ou 'false'"
+            detail="La valeur doit être un booléen ou une chaîne"
         )
 
     result = await db.execute(
@@ -73,12 +75,23 @@ async def update_setting(
     )
     setting = result.scalar_one_or_none()
     if not setting:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Paramètre introuvable")
+        # Upsert : créer le paramètre s'il n'existe pas encore
+        setting = AppSetting(key=key, value=value)
+        db.add(setting)
+    else:
+        setting.value = value
 
-    setting.value = value
     setting.updated_at = utcnow()
     setting.updated_by_id = current_admin.id
     await db.commit()
+
+    # Invalider le cache du token GitHub si concerné
+    if key == "github_token":
+        try:
+            from app.github_client import invalidate_token_cache
+            invalidate_token_cache()
+        except ImportError:
+            pass
 
     logger.info(f"Setting '{key}' mis à jour à '{value}' par {current_admin.username}")
 

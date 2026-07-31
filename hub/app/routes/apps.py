@@ -1259,7 +1259,33 @@ async def register_app(
                 existing_app.is_workshop = is_now_workshop
                 updated_fields.append(f"is_workshop: {old_workshop} → {is_now_workshop}")
                 logger.info(f"🔄 Mise à jour is_workshop: {old_workshop} → {is_now_workshop}")
-            
+
+            # WORKSHOP DEV AUTO-APPROVAL (ré-enregistrement) :
+            # Si l'atelier était en pending et que l'app de base est approuvée
+            # en prod, l'auto-approuver — pas besoin d'intervention admin en DEV.
+            workshop_auto_approved = False
+            if is_now_workshop and existing_app.approval_status == ApprovalStatus.pending:
+                base_slug_rr = app_data.slug[:-3]  # retirer "-ws"
+                if base_slug_rr:
+                    result = await db.execute(
+                        select(Application).where(
+                            Application.slug == base_slug_rr,
+                            Application.approval_status == ApprovalStatus.approved
+                        )
+                    )
+                    base_app_rr = result.scalar_one_or_none()
+                    if base_app_rr:
+                        existing_app.approval_status = ApprovalStatus.approved
+                        existing_app.is_active = True
+                        existing_app.approved_at = utcnow()
+                        existing_app.approved_by_id = None
+                        workshop_auto_approved = True
+                        updated_fields.append("approval_status: pending → approved (atelier auto-approuvé)")
+                        logger.info(
+                            f"🚀 Atelier '{app_data.slug}' auto-approuvé au ré-enregistrement "
+                            f"(app de base '{base_slug_rr}' déjà approuvée)"
+                        )
+
             # Mettre à jour le nom si fourni et différent
             if app_data.name and existing_app.name != app_data.name:
                 old_value = existing_app.name
@@ -1356,6 +1382,11 @@ async def register_app(
             # l'app est bloquée : register ne retourne pas le secret, et
             # regenerate-secret exige un token M2M qu'elle n'a pas.
             if sa:
+                # Activer le SA si l'atelier vient d'être auto-approuvé au ré-enregistrement
+                if workshop_auto_approved and not sa.is_active:
+                    sa.is_active = True
+                    logger.info(f"✅ SA activé pour atelier auto-approuvé '{app_data.slug}'")
+                
                 client_secret = ServiceAccount.generate_client_secret()
                 sa.client_secret_hash = get_password_hash(client_secret)
                 await db.commit()
@@ -1398,18 +1429,44 @@ async def register_app(
         frontend_url = None
     callback_url = f"{frontend_url}/callback" if frontend_url else None
     
-    # SÉCURITÉ : Les apps auto-enregistrées sont en statut "pending"
-    # L'admin doit approuver avant que l'app ne soit active
-    # Description enrichie pour les apps distantes
+    is_workshop = app_data.slug.endswith("-ws")
+
+    # WORKSHOP DEV AUTO-APPROVAL :
+    # En mode DEV (hubctl --dev), les apps atelier (slug-ws) sont des clones
+    # d'une app de production déjà validée. Inutile de forcer l'admin à les
+    # approuver une par une : si l'app de base (sans "-ws") est déjà approuvée,
+    # l'atelier est auto-approuvé immédiatement.
+    auto_approve_workshop = False
+    base_slug = None
+    if is_workshop:
+        base_slug = app_data.slug[:-3]  # retirer le suffixe "-ws"
+        if base_slug:
+            result = await db.execute(
+                select(Application).where(
+                    Application.slug == base_slug,
+                    Application.approval_status == ApprovalStatus.approved
+                )
+            )
+            base_app = result.scalar_one_or_none()
+            auto_approve_workshop = base_app is not None
+            if auto_approve_workshop:
+                logger.info(
+                    f"🚀 Atelier '{app_data.slug}' auto-approuvé "
+                    f"(app de base '{base_slug}' déjà approuvée en production)"
+                )
+
+    # Description enrichie pour les apps distantes et workshops
     description = app_data.description
     if not description:
-        if is_remote:
+        if auto_approve_workshop:
+            description = f"Atelier de {base_slug} (auto-approuvé — clone DEV)"
+        elif is_remote:
             description = f"Application {app_data.slug} (auto-enregistrée depuis serveur distant {client_ip}, en attente d'approbation)"
         else:
             description = f"Application {app_data.slug} (auto-enregistrée, en attente d'approbation)"
-    
-    is_workshop = app_data.slug.endswith("-ws")
-    
+
+    now_ts = utcnow()
+
     app = Application(
         name=app_data.name or app_data.slug.replace("-", " ").title(),
         slug=app_data.slug,
@@ -1423,8 +1480,10 @@ async def register_app(
         is_remote=is_remote,  # Marquer comme app distante si custom_host fourni
         registered_from_ip=client_ip,  # Enregistrer l'IP source
         version=app_data.version,  # Version de l'app, capturée à l'enregistrement
-        approval_status=ApprovalStatus.pending,  # En attente d'approbation admin
-        is_active=False,  # Inactive jusqu'à approbation
+        approval_status=ApprovalStatus.approved if auto_approve_workshop else ApprovalStatus.pending,
+        is_active=auto_approve_workshop,  # Actif immédiatement si auto-approuvé
+        approved_at=now_ts if auto_approve_workshop else None,
+        approved_by_id=None,  # Système (auto-approbation workshop DEV)
         is_workshop=is_workshop
     )
     
@@ -1438,7 +1497,9 @@ async def register_app(
     db.add(app)
     await db.flush()
     
-    if is_remote:
+    if auto_approve_workshop:
+        logger.info(f"🚀 Application atelier '{app_data.slug}' créée avec AUTO-APPROBATION (base: {base_slug})")
+    elif is_remote:
         logger.info(f"🔒🌐 Application DISTANTE '{app_data.slug}' créée en statut PENDING (host: {host}, IP source: {client_ip})")
     else:
         logger.info(f"🔒 Application '{app_data.slug}' créée en statut PENDING (en attente d'approbation admin)")
@@ -1447,12 +1508,16 @@ async def register_app(
     client_id = ServiceAccount.generate_client_id()
     client_secret = ServiceAccount.generate_client_secret()
     
+    sa_desc = f"Service account auto-créé pour {app.name}"
+    if not auto_approve_workshop:
+        sa_desc += " (en attente d'approbation)"
+    
     service_account = ServiceAccount(
         name=f"SA - {app.name}",
-        description=f"Service account auto-créé pour {app.name} (en attente d'approbation)",
+        description=sa_desc,
         client_id=client_id,
         client_secret_hash=get_password_hash(client_secret),
-        is_active=False  # Inactif jusqu'à approbation de l'app
+        is_active=auto_approve_workshop  # Actif immédiatement si auto-approuvé
     )
     db.add(service_account)
     await db.flush()
@@ -1521,16 +1586,24 @@ async def register_app(
         app_slugs=all_app_slugs
     )
     
-    # Message indiquant l'attente d'approbation
-    if is_remote:
+    # Message adapté selon le statut d'approbation
+    if auto_approve_workshop:
+        message = f"🚀 Atelier '{app_data.slug}' enregistré et AUTO-APPROUVÉ (base: {base_slug})."
+        message += " Credentials M2M actifs."
+    elif is_remote:
         message = f"⏳🌐 Application DISTANTE '{app_data.slug}' enregistrée depuis {client_ip}. EN ATTENTE D'APPROBATION ADMIN."
+        message += " Credentials M2M générés mais inactifs jusqu'à approbation."
     else:
         message = f"⏳ Application '{app_data.slug}' enregistrée avec succès. EN ATTENTE D'APPROBATION ADMIN."
-    message += " Credentials M2M générés mais inactifs jusqu'à approbation."
-    if app_data.is_shared:
+        message += " Credentials M2M générés mais inactifs jusqu'à approbation."
+    
+    if app_data.is_shared and not auto_approve_workshop:
         message += " Le mode service partagé sera activé après approbation."
     
-    logger.info(f"📝 Application '{app_data.slug}' auto-enregistrée depuis {client_ip} (PENDING, remote={is_remote})")
+    if auto_approve_workshop:
+        logger.info(f"📝 Atelier '{app_data.slug}' auto-enregistré depuis {client_ip} (AUTO-APPROVED)")
+    else:
+        logger.info(f"📝 Application '{app_data.slug}' auto-enregistrée depuis {client_ip} (PENDING, remote={is_remote})")
     
     return AppRegisterResponse(
         message=message,
@@ -1542,7 +1615,7 @@ async def register_app(
             "hub_api_port": settings.hub_api_port if hasattr(settings, 'hub_api_port') else 8000
         },
         is_new=True,
-        pending_approval=True  # Indique que l'app nécessite une approbation admin
+        pending_approval=not auto_approve_workshop  # Pas d'attente si auto-approuvé
     )
 
 

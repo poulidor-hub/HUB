@@ -90,6 +90,14 @@ def delete_backup_file_if_present(path_value: Optional[str]) -> int:
     return file_size
 
 
+_VALID_BACKUP_MODES = {"disabled", "manual", "scheduled"}
+
+
+def _safe_backup_mode(raw: Optional[str]) -> BackupModeEnum:
+    """Normalise la valeur de backup_mode : fallback "manual" si la valeur est invalide ou absente."""
+    return BackupModeEnum(raw if raw in _VALID_BACKUP_MODES else "manual")
+
+
 def _naive_utc(dt: Optional[datetime]) -> Optional[datetime]:
     """Normalise un datetime en naïf UTC.
 
@@ -554,7 +562,7 @@ async def ensure_hub_system_application(db: AsyncSession) -> Application:
     if not app.category:
         app.category = "Système"
         changed = True
-    if not app.backup_mode:
+    if not app.backup_mode or app.backup_mode not in _VALID_BACKUP_MODES:
         app.backup_mode = "manual"
         changed = True
     if not app.backup_retention:
@@ -828,7 +836,7 @@ async def list_app_backups(
     backups = result.scalars().all()
     
     backup_config = AppBackupConfig(
-        backup_mode=BackupModeEnum(app.backup_mode or "manual"),
+        backup_mode=_safe_backup_mode(app.backup_mode),
         backup_cron=app.backup_cron,
         backup_retention=app.backup_retention or 5,
         backup_quiesce=bool(getattr(app, "backup_quiesce", False)),
@@ -1058,7 +1066,7 @@ async def get_backup_config(
     app = await get_app_or_404(db, slug)
     
     return AppBackupConfig(
-        backup_mode=BackupModeEnum(app.backup_mode or "manual"),
+        backup_mode=_safe_backup_mode(app.backup_mode),
         backup_cron=app.backup_cron,
         backup_retention=app.backup_retention or 5,
         backup_quiesce=bool(getattr(app, "backup_quiesce", False)),
@@ -1120,7 +1128,7 @@ async def update_backup_config(
     logger.info(f"⚙️ Configuration backup mise à jour pour {slug}: mode={app.backup_mode}, cron={app.backup_cron}")
     
     return AppBackupConfig(
-        backup_mode=BackupModeEnum(app.backup_mode or "manual"),
+        backup_mode=_safe_backup_mode(app.backup_mode),
         backup_cron=app.backup_cron,
         backup_retention=app.backup_retention or 5,
         backup_quiesce=bool(getattr(app, "backup_quiesce", False)),
@@ -2438,7 +2446,7 @@ async def get_all_backups_overview(
             app_slug=app.slug,
             app_name=app.name,
             is_system_app=bool(getattr(app, "is_system_app", False)),
-            backup_mode=BackupModeEnum(app.backup_mode or "manual"),
+            backup_mode=_safe_backup_mode(app.backup_mode),
             backup_cron=app.backup_cron,
             backup_retention=app.backup_retention or 5,
             backup_quiesce=bool(getattr(app, "backup_quiesce", False)),

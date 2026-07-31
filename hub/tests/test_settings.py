@@ -5,9 +5,10 @@ Couvre :
 - GET /api/settings/{key} : lecture publique (sans auth)
 - GET avec clé hors whitelist → 404
 - GET avec clé absente de la BDD → 404
-- PUT /api/settings/{key} : modification admin
+- PUT /api/settings/{key} : modification admin (upsert — crée si absent)
 - PUT non-admin → 403
-- PUT clé inexistante → 404
+- PUT chaîne quelconque acceptée (booléens normalisés, strings tels quels)
+- PUT avec valeur numérique → 400
 """
 
 import pytest
@@ -123,19 +124,21 @@ class TestUpdateSetting:
         )
         assert resp.status_code == 403
 
-    async def test_update_nonexistent_key(
+    async def test_update_nonexistent_key_creates(
         self,
         client: AsyncClient,
         admin_user: User,
         admin_token: str,
     ):
-        """Modifier une clé inexistante retourne 404."""
+        """Modifier une clé inexistante la crée (upsert)."""
         resp = await client.put(
-            "/api/settings/nonexistent_key",
+            "/api/settings/new_feature_flag",
             json={"value": "true"},
             headers=get_auth_header(admin_token),
         )
-        assert resp.status_code == 404
+        assert resp.status_code == 200
+        assert resp.json()["key"] == "new_feature_flag"
+        assert resp.json()["value"] == "true"
 
     async def test_update_missing_value_field(
         self,
@@ -232,22 +235,39 @@ class TestUpdateSetting:
         assert resp.status_code == 200
         assert resp.json()["value"] == "true"
 
-    async def test_update_with_invalid_value_rejected(
+    async def test_update_accepts_arbitrary_string(
         self,
         client: AsyncClient,
         admin_user: User,
         admin_token: str,
         async_session: AsyncSession,
     ):
-        """Une valeur non booléenne est rejetée en 400."""
-        await ensure_setting(async_session)
+        """Les chaînes quelconques sont acceptées (ex: token GitHub)."""
+        await ensure_setting(async_session, value="true")
 
         resp = await client.put(
             "/api/settings/account_requests_enabled",
-            json={"value": "maybe"},
+            json={"value": "ghp_exampleToken123"},
             headers=get_auth_header(admin_token),
         )
-        assert resp.status_code == 400
+        assert resp.status_code == 200
+        assert resp.json()["value"] == "ghp_exampleToken123"
+
+    async def test_update_github_token_upsert(
+        self,
+        client: AsyncClient,
+        admin_user: User,
+        admin_token: str,
+    ):
+        """La sauvegarde d'un token GitHub fonctionne (clé créée si absente)."""
+        resp = await client.put(
+            "/api/settings/github_token",
+            json={"value": "ghp_testTokenXYZ"},
+            headers=get_auth_header(admin_token),
+        )
+        assert resp.status_code == 200
+        assert resp.json()["key"] == "github_token"
+        assert resp.json()["value"] == "ghp_testTokenXYZ"
 
     async def test_update_with_numeric_value_rejected(
         self,

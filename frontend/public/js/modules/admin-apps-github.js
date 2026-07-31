@@ -23,19 +23,18 @@ async function loadGithubApps() {
 function renderGithubApps(data) {
     const summary = document.getElementById('githubAppsSummary');
     const fetchedStr = data.fetched_at ? ' · sync ' + formatRelative(data.fetched_at) : ' · jamais synchronisé';
-    summary.innerHTML = '<strong>' + data.total + '</strong> repo(s)' + fetchedStr;
+    var tokenBadge = data.token_configured
+        ? ' · <span style="color:#16a34a;font-size:12px;">🔑 token configuré</span> <a href="#" onclick="toggleGithubTokenForm();return false;" style="font-size:12px;">(modifier)</a>'
+        : ' · <span style="color:#dc2626;font-size:12px;">⚠️ pas de token</span>';
+    summary.innerHTML = '<strong>' + data.total + '</strong> repo(s)' + fetchedStr + tokenBadge;
 
     const grid = document.getElementById('githubAppsGrid');
     if (!data.token_configured) {
-        grid.innerHTML =
-            '<div class="text-center py-5">' +
-                '<div style="font-size:32px;">⚠️</div>' +
-                '<h5>Aucun token GitHub configuré</h5>' +
-                '<p class="text-muted">La sélection visuelle nécessite un Personal Access Token GitHub.</p>' +
-                '<button class="btn btn-primary" onclick="document.getElementById(\'navAppsHealth\').click()">⚙️ Configurer le token</button>' +
-            '</div>';
+        grid.innerHTML = _ghTokenNoConfigHTML();
         return;
     }
+    // Afficher le formulaire de token sous la grille si déplié
+    var tokenFormHTML = _ghTokenFormHTML();
     if (!data.repos || !data.repos.length) {
         grid.innerHTML =
             '<div class="text-center py-5">' +
@@ -43,10 +42,11 @@ function renderGithubApps(data) {
                 '<h5>Aucun repo en cache</h5>' +
                 '<p class="text-muted">Synchronisez depuis GitHub pour voir vos dépôts.</p>' +
                 '<button class="btn btn-primary" onclick="syncGithubRepos()">🔄 Synchroniser maintenant</button>' +
-            '</div>';
+            '</div>' +
+            tokenFormHTML;
         return;
     }
-    grid.innerHTML = data.repos.map(renderGithubRepoCard).join('');
+    grid.innerHTML = data.repos.map(renderGithubRepoCard).join('') + tokenFormHTML;
 
     const ownerSelect = document.getElementById('githubOwnerSelect');
     if (ownerSelect) {
@@ -133,6 +133,98 @@ function formatRelative(iso) {
     if (secs < 3600) return 'il y a ' + Math.floor(secs / 60) + ' min';
     if (secs < 86400) return 'il y a ' + Math.floor(secs / 3600) + ' h';
     return 'il y a ' + Math.floor(secs / 86400) + ' j';
+}
+
+// ─── Gestion du token GitHub ─────────────────────────────────────────
+
+/**
+ * HTML du message quand aucun token n'est configuré.
+ * Affiche le formulaire de token bien visible.
+ */
+function _ghTokenNoConfigHTML() {
+    return '<div class="text-center py-5">' +
+        '<div style="font-size:32px;">⚠️</div>' +
+        '<h5>Aucun token GitHub configuré</h5>' +
+        '<p class="text-muted">La sélection visuelle nécessite un Personal Access Token GitHub.</p>' +
+        _ghTokenFormContent() +
+    '</div>';
+}
+
+/**
+ * HTML du formulaire de token (masqué par défaut quand le token est déjà configuré).
+ */
+function _ghTokenFormHTML() {
+    return '<div id="ghTokenFormWrapper" style="display:none;margin-top:16px;padding:16px;border:1px solid #e2e8f0;border-radius:8px;background:#f8fafc;">' +
+        '<div class="d-flex justify-content-between align-items-center mb-2">' +
+            '<strong style="font-size:14px;">🔑 Token GitHub</strong>' +
+            '<button class="btn btn-sm btn-outline-secondary" onclick="toggleGithubTokenForm()">✕</button>' +
+        '</div>' +
+        '<p class="text-muted small mb-2">Personal Access Token (classic) avec les droits <code>repo</code> et <code>read:org</code>.</p>' +
+        _ghTokenFormContent() +
+    '</div>';
+}
+
+function _ghTokenFormContent() {
+    return '<div class="mx-auto" style="max-width:450px;">' +
+        '<div class="input-group mb-2">' +
+            '<input type="password" id="githubTokenInput" class="form-control" placeholder="ghp_..." autocomplete="off">' +
+            '<button class="btn btn-outline-secondary" type="button" onclick="toggleGithubTokenVisibility()" title="Afficher/masquer">' +
+                '<i class="bi bi-eye"></i>' +
+            '</button>' +
+        '</div>' +
+        '<div class="d-flex gap-2 justify-content-center">' +
+            '<button class="btn btn-primary btn-sm" onclick="saveGithubToken()">Enregistrer le token</button>' +
+        '</div>' +
+    '</div>';
+}
+
+function toggleGithubTokenForm() {
+    var wrapper = document.getElementById('ghTokenFormWrapper');
+    if (!wrapper) return;
+    if (wrapper.style.display === 'none') {
+        wrapper.style.display = 'block';
+        var input = document.getElementById('githubTokenInput');
+        if (input) { input.value = ''; input.focus(); }
+    } else {
+        wrapper.style.display = 'none';
+    }
+}
+
+function toggleGithubTokenVisibility() {
+    var input = document.getElementById('githubTokenInput');
+    if (!input) return;
+    input.type = input.type === 'password' ? 'text' : 'password';
+}
+
+async function saveGithubToken() {
+    var input = document.getElementById('githubTokenInput');
+    if (!input) return;
+    var token = input.value.trim();
+    if (!token) {
+        showToast('Token GitHub', 'Veuillez saisir un token', 'warning');
+        return;
+    }
+    // Validation basique : un PAT GitHub classique commence par ghp_
+    if (!token.startsWith('ghp_') && !token.startsWith('github_pat_')) {
+        showToast('Token GitHub', 'Le token ne ressemble pas à un PAT GitHub (ghp_... ou github_pat_...)', 'warning');
+        return;
+    }
+
+    var btn = event && event.target ? event.target : null;
+    if (btn) { btn.disabled = true; btn.textContent = 'Enregistrement…'; }
+
+    try {
+        await api.updateSetting('github_token', token);
+        showToast('Token GitHub', 'Token enregistré avec succès', 'success');
+        // Masquer le formulaire et recharger
+        var wrapper = document.getElementById('ghTokenFormWrapper');
+        if (wrapper) wrapper.style.display = 'none';
+        await loadGithubApps();
+    } catch (e) {
+        showToast('Token GitHub', 'Erreur: ' + (e.message || 'échec'), 'danger');
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = 'Enregistrer le token'; }
+    }
 }
 
 // (empty after stub removal in Task 9)
