@@ -7,6 +7,23 @@
 
 ---
 
+## [3.20.1] - 1 août 2026
+
+### ⚡ Corrections UI — filtrage temporel audit + bugs data-action
+
+- **audit: boutons de période visuellement cassés** — `parseArgs` passe les arguments en string, la comparaison stricte `parseInt(dataset) === days` échouait toujours. Ajout de `parseInt(days)` dans `setAuditPeriod`.
+- **audit: double sélecteur de période incohérent** — supprimé `errorsFilterHours` indépendant dans l'onglet Erreurs, remplacé par `getErrorHours()` lié au sélecteur global `auditPeriodPage` (plafonné à 168h, max API).
+- **audit: changement de période ignorait l'onglet actif** — `loadAuditPageData()` n'appelait que l'overview. Ajout de la détection de l'onglet actif (`#auditPageTabs .nav-link.active`) et appel du loader correspondant.
+- **SSE audit: reconnect et `audit_updated` incomplets** — appelaient `loadAuditPageOverview()` au lieu de `loadAuditPageData()`, ignorant l'onglet visible. Corrigé (×2).
+- **export CSV audit: période et filtres toujours au défaut 30j** — `exportAuditLogs`/`exportSessions` lisaient `auditPeriod` (inexistant) et `logsFilterAction`/`logsFilterApp` (vieux IDs modale). Corrigé vers `auditPeriodPage` + `pageLogsFilterAction`/`pageLogsFilterApp`.
+- **toggle inscriptions admin: toujours actif** — `data-args="this.checked"` passé en string littérale `"this.checked"` (toujours truthy). Remplacé par `$el` + lecture de `el.checked`.
+- **profils: « Tout désélectionner » sélectionnait tout** — `profileSelectAllApps("false")` recevait la string `"false"` (truthy). Ajout de `checked = (checked === true || checked === 'true')`.
+- **SSE users reconnect: profils/demandes ignorés** — `refreshAfterReconnect` et `user_permissions_changed` n'appelaient que `loadUsersPageData()`. Ajout de `loadUsersPageActiveTab()` avec détection d'onglet actif (users/profils/demandes).
+- **audit.js: purge de 18 fonctions mortes** (617→138 lignes) — l'ancien cluster modale (`loadAuditData`, `renderAuditStats`, `renderActiveSessions`, etc.) ciblait des éléments DOM qui n'existent plus. Conservé uniquement les 7 fonctions utilisées (5 helpers + 2 exports).
+- **audit-page.js: source de vérité unifiée** — suppression de la variable `pageAuditDays`, toutes les fonctions lisent désormais `auditPeriodPage` (DOM).
+
+---
+
 ## [3.20.0] - 1 août 2026
 
 ### ⚡ Workshop auto-approval + token GitHub + fix backup_mode

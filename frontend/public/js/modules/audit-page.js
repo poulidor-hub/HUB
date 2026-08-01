@@ -11,10 +11,9 @@ let pageAuditLogsPage = 1;
 let pageAuditCurrentAppSlug = null;
 let pageAuditAppLogsPage = 1;
 let allUsersPage = [];
-let pageAuditDays = 7;
 
 function setAuditPeriod(days) {
-    pageAuditDays = days;
+    days = parseInt(days);
     const hidden = document.getElementById('auditPeriodPage');
     if (hidden) hidden.value = days;
     document.querySelectorAll('#auditPageSeg button').forEach(b => {
@@ -30,11 +29,30 @@ function openAuditTab(tab) {
 }
 
 async function loadAuditPageData() {
+    // Toujours recharger la vue d'ensemble (les KPIs et les alertes en haut)
     await loadAuditPageOverview();
+
+    // Recharger aussi l'onglet actuellement visible
+    const activeTab = document.querySelector('#auditPageTabs .nav-link.active');
+    if (!activeTab) return;
+
+    const target = activeTab.getAttribute('data-bs-target');
+    const loaders = {
+        '#auditPageOverview': loadAuditPageOverview,
+        '#auditPageApps': loadAuditPageApps,
+        '#auditPageLogs': loadAuditPageLogsTab,
+        '#auditPageSessions': loadAuditPageSessions,
+        '#auditPageErrors': loadAuditPageErrors
+    };
+
+    const loader = loaders[target];
+    if (loader && loader !== loadAuditPageOverview) {
+        await loader();
+    }
 }
 
 async function loadAuditPageOverview() {
-    const days = pageAuditDays;
+    const days = parseInt(document.getElementById('auditPeriodPage')?.value || 7);
     try {
         const [kpis, alerts, active] = await Promise.all([
             api.getAuditKpis(days),

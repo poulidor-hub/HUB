@@ -31,6 +31,27 @@ function changeUsersPage(page) {
     loadUsersPageData();
 }
 
+/**
+ * Détecte l'onglet users actif et recharge ses données.
+ * Utilisé par SSE (reconnect, permissions changed) pour ne rafraîchir
+ * que ce que l'utilisateur voit réellement.
+ */
+async function loadUsersPageActiveTab() {
+    const activeTab = document.querySelector('#usersPageTabs .nav-link.active');
+    if (!activeTab) {
+        await loadUsersPageData();
+        return;
+    }
+    const target = activeTab.getAttribute('data-bs-target');
+    const loaders = {
+        '#tabUsersList': loadUsersPageData,
+        '#tabProfiles': loadProfilesTab,
+        '#tabAccountRequests': loadAccountRequestsTab
+    };
+    const loader = loaders[target];
+    if (loader) await loader();
+}
+
 async function loadUsersPageData() {
     try {
         const search = document.getElementById('usersSearchInput')?.value || '';
@@ -490,6 +511,8 @@ function toggleProfileRoleSelect(appId) {
 }
 
 function profileSelectAllApps(checked) {
+    // La delegation data-action passe les arguments en CHAINE ("true"/"false")
+    checked = (checked === true || checked === 'true');
     document.querySelectorAll('#profileAppsCheckboxes .app-role-row').forEach(row => {
         if (row.style.display === 'none') return;
 

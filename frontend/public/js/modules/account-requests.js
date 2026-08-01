@@ -351,7 +351,8 @@ async function loadAccountRequestsTab() {
 /**
  * Toggle activation/désactivation des demandes de compte.
  */
-async function handleToggleAccountRequests(checked) {
+async function handleToggleAccountRequests(el) {
+    const checked = el ? el.checked : false;
     try {
         await api.updateSetting('account_requests_enabled', checked ? 'true' : 'false');
         showToast('Inscriptions', checked ? 'Demandes de compte activées' : 'Demandes de compte désactivées', 'success');
@@ -359,8 +360,7 @@ async function handleToggleAccountRequests(checked) {
         console.error('Erreur toggle account requests:', e);
         showToast('Erreur', 'Impossible de modifier le paramètre', 'danger');
         // Remettre le toggle dans l'état précédent
-        const toggle = document.getElementById('toggleAccountRequests');
-        if (toggle) toggle.checked = !checked;
+        if (el) el.checked = !checked;
     }
 }
 

@@ -127,13 +127,13 @@ async function refreshAfterReconnect() {
         // Rafraîchir selon la page courante
         switch (currentPage) {
             case 'users':
-                loadUsersPageData();
+                loadUsersPageActiveTab();
                 break;
             case 'service-accounts':
                 loadAdminData();
                 break;
             case 'audit':
-                loadAuditPageOverview();
+                loadAuditPageData();
                 break;
             case 'apps-admin':
                 loadAdminData();
@@ -319,7 +319,7 @@ function handleSSEEvent(data) {
             // Rafraîchir les données d'audit si on est sur cette page
             if (currentPage === 'audit') {
                 // Rafraîchir les données d'audit sans toast (pour éviter le spam)
-                loadAuditPageOverview();
+                loadAuditPageData();
             }
             // Mettre à jour aussi les stats si disponibles
             if (data.data?.stats) {
@@ -347,9 +347,9 @@ function handleSSEEvent(data) {
                     }
                 }, SSE_DEBOUNCE_DELAY);
             }
-            // Rafraîchir la liste utilisateurs si l'admin est sur cette page
+            // Rafraîchir l'onglet users actif si l'admin est sur cette page
             if (currentPage === 'users') {
-                loadUsersPageData();
+                loadUsersPageActiveTab();
             }
             break;
         }

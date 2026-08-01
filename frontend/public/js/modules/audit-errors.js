@@ -10,6 +10,15 @@
 let errorsPage = 1;
 
 /**
+ * Convertit la periode d'audit globale (jours) en heures pour le endpoint erreurs.
+ * Max 168h (7 jours) car c'est la limite de l'API /audit/errors.
+ */
+function getErrorHours() {
+    const days = parseInt(document.getElementById('auditPeriodPage')?.value || 7);
+    return Math.min(days * 24, 168);
+}
+
+/**
  * Met à jour le badge de notification d'erreurs dans la navigation principale.
  */
 function updateNavErrorBadge(count) {
@@ -41,7 +50,7 @@ async function updateErrorNotificationBadge() {
  * Purge les erreurs (avec confirmation).
  */
 async function purgeErrors() {
-    const hours = parseInt(document.getElementById('errorsFilterHours')?.value || 24);
+    const hours = getErrorHours();
     const errorCode = document.getElementById('errorsFilterCode')?.value || null;
     
     const desc = errorCode ? `les erreurs ${errorCode}` : 'toutes les erreurs';
@@ -78,7 +87,7 @@ async function purgeAllErrors() {
  */
 async function updateErrorTabBadge() {
     try {
-        const stats = await api.getErrorStats(24);
+        const stats = await api.getErrorStats(getErrorHours());
         const badge = document.getElementById('errorCountBadge');
         if (badge) {
             if (stats.total > 0) {
@@ -94,7 +103,7 @@ async function updateErrorTabBadge() {
 }
 
 async function loadAuditPageErrors() {
-    const hours = parseInt(document.getElementById('errorsFilterHours')?.value || 24);
+    const hours = getErrorHours();
     const errorCode = document.getElementById('errorsFilterCode')?.value || null;
     const errorType = document.getElementById('errorsFilterType')?.value || null;
     const sourceApp = document.getElementById('errorsFilterApp')?.value || null;
@@ -130,7 +139,7 @@ async function loadAuditPageErrors() {
         if (kpiRow) {
             kpiRow.innerHTML =
                 auditKpiCard('#fde8e8', '#dc3545', 'bi-exclamation-triangle-fill', stats.total, 'Erreurs totales',
-                    '<span class="audit-trend flat">' + (parseInt(document.getElementById('errorsFilterHours')?.value) || 24) + 'h</span>') +
+                    '<span class="audit-trend flat">' + (parseInt(document.getElementById('auditPeriodPage')?.value) || 7) + 'j</span>') +
                 auditKpiCard('#fff1e6', '#fd7e14', 'bi-exclamation-diamond', count4xx, 'Erreurs client (4xx)',
                     '<span class="audit-trend flat">Client</span>') +
                 auditKpiCard('#fde8e8', '#dc3545', 'bi-exclamation-triangle', count5xx, 'Erreurs serveur (5xx)',
@@ -190,7 +199,6 @@ function resetErrorsFilters() {
     document.getElementById('errorsFilterType').value = '';
     document.getElementById('errorsFilterApp').value = '';
     document.getElementById('errorsFilterPath').value = '';
-    document.getElementById('errorsFilterHours').value = '24';
     errorsPage = 1;
     loadAuditPageErrors();
 }
@@ -360,7 +368,7 @@ async function showErrorDetail(errorId) {
 }
 
 async function exportErrors() {
-    const hours = parseInt(document.getElementById('errorsFilterHours')?.value || 24);
+    const hours = getErrorHours();
     const errorCode = document.getElementById('errorsFilterCode')?.value || null;
     
     try {
