@@ -157,25 +157,57 @@ Les apps peuvent envoyer des messages via leur service account M2M. Voir la doc 
 
 ---
 
-## VPN WireGuard (optionnel)
+## VPN WireGuard — Serveur (accès distant)
 
-Le Hub peut se connecter à un réseau WireGuard pour :
-- Relier plusieurs sites distants
-- Permettre l'accès distant sécurisé aux apps
+Le HUB agit comme **serveur WireGuard**, permettant aux utilisateurs HUB
+de se connecter au HUB et à ses applications à distance via un tunnel VPN
+chiffré (split tunnel : seul le trafic local au HUB passe par le VPN).
 
-### Configuration
+### 1. Initialisation du serveur
 
 1. **Administration → VPN**
-2. Activer l'interrupteur
-3. Renseigner :
-   - Clé privée (ou générer)
-   - Adresse VPN
-   - Clé publique du serveur
-   - Endpoint (IP:port du serveur WireGuard)
+2. Saisir l'**endpoint public** du serveur (IP publique ou nom de domaine)
+3. Cliquer **Initialiser**
+4. La clé privée du serveur est générée automatiquement, la config
+   `wg0.conf` est créée.
 
-### Déploiement
+### 2. Ajout de peers (utilisateurs)
 
-Cliquer **Déployer** pour appliquer la configuration VPN au conteneur Hub.
+1. Dans l'onglet VPN, cliquer **Ajouter un peer**
+2. Sélectionner un **utilisateur HUB** dans la liste déroulante
+3. Saisir un **nom de device** (ex : « iPhone de Paul », « PC maison »)
+4. Valider — le peer est créé avec une paire de clés WireGuard
+
+### 3. Distribution de la configuration
+
+Pour chaque peer créé :
+- **Télécharger le .conf** : bouton 📥 — fichier prêt à importer dans
+  l'application WireGuard du device
+- **Scanner le QR code** : bouton 📱 — affiche un QR code importable
+  directement depuis l'app mobile WireGuard
+
+### 4. Activation du serveur
+
+1. Basculer le **toggle VPN** sur ON dans l'interface admin
+2. Exécuter la synchronisation côté hôte :
+   ```bash
+   hubctl vpn sync
+   ```
+   Cette commande applique la configuration et démarre le conteneur
+   `wireguard-server`.
+
+### 5. Ouverture du port firewall
+
+Le serveur WireGuard écoute sur le port **51820/udp**. Ouvrir ce port
+dans le firewall/pare-feu du serveur HUB :
+
+```bash
+# Exemple avec ufw
+sudo ufw allow 51820/udp
+```
+
+> ⚠️ Le port 51820/udp est le seul port exposé sur Internet.
+> L'accès aux apps et au dashboard HUB se fait exclusivement via le tunnel VPN.
 
 ---
 

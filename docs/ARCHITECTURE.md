@@ -30,10 +30,11 @@
 │  └──────────────────────────────────────────┘             │
 └──────────────────────────────────────────────────────────┘
                           │
-                    ┌─────┴─────┐
-                    │ WireGuard │  ← VPN site-à-site
-                    │  Client   │     (optionnel)
-                    └───────────┘
+                ┌─────────┴─────────┐
+                │ Accès distant     │  ← VPN WireGuard
+                │ utilisateurs      │     (serveur HUB)
+                │ (clients VPN)     │
+                └───────────────────┘
 ```
 
 ## Composants
@@ -50,7 +51,7 @@ FastAPI + SQLAlchemy async + PostgreSQL.
 | **Messages** | Système de messagerie interne (broadcast, user, app), boîte de réception |
 | **Backups** | Réception, stockage, planification cron, export chiffré, snapshots |
 | **PKI** | Génération de certificats auto-signés pour HTTPS |
-| **VPN** | Configuration WireGuard client intégré |
+| **VPN** | Serveur WireGuard intégré — gestion des peers, .conf, QR code |
 
 **Fichiers clés :**
 - `hub/app/main.py` — Point d'entrée FastAPI, lifespan, middlewares
@@ -167,19 +168,22 @@ App (backend)                     Hub API
 ## Réseau
 
 ```
-Internet ──► WireGuard VPN ──► LAN
-                                  │
-                         ┌────────┴────────┐
-                         │   Hub Frontend  │  :80 / :443
-                         │   Hub API       │  :8000 (interne)
-                         │   PostgreSQL    │  :5432 (Docker interne)
-                         │   Apps API      │  :9000-9499
-                         │   Apps Frontend │  :4200-4699
-                         └─────────────────┘
+Utilisateurs distants (clients WireGuard)
+        │
+        ▼
+  Internet ──► Port 51820/udp ──► WireGuard Server (HUB)
+                                        │
+                               ┌────────┴────────┐
+                               │   Hub Frontend  │  :80 / :443
+                               │   Hub API       │  :8000 (interne)
+                               │   PostgreSQL    │  :5432 (Docker interne)
+                               │   Apps API      │  :9000-9499
+                               │   Apps Frontend │  :4200-4699
+                               └─────────────────┘
 ```
 
 **Règles :**
-- Rien n'est exposé sur Internet. Tout passe par le LAN ou le VPN.
+- Seul le port WireGuard 51820/udp est exposé sur Internet. Tout le reste passe par le LAN ou le tunnel VPN.
 - L'API Hub (`:8000`) n'est pas accessible aux navigateurs hors LAN.
 - Les apps communiquent avec le Hub en HTTP à l'intérieur du réseau Docker.
 - Le HTTPS est optionnel mais recommandé (PKI intégrée).

@@ -5,6 +5,21 @@
 
 ---
 
+## [non publié]
+
+### Ajouts
+- **VPN WireGuard — Mode serveur** : le HUB est désormais serveur WireGuard,
+  permettant aux utilisateurs HUB de se connecter au HUB à distance. Gestion
+  des peers liée aux comptes HUB, téléchargement .conf, QR code, split tunnel.
+  Le mode client précédent (site-à-site) est retiré.
+
+### Changements technique
+- Service Docker `wireguard-client` renommé `wireguard-server`
+- Nouvelle table `vpn_peers` (FK users avec cascade)
+- Migration `046_vpn_server_mode.sql`
+- Variable `WG_ENABLED` supprimée (cosmétique, non reconnue par l'image)
+- `hubctl vpn` : `WG_SERVICE` mis à jour
+
 ---
 
 ## [3.20.1] - 1 août 2026
