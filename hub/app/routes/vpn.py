@@ -17,14 +17,15 @@ Endpoints admin :
 - GET  /api/vpn/peers/{id}/qrcode  : QR code SVG
 """
 
-import hashlib
 import ipaddress
 import io
 import logging
-import re
 import subprocess
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from pathlib import Path
+
+import qrcode
+import qrcode.image.svg
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
@@ -48,14 +49,6 @@ VPN_SERVER_PUBKEY = "vpn_server_public_key"
 VPN_ENDPOINT = "vpn_endpoint"
 VPN_LISTEN_PORT = "vpn_listen_port"
 VPN_SUBNET = "vpn_subnet"
-
-_WG_KEY_RE = re.compile(r"^[A-Za-z0-9+/]{43}=$")
-
-
-def _is_valid_wg_key(s: str) -> bool:
-    if not s or len(s) != 44:
-        return False
-    return bool(_WG_KEY_RE.match(s))
 
 
 def _wg_conf_path() -> Path:
@@ -212,7 +205,7 @@ async def _regenerate_and_sync(
             capture_output=True, text=True, timeout=10,
         )
     except (subprocess.SubprocessError, FileNotFoundError):
-        pass  # Conteneur arrêté — la conf sera appliquée au prochain démarrage
+        logger.warning("wg syncconf failed (container may be stopped)")
 
 
 def _wg_status() -> dict | None:
@@ -249,11 +242,6 @@ def _parse_wg_show_output(output: str) -> dict:
                 key, _, value = line.partition(":")
                 current_peer[key.strip()] = value.strip()
     return data
-
-
-def _is_server_initialized(db_settings: dict) -> bool:
-    """Vrai si la keypair serveur a été générée."""
-    return bool(db_settings.get(VPN_SERVER_PRIVKEY))
 
 
 # =============================================================================
@@ -315,7 +303,6 @@ async def get_vpn_status(
     if enabled and initialized:
         wg = _wg_status()
         if wg:
-            now = datetime.now(timezone.utc)
             for p in wg.get("peers", []):
                 handshake = p.get("latest handshake")
                 if handshake and "minute" in handshake:
@@ -475,13 +462,11 @@ async def list_peers(
             pk = p.get("public_key", "")
             wg_stats[pk] = p
 
-    now = datetime.now(timezone.utc)
     peer_list = []
     for peer in peers:
         stats = wg_stats.get(peer.public_key, {})
         handshake_raw = stats.get("latest handshake")
 
-        last_handshake = None
         connected = False
         if handshake_raw:
             connected = "minute" in handshake_raw or "second" in handshake_raw
@@ -679,9 +664,6 @@ async def get_peer_qrcode(
         raise HTTPException(status_code=400, detail="Serveur non initialisé")
 
     conf = _generate_client_conf(peer, server_pubkey, endpoint, int(listen_port_str))
-
-    import qrcode
-    import qrcode.image.svg
 
     factory = qrcode.image.svg.SvgPathImage
     img = qrcode.make(conf.encode(), image_factory=factory)

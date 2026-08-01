@@ -58,14 +58,6 @@ def vpn_temp_dir(monkeypatch):
 @pytest.fixture
 def mock_keypair(monkeypatch):
     """Mock wg genkey/pubkey pour éviter la dépendance binaire en tests."""
-    calls = [0]
-    def fake_genkey():
-        calls[0] += 1
-        return _VALID_PRIVKEY
-    def fake_pubkey(input=None, **kwargs):
-        calls[0] += 1
-        return _VALID_PUBKEY
-
     import app.routes.vpn as vpn_mod
     original_run = vpn_mod.subprocess.run
 
