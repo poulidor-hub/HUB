@@ -1,50 +1,45 @@
 """
-Tests des endpoints VPN WireGuard.
-Couvre : deploy, status, toggle, config, generate-key, auth.
+Tests des endpoints VPN WireGuard (mode serveur).
+Couvre : init, server-config, peers CRUD, config download, qrcode, toggle, auth.
 """
 import os
 import tempfile
-import base64
 import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
-from fastapi import HTTPException
-from app.models import AppSetting, User
-from app.routes import vpn as vpn_module
+from app.models import AppSetting, User, VpnPeer
 from tests.conftest import get_auth_header
 
 
-VPN_SETTINGS = {"vpn_enabled", "vpn_config_hash"}
-
-_VALID_CONF = """[Interface]
-PrivateKey = OUrAxOwyrwschr4I3Nj+FvNVzSOv2JyHZQRYwEb5Fzo=
-Address = 10.8.0.5/24
-DNS = 1.1.1.1
-
-[Peer]
-PublicKey = IV/yo+aGOozVjU49Bm3+ZMGlhS6DR/f27YJBgHfW0WI==
-Endpoint = vps.example.com:51820
-AllowedIPs = 0.0.0.0/0
-"""
+_VALID_PRIVKEY = "OUrAxOwyrwschr4I3Nj+FvNVzSOv2JyHZQRYwEb5Fzo="
+_VALID_PUBKEY = "IV/yo+aGOozVjU49Bm3+ZMGlhS6DR/f27YJBgHfW0WI=="
 
 
-async def _seed_vpn_settings(db: AsyncSession, enabled: bool = False, config_hash: str = ""):
-    for key in VPN_SETTINGS:
+async def _seed_server_settings(
+    db: AsyncSession,
+    *,
+    initialized: bool = True,
+    enabled: bool = False,
+    endpoint: str = "203.0.113.10",
+):
+    settings = {
+        "vpn_enabled": "true" if enabled else "false",
+        "vpn_endpoint": endpoint,
+        "vpn_listen_port": "51820",
+        "vpn_subnet": "10.8.0.0/24",
+    }
+    if initialized:
+        settings["vpn_server_private_key"] = _VALID_PRIVKEY
+        settings["vpn_server_public_key"] = _VALID_PUBKEY
+
+    for key, value in settings.items():
         result = await db.execute(select(AppSetting).where(AppSetting.key == key))
         existing = result.scalar_one_or_none()
         if existing:
-            if key == "vpn_enabled":
-                existing.value = "true" if enabled else "false"
-            elif key == "vpn_config_hash":
-                existing.value = config_hash
+            existing.value = value
         else:
-            value = ""
-            if key == "vpn_enabled":
-                value = "true" if enabled else "false"
-            elif key == "vpn_config_hash":
-                value = config_hash
             db.add(AppSetting(key=key, value=value))
     await db.commit()
 
@@ -52,8 +47,7 @@ async def _seed_vpn_settings(db: AsyncSession, enabled: bool = False, config_has
 @pytest.fixture
 def vpn_temp_dir(monkeypatch):
     with tempfile.TemporaryDirectory() as tmpdir:
-        vpn_dir = os.path.join(tmpdir, "wg_confs")
-        os.makedirs(vpn_dir, exist_ok=True)
+        os.makedirs(os.path.join(tmpdir, "wg_confs"), exist_ok=True)
         monkeypatch.setenv("VPN_CONFIG_DIR", tmpdir)
         from app.config import get_settings
         get_settings.cache_clear()
@@ -61,111 +55,281 @@ def vpn_temp_dir(monkeypatch):
         get_settings.cache_clear()
 
 
+@pytest.fixture
+def mock_keypair(monkeypatch):
+    """Mock wg genkey/pubkey pour éviter la dépendance binaire en tests."""
+    calls = [0]
+    def fake_genkey():
+        calls[0] += 1
+        return _VALID_PRIVKEY
+    def fake_pubkey(input=None, **kwargs):
+        calls[0] += 1
+        return _VALID_PUBKEY
+
+    import app.routes.vpn as vpn_mod
+    original_run = vpn_mod.subprocess.run
+
+    def fake_run(cmd, *args, **kwargs):
+        if isinstance(cmd, list) and len(cmd) >= 1 and cmd[0] == "wg":
+            if "genkey" in cmd:
+                class FakeResult:
+                    returncode = 0
+                    stdout = _VALID_PRIVKEY + "\n"
+                    stderr = ""
+                return FakeResult()
+            if "pubkey" in cmd:
+                class FakeResult:
+                    returncode = 0
+                    stdout = _VALID_PUBKEY + "\n"
+                    stderr = ""
+                return FakeResult()
+        return original_run(cmd, *args, **kwargs)
+
+    monkeypatch.setattr(vpn_mod.subprocess, "run", fake_run)
+    return fake_run
+
+
 # =============================================================================
-# POST /api/vpn/deploy
+# POST /api/vpn/init
 # =============================================================================
 
-class TestVpnDeploy:
-    """Tests du endpoint POST /api/vpn/deploy"""
+class TestVpnInit:
 
-    async def test_deploy_valid_config_creates_wg0_conf(
+    async def test_init_creates_keypair_and_settings(
         self, client: AsyncClient, async_session: AsyncSession,
-        admin_token: str, vpn_temp_dir: str,
+        admin_token: str, vpn_temp_dir: str, mock_keypair,
     ):
-        await _seed_vpn_settings(async_session)
+        await _seed_server_settings(async_session, initialized=False)
         auth = get_auth_header(admin_token)
 
-        payload = {
-            "enabled": True,
-            "private_key": "OUrAxOwyrwschr4I3Nj+FvNVzSOv2JyHZQRYwEb5Fzo=",
-            "address": "10.8.0.5/24",
-            "dns": "1.1.1.1",
-            "public_key": "IV/yo+aGOozVjU49Bm3+ZMGlhS6DR/f27YJBgHfW0WI==",
-            "endpoint": "vps.example.com:51820",
-            "allowed_ips": "0.0.0.0/0",
-            "preshared_key": None,
-        }
-
-        resp = await client.post("/api/vpn/deploy", json=payload, headers=auth)
+        resp = await client.post("/api/vpn/init", json={
+            "endpoint": "10.0.0.1",
+            "listen_port": 51820,
+        }, headers=auth)
         assert resp.status_code == 200
-        assert resp.json()["status"] == "deployed"
+        assert resp.json()["status"] == "initialized"
 
-        conf_path = os.path.join(vpn_temp_dir, "wg_confs", "wg0.conf")
-        assert os.path.isfile(conf_path)
-
-        with open(conf_path, "r") as f:
-            content = f.read()
-        assert "yAnz5TF+" in content
-        assert "10.8.0.5/24" in content
-        assert "IV/yo+aGOozVjU49Bm3+ZMGlhS6DR/f27YJBgHfW0WI==" in content or "xTIBA5r" in content
-
-        result = await async_session.execute(
-            select(AppSetting).where(AppSetting.key == "vpn_enabled")
-        )
-        setting = result.scalar_one()
-        assert setting.value == "true"
-
-        result = await async_session.execute(
-            select(AppSetting).where(AppSetting.key == "vpn_config_hash")
-        )
-        hash_setting = result.scalar_one()
-        assert len(hash_setting.value) == 64
-
-    async def test_deploy_invalid_private_key_returns_422(
+    async def test_init_already_initialized_returns_409(
         self, client: AsyncClient, async_session: AsyncSession,
-        admin_token: str, vpn_temp_dir: str,
+        admin_token: str, vpn_temp_dir: str, mock_keypair,
     ):
-        await _seed_vpn_settings(async_session)
+        await _seed_server_settings(async_session, initialized=True)
         auth = get_auth_header(admin_token)
 
-        payload = {
-            "enabled": True,
-            "private_key": "not-a-valid-base64-key!!!",
-            "address": "10.8.0.5/24",
-            "dns": "1.1.1.1",
-            "public_key": "IV/yo+aGOozVjU49Bm3+ZMGlhS6DR/f27YJBgHfW0WI==",
-            "endpoint": "vps.example.com:51820",
-            "allowed_ips": "0.0.0.0/0",
-        }
+        resp = await client.post("/api/vpn/init", json={
+            "endpoint": "10.0.0.1",
+        }, headers=auth)
+        assert resp.status_code == 409
 
-        resp = await client.post("/api/vpn/deploy", json=payload, headers=auth)
-        assert resp.status_code == 422
-
-    async def test_deploy_invalid_cidr_returns_422(
+    async def test_init_requires_admin(
         self, client: AsyncClient, async_session: AsyncSession,
-        admin_token: str, vpn_temp_dir: str,
+        vpn_temp_dir: str,
     ):
-        await _seed_vpn_settings(async_session)
-        auth = get_auth_header(admin_token)
-
-        payload = {
-            "enabled": True,
-            "private_key": "OUrAxOwyrwschr4I3Nj+FvNVzSOv2JyHZQRYwEb5Fzo=",
-            "address": "invalid-cidr",
-            "dns": "1.1.1.1",
-            "public_key": "IV/yo+aGOozVjU49Bm3+ZMGlhS6DR/f27YJBgHfW0WI==",
-            "endpoint": "vps.example.com:51820",
-            "allowed_ips": "0.0.0.0/0",
-        }
-
-        resp = await client.post("/api/vpn/deploy", json=payload, headers=auth)
-        assert resp.status_code == 422
-
-    async def test_deploy_unauthorized(
-        self, client: AsyncClient, async_session: AsyncSession,
-    ):
-        await _seed_vpn_settings(async_session)
-
-        payload = {
-            "enabled": True, "private_key": "OUrAxOwyrwschr4I3Nj+FvNVzSOv2JyHZQRYwEb5Fzo=",
-            "address": "10.8.0.5/24",
-            "public_key": "IV/yo+aGOozVjU49Bm3+ZMGlhS6DR/f27YJBgHfW0WI==",
-            "endpoint": "vps.example.com:51820",
-            "allowed_ips": "0.0.0.0/0",
-        }
-
-        resp = await client.post("/api/vpn/deploy", json=payload)
+        await _seed_server_settings(async_session, initialized=False)
+        resp = await client.post("/api/vpn/init", json={
+            "endpoint": "10.0.0.1",
+        })
         assert resp.status_code in (401, 403)
+
+
+# =============================================================================
+# GET /api/vpn/server-config
+# =============================================================================
+
+class TestVpnServerConfig:
+
+    async def test_get_config_when_initialized(
+        self, client: AsyncClient, async_session: AsyncSession,
+        admin_token: str, vpn_temp_dir: str,
+    ):
+        await _seed_server_settings(async_session, initialized=True)
+        auth = get_auth_header(admin_token)
+
+        resp = await client.get("/api/vpn/server-config", headers=auth)
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["initialized"] is True
+        assert data["endpoint"] == "203.0.113.10"
+        assert data["listen_port"] == 51820
+
+    async def test_get_config_when_not_initialized(
+        self, client: AsyncClient, async_session: AsyncSession,
+        admin_token: str, vpn_temp_dir: str,
+    ):
+        await _seed_server_settings(async_session, initialized=False)
+        auth = get_auth_header(admin_token)
+
+        resp = await client.get("/api/vpn/server-config", headers=auth)
+        assert resp.status_code == 200
+        assert resp.json()["initialized"] is False
+
+
+# =============================================================================
+# GET /api/vpn/peers
+# =============================================================================
+
+class TestVpnPeersList:
+
+    async def test_list_peers_empty(
+        self, client: AsyncClient, async_session: AsyncSession,
+        admin_token: str, vpn_temp_dir: str,
+    ):
+        await _seed_server_settings(async_session, initialized=True)
+        auth = get_auth_header(admin_token)
+
+        resp = await client.get("/api/vpn/peers", headers=auth)
+        assert resp.status_code == 200
+        assert resp.json()["peers"] == []
+
+    async def test_list_peers_requires_admin(
+        self, client: AsyncClient, async_session: AsyncSession,
+        vpn_temp_dir: str,
+    ):
+        resp = await client.get("/api/vpn/peers")
+        assert resp.status_code in (401, 403)
+
+
+# =============================================================================
+# POST /api/vpn/peers
+# =============================================================================
+
+class TestVpnCreatePeer:
+
+    async def test_create_peer_success(
+        self, client: AsyncClient, async_session: AsyncSession,
+        admin_token: str, admin_user: User, vpn_temp_dir: str, mock_keypair,
+    ):
+        await _seed_server_settings(async_session, initialized=True)
+        auth = get_auth_header(admin_token)
+
+        resp = await client.post("/api/vpn/peers", json={
+            "user_id": admin_user.id,
+            "name": "Laptop",
+        }, headers=auth)
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["name"] == "Laptop"
+        assert data["vpn_ip"].startswith("10.8.0.")
+
+    async def test_create_peer_user_not_found(
+        self, client: AsyncClient, async_session: AsyncSession,
+        admin_token: str, vpn_temp_dir: str, mock_keypair,
+    ):
+        await _seed_server_settings(async_session, initialized=True)
+        auth = get_auth_header(admin_token)
+
+        resp = await client.post("/api/vpn/peers", json={
+            "user_id": 99999,
+            "name": "Laptop",
+        }, headers=auth)
+        assert resp.status_code == 404
+
+    async def test_create_peer_server_not_initialized(
+        self, client: AsyncClient, async_session: AsyncSession,
+        admin_token: str, admin_user: User, vpn_temp_dir: str, mock_keypair,
+    ):
+        await _seed_server_settings(async_session, initialized=False)
+        auth = get_auth_header(admin_token)
+
+        resp = await client.post("/api/vpn/peers", json={
+            "user_id": admin_user.id,
+            "name": "Laptop",
+        }, headers=auth)
+        assert resp.status_code == 400
+
+
+# =============================================================================
+# DELETE /api/vpn/peers/{id}
+# =============================================================================
+
+class TestVpnDeletePeer:
+
+    async def test_delete_peer_success(
+        self, client: AsyncClient, async_session: AsyncSession,
+        admin_token: str, admin_user: User, vpn_temp_dir: str, mock_keypair,
+    ):
+        await _seed_server_settings(async_session, initialized=True)
+
+        peer = VpnPeer(
+            user_id=admin_user.id, name="Laptop",
+            public_key=_VALID_PUBKEY, private_key=_VALID_PRIVKEY,
+            vpn_ip="10.8.0.2/32", enabled=True,
+        )
+        async_session.add(peer)
+        await async_session.commit()
+        await async_session.refresh(peer)
+
+        auth = get_auth_header(admin_token)
+        resp = await client.delete(f"/api/vpn/peers/{peer.id}", headers=auth)
+        assert resp.status_code == 200
+
+    async def test_delete_peer_not_found(
+        self, client: AsyncClient, async_session: AsyncSession,
+        admin_token: str, vpn_temp_dir: str,
+    ):
+        await _seed_server_settings(async_session, initialized=True)
+        auth = get_auth_header(admin_token)
+
+        resp = await client.delete("/api/vpn/peers/99999", headers=auth)
+        assert resp.status_code == 404
+
+
+# =============================================================================
+# PUT /api/vpn/peers/{id}/toggle
+# =============================================================================
+
+class TestVpnTogglePeer:
+
+    async def test_toggle_peer_disables(
+        self, client: AsyncClient, async_session: AsyncSession,
+        admin_token: str, admin_user: User, vpn_temp_dir: str,
+    ):
+        await _seed_server_settings(async_session, initialized=True)
+
+        peer = VpnPeer(
+            user_id=admin_user.id, name="Laptop",
+            public_key=_VALID_PUBKEY, private_key=_VALID_PRIVKEY,
+            vpn_ip="10.8.0.2/32", enabled=True,
+        )
+        async_session.add(peer)
+        await async_session.commit()
+        await async_session.refresh(peer)
+
+        auth = get_auth_header(admin_token)
+        resp = await client.put(f"/api/vpn/peers/{peer.id}/toggle", headers=auth)
+        assert resp.status_code == 200
+        assert resp.json()["enabled"] is False
+
+
+# =============================================================================
+# GET /api/vpn/peers/{id}/config
+# =============================================================================
+
+class TestVpnPeerConfig:
+
+    async def test_download_config(
+        self, client: AsyncClient, async_session: AsyncSession,
+        admin_token: str, admin_user: User, vpn_temp_dir: str,
+    ):
+        await _seed_server_settings(async_session, initialized=True)
+
+        peer = VpnPeer(
+            user_id=admin_user.id, name="Laptop Pro",
+            public_key=_VALID_PUBKEY, private_key=_VALID_PRIVKEY,
+            vpn_ip="10.8.0.2/32", enabled=True,
+        )
+        async_session.add(peer)
+        await async_session.commit()
+        await async_session.refresh(peer)
+
+        auth = get_auth_header(admin_token)
+        resp = await client.get(f"/api/vpn/peers/{peer.id}/config", headers=auth)
+        assert resp.status_code == 200
+        assert "attachment" in resp.headers.get("content-disposition", "")
+        body = resp.content.decode()
+        assert "[Interface]" in body
+        assert "[Peer]" in body
+        assert "10.8.0.1/32" in body  # split tunnel
 
 
 # =============================================================================
@@ -173,38 +337,17 @@ class TestVpnDeploy:
 # =============================================================================
 
 class TestVpnStatus:
-    """Tests du endpoint GET /api/vpn/status"""
 
-    async def test_status_disabled(
-        self, client: AsyncClient, async_session: AsyncSession, admin_token: str,
-    ):
-        await _seed_vpn_settings(async_session, enabled=False)
-        auth = get_auth_header(admin_token)
-
-        resp = await client.get("/api/vpn/status", headers=auth)
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["enabled"] is False
-        assert data["connected"] is False
-
-    async def test_status_enabled_no_tunnel(
-        self, client: AsyncClient, async_session: AsyncSession, admin_token: str,
-    ):
-        await _seed_vpn_settings(async_session, enabled=True)
-        auth = get_auth_header(admin_token)
-
-        resp = await client.get("/api/vpn/status", headers=auth)
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["enabled"] is True
-        assert data["connected"] is False
-
-    async def test_status_unauthorized(
+    async def test_status_when_disabled(
         self, client: AsyncClient, async_session: AsyncSession,
+        admin_token: str, vpn_temp_dir: str,
     ):
-        await _seed_vpn_settings(async_session)
-        resp = await client.get("/api/vpn/status")
-        assert resp.status_code in (401, 403)
+        await _seed_server_settings(async_session, initialized=True, enabled=False)
+        auth = get_auth_header(admin_token)
+
+        resp = await client.get("/api/vpn/status", headers=auth)
+        assert resp.status_code == 200
+        assert resp.json()["enabled"] is False
 
 
 # =============================================================================
@@ -212,238 +355,14 @@ class TestVpnStatus:
 # =============================================================================
 
 class TestVpnToggle:
-    """Tests du endpoint PUT /api/vpn/toggle"""
 
     async def test_toggle_enable(
         self, client: AsyncClient, async_session: AsyncSession,
         admin_token: str, vpn_temp_dir: str,
     ):
-        await _seed_vpn_settings(async_session, enabled=False)
+        await _seed_server_settings(async_session, initialized=True, enabled=False)
         auth = get_auth_header(admin_token)
 
         resp = await client.put("/api/vpn/toggle", json={"enabled": True}, headers=auth)
         assert resp.status_code == 200
         assert resp.json()["vpn_enabled"] is True
-
-        result = await async_session.execute(
-            select(AppSetting).where(AppSetting.key == "vpn_enabled")
-        )
-        assert result.scalar_one().value == "true"
-
-    async def test_toggle_disable(
-        self, client: AsyncClient, async_session: AsyncSession,
-        admin_token: str, vpn_temp_dir: str,
-    ):
-        await _seed_vpn_settings(async_session, enabled=True)
-        auth = get_auth_header(admin_token)
-
-        resp = await client.put("/api/vpn/toggle", json={"enabled": False}, headers=auth)
-        assert resp.status_code == 200
-        assert resp.json()["vpn_enabled"] is False
-
-        result = await async_session.execute(
-            select(AppSetting).where(AppSetting.key == "vpn_enabled")
-        )
-        assert result.scalar_one().value == "false"
-
-    async def test_toggle_unauthorized(
-        self, client: AsyncClient, async_session: AsyncSession,
-    ):
-        await _seed_vpn_settings(async_session)
-        resp = await client.put("/api/vpn/toggle", json={"enabled": True})
-        assert resp.status_code in (401, 403)
-
-
-# =============================================================================
-# GET /api/vpn/config
-# =============================================================================
-
-class TestVpnConfig:
-    """Tests du endpoint GET /api/vpn/config"""
-
-    async def test_config_returns_masked_key(
-        self, client: AsyncClient, async_session: AsyncSession,
-        admin_token: str, vpn_temp_dir: str,
-    ):
-        await _seed_vpn_settings(async_session, enabled=True)
-        auth = get_auth_header(admin_token)
-
-        payload = {
-            "enabled": True,
-            "private_key": "OUrAxOwyrwschr4I3Nj+FvNVzSOv2JyHZQRYwEb5Fzo=",
-            "address": "10.8.0.5/24",
-            "dns": "1.1.1.1",
-            "public_key": "IV/yo+aGOozVjU49Bm3+ZMGlhS6DR/f27YJBgHfW0WI==",
-            "endpoint": "vps.example.com:51820",
-            "allowed_ips": "0.0.0.0/0",
-        }
-        await client.post("/api/vpn/deploy", json=payload, headers=auth)
-
-        resp = await client.get("/api/vpn/config", headers=auth)
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["enabled"] is True
-        assert data["address"] == "10.8.0.5/24"
-        assert "private_key" not in data
-        assert "private_key_hash" in data
-        assert len(data["private_key_hash"]) > 0
-
-    async def test_config_unauthorized(
-        self, client: AsyncClient, async_session: AsyncSession,
-    ):
-        await _seed_vpn_settings(async_session)
-        resp = await client.get("/api/vpn/config")
-        assert resp.status_code in (401, 403)
-
-
-# =============================================================================
-# POST /api/vpn/generate-key
-# =============================================================================
-
-class TestVpnGenerateKey:
-    """Tests du endpoint POST /api/vpn/generate-key"""
-
-    async def test_generate_key_success(
-        self, client: AsyncClient, async_session: AsyncSession, admin_token: str,
-    ):
-        await _seed_vpn_settings(async_session)
-        auth = get_auth_header(admin_token)
-
-        resp = await client.post("/api/vpn/generate-key", headers=auth)
-        if resp.status_code == 500:
-            pytest.skip("wg not installed on test machine")
-        assert resp.status_code == 200
-        data = resp.json()
-        assert "private_key" in data
-        assert "public_key" in data
-        private_bytes = base64.b64decode(data["private_key"] + "==")
-        assert len(private_bytes) == 32
-        public_bytes = base64.b64decode(data["public_key"] + "==")
-        assert len(public_bytes) == 32
-
-    async def test_generate_key_unauthorized(
-        self, client: AsyncClient, async_session: AsyncSession,
-    ):
-        await _seed_vpn_settings(async_session)
-        resp = await client.post("/api/vpn/generate-key")
-        assert resp.status_code in (401, 403)
-
-
-# =============================================================================
-# Helpers d'import (_validate_import_conf / _extract_private_key)
-# =============================================================================
-
-class TestImportHelpers:
-    def test_extract_private_key(self):
-        assert vpn_module._extract_private_key(_VALID_CONF) == \
-            "OUrAxOwyrwschr4I3Nj+FvNVzSOv2JyHZQRYwEb5Fzo="
-
-    def test_extract_private_key_absent(self):
-        assert vpn_module._extract_private_key("[Interface]\nAddress = 10.0.0.1/24\n") is None
-
-    def test_validate_import_conf_ok(self):
-        summary = vpn_module._validate_import_conf(_VALID_CONF)
-        assert summary["address"] == "10.8.0.5/24"
-        assert summary["endpoint"] == "vps.example.com:51820"
-        assert summary["public_key"] == "IV/yo+aGOozVjU49Bm3+ZMGlhS6DR/f27YJBgHfW0WI=="
-        assert len(summary["private_key_hash"]) == 64
-        assert "private_key" not in summary
-
-    def test_validate_import_conf_rejects_postup(self):
-        conf = _VALID_CONF.replace("[Peer]", "PostUp = echo hacked\n\n[Peer]")
-        with pytest.raises(HTTPException) as exc:
-            vpn_module._validate_import_conf(conf)
-        assert exc.value.status_code == 422
-        assert "postup" in exc.value.detail.lower()
-
-    def test_validate_import_conf_rejects_bad_key(self):
-        conf = _VALID_CONF.replace("OUrAxOwyrwschr4I3Nj+FvNVzSOv2JyHZQRYwEb5Fzo=", "bad-key!!!")
-        with pytest.raises(HTTPException) as exc:
-            vpn_module._validate_import_conf(conf)
-        assert exc.value.status_code == 422
-
-
-# =============================================================================
-# POST /api/vpn/import
-# =============================================================================
-
-class TestVpnImport:
-    """Tests du endpoint POST /api/vpn/import"""
-
-    async def test_import_valid_conf(
-        self, client: AsyncClient, async_session: AsyncSession,
-        admin_token: str, vpn_temp_dir: str,
-    ):
-        await _seed_vpn_settings(async_session)
-        auth = get_auth_header(admin_token)
-
-        resp = await client.post("/api/vpn/import", json={"config": _VALID_CONF}, headers=auth)
-        assert resp.status_code == 200
-        body = resp.json()
-        assert body["status"] == "imported"
-        assert body["enabled"] is True
-        assert body["endpoint"] == "vps.example.com:51820"
-        assert "yAnz5TF+" not in str(body)
-
-        conf_path = os.path.join(vpn_temp_dir, "wg_confs", "wg0.conf")
-        assert os.path.isfile(conf_path)
-        with open(conf_path) as f:
-            assert "yAnz5TF+" in f.read()
-
-        result = await async_session.execute(
-            select(AppSetting).where(AppSetting.key == "vpn_enabled")
-        )
-        assert result.scalar_one().value == "true"
-
-    async def test_import_missing_private_key(
-        self, client: AsyncClient, async_session: AsyncSession,
-        admin_token: str, vpn_temp_dir: str,
-    ):
-        await _seed_vpn_settings(async_session)
-        auth = get_auth_header(admin_token)
-        conf = _VALID_CONF.replace(
-            "PrivateKey = OUrAxOwyrwschr4I3Nj+FvNVzSOv2JyHZQRYwEb5Fzo=\n", ""
-        )
-        resp = await client.post("/api/vpn/import", json={"config": conf}, headers=auth)
-        assert resp.status_code == 422
-
-    async def test_import_invalid_key(
-        self, client: AsyncClient, async_session: AsyncSession,
-        admin_token: str, vpn_temp_dir: str,
-    ):
-        await _seed_vpn_settings(async_session)
-        auth = get_auth_header(admin_token)
-        conf = _VALID_CONF.replace("OUrAxOwyrwschr4I3Nj+FvNVzSOv2JyHZQRYwEb5Fzo=", "bad!!!")
-        resp = await client.post("/api/vpn/import", json={"config": conf}, headers=auth)
-        assert resp.status_code == 422
-
-    async def test_import_postup_rejected(
-        self, client: AsyncClient, async_session: AsyncSession,
-        admin_token: str, vpn_temp_dir: str,
-    ):
-        await _seed_vpn_settings(async_session)
-        auth = get_auth_header(admin_token)
-        conf = _VALID_CONF.replace("[Peer]", "PostUp = echo hacked\n\n[Peer]")
-        resp = await client.post("/api/vpn/import", json={"config": conf}, headers=auth)
-        assert resp.status_code == 422
-        assert "postup" in resp.json()["detail"].lower()
-
-    async def test_import_preserves_mtu(
-        self, client: AsyncClient, async_session: AsyncSession,
-        admin_token: str, vpn_temp_dir: str,
-    ):
-        await _seed_vpn_settings(async_session)
-        auth = get_auth_header(admin_token)
-        conf = _VALID_CONF.replace("Address = 10.8.0.5/24", "Address = 10.8.0.5/24\nMTU = 1420")
-        resp = await client.post("/api/vpn/import", json={"config": conf}, headers=auth)
-        assert resp.status_code == 200
-        conf_path = os.path.join(vpn_temp_dir, "wg_confs", "wg0.conf")
-        with open(conf_path) as f:
-            assert "MTU = 1420" in f.read()
-
-    async def test_import_unauthorized(
-        self, client: AsyncClient, async_session: AsyncSession, vpn_temp_dir: str,
-    ):
-        await _seed_vpn_settings(async_session)
-        resp = await client.post("/api/vpn/import", json={"config": _VALID_CONF})
-        assert resp.status_code == 401

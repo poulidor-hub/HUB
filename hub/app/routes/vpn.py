@@ -1,29 +1,39 @@
 """
-Routes VPN WireGuard — configuration et gestion du client VPN.
+Routes VPN WireGuard — Serveur VPN permettant aux utilisateurs HUB de se
+connecter au HUB à distance.
 
 Endpoints admin :
-- POST /api/vpn/deploy : Déployer la configuration WireGuard
-- GET /api/vpn/status : État actuel de la connexion VPN
-- PUT /api/vpn/toggle : Activer/désactiver le VPN
-- GET /api/vpn/config : Récupérer la configuration actuelle
-- POST /api/vpn/generate-key : Générer une paire de clés WireGuard
+- GET  /api/vpn/status        : État du serveur VPN
+- PUT  /api/vpn/toggle        : Activer/désactiver le serveur
+- GET  /api/vpn/server-config : Configuration du serveur
+- PUT  /api/vpn/server-config : Mettre à jour la configuration
+- POST /api/vpn/init          : Initialiser le serveur (génère la keypair)
+- POST /api/vpn/generate-key  : Générer une paire de clés WireGuard
+- GET  /api/vpn/peers         : Lister les peers (+ stats live)
+- POST /api/vpn/peers         : Créer un peer
+- DELETE /api/vpn/peers/{id}  : Supprimer un peer
+- PUT  /api/vpn/peers/{id}/toggle : Activer/désactiver un peer
+- GET  /api/vpn/peers/{id}/config  : Télécharger le .conf client
+- GET  /api/vpn/peers/{id}/qrcode  : QR code SVG
 """
 
 import hashlib
 import ipaddress
+import io
 import logging
-import os
 import re
 import subprocess
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
 from app.database import get_db
-from app.models import AppSetting, User, utcnow
+from app.models import AppSetting, User, VpnPeer, utcnow
 from app.auth import get_current_admin
 from app.config import get_settings
 
@@ -31,8 +41,13 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/vpn", tags=["VPN"])
 
+# Clés app_settings
 VPN_ENABLED_KEY = "vpn_enabled"
-VPN_CONFIG_HASH_KEY = "vpn_config_hash"
+VPN_SERVER_PRIVKEY = "vpn_server_private_key"
+VPN_SERVER_PUBKEY = "vpn_server_public_key"
+VPN_ENDPOINT = "vpn_endpoint"
+VPN_LISTEN_PORT = "vpn_listen_port"
+VPN_SUBNET = "vpn_subnet"
 
 _WG_KEY_RE = re.compile(r"^[A-Za-z0-9+/]{43}=$")
 
@@ -41,14 +56,6 @@ def _is_valid_wg_key(s: str) -> bool:
     if not s or len(s) != 44:
         return False
     return bool(_WG_KEY_RE.match(s))
-
-
-def _is_valid_cidr(s: str) -> bool:
-    try:
-        ipaddress.IPv4Network(s, strict=False)
-        return "/" in s
-    except (ValueError, TypeError):
-        return False
 
 
 def _wg_conf_path() -> Path:
@@ -62,54 +69,154 @@ def _wg_conf_dir() -> Path:
     return p
 
 
-def _generate_wg_conf(
-    private_key: str,
-    address: str,
-    dns: str | None,
-    public_key: str,
-    endpoint: str,
-    allowed_ips: str,
-    preshared_key: str | None = None,
+async def _get_setting(db: AsyncSession, key: str) -> str | None:
+    result = await db.execute(select(AppSetting).where(AppSetting.key == key))
+    setting = result.scalar_one_or_none()
+    return setting.value if setting else None
+
+
+async def _set_setting(db: AsyncSession, key: str, value: str, user_id: int) -> None:
+    result = await db.execute(select(AppSetting).where(AppSetting.key == key))
+    setting = result.scalar_one_or_none()
+    if not setting:
+        setting = AppSetting(key=key, value=value)
+        db.add(setting)
+    else:
+        setting.value = value
+        setting.updated_at = utcnow()
+        setting.updated_by_id = user_id
+
+
+def _generate_keypair() -> tuple[str, str]:
+    """Génère une paire de clés WireGuard. Retourne (private_key, public_key)."""
+    try:
+        r1 = subprocess.run(["wg", "genkey"], capture_output=True, text=True, timeout=5)
+        if r1.returncode != 0:
+            raise RuntimeError("wg genkey failed")
+        private_key = r1.stdout.strip()
+
+        r2 = subprocess.run(["wg", "pubkey"], input=private_key,
+                            capture_output=True, text=True, timeout=5)
+        if r2.returncode != 0:
+            raise RuntimeError("wg pubkey failed")
+        public_key = r2.stdout.strip()
+
+        return private_key, public_key
+    except FileNotFoundError:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="WireGuard (wg) n'est pas installé sur le serveur"
+        )
+
+
+def _generate_server_conf(
+    server_privkey: str,
+    listen_port: int,
+    subnet: str,
+    peers: list[VpnPeer],
 ) -> str:
+    """Génère le contenu du wg0.conf serveur avec tous les peers."""
+    server_ip = str(ipaddress.IPv4Network(subnet, strict=False).network_address + 1)
+
     lines = [
         "[Interface]",
-        f"PrivateKey = {private_key}",
-        f"Address = {address}",
+        f"PrivateKey = {server_privkey}",
+        f"Address = {server_ip}/{_cidr_prefix_len(subnet)}",
+        f"ListenPort = {listen_port}",
     ]
-    if dns:
-        lines.append(f"DNS = {dns}")
 
-    lines.append("")
-    lines.append("[Peer]")
-    lines.append(f"PublicKey = {public_key}")
-    lines.append(f"Endpoint = {endpoint}")
-    lines.append(f"AllowedIPs = {allowed_ips}")
-    if preshared_key:
-        lines.append(f"PresharedKey = {preshared_key}")
+    for peer in peers:
+        if not peer.enabled:
+            continue
+        lines.append("")
+        lines.append(f"# {peer.user.username} - {peer.name}")
+        lines.append("[Peer]")
+        lines.append(f"PublicKey = {peer.public_key}")
+        lines.append(f"AllowedIPs = {peer.vpn_ip.split('/')[0]}/32")
 
     return "\n".join(lines) + "\n"
 
 
-def _parse_wg_conf(content: str) -> dict:
-    result: dict = {}
-    current_section = None
-    for line in content.strip().split("\n"):
-        line = line.strip()
-        if line.startswith("[") and line.endswith("]"):
-            current_section = line[1:-1]
-            continue
-        if "=" in line:
-            key, _, value = line.partition("=")
-            key = key.strip()
-            value = value.strip()
-            if current_section == "Interface" and key != "PrivateKey":
-                result[key.lower()] = value
-            elif current_section == "Peer":
-                result[key.lower()] = value
-    return result
+def _cidr_prefix_len(cidr: str) -> int:
+    """Extrait le prefix length d'un CIDR (ex: '10.8.0.0/24' → 24)."""
+    return int(cidr.split("/")[1]) if "/" in cidr else 24
+
+
+def _generate_client_conf(
+    peer: VpnPeer,
+    server_pubkey: str,
+    endpoint: str,
+    listen_port: int,
+) -> str:
+    """Génère le .conf client pour un peer (téléchargement par l'utilisateur)."""
+    peer_ip = peer.vpn_ip.split("/")[0]
+    return (
+        "[Interface]\n"
+        f"PrivateKey = {peer.private_key}\n"
+        f"Address = {peer_ip}/32\n"
+        f"DNS = 10.8.0.1\n"
+        "\n"
+        "[Peer]\n"
+        f"PublicKey = {server_pubkey}\n"
+        f"Endpoint = {endpoint}:{listen_port}\n"
+        f"AllowedIPs = 10.8.0.1/32\n"
+        "PersistentKeepalive = 25\n"
+    )
+
+
+async def _allocate_peer_ip(db: AsyncSession, subnet: str) -> str:
+    """Alloue la prochaine IP disponible dans le sous-réseau (à partir de .2)."""
+    network = ipaddress.IPv4Network(subnet, strict=False)
+    used_ips: set[str] = set()
+
+    result = await db.execute(select(VpnPeer.vpn_ip))
+    for (vpn_ip,) in result.all():
+        used_ips.add(vpn_ip.split("/")[0])
+
+    # .1 = serveur, on commence à .2
+    for i in range(2, network.num_addresses - 1):
+        candidate = str(network.network_address + i)
+        if candidate not in used_ips:
+            return f"{candidate}/32"
+
+    raise HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail="Plus d'IP disponible dans le sous-réseau VPN"
+    )
+
+
+async def _regenerate_and_sync(
+    db: AsyncSession,
+    server_privkey: str,
+    listen_port: int,
+    subnet: str,
+) -> None:
+    """Régénère le wg0.conf depuis les peers en DB et applique via wg syncconf."""
+    result = await db.execute(
+        select(VpnPeer).order_by(VpnPeer.id)
+    )
+    peers = list(result.scalars().all())
+
+    conf_content = _generate_server_conf(server_privkey, listen_port, subnet, peers)
+
+    conf_path = _wg_conf_path()
+    _wg_conf_dir()
+    conf_path.write_text(conf_content)
+    conf_path.chmod(0o600)
+
+    # Appliquer à chaud si le conteneur tourne
+    try:
+        subprocess.run(
+            ["docker", "exec", "hub-wireguard",
+             "bash", "-c", "wg syncconf wg0 <(wg-quick strip wg0)"],
+            capture_output=True, text=True, timeout=10,
+        )
+    except (subprocess.SubprocessError, FileNotFoundError):
+        pass  # Conteneur arrêté — la conf sera appliquée au prochain démarrage
 
 
 def _wg_status() -> dict | None:
+    """Lit l'état du tunnel via docker exec wg show."""
     try:
         result = subprocess.run(
             ["docker", "exec", "hub-wireguard", "wg", "show", "wg0"],
@@ -126,289 +233,103 @@ def _wg_status() -> dict | None:
 
 
 def _parse_wg_show_output(output: str) -> dict:
+    """Parse la sortie de 'wg show wg0'. Retourne {peers: [{public_key, endpoint, ...}]}."""
     data: dict = {"peers": []}
-    current_peer = None
+    current_peer: dict | None = None
     for line in output.strip().split("\n"):
         line = line.strip()
         if line.startswith("interface:"):
             continue
         if line.startswith("peer:"):
-            current_peer = {}
+            current_peer = {"public_key": line.split(":", 1)[1].strip()}
             data["peers"].append(current_peer)
             continue
         if current_peer is not None:
             if ":" in line:
                 key, _, value = line.partition(":")
                 current_peer[key.strip()] = value.strip()
-        else:
-            if ":" in line:
-                key, _, value = line.partition(":")
-                data[key.strip()] = value.strip()
     return data
 
 
-# =============================================================================
-# Import de configuration (.conf)
-# =============================================================================
-
-_ALLOWED_WG_DIRECTIVES = {
-    "interface": {"privatekey", "address", "dns", "mtu", "table", "listenport"},
-    "peer": {"publickey", "endpoint", "allowedips", "presharedkey", "persistentkeepalive"},
-}
-
-_FORBIDDEN_WG_DIRECTIVES = {"postup", "postdown", "preup", "predown", "saveconfig"}
-
-_WG_PRIVATE_KEY_RE = re.compile(r"^\s*PrivateKey\s*=\s*(.+?)\s*$", re.MULTILINE)
-
-
-def _extract_private_key(content: str) -> str | None:
-    m = _WG_PRIVATE_KEY_RE.search(content)
-    if not m:
-        return None
-    return m.group(1).strip()
-
-
-def _validate_import_conf(content: str) -> dict:
-    """Valide un .conf WireGuard importé.
-
-    Lève HTTPException(422) si une directive est interdite/inconnue ou si un
-    champ essentiel est manquant/invalide. Retourne un résumé SANS la clé privée.
-    """
-    if not content or not content.strip():
-        raise HTTPException(status_code=422, detail="Fichier de configuration vide")
-
-    current_section = None
-    for raw in content.splitlines():
-        line = raw.strip()
-        if not line or line.startswith("#"):
-            continue
-        if line.startswith("[") and line.endswith("]"):
-            current_section = line[1:-1].strip().lower()
-            continue
-        if "=" not in line:
-            continue
-        key = line.split("=", 1)[0].strip().lower()
-        if key in _FORBIDDEN_WG_DIRECTIVES:
-            raise HTTPException(
-                status_code=422,
-                detail=f"Directive interdite pour des raisons de sécurité : {key} "
-                       f"(scripts PostUp/PostDown/PreUp/PreDown non autorisés)",
-            )
-        allowed = _ALLOWED_WG_DIRECTIVES.get(current_section or "", set())
-        if key not in allowed:
-            raise HTTPException(
-                status_code=422,
-                detail=f"Directive inconnue ou non autorisée : {key}",
-            )
-
-    parsed = _parse_wg_conf(content)
-    private_key = _extract_private_key(content)
-
-    if not private_key or not _is_valid_wg_key(private_key):
-        raise HTTPException(status_code=422, detail="Clé privée (PrivateKey) manquante ou invalide")
-
-    address = parsed.get("address")
-    if not address or not _is_valid_cidr(address):
-        raise HTTPException(status_code=422, detail="Adresse (Address) manquante ou invalide")
-
-    public_key = parsed.get("publickey")
-    if not public_key or not _is_valid_wg_key(public_key):
-        raise HTTPException(status_code=422, detail="Clé publique du serveur (PublicKey) manquante ou invalide")
-
-    endpoint = parsed.get("endpoint")
-    if not endpoint or ":" not in endpoint:
-        raise HTTPException(status_code=422, detail="Endpoint manquant ou invalide (format host:port attendu)")
-    _, _, port_str = endpoint.partition(":")
-    try:
-        port = int(port_str.strip())
-        if not (1 <= port <= 65535):
-            raise ValueError
-    except ValueError:
-        raise HTTPException(status_code=422, detail=f"Port d'endpoint invalide : {port_str}")
-
-    allowed_ips = parsed.get("allowedips")
-    if not allowed_ips:
-        raise HTTPException(status_code=422, detail="AllowedIPs manquant")
-
-    return {
-        "address": address,
-        "dns": parsed.get("dns"),
-        "public_key": public_key,
-        "endpoint": endpoint,
-        "allowed_ips": allowed_ips,
-        "private_key_hash": hashlib.sha256(private_key.encode()).hexdigest(),
-    }
+def _is_server_initialized(db_settings: dict) -> bool:
+    """Vrai si la keypair serveur a été générée."""
+    return bool(db_settings.get(VPN_SERVER_PRIVKEY))
 
 
 # =============================================================================
-# Schemas Pydantic
+# Schémas Pydantic
 # =============================================================================
-
-class VpnDeployRequest(BaseModel):
-    enabled: bool
-    private_key: str
-    address: str
-    dns: str | None = None
-    public_key: str
-    endpoint: str
-    allowed_ips: str = "0.0.0.0/0"
-    preshared_key: str | None = None
-
-    @field_validator("private_key", "public_key")
-    @classmethod
-    def validate_wg_key(cls, v: str) -> str:
-        if not _is_valid_wg_key(v):
-            raise ValueError("Clé WireGuard invalide (format base64 44 caractères attendu)")
-        return v
-
-    @field_validator("preshared_key")
-    @classmethod
-    def validate_preshared_key(cls, v: str | None) -> str | None:
-        if v is not None and not _is_valid_wg_key(v):
-            raise ValueError("PresharedKey invalide (format base64 44 caractères attendu)")
-        return v
-
-    @field_validator("address")
-    @classmethod
-    def validate_address(cls, v: str) -> str:
-        if not _is_valid_cidr(v):
-            raise ValueError("Adresse CIDR invalide (ex: 10.8.0.5/24)")
-        return v
-
-    @field_validator("endpoint")
-    @classmethod
-    def validate_endpoint(cls, v: str) -> str:
-        if not v or ":" not in v:
-            raise ValueError("Endpoint invalide (format host:port attendu)")
-        host, _, port_str = v.partition(":")
-        port_str = port_str.strip()
-        try:
-            port = int(port_str)
-            if not (1 <= port <= 65535):
-                raise ValueError
-        except ValueError:
-            raise ValueError(f"Port invalide: {port_str}")
-        return v
-
 
 class VpnToggleRequest(BaseModel):
     enabled: bool
 
 
-class VpnImportRequest(BaseModel):
-    config: str
+class VpnServerConfigUpdate(BaseModel):
+    endpoint: str
+    listen_port: int = 51820
+
+    @field_validator("endpoint")
+    @classmethod
+    def validate_endpoint(cls, v: str) -> str:
+        if not v or not v.strip():
+            raise ValueError("Endpoint requis (IP ou domaine du HUB)")
+        return v.strip()
+
+
+class VpnPeerCreate(BaseModel):
+    user_id: int
+    name: str
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("Le nom du device est requis")
+        if len(v) > 100:
+            raise ValueError("Le nom ne peut pas dépasser 100 caractères")
+        return v
 
 
 # =============================================================================
-# Endpoints
+# Endpoints — Serveur
 # =============================================================================
-
-@router.post("/deploy")
-async def deploy_vpn_config(
-    payload: VpnDeployRequest,
-    current_admin: User = Depends(get_current_admin),
-    db: AsyncSession = Depends(get_db),
-):
-    _wg_conf_dir()
-
-    conf_content = _generate_wg_conf(
-        private_key=payload.private_key,
-        address=payload.address,
-        dns=payload.dns,
-        public_key=payload.public_key,
-        endpoint=payload.endpoint,
-        allowed_ips=payload.allowed_ips,
-        preshared_key=payload.preshared_key,
-    )
-    conf_path = _wg_conf_path()
-    conf_path.write_text(conf_content)
-    conf_path.chmod(0o600)
-
-    config_hash = hashlib.sha256(conf_content.encode()).hexdigest()
-
-    for key, value in [
-        (VPN_ENABLED_KEY, "true" if payload.enabled else "false"),
-        (VPN_CONFIG_HASH_KEY, config_hash),
-    ]:
-        result = await db.execute(select(AppSetting).where(AppSetting.key == key))
-        setting = result.scalar_one_or_none()
-        if not setting:
-            setting = AppSetting(key=key, value=value)
-            db.add(setting)
-        else:
-            setting.value = value
-            setting.updated_at = utcnow()
-            setting.updated_by_id = current_admin.id
-
-    await db.commit()
-
-    logger.info(
-        f"Configuration VPN déployée par {current_admin.username} "
-        f"(endpoint={payload.endpoint}, address={payload.address})"
-    )
-
-    try:
-        from app.routes.audit import log_action
-        await log_action(
-            db, current_admin.id, "VPN_CONFIG_UPDATED",
-            target="vpn",
-            details=f"Config VPN déployée: endpoint={payload.endpoint}, address={payload.address}",
-            notify_sse=False,
-        )
-        await db.commit()
-    except Exception:
-        pass
-
-    return {"status": "deployed"}
-
 
 @router.get("/status")
 async def get_vpn_status(
     current_admin: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    result = await db.execute(
-        select(AppSetting).where(AppSetting.key == VPN_ENABLED_KEY)
-    )
-    setting = result.scalar_one_or_none()
-    enabled = setting is not None and setting.value == "true"
+    enabled = await _get_setting(db, VPN_ENABLED_KEY) == "true"
+    server_privkey = await _get_setting(db, VPN_SERVER_PRIVKEY)
+    initialized = bool(server_privkey)
 
-    response = {"enabled": enabled, "connected": False}
+    peer_count = 0
+    connected_count = 0
+    listen_port_str = await _get_setting(db, VPN_LISTEN_PORT) or "51820"
 
-    if enabled:
-        wg_data = _wg_status()
-        if wg_data:
-            peers = wg_data.get("peers", [])
-            connected = False
-            vpn_ip = None
-            endpoint = None
-            transfer_rx = 0
-            transfer_tx = 0
+    result = await db.execute(select(VpnPeer))
+    all_peers = result.scalars().all()
+    peer_count = len(all_peers)
 
-            for peer in peers:
-                if "latest handshake" in peer:
-                    connected = True
-                if "endpoint" in peer and not endpoint:
-                    endpoint = peer["endpoint"]
-                if "transfer" in peer:
-                    parts = peer["transfer"].split()
-                    if len(parts) >= 2:
-                        transfer_rx = parts[0]
-                        transfer_tx = parts[2]
+    if enabled and initialized:
+        wg = _wg_status()
+        if wg:
+            now = datetime.now(timezone.utc)
+            for p in wg.get("peers", []):
+                handshake = p.get("latest handshake")
+                if handshake and "minute" in handshake:
+                    connected_count += 1
+                elif handshake and "second" in handshake:
+                    connected_count += 1
 
-            response["connected"] = connected
-            if connected:
-                conf_path = _wg_conf_path()
-                if conf_path.exists():
-                    parsed = _parse_wg_conf(conf_path.read_text())
-                    vpn_ip = parsed.get("address", "").split("/")[0] if "address" in parsed else None
-
-            response["vpn_ip"] = vpn_ip
-            response["endpoint"] = endpoint
-            response["transfer_rx"] = transfer_rx
-            response["transfer_tx"] = transfer_tx
-
-    return response
+    return {
+        "enabled": enabled,
+        "initialized": initialized,
+        "peer_count": peer_count,
+        "connected_count": connected_count,
+        "listen_port": int(listen_port_str),
+    }
 
 
 @router.put("/toggle")
@@ -417,25 +338,14 @@ async def toggle_vpn(
     current_admin: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    result = await db.execute(
-        select(AppSetting).where(AppSetting.key == VPN_ENABLED_KEY)
-    )
-    setting = result.scalar_one_or_none()
-
-    if not setting:
-        setting = AppSetting(key=VPN_ENABLED_KEY, value="false")
-        db.add(setting)
-
-    new_value = "true" if payload.enabled else "false"
+    await _set_setting(db, VPN_ENABLED_KEY, "true" if payload.enabled else "false",
+                       current_admin.id)
 
     if not payload.enabled:
         conf_path = _wg_conf_path()
         if conf_path.exists():
             conf_path.unlink()
 
-    setting.value = new_value
-    setting.updated_at = utcnow()
-    setting.updated_by_id = current_admin.id
     await db.commit()
 
     action = "VPN_ENABLED" if payload.enabled else "VPN_DISABLED"
@@ -444,8 +354,7 @@ async def toggle_vpn(
     try:
         from app.routes.audit import log_action
         await log_action(
-            db, current_admin.id, action,
-            target="vpn",
+            db, current_admin.id, action, target="vpn",
             details=f"VPN {'activé' if payload.enabled else 'désactivé'}",
             notify_sse=False,
         )
@@ -456,96 +365,85 @@ async def toggle_vpn(
     return {"vpn_enabled": payload.enabled}
 
 
-@router.post("/import")
-async def import_vpn_config(
-    payload: VpnImportRequest,
+@router.get("/server-config")
+async def get_server_config(
     current_admin: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    summary = _validate_import_conf(payload.config)
+    server_privkey = await _get_setting(db, VPN_SERVER_PRIVKEY)
+    server_pubkey = await _get_setting(db, VPN_SERVER_PUBKEY)
+    endpoint = await _get_setting(db, VPN_ENDPOINT)
+    listen_port_str = await _get_setting(db, VPN_LISTEN_PORT) or "51820"
+    subnet = await _get_setting(db, VPN_SUBNET) or "10.8.0.0/24"
 
-    _wg_conf_dir()
-    conf_path = _wg_conf_path()
-    content = payload.config if payload.config.endswith("\n") else payload.config + "\n"
-    conf_path.write_text(content)
-    conf_path.chmod(0o600)
+    return {
+        "initialized": bool(server_privkey),
+        "endpoint": endpoint or "",
+        "listen_port": int(listen_port_str),
+        "subnet": subnet,
+        "server_public_key": server_pubkey or "",
+    }
 
-    config_hash = hashlib.sha256(content.encode()).hexdigest()
 
-    for key, value in [
-        (VPN_ENABLED_KEY, "true"),
-        (VPN_CONFIG_HASH_KEY, config_hash),
-    ]:
-        result = await db.execute(select(AppSetting).where(AppSetting.key == key))
-        setting = result.scalar_one_or_none()
-        if not setting:
-            setting = AppSetting(key=key, value=value)
-            db.add(setting)
-        else:
-            setting.value = value
-            setting.updated_at = utcnow()
-            setting.updated_by_id = current_admin.id
+@router.put("/server-config")
+async def update_server_config(
+    payload: VpnServerConfigUpdate,
+    current_admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    server_privkey = await _get_setting(db, VPN_SERVER_PRIVKEY)
+    if not server_privkey:
+        raise HTTPException(status_code=400, detail="Serveur non initialisé")
 
+    await _set_setting(db, VPN_ENDPOINT, payload.endpoint, current_admin.id)
+    await _set_setting(db, VPN_LISTEN_PORT, str(payload.listen_port), current_admin.id)
     await db.commit()
 
-    logger.info(
-        f"Configuration VPN importée par {current_admin.username} "
-        f"(endpoint={summary['endpoint']})"
-    )
+    subnet = await _get_setting(db, VPN_SUBNET) or "10.8.0.0/24"
+    await _regenerate_and_sync(db, server_privkey, payload.listen_port, subnet)
+
+    logger.info(f"Config serveur VPN mise à jour par {current_admin.username}")
+    return {"status": "updated"}
+
+
+@router.post("/init")
+async def init_server(
+    payload: VpnServerConfigUpdate,
+    current_admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    existing = await _get_setting(db, VPN_SERVER_PRIVKEY)
+    if existing:
+        raise HTTPException(status_code=409, detail="Serveur déjà initialisé")
+
+    private_key, public_key = _generate_keypair()
+
+    await _set_setting(db, VPN_SERVER_PRIVKEY, private_key, current_admin.id)
+    await _set_setting(db, VPN_SERVER_PUBKEY, public_key, current_admin.id)
+    await _set_setting(db, VPN_ENDPOINT, payload.endpoint, current_admin.id)
+    await _set_setting(db, VPN_LISTEN_PORT, str(payload.listen_port), current_admin.id)
+    await _set_setting(db, VPN_SUBNET, "10.8.0.0/24", current_admin.id)
+    await _set_setting(db, VPN_ENABLED_KEY, "true", current_admin.id)
+    await db.commit()
+
+    await _regenerate_and_sync(db, private_key, payload.listen_port, "10.8.0.0/24")
+
+    logger.info(f"Serveur VPN initialisé par {current_admin.username}")
 
     try:
         from app.routes.audit import log_action
         await log_action(
-            db, current_admin.id, "VPN_CONFIG_IMPORTED",
-            target="vpn",
-            details=f"Config VPN importée: endpoint={summary['endpoint']}, address={summary['address']}",
+            db, current_admin.id, "VPN_SERVER_INITIALIZED", target="vpn",
+            details=f"Serveur VPN initialisé: endpoint={payload.endpoint}",
             notify_sse=False,
         )
         await db.commit()
     except Exception:
         pass
 
-    return {"status": "imported", "enabled": True, **summary}
-
-
-@router.get("/config")
-async def get_vpn_config(
-    current_admin: User = Depends(get_current_admin),
-    db: AsyncSession = Depends(get_db),
-):
-    result = await db.execute(
-        select(AppSetting).where(AppSetting.key == VPN_ENABLED_KEY)
-    )
-    enabled_setting = result.scalar_one_or_none()
-    enabled = enabled_setting is not None and enabled_setting.value == "true"
-
-    conf_path = _wg_conf_path()
-    if not conf_path.exists():
-        return {"enabled": enabled, "configured": False}
-
-    content = conf_path.read_text()
-    parsed = _parse_wg_conf(content)
-
-    private_key_line = None
-    for line in content.split("\n"):
-        if line.strip().startswith("PrivateKey"):
-            private_key_line = line.strip()
-            break
-
-    private_key_hash = ""
-    if private_key_line:
-        _, _, pk = private_key_line.partition("=")
-        private_key_hash = hashlib.sha256(pk.strip().encode()).hexdigest()
-
     return {
-        "enabled": enabled,
-        "configured": True,
-        "address": parsed.get("address"),
-        "dns": parsed.get("dns"),
-        "public_key": parsed.get("publickey"),
-        "endpoint": parsed.get("endpoint"),
-        "allowed_ips": parsed.get("allowedips"),
-        "private_key_hash": private_key_hash,
+        "status": "initialized",
+        "server_public_key": public_key,
     }
 
 
@@ -553,33 +451,243 @@ async def get_vpn_config(
 async def generate_wireguard_key(
     current_admin: User = Depends(get_current_admin),
 ):
+    private_key, public_key = _generate_keypair()
+    return {"private_key": private_key, "public_key": public_key}
+
+
+# =============================================================================
+# Endpoints — Peers
+# =============================================================================
+
+@router.get("/peers")
+async def list_peers(
+    current_admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(select(VpnPeer).order_by(VpnPeer.id))
+    peers = result.scalars().all()
+
+    # Stats live depuis wg show
+    wg_stats: dict[str, dict] = {}
+    wg = _wg_status()
+    if wg:
+        for p in wg.get("peers", []):
+            pk = p.get("public_key", "")
+            wg_stats[pk] = p
+
+    now = datetime.now(timezone.utc)
+    peer_list = []
+    for peer in peers:
+        stats = wg_stats.get(peer.public_key, {})
+        handshake_raw = stats.get("latest handshake")
+
+        last_handshake = None
+        connected = False
+        if handshake_raw:
+            connected = "minute" in handshake_raw or "second" in handshake_raw
+
+        transfer_parts = stats.get("transfer", "").split() if stats.get("transfer") else []
+        transfer_rx = None
+        transfer_tx = None
+        if len(transfer_parts) >= 3:
+            transfer_rx = transfer_parts[0]
+            transfer_tx = transfer_parts[2]
+
+        peer_list.append({
+            "id": peer.id,
+            "user_id": peer.user_id,
+            "username": peer.user.username if peer.user else "—",
+            "name": peer.name,
+            "vpn_ip": peer.vpn_ip.split("/")[0],
+            "public_key": peer.public_key,
+            "enabled": peer.enabled,
+            "created_at": peer.created_at.isoformat() if peer.created_at else None,
+            "last_handshake": handshake_raw,
+            "transfer_rx": transfer_rx,
+            "transfer_tx": transfer_tx,
+            "connected": connected,
+        })
+
+    return {"peers": peer_list}
+
+
+@router.post("/peers")
+async def create_peer(
+    payload: VpnPeerCreate,
+    current_admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    # Vérifier que l'utilisateur existe
+    user_result = await db.execute(select(User).where(User.id == payload.user_id))
+    user = user_result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=404, detail="Utilisateur introuvable")
+
+    # Vérifier que le serveur est initialisé
+    server_privkey = await _get_setting(db, VPN_SERVER_PRIVKEY)
+    if not server_privkey:
+        raise HTTPException(status_code=400, detail="Serveur VPN non initialisé")
+
+    # Générer la keypair du peer
+    private_key, public_key = _generate_keypair()
+
+    # Allouer une IP
+    subnet = await _get_setting(db, VPN_SUBNET) or "10.8.0.0/24"
+    vpn_ip = await _allocate_peer_ip(db, subnet)
+
+    # Créer le peer en DB
+    peer = VpnPeer(
+        user_id=payload.user_id,
+        name=payload.name,
+        public_key=public_key,
+        private_key=private_key,
+        vpn_ip=vpn_ip,
+        enabled=True,
+    )
+    db.add(peer)
+    await db.commit()
+    await db.refresh(peer)
+
+    # Régénérer le wg0.conf
+    listen_port_str = await _get_setting(db, VPN_LISTEN_PORT) or "51820"
+    await _regenerate_and_sync(db, server_privkey, int(listen_port_str), subnet)
+
+    logger.info(
+        f"Peer VPN créé par {current_admin.username}: "
+        f"user={user.username}, name={payload.name}, ip={vpn_ip}"
+    )
+
     try:
-        result = subprocess.run(
-            ["wg", "genkey"],
-            capture_output=True, text=True, timeout=5
+        from app.routes.audit import log_action
+        await log_action(
+            db, current_admin.id, "VPN_PEER_CREATED", target="vpn",
+            details=f"Peer créé: {user.username}/{payload.name} ({vpn_ip})",
+            notify_sse=False,
         )
-        if result.returncode != 0:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Erreur lors de la génération de la clé privée"
-            )
-        private_key = result.stdout.strip()
+        await db.commit()
+    except Exception:
+        pass
 
-        result2 = subprocess.run(
-            ["wg", "pubkey"],
-            input=private_key,
-            capture_output=True, text=True, timeout=5
-        )
-        if result2.returncode != 0:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Erreur lors de la génération de la clé publique"
-            )
-        public_key = result2.stdout.strip()
+    return {
+        "id": peer.id,
+        "name": peer.name,
+        "vpn_ip": peer.vpn_ip,
+        "public_key": peer.public_key,
+    }
 
-        return {"private_key": private_key, "public_key": public_key}
-    except FileNotFoundError:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="WireGuard (wg) n'est pas installé sur le serveur"
-        )
+
+@router.delete("/peers/{peer_id}")
+async def delete_peer(
+    peer_id: int,
+    current_admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(select(VpnPeer).where(VpnPeer.id == peer_id))
+    peer = result.scalar_one_or_none()
+    if not peer:
+        raise HTTPException(status_code=404, detail="Peer introuvable")
+
+    username = peer.user.username if peer.user else "—"
+    peer_name = peer.name
+
+    await db.delete(peer)
+    await db.commit()
+
+    # Régénérer le wg0.conf
+    server_privkey = await _get_setting(db, VPN_SERVER_PRIVKEY)
+    if server_privkey:
+        listen_port_str = await _get_setting(db, VPN_LISTEN_PORT) or "51820"
+        subnet = await _get_setting(db, VPN_SUBNET) or "10.8.0.0/24"
+        await _regenerate_and_sync(db, server_privkey, int(listen_port_str), subnet)
+
+    logger.info(f"Peer VPN supprimé par {current_admin.username}: {username}/{peer_name}")
+
+    return {"status": "deleted"}
+
+
+@router.put("/peers/{peer_id}/toggle")
+async def toggle_peer(
+    peer_id: int,
+    current_admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(select(VpnPeer).where(VpnPeer.id == peer_id))
+    peer = result.scalar_one_or_none()
+    if not peer:
+        raise HTTPException(status_code=404, detail="Peer introuvable")
+
+    peer.enabled = not peer.enabled
+    peer.updated_at = utcnow()
+    await db.commit()
+
+    # Régénérer le wg0.conf
+    server_privkey = await _get_setting(db, VPN_SERVER_PRIVKEY)
+    if server_privkey:
+        listen_port_str = await _get_setting(db, VPN_LISTEN_PORT) or "51820"
+        subnet = await _get_setting(db, VPN_SUBNET) or "10.8.0.0/24"
+        await _regenerate_and_sync(db, server_privkey, int(listen_port_str), subnet)
+
+    return {"id": peer.id, "enabled": peer.enabled}
+
+
+@router.get("/peers/{peer_id}/config")
+async def download_peer_config(
+    peer_id: int,
+    current_admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(select(VpnPeer).where(VpnPeer.id == peer_id))
+    peer = result.scalar_one_or_none()
+    if not peer:
+        raise HTTPException(status_code=404, detail="Peer introuvable")
+
+    server_pubkey = await _get_setting(db, VPN_SERVER_PUBKEY)
+    endpoint = await _get_setting(db, VPN_ENDPOINT)
+    listen_port_str = await _get_setting(db, VPN_LISTEN_PORT) or "51820"
+
+    if not server_pubkey or not endpoint:
+        raise HTTPException(status_code=400, detail="Serveur non initialisé")
+
+    conf = _generate_client_conf(peer, server_pubkey, endpoint, int(listen_port_str))
+
+    safe_name = peer.name.replace(" ", "_").lower()
+    filename = f"hub-{peer.user.username}-{safe_name}.conf"
+
+    return StreamingResponse(
+        io.BytesIO(conf.encode()),
+        media_type="application/octet-stream",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/peers/{peer_id}/qrcode")
+async def get_peer_qrcode(
+    peer_id: int,
+    current_admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(select(VpnPeer).where(VpnPeer.id == peer_id))
+    peer = result.scalar_one_or_none()
+    if not peer:
+        raise HTTPException(status_code=404, detail="Peer introuvable")
+
+    server_pubkey = await _get_setting(db, VPN_SERVER_PUBKEY)
+    endpoint = await _get_setting(db, VPN_ENDPOINT)
+    listen_port_str = await _get_setting(db, VPN_LISTEN_PORT) or "51820"
+
+    if not server_pubkey or not endpoint:
+        raise HTTPException(status_code=400, detail="Serveur non initialisé")
+
+    conf = _generate_client_conf(peer, server_pubkey, endpoint, int(listen_port_str))
+
+    import qrcode
+    import qrcode.image.svg
+
+    factory = qrcode.image.svg.SvgPathImage
+    img = qrcode.make(conf.encode(), image_factory=factory)
+
+    buf = io.BytesIO()
+    img.save(buf)
+    buf.seek(0)
+
+    return StreamingResponse(buf, media_type="image/svg+xml")
