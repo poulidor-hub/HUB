@@ -108,7 +108,7 @@ services:
       - ./storage/snapshots:/code/storage/snapshots:rw
       # Certificats PKI (CA + cert serveur), partagés avec le frontend
       - ./certs:/code/certs:rw
-      # Configuration VPN WireGuard (volume partagé avec wireguard-client)
+      # Configuration VPN WireGuard (volume partagé avec wireguard-server)
       - vpn-config:/vpn:rw
       # Socket Docker pour le pilotage des conteneurs (docker_scanner)
       - /var/run/docker.sock:/var/run/docker.sock:ro
@@ -174,8 +174,10 @@ services:
       # Le seul privilège requis est le bind des ports 80/443.
       - NET_BIND_SERVICE
 
-  # ===== VPN WireGuard Client =====
-  wireguard-client:
+  # ===== VPN WireGuard Server =====
+  # Le HUB est serveur : les utilisateurs s'y connectent à distance.
+  # Port 51820/udp doit être ouvert dans le firewall hôte.
+  wireguard-server:
     image: linuxserver/wireguard:latest
     container_name: hub-wireguard
     network_mode: host
@@ -188,11 +190,9 @@ services:
       - PUID=1000
       - PGID=1000
       - TZ=${TZ:-Europe/Paris}
-      - WG_ENABLED=${WG_ENABLED:-false}
     volumes:
       - vpn-config:/config
     # Cycle de vie géré par hubctl vpn + boot hook (côté POULIDOR).
-    # Ne pas remettre unless-stopped : le conteneur tournait à vide tant que vpn_enabled=false.
     restart: "no"
 
 # ===== VOLUMES =====
