@@ -1,195 +1,315 @@
 /**
- * Admin VPN WireGuard Module
+ * Admin VPN WireGuard Module — Mode Serveur
  *
  * Gère l'onglet VPN dans l'interface d'administration :
+ * - Init du serveur (keypair + endpoint)
  * - Toggle ON/OFF
- * - Formulaire de configuration
- * - Déploiement
+ * - CRUD des peers (créer, supprimer, activer/désactiver)
+ * - Téléchargement .conf + QR code
  * - Polling du statut
- * - Génération de clés
  */
 
 const VPN_POLL_INTERVAL = 10000;
 let vpnPollTimer = null;
-let _vpnTooltips = [];
 
-async function loadVpnState() {
+// ── Status ──────────────────────────────────────────────
+
+async function loadVpnStatus() {
     if (!api.token) return;
     try {
         const data = await api.request('/vpn/status');
         const toggle = document.getElementById('toggleVpn');
-        const form = document.getElementById('vpnConfigForm');
-        const badge = document.getElementById('vpnStatusBadge');
-        const stats = document.getElementById('vpnStats');
-
         if (toggle) toggle.checked = data.enabled === true;
 
-        if (form) form.classList.toggle('d-none', !data.enabled);
-
+        const badge = document.getElementById('vpnStatusBadge');
         if (badge) {
             badge.classList.remove('d-none', 'bg-success', 'bg-secondary', 'bg-warning');
-            if (!data.enabled) {
-                badge.classList.add('d-none');
-            } else if (data.connected) {
+            if (data.enabled && data.initialized) {
                 badge.classList.add('bg-success');
-                badge.textContent = 'Connecté';
+                badge.textContent = `${data.connected_count}/${data.peer_count} connecté(s)`;
+            } else if (data.enabled) {
+                badge.classList.add('bg-warning');
+                badge.textContent = 'En attente';
             } else {
                 badge.classList.add('bg-secondary');
-                badge.textContent = 'Déconnecté';
+                badge.textContent = 'Arrêté';
             }
         }
 
-        const summary = document.getElementById('vpnImportSummary');
-        const summaryText = document.getElementById('vpnImportSummaryText');
-        if (summary && summaryText) {
-            if (data.enabled) {
-                summary.classList.remove('d-none');
-                summaryText.textContent =
-                    'Configuration active — Serveur ' + (data.endpoint || '—');
-            } else {
-                summary.classList.add('d-none');
-            }
-        }
-
-        if (stats) stats.classList.toggle('d-none', !data.connected);
-
-        if (data.connected) {
-            const ipEl = document.getElementById('vpnStatsIp');
-            const epEl = document.getElementById('vpnStatsEndpoint');
-            const rxEl = document.getElementById('vpnStatsRx');
-            const txEl = document.getElementById('vpnStatsTx');
-            if (ipEl) ipEl.textContent = data.vpn_ip || '-';
-            if (epEl) epEl.textContent = data.endpoint || '-';
-            if (rxEl) rxEl.textContent = data.transfer_rx || '-';
-            if (txEl) txEl.textContent = data.transfer_tx || '-';
-        }
-
-        if (data.enabled) {
-            await loadVpnConfig();
+        const countEl = document.getElementById('vpnPeerCount');
+        if (countEl && data.initialized) {
+            countEl.textContent = `${data.peer_count} peer(s) · ${data.connected_count} connecté(s)`;
         }
     } catch (e) {
-        console.error('loadVpnState:', e);
+        console.error('loadVpnStatus:', e);
     }
 }
 
-async function loadVpnConfig() {
+// ── Server config / init ────────────────────────────────
+
+async function loadVpnServerConfig() {
+    if (!api.token) return;
     try {
-        const data = await api.request('/vpn/config');
-        if (!data.configured) return;
+        const data = await api.request('/vpn/server-config');
+        const initPanel = document.getElementById('vpnInitPanel');
+        const mainPanel = document.getElementById('vpnMainPanel');
 
-        const addressEl = document.getElementById('vpnAddress');
-        const dnsEl = document.getElementById('vpnDns');
-        const pkEl = document.getElementById('vpnPublicKey');
-        const epEl = document.getElementById('vpnEndpoint');
-        const aipEl = document.getElementById('vpnAllowedIPs');
+        if (!data.initialized) {
+            if (initPanel) initPanel.classList.remove('d-none');
+            if (mainPanel) mainPanel.classList.add('d-none');
+            return;
+        }
 
-        if (addressEl && data.address) addressEl.value = data.address;
-        if (dnsEl && data.dns) dnsEl.value = data.dns;
-        if (pkEl && data.public_key) pkEl.value = data.public_key;
-        if (epEl && data.endpoint) epEl.value = data.endpoint;
-        if (aipEl && data.allowed_ips) aipEl.value = data.allowed_ips;
+        if (initPanel) initPanel.classList.add('d-none');
+        if (mainPanel) mainPanel.classList.remove('d-none');
+
+        const ep = document.getElementById('vpnSettingsEndpoint');
+        const port = document.getElementById('vpnSettingsPort');
+        const pubkey = document.getElementById('vpnServerPubkey');
+        if (ep) ep.value = data.endpoint || '';
+        if (port) port.value = data.listen_port || 51820;
+        if (pubkey) pubkey.value = data.server_public_key || '';
     } catch (e) {
-        console.error('loadVpnConfig:', e);
+        console.error('loadVpnServerConfig:', e);
     }
 }
+
+async function handleVpnInit() {
+    const endpoint = document.getElementById('vpnInitEndpoint')?.value?.trim();
+    const port = parseInt(document.getElementById('vpnInitPort')?.value || '51820');
+
+    if (!endpoint) {
+        showToast('VPN', 'Endpoint requis', 'warning');
+        return;
+    }
+
+    try {
+        await api.request('/vpn/init', {
+            method: 'POST',
+            body: JSON.stringify({ endpoint, listen_port: port })
+        });
+        showToast('VPN', 'Serveur initialisé', 'success');
+        await loadVpnServerConfig();
+        await loadVpnStatus();
+        await loadVpnPeers();
+        startVpnPolling();
+    } catch (e) {
+        showToast('VPN', e.message || 'Erreur d\'initialisation', 'danger');
+    }
+}
+
+async function handleSaveServerConfig() {
+    const endpoint = document.getElementById('vpnSettingsEndpoint')?.value?.trim();
+    const port = parseInt(document.getElementById('vpnSettingsPort')?.value || '51820');
+
+    if (!endpoint) {
+        showToast('VPN', 'Endpoint requis', 'warning');
+        return;
+    }
+
+    try {
+        await api.request('/vpn/server-config', {
+            method: 'PUT',
+            body: JSON.stringify({ endpoint, listen_port: port })
+        });
+        showToast('VPN', 'Réglages enregistrés', 'success');
+    } catch (e) {
+        showToast('VPN', e.message || 'Erreur', 'danger');
+    }
+}
+
+// ── Toggle ──────────────────────────────────────────────
 
 async function handleVpnToggle() {
     const toggle = document.getElementById('toggleVpn');
-    const form = document.getElementById('vpnConfigForm');
     const checked = toggle ? toggle.checked : false;
 
     try {
-        const data = await api.request('/vpn/toggle', {
+        await api.request('/vpn/toggle', {
             method: 'PUT',
             body: JSON.stringify({ enabled: checked })
         });
-
-        if (form) form.classList.toggle('d-none', !checked);
-
-        showToast(
-            'VPN',
-            checked ? 'VPN activé' : 'VPN désactivé',
-            'success'
-        );
-
-        if (checked) {
-            startVpnPolling();
-        } else {
-            stopVpnPolling();
-        }
-
-        await loadVpnState();
+        showToast('VPN', checked ? 'VPN activé' : 'VPN désactivé', 'success');
+        if (checked) startVpnPolling(); else stopVpnPolling();
+        await loadVpnStatus();
     } catch (e) {
         showToast('VPN', e.message || 'Erreur', 'danger');
         if (toggle) toggle.checked = !checked;
     }
 }
 
-async function handleVpnKeyGen() {
-    const genBtn = document.querySelector('[data-action="handleVpnKeyGen"]');
-    if (genBtn) genBtn.disabled = true;
+// ── Peers ───────────────────────────────────────────────
 
+async function loadVpnPeers() {
+    if (!api.token) return;
     try {
-        const data = await api.request('/vpn/generate-key', {
-            method: 'POST'
-        });
-
-        const pkInput = document.getElementById('vpnPrivateKey');
-        if (pkInput) pkInput.value = data.private_key;
-
-        showToast('VPN', 'Clés WireGuard générées', 'success');
+        const data = await api.request('/vpn/peers');
+        renderPeers(data.peers || []);
     } catch (e) {
-        showToast('VPN', e.message || 'Erreur de génération', 'danger');
-    } finally {
-        if (genBtn) genBtn.disabled = false;
+        console.error('loadVpnPeers:', e);
     }
 }
 
-async function handleVpnDeploy() {
-    const privateKey = document.getElementById('vpnPrivateKey')?.value?.trim();
-    const address = document.getElementById('vpnAddress')?.value?.trim();
-    const dns = document.getElementById('vpnDns')?.value?.trim() || null;
-    const publicKey = document.getElementById('vpnPublicKey')?.value?.trim();
-    const endpoint = document.getElementById('vpnEndpoint')?.value?.trim();
-    const allowedIps = document.getElementById('vpnAllowedIPs')?.value?.trim() || '0.0.0.0/0';
-    const presharedKey = document.getElementById('vpnPresharedKey')?.value?.trim() || null;
+function renderPeers(peers) {
+    const container = document.getElementById('vpnPeersList');
+    if (!container) return;
 
-    if (!privateKey || !address || !publicKey || !endpoint) {
-        showToast('VPN', 'Les champs Clé privée, Adresse, Clé publique et Endpoint sont requis', 'warning');
+    if (peers.length === 0) {
+        container.innerHTML = '<p class="text-muted text-center py-4">Aucun peer. Ajoutez-en un pour commencer.</p>';
         return;
     }
 
-    const deployBtn = document.querySelector('[data-action="handleVpnDeploy"]');
-    if (deployBtn) deployBtn.disabled = true;
+    container.innerHTML = peers.map(p => `
+        <div class="vpn-peer-card ${p.enabled ? '' : 'disabled'}">
+            <div class="vpn-peer-avatar">${(p.username || '?')[0].toUpperCase()}</div>
+            <div class="vpn-peer-info">
+                <div class="vpn-peer-name">${escapeHtml(p.username)} — ${escapeHtml(p.name)}</div>
+                <div class="vpn-peer-meta">
+                    ${escapeHtml(p.vpn_ip)}
+                    ${p.last_handshake ? ' · ' + escapeHtml(p.last_handshake) : ' · jamais connecté'}
+                </div>
+            </div>
+            <div class="vpn-peer-tx">
+                ${p.transfer_rx ? '↓' + escapeHtml(p.transfer_rx) : ''}
+                ${p.transfer_tx ? ' ↑' + escapeHtml(p.transfer_tx) : ''}
+            </div>
+            <div class="vpn-peer-status ${p.connected ? 'connected' : ''}"
+                 title="${p.connected ? 'Connecté' : 'Hors ligne'}"></div>
+            <div class="vpn-peer-actions">
+                <button class="btn btn-outline-secondary btn-sm" onclick="downloadPeerConfig(${p.id})" title="Télécharger .conf">
+                    <i class="bi bi-download"></i>
+                </button>
+                <button class="btn btn-outline-secondary btn-sm" onclick="showPeerQrCode(${p.id}, '${escapeHtml(p.username)}', '${escapeHtml(p.name)}')" title="QR code">
+                    <i class="bi bi-qr-code"></i>
+                </button>
+                <button class="btn btn-outline-secondary btn-sm" onclick="handleTogglePeer(${p.id})" title="${p.enabled ? 'Désactiver' : 'Activer'}">
+                    <i class="bi bi-${p.enabled ? 'toggle-on' : 'toggle-off'}"></i>
+                </button>
+                <button class="btn btn-outline-danger btn-sm" onclick="handleDeletePeer(${p.id}, '${escapeHtml(p.username)}', '${escapeHtml(p.name)}')" title="Supprimer">
+                    <i class="bi bi-trash"></i>
+                </button>
+            </div>
+        </div>
+    `).join('');
+}
 
+function escapeHtml(str) {
+    const div = document.createElement('div');
+    div.textContent = str || '';
+    return div.innerHTML;
+}
+
+async function loadVpnUsers() {
     try {
-        await api.request('/vpn/deploy', {
-            method: 'POST',
-            body: JSON.stringify({
-                enabled: true,
-                private_key: privateKey,
-                address: address,
-                dns: dns,
-                public_key: publicKey,
-                endpoint: endpoint,
-                allowed_ips: allowedIps,
-                preshared_key: presharedKey
-            })
-        });
-
-        showToast('VPN', 'Configuration déployée avec succès', 'success');
-        await loadVpnState();
-        startVpnPolling();
+        const data = await api.request('/users?per_page=100');
+        const select = document.getElementById('vpnPeerUser');
+        if (!select) return;
+        const users = data.users || data.items || data || [];
+        select.innerHTML = users.map(u =>
+            `<option value="${u.id}">${escapeHtml(u.username)}</option>`
+        ).join('');
     } catch (e) {
-        showToast('VPN', e.message || 'Erreur de déploiement', 'danger');
-    } finally {
-        if (deployBtn) deployBtn.disabled = false;
+        console.error('loadVpnUsers:', e);
     }
 }
 
+async function handleCreatePeer() {
+    const userId = parseInt(document.getElementById('vpnPeerUser')?.value);
+    const name = document.getElementById('vpnPeerName')?.value?.trim();
+
+    if (!userId || !name) {
+        showToast('VPN', 'Utilisateur et nom requis', 'warning');
+        return;
+    }
+
+    try {
+        const result = await api.request('/vpn/peers', {
+            method: 'POST',
+            body: JSON.stringify({ user_id: userId, name })
+        });
+        showToast('VPN', `Peer créé (${result.vpn_ip})`, 'success');
+
+        // Reset form + close modal
+        const nameInput = document.getElementById('vpnPeerName');
+        if (nameInput) nameInput.value = '';
+        const modalEl = document.getElementById('vpnAddPeerModal');
+        if (modalEl) bootstrap.Modal.getInstance(modalEl)?.hide();
+
+        await loadVpnPeers();
+        await loadVpnStatus();
+    } catch (e) {
+        showToast('VPN', e.message || 'Erreur', 'danger');
+    }
+}
+
+async function handleDeletePeer(peerId, username, name) {
+    if (!confirm(`Supprimer le peer "${username} — ${name}" ?`)) return;
+    try {
+        await api.request(`/vpn/peers/${peerId}`, { method: 'DELETE' });
+        showToast('VPN', 'Peer supprimé', 'success');
+        await loadVpnPeers();
+        await loadVpnStatus();
+    } catch (e) {
+        showToast('VPN', e.message || 'Erreur', 'danger');
+    }
+}
+
+async function handleTogglePeer(peerId) {
+    try {
+        const result = await api.request(`/vpn/peers/${peerId}/toggle`, { method: 'PUT' });
+        showToast('VPN', result.enabled ? 'Peer activé' : 'Peer désactivé', 'success');
+        await loadVpnPeers();
+    } catch (e) {
+        showToast('VPN', e.message || 'Erreur', 'danger');
+    }
+}
+
+async function downloadPeerConfig(peerId) {
+    try {
+        const resp = await fetch(`/api/vpn/peers/${peerId}/config`, {
+            headers: { 'Authorization': `Bearer ${api.token}` }
+        });
+        if (!resp.ok) throw new Error('Erreur de téléchargement');
+        const blob = await resp.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'wireguard.conf';
+        a.click();
+        URL.revokeObjectURL(url);
+    } catch (e) {
+        showToast('VPN', e.message || 'Erreur', 'danger');
+    }
+}
+
+async function showPeerQrCode(peerId, username, name) {
+    try {
+        const resp = await fetch(`/api/vpn/peers/${peerId}/qrcode`, {
+            headers: { 'Authorization': `Bearer ${api.token}` }
+        });
+        if (!resp.ok) throw new Error('Erreur QR code');
+        const svgText = await resp.text();
+
+        const titleEl = document.getElementById('vpnQrTitle');
+        const imgEl = document.getElementById('vpnQrImage');
+        if (titleEl) titleEl.textContent = `QR Code — ${username} / ${name}`;
+        if (imgEl) imgEl.innerHTML = svgText;
+
+        const modalEl = document.getElementById('vpnQrModal');
+        if (modalEl) new bootstrap.Modal(modalEl).show();
+    } catch (e) {
+        showToast('VPN', e.message || 'Erreur', 'danger');
+    }
+}
+
+// ── Polling ─────────────────────────────────────────────
+
 function startVpnPolling() {
     stopVpnPolling();
-    vpnPollTimer = setInterval(loadVpnState, VPN_POLL_INTERVAL);
+    vpnPollTimer = setInterval(async () => {
+        await loadVpnStatus();
+        await loadVpnPeers();
+    }, VPN_POLL_INTERVAL);
 }
 
 function stopVpnPolling() {
@@ -199,59 +319,22 @@ function stopVpnPolling() {
     }
 }
 
-async function handleVpnFile(fileArg) {
-    const input = document.getElementById('vpnFileInput');
-    const file = (fileArg instanceof File) ? fileArg : (input && input.files && input.files[0]);
-    if (!file) return;
-
-    try {
-        const text = await file.text();
-        await api.importVpnConfig(text);
-        showToast('VPN', 'Configuration importée', 'success');
-        if (input) input.value = '';
-        await loadVpnState();
-    } catch (e) {
-        showToast('VPN', e.message || "Échec de l'import", 'danger');
-    }
-}
-
-function setupVpnDragDrop() {
-    const dz = document.getElementById('vpnDropzone');
-    if (!dz || dz.dataset.ddBound === '1') return;
-    dz.dataset.ddBound = '1';
-
-    ['dragover', 'dragenter'].forEach(evt =>
-        dz.addEventListener(evt, (e) => { e.preventDefault(); dz.classList.add('drag-over'); }));
-    ['dragleave', 'dragend'].forEach(evt =>
-        dz.addEventListener(evt, () => dz.classList.remove('drag-over')));
-    dz.addEventListener('drop', (e) => {
-        e.preventDefault();
-        dz.classList.remove('drag-over');
-        const file = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
-        if (file) handleVpnFile(file);
-    });
-}
-
-function initVpnTooltips() {
-    const panel = document.getElementById('vpnPanel');
-    if (!panel || typeof bootstrap === 'undefined') return;
-    _vpnTooltips.forEach(t => { try { t.dispose(); } catch (e) {} });
-    _vpnTooltips = [];
-    panel.querySelectorAll('[data-bs-toggle="tooltip"]').forEach(el => {
-        _vpnTooltips.push(new bootstrap.Tooltip(el));
-    });
-}
+// ── Init ────────────────────────────────────────────────
 
 document.addEventListener('DOMContentLoaded', () => {
-    // Ne pas charger l'état VPN au démarrage : /vpn/status est protégé et un appel
-    // non authentifié (page de login) déclenche un faux "session expirée".
-    // Le chargement est géré à l'affichage de l'onglet VPN (shown.bs.tab).
     const vpnTab = document.getElementById('vpn-tab');
     if (vpnTab) {
-        vpnTab.addEventListener('shown.bs.tab', () => {
-            setupVpnDragDrop();
-            initVpnTooltips();
-            loadVpnState().catch(() => {});
+        vpnTab.addEventListener('shown.bs.tab', async () => {
+            await loadVpnServerConfig();
+            await loadVpnStatus();
+            await loadVpnPeers();
+            await loadVpnUsers();
         });
+    }
+
+    // Pré-charger les users quand on ouvre le modal
+    const addPeerModal = document.getElementById('vpnAddPeerModal');
+    if (addPeerModal) {
+        addPeerModal.addEventListener('show.bs.modal', () => loadVpnUsers());
     }
 });
