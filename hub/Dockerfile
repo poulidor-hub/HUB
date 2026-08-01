@@ -14,6 +14,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libpq-dev \
     postgresql-client \
     gosu \
+    wireguard-tools \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .

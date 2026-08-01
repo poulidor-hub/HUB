@@ -25,6 +25,13 @@ if [ -d "/code/storage" ]; then
     chmod -R u+rw /code/storage 2>/dev/null || true
 fi
 
+# Ajuster les permissions du volume VPN WireGuard (partagé avec wireguard-server)
+if [ -d "/vpn" ]; then
+    echo "🛡️ Ajustement des permissions VPN..."
+    mkdir -p /vpn/wg_confs
+    chown -R appuser:"$(id -gn appuser)" /vpn 2>/dev/null || true
+fi
+
 # Ajouter appuser au groupe docker pour accéder au socket Docker
 # Le GID du groupe docker est passé via group_add dans docker-compose
 if [ -S "/var/run/docker.sock" ]; then
