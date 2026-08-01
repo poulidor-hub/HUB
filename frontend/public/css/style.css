@@ -2084,7 +2084,7 @@ body {
 
 #changePasswordModal .cpw-foot { padding: 8px 22px 20px; border-top: 0; }
 
-/* === Vue VPN WireGuard (thème Soft & Clean, repris de cpw-*) === */
+/* === Serveur VPN WireGuard (thème Soft & Clean) === */
 #vpnPanel .vpn-head { display:flex; align-items:center; gap:13px; padding:4px 0 16px; position:relative; }
 #vpnPanel .vpn-badge {
     width:46px; height:46px; border-radius:13px; flex-shrink:0;
@@ -2094,38 +2094,53 @@ body {
 #vpnPanel .vpn-title { margin:0; font-size:1.06rem; font-weight:600; color:#1f2937; }
 #vpnPanel .vpn-subtitle { margin:2px 0 0; font-size:.8rem; color:#6b7280; }
 
-#vpnPanel .vpn-dropzone {
-    border:2px dashed #c3d0e0; border-radius:12px; background:#f7faff;
-    padding:26px; text-align:center; transition:border-color .15s, background-color .15s;
-}
-#vpnPanel .vpn-dropzone.drag-over { border-color:#2b78d6; background:#e7f1fb; }
-#vpnPanel .vpn-dz-icon { font-size:30px; line-height:1; margin-bottom:8px; }
-#vpnPanel .vpn-dz-title { font-weight:600; font-size:.95rem; color:#1f2937; margin-bottom:4px; }
-#vpnPanel .vpn-dz-hint { font-size:.76rem; color:#9aa3af; margin-top:13px; }
-
-#vpnPanel .vpn-summary {
-    background:#e7f6ef; border-radius:10px; padding:11px 14px; margin-top:14px;
-    font-size:.82rem; color:#3f7a55;
-}
-
 #vpnPanel .vpn-field { margin-bottom:14px; }
 #vpnPanel .vpn-field label {
     display:block; font-size:.82rem; font-weight:600; color:#374151; margin-bottom:6px;
 }
-#vpnPanel .vpn-field input {
+#vpnPanel .vpn-field input,
+#vpnPanel .vpn-field select {
     width:100%; border:1px solid #d6dde6; border-radius:10px;
     padding:10px 13px; font-size:.9rem; color:#1f2937; background:#fff;
     outline:none; transition:border-color .15s, box-shadow .15s;
 }
-#vpnPanel .vpn-field input:focus {
+#vpnPanel .vpn-field input:focus,
+#vpnPanel .vpn-field select:focus {
     border-color:#2b78d6; box-shadow:0 0 0 3px rgba(43,120,214,.15);
 }
-#vpnPanel .vpn-info {
-    display:inline-block; width:16px; height:16px; line-height:16px; text-align:center;
-    border-radius:50%; background:#e7f1fb; color:#2b78d6; font-size:.7rem; font-weight:700;
-    cursor:help; margin-left:3px;
-}
+
 #vpnPanel .vpn-advanced-toggle {
     font-size:.85rem; color:#2b78d6; font-weight:600; cursor:pointer; user-select:none;
     background:none; border:0; padding:0;
 }
+
+/* Carte peer */
+#vpnPanel .vpn-peer-card {
+    display:flex; align-items:center; gap:14px;
+    padding:14px 16px; border:1px solid #e2e8f0; border-radius:12px;
+    margin-bottom:8px; background:#fff; transition:border-color .15s;
+}
+#vpnPanel .vpn-peer-card:hover { border-color:#c3d0e0; }
+#vpnPanel .vpn-peer-card.disabled { opacity:.6; }
+
+#vpnPanel .vpn-peer-avatar {
+    width:38px; height:38px; border-radius:10px; flex-shrink:0;
+    background:#e7f1fb; color:#2b78d6; font-weight:700; font-size:.95rem;
+    display:flex; align-items:center; justify-content:center;
+}
+#vpnPanel .vpn-peer-info { flex-grow:1; min-width:0; }
+#vpnPanel .vpn-peer-name { font-weight:600; font-size:.9rem; color:#1f2937; }
+#vpnPanel .vpn-peer-meta { font-size:.78rem; color:#6b7280; }
+
+#vpnPanel .vpn-peer-status {
+    width:10px; height:10px; border-radius:50%; flex-shrink:0;
+    background:#d1d5db;
+}
+#vpnPanel .vpn-peer-status.connected { background:#22c55e; }
+
+#vpnPanel .vpn-peer-actions {
+    display:flex; align-items:center; gap:6px; flex-shrink:0;
+}
+#vpnPanel .vpn-peer-actions .btn { padding:4px 8px; font-size:.78rem; }
+
+#vpnPanel .vpn-peer-tx { font-size:.72rem; color:#9aa3af; white-space:nowrap; }

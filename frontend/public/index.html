@@ -1305,20 +1305,20 @@
                             <div class="vpn-head">
                                 <div class="vpn-badge"><i class="bi bi-shield-lock"></i></div>
                                 <div class="flex-grow-1">
-                                    <h5 class="vpn-title">VPN WireGuard</h5>
-                                    <p class="vpn-subtitle">Connectez ce Hub à votre serveur VPN.</p>
+                                    <h5 class="vpn-title">Serveur VPN WireGuard</h5>
+                                    <p class="vpn-subtitle">Permet aux utilisateurs d'accéder au HUB à distance.</p>
                                 </div>
                                 <div class="d-flex align-items-center gap-2">
-                                    <span id="vpnStatusBadge" class="badge bg-secondary d-none">Déconnecté</span>
+                                    <span id="vpnStatusBadge" class="badge bg-secondary d-none">—</span>
                                     <div class="form-check form-switch mb-0">
                                         <input class="form-check-input" type="checkbox" id="toggleVpn"
                                                data-action="handleVpnToggle">
-                                        <label class="form-check-label small" for="toggleVpn">Allumer</label>
+                                        <label class="form-check-label small" for="toggleVpn">Activer</label>
                                     </div>
                                 </div>
                             </div>
 
-                            <!-- Bandeau : cycle de vie conteneur géré côté hôte -->
+                            <!-- Bandeau cycle de vie -->
                             <div class="alert alert-info py-2 mb-3 small">
                                 <i class="bi bi-info-circle me-1"></i>
                                 Le conteneur WireGuard démarre au prochain boot du Hub ou via
@@ -1326,115 +1326,126 @@
                                 l'application effective se fait côté hôte.
                             </div>
 
-                            <!-- Zone d'import -->
-                            <div id="vpnDropzone" class="vpn-dropzone">
-                                <div class="vpn-dz-icon"><i class="bi bi-file-earmark-arrow-up"></i></div>
-                                <div class="vpn-dz-title">Glissez votre fichier <code>.conf</code> ici</div>
-                                <div class="small text-muted mb-2">ou</div>
-                                <label for="vpnFileInput" class="btn btn-primary btn-sm mb-0">
-                                    <i class="bi bi-folder2-open me-1"></i>Choisir un fichier
-                                </label>
-                                <input type="file" id="vpnFileInput" accept=".conf" class="d-none"
-                                       data-action="handleVpnFile">
-                                <div class="vpn-dz-hint">
-                                    Fichier de connexion fourni par votre prestataire VPN
-                                    <span class="vpn-info" data-bs-toggle="tooltip"
-                                          title="C'est le fichier .conf (ex: client.conf) que votre prestataire VPN ou administrateur réseau vous a transmis. Il contient toute la configuration nécessaire.">i</span>
+                            <!-- État : non initialisé -->
+                            <div id="vpnInitPanel" class="d-none">
+                                <p class="text-muted">
+                                    Le serveur VPN n'est pas encore configuré. Saisissez l'endpoint public
+                                    du HUB (IP ou domaine par lequel les utilisateurs le joindront).
+                                </p>
+                                <div class="row g-3 align-items-end">
+                                    <div class="col-md-6 vpn-field">
+                                        <label>Endpoint public du HUB</label>
+                                        <input type="text" id="vpnInitEndpoint" placeholder="203.0.113.10">
+                                    </div>
+                                    <div class="col-md-3 vpn-field">
+                                        <label>Port</label>
+                                        <input type="number" id="vpnInitPort" value="51820">
+                                    </div>
+                                    <div class="col-md-3">
+                                        <button class="btn btn-primary btn-sm w-100" data-action="handleVpnInit">
+                                            <i class="bi bi-magic me-1"></i>Initialiser
+                                        </button>
+                                    </div>
                                 </div>
                             </div>
 
-                            <!-- Résumé après import -->
-                            <div id="vpnImportSummary" class="vpn-summary d-none">
-                                <i class="bi bi-check-circle-fill me-1"></i>
-                                <span id="vpnImportSummaryText"></span>
-                            </div>
+                            <!-- État : initialisé -->
+                            <div id="vpnMainPanel" class="d-none">
+                                <!-- Barre d'actions -->
+                                <div class="d-flex justify-content-between align-items-center mb-3">
+                                    <div>
+                                        <button class="btn btn-primary btn-sm" data-action="handleAddPeer"
+                                                data-bs-toggle="modal" data-bs-target="#vpnAddPeerModal">
+                                            <i class="bi bi-person-plus me-1"></i>Ajouter un peer
+                                        </button>
+                                    </div>
+                                    <div>
+                                        <span class="text-muted small me-2" id="vpnPeerCount"></span>
+                                        <button class="vpn-advanced-toggle" type="button"
+                                                data-bs-toggle="collapse" data-bs-target="#vpnServerSettings">
+                                            <i class="bi bi-gear me-1"></i>Réglages
+                                        </button>
+                                    </div>
+                                </div>
 
-                            <!-- Paramètres avancés -->
-                            <div class="mt-3">
-                                <button class="vpn-advanced-toggle" type="button"
-                                        data-bs-toggle="collapse" data-bs-target="#vpnAdvanced">
-                                    <i class="bi bi-sliders me-1"></i>Paramètres avancés
-                                    <span class="text-muted fw-normal">(facultatif — pour un technicien)</span>
-                                </button>
+                                <!-- Liste des peers -->
+                                <div id="vpnPeersList">
+                                    <p class="text-muted text-center py-4">Aucun peer. Ajoutez-en un pour commencer.</p>
+                                </div>
 
-                                <div class="collapse mt-3" id="vpnAdvanced">
-                                    <div id="vpnConfigForm">
+                                <!-- Réglages serveur -->
+                                <div class="collapse mt-3" id="vpnServerSettings">
+                                    <div class="card card-body bg-light">
                                         <div class="row g-3">
                                             <div class="col-md-6 vpn-field">
-                                                <label>Clé privée
-                                                    <span class="vpn-info" data-bs-toggle="tooltip"
-                                                          title="Secret de ce Hub. Ne le partagez jamais. Généré au clic sur « Générer » ou fourni dans votre fichier de configuration.">i</span>
-                                                </label>
-                                                <div class="input-group">
-                                                    <input type="password" id="vpnPrivateKey" placeholder="yAnz5TF+X...">
-                                                    <button class="btn btn-outline-secondary btn-sm" type="button" data-action="handleVpnKeyGen">
-                                                        <i class="bi bi-arrow-repeat"></i> Générer
-                                                    </button>
-                                                </div>
+                                                <label>Endpoint public</label>
+                                                <input type="text" id="vpnSettingsEndpoint">
                                             </div>
-                                            <div class="col-md-6 vpn-field">
-                                                <label>Adresse VPN
-                                                    <span class="vpn-info" data-bs-toggle="tooltip"
-                                                          title="Adresse IP que le Hub utilisera à l'intérieur du tunnel VPN. Format IP/masque (ex: 10.8.0.5/24).">i</span>
-                                                </label>
-                                                <input type="text" id="vpnAddress" placeholder="10.8.0.5/24">
+                                            <div class="col-md-3 vpn-field">
+                                                <label>Port d'écoute</label>
+                                                <input type="number" id="vpnSettingsPort" value="51820">
                                             </div>
-                                            <div class="col-md-6 vpn-field">
-                                                <label>DNS (optionnel)
-                                                    <span class="vpn-info" data-bs-toggle="tooltip"
-                                                          title="Serveur qui traduit les noms de sites web en adresses IP, à utiliser quand le VPN est actif. Optionnel.">i</span>
-                                                </label>
-                                                <input type="text" id="vpnDns" placeholder="1.1.1.1">
-                                            </div>
-                                            <div class="col-md-6 vpn-field">
-                                                <label>Clé publique du serveur
-                                                    <span class="vpn-info" data-bs-toggle="tooltip"
-                                                          title="Identifiant public du serveur VPN auquel le Hub se connecte. Fourni par votre prestataire VPN.">i</span>
-                                                </label>
-                                                <input type="text" id="vpnPublicKey" placeholder="xTIBA5r...">
-                                            </div>
-                                            <div class="col-md-6 vpn-field">
-                                                <label>Endpoint
-                                                    <span class="vpn-info" data-bs-toggle="tooltip"
-                                                          title="Adresse du serveur VPN auquel se connecter : nom de domaine ou IP + numéro de port (ex: vps.example.com:51820).">i</span>
-                                                </label>
-                                                <input type="text" id="vpnEndpoint" placeholder="vps.example.com:51820">
-                                            </div>
-                                            <div class="col-md-6 vpn-field">
-                                                <label>AllowedIPs
-                                                    <span class="vpn-info" data-bs-toggle="tooltip"
-                                                          title="Quel trafic internet passe par le VPN. 0.0.0.0/0 = tout le trafic passe par le VPN (recommandé).">i</span>
-                                                </label>
-                                                <input type="text" id="vpnAllowedIPs" value="0.0.0.0/0">
-                                            </div>
-                                            <div class="col-md-6 vpn-field">
-                                                <label>PresharedKey (optionnel)
-                                                    <span class="vpn-info" data-bs-toggle="tooltip"
-                                                          title="Clé secrète partagée additionnelle pour renforcer la sécurité du tunnel. Optionnelle.">i</span>
-                                                </label>
-                                                <input type="password" id="vpnPresharedKey" placeholder="Optionnel">
+                                            <div class="col-md-3 vpn-field">
+                                                <label>Clé publique serveur</label>
+                                                <input type="text" id="vpnServerPubkey" readonly class="font-monospace small">
                                             </div>
                                         </div>
-                                        <div class="mt-3">
-                                            <button class="btn btn-primary btn-sm" data-action="handleVpnDeploy">
-                                                <i class="bi bi-cloud-upload me-1"></i>Déployer
+                                        <div class="mt-2">
+                                            <button class="btn btn-outline-primary btn-sm" data-action="handleSaveServerConfig">
+                                                <i class="bi bi-check-lg me-1"></i>Enregistrer
                                             </button>
                                         </div>
                                     </div>
                                 </div>
                             </div>
 
-                            <!-- Stats de connexion -->
-                            <div id="vpnStats" class="d-none mt-3">
-                                <hr>
-                                <div class="row small text-muted">
-                                    <div class="col-md-3"><strong>IP VPN:</strong> <span id="vpnStatsIp">-</span></div>
-                                    <div class="col-md-3"><strong>Serveur:</strong> <span id="vpnStatsEndpoint">-</span></div>
-                                    <div class="col-md-3"><strong>Reçu:</strong> <span id="vpnStatsRx">-</span></div>
-                                    <div class="col-md-3"><strong>Envoyé:</strong> <span id="vpnStatsTx">-</span></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Modal : Ajouter un peer -->
+                <div class="modal fade" id="vpnAddPeerModal" tabindex="-1">
+                    <div class="modal-dialog">
+                        <div class="modal-content">
+                            <div class="modal-header">
+                                <h5 class="modal-title">Ajouter un peer VPN</h5>
+                                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                            </div>
+                            <div class="modal-body">
+                                <div class="mb-3 vpn-field">
+                                    <label>Utilisateur HUB</label>
+                                    <select id="vpnPeerUser" class="form-select"></select>
+                                </div>
+                                <div class="mb-3 vpn-field">
+                                    <label>Nom du device</label>
+                                    <input type="text" id="vpnPeerName" placeholder="Laptop, Téléphone…">
                                 </div>
                             </div>
+                            <div class="modal-footer">
+                                <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Annuler</button>
+                                <button type="button" class="btn btn-primary" data-action="handleCreatePeer">
+                                    <i class="bi bi-plus-lg me-1"></i>Créer le peer
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
 
+                <!-- Modal : QR code -->
+                <div class="modal fade" id="vpnQrModal" tabindex="-1">
+                    <div class="modal-dialog modal-dialog-centered">
+                        <div class="modal-content">
+                            <div class="modal-header">
+                                <h5 class="modal-title" id="vpnQrTitle">QR Code</h5>
+                                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                            </div>
+                            <div class="modal-body text-center">
+                                <div id="vpnQrImage" class="mb-3"></div>
+                                <p class="text-muted small">Scannez avec l'app WireGuard de votre appareil.</p>
+                            </div>
+                            <div class="modal-footer">
+                                <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Fermer</button>
+                            </div>
                         </div>
                     </div>
                 </div>
