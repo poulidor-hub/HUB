@@ -177,6 +177,23 @@ class User(Base):
         return f"<User {self.username}>"
 
 
+class VpnPeer(Base):
+    """Peer VPN WireGuard — un device d'un utilisateur HUB."""
+    __tablename__ = "vpn_peers"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    name = Column(String(100), nullable=False)
+    public_key = Column(String(44), unique=True, nullable=False)
+    private_key = Column(String(64), nullable=False)
+    vpn_ip = Column(String(18), unique=True, nullable=False)
+    enabled = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime, default=utcnow)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
+
+    user = relationship("User", lazy="selectin")
+
+
 class Application(Base):
     __tablename__ = "applications"
     
