@@ -153,7 +153,7 @@ async function loadVpnPeers() {
         const data = await api.request('/vpn/peers');
         const peers = data.peers || [];
         renderVpnKpi(peers);
-        // renderPeersGrouped(peers); // ← activé en Task 6
+        renderPeersGrouped(peers);
     } catch (e) {
         console.error('loadVpnPeers:', e);
     }
@@ -292,6 +292,147 @@ function initVpnFilters() {
         });
         chip.dataset.bound = '1';
     });
+
+    const prevBtn = document.getElementById('vpnPagePrev');
+    const nextBtn = document.getElementById('vpnPageNext');
+    if (prevBtn && !prevBtn.dataset.bound) {
+        prevBtn.addEventListener('click', () => {
+            if (vpnCurrentPage > 1) { vpnCurrentPage--; renderPeersGrouped([], true); }
+        });
+        prevBtn.dataset.bound = '1';
+    }
+    if (nextBtn && !nextBtn.dataset.bound) {
+        nextBtn.addEventListener('click', () => {
+            vpnCurrentPage++; renderPeersGrouped([], true);
+        });
+        nextBtn.dataset.bound = '1';
+    }
+}
+
+function renderPeersGrouped(peers, fromFilter = false) {
+    const container = document.getElementById('vpnUsersGrid');
+    if (!container) return;
+
+    if (!fromFilter && peers.length >= 0) {
+        vpnLastGrouped = groupPeersByUser(peers);
+    }
+    const grouped = vpnLastGrouped;
+
+    const filtered = filterVpnUsers(grouped);
+
+    if (filtered.length === 0) {
+        container.innerHTML = '<p class="text-muted text-center py-4">Aucun peer. Ajoutez-en un pour commencer.</p>';
+        const pag = document.getElementById('vpnPagination');
+        if (pag) pag.style.display = 'none';
+        return;
+    }
+
+    const totalPages = Math.ceil(filtered.length / VPN_USERS_PER_PAGE);
+    if (vpnCurrentPage > totalPages) vpnCurrentPage = 1;
+    const start = (vpnCurrentPage - 1) * VPN_USERS_PER_PAGE;
+    const pageUsers = filtered.slice(start, start + VPN_USERS_PER_PAGE);
+
+    container.innerHTML = pageUsers.map(user => renderUserCard(user)).join('');
+    renderPagination(filtered.length, totalPages);
+}
+
+function renderUserCard(user) {
+    const allOn = user.connectedDevices === user.totalDevices;
+    const allOff = user.connectedDevices === 0;
+    const badgeClass = allOn ? 'all-on' : (allOff ? 'all-off' : 'partial');
+    const badgeText = `${user.connectedDevices}/${user.totalDevices} connecté${user.connectedDevices > 1 ? 's' : ''}`;
+    const cardClass = allOff ? 'vpn-user-card all-off' : 'vpn-user-card';
+    const initial = (user.username || '?')[0].toUpperCase();
+    const lastSeen = user.lastActivity ? `Dernière activité : ${escapeHtml(user.lastActivity)}` : 'Jamais connecté';
+
+    const devicesHtml = user.devices.map(d => renderDeviceCard(d)).join('');
+
+    return `
+        <div class="${cardClass}">
+            <div class="vpn-user-header">
+                <div class="vpn-user-avatar">${initial}</div>
+                <div class="vpn-user-meta">
+                    <span class="vpn-user-name">${escapeHtml(user.username)}</span>
+                    <span class="vpn-user-last-seen">${lastSeen}</span>
+                </div>
+                <span class="vpn-user-badge ${badgeClass}">${badgeText}</span>
+            </div>
+            <div class="vpn-device-list">${devicesHtml}</div>
+            <div class="vpn-user-footer">
+                <button class="btn btn-sm btn-outline-primary"
+                        onclick="openAddPeerForUser(${user.user_id}, '${escapeHtml(user.username)}')">
+                    <i class="bi bi-plus-lg"></i> Ajouter un device
+                </button>
+            </div>
+        </div>
+    `;
+}
+
+function renderDeviceCard(d) {
+    const icon = getDeviceIcon(d.name);
+    const cardClass = d.connected ? 'vpn-device-card' : 'vpn-device-card off';
+    const statusClass = d.connected ? 'on' : '';
+    const handshake = d.last_handshake ? escapeHtml(d.last_handshake) : 'jamais';
+    const tx = (d.transfer_rx ? '↓' + escapeHtml(d.transfer_rx) : '') +
+               (d.transfer_tx ? ' ↑' + escapeHtml(d.transfer_tx) : '');
+    const toggleIcon = d.enabled ? 'bi-toggle-on' : 'bi-toggle-off';
+
+    return `
+        <div class="${cardClass}">
+            <span class="vpn-device-icon"><i class="bi ${icon}"></i></span>
+            <div class="vpn-device-info">
+                <span class="vpn-device-name">${escapeHtml(d.name)}</span>
+                <span class="vpn-device-ip">${escapeHtml(d.vpn_ip)}</span>
+                <span class="vpn-device-handshake">${handshake}</span>
+            </div>
+            <span class="vpn-device-tx">${tx}</span>
+            <span class="vpn-device-status ${statusClass}"
+                  title="${d.connected ? 'Connecté' : 'Hors ligne'}"></span>
+            <div class="vpn-device-actions btn-group btn-group-sm">
+                <button class="btn btn-outline-secondary" onclick="downloadPeerConfig(${d.id})" title="Télécharger .conf">
+                    <i class="bi bi-download"></i>
+                </button>
+                <button class="btn btn-outline-secondary"
+                        onclick="showPeerQrCode(${d.id}, '${escapeHtml(d.username)}', '${escapeHtml(d.name)}')" title="QR code">
+                    <i class="bi bi-qr-code"></i>
+                </button>
+                <button class="btn btn-outline-secondary" onclick="handleTogglePeer(${d.id})" title="${d.enabled ? 'Désactiver' : 'Activer'}">
+                    <i class="bi ${toggleIcon}"></i>
+                </button>
+                <button class="btn btn-outline-danger"
+                        onclick="handleDeletePeer(${d.id}, '${escapeHtml(d.username)}', '${escapeHtml(d.name)}')" title="Supprimer">
+                    <i class="bi bi-trash"></i>
+                </button>
+            </div>
+        </div>
+    `;
+}
+
+function renderPagination(totalUsers, totalPages) {
+    const pag = document.getElementById('vpnPagination');
+    if (!pag) return;
+    if (totalPages <= 1) {
+        pag.style.display = 'none';
+        return;
+    }
+    pag.style.display = 'flex';
+    const prev = document.getElementById('vpnPagePrev');
+    const next = document.getElementById('vpnPageNext');
+    const info = document.getElementById('vpnPageInfo');
+    if (prev) prev.disabled = vpnCurrentPage === 1;
+    if (next) next.disabled = vpnCurrentPage === totalPages;
+    if (info) info.textContent = `Page ${vpnCurrentPage} sur ${totalPages} · ${totalUsers} utilisateurs`;
+}
+
+function openAddPeerForUser(userId, username) {
+    const modalEl = document.getElementById('vpnAddPeerModal');
+    if (!modalEl) return;
+    const modal = bootstrap.Modal.getOrCreateInstance(modalEl);
+    modal.show();
+    setTimeout(() => {
+        const select = document.getElementById('vpnPeerUser');
+        if (select) select.value = userId;
+    }, 200);
 }
 
 /**
