@@ -47,33 +47,41 @@ async def import_environment(db: AsyncSession, data: BackupImport) -> ImportResu
 
 async def _import_users(db: AsyncSession, data: BackupImport, result: ImportResult) -> None:
     for user_export in data.users:
+        created = False
+        updated = False
         try:
-            existing = (await db.execute(
-                select(User).where(User.username == user_export.username)
-            )).scalar_one_or_none()
-            if existing is None:
-                db.add(User(
-                    username=user_export.username,
-                    email=user_export.email,
-                    hashed_password=user_export.hashed_password,
-                    is_active=user_export.is_active,
-                    is_admin=user_export.is_admin,
-                    must_change_password=user_export.must_change_password,
-                    can_change_password=user_export.can_change_password,
-                ))
+            async with db.begin_nested():
+                existing = (await db.execute(
+                    select(User).where(User.username == user_export.username)
+                )).scalar_one_or_none()
+                if existing is None:
+                    db.add(User(
+                        username=user_export.username,
+                        email=user_export.email,
+                        hashed_password=user_export.hashed_password,
+                        is_active=user_export.is_active,
+                        is_admin=user_export.is_admin,
+                        must_change_password=user_export.must_change_password,
+                        can_change_password=user_export.can_change_password,
+                    ))
+                    created = True
+                else:
+                    existing.email = user_export.email
+                    existing.hashed_password = user_export.hashed_password
+                    existing.is_active = user_export.is_active
+                    existing.is_admin = user_export.is_admin
+                    existing.must_change_password = user_export.must_change_password
+                    existing.can_change_password = user_export.can_change_password
+                    updated = True
+            # Savepoint committed — count the result
+            if created:
                 result.users_created += 1
-            else:
-                existing.email = user_export.email
-                existing.hashed_password = user_export.hashed_password
-                existing.is_active = user_export.is_active
-                existing.is_admin = user_export.is_admin
-                existing.must_change_password = user_export.must_change_password
-                existing.can_change_password = user_export.can_change_password
+            if updated:
                 result.users_updated += 1
         except Exception as e:
             logger.warning(f"Import user {user_export.username} échoué: {e}")
             result.errors.append(f"user {user_export.username}: {e}")
-            await db.rollback()
+            # savepoint auto-rolled back by begin_nested() on exception
 
 
 def build_backup_import_from_zip_bytes(zip_bytes: bytes) -> BackupImport:
