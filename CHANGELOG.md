@@ -5,13 +5,16 @@
 
 ---
 
-## [non publié]
+## [3.21.0] - 2 août 2026
 
 ### Ajouts
 - **VPN WireGuard — Mode serveur** : le HUB est désormais serveur WireGuard,
   permettant aux utilisateurs HUB de se connecter au HUB à distance. Gestion
   des peers liée aux comptes HUB, téléchargement .conf, QR code, split tunnel.
   Le mode client précédent (site-à-site) est retiré.
+- **AllowedIPs dynamiques** : accès à toutes les apps du host (`HUB_HOST:*`)
+  via le tunnel VPN, aucune IP en dur dans le code — `hub_host` lu depuis
+  `HUB_HOST`/`.env` et `vpn_server_ip` dérivé du sous-réseau VPN.
 
 ### Changements technique
 - Service Docker `wireguard-client` renommé `wireguard-server`
@@ -19,6 +22,16 @@
 - Migration `046_vpn_server_mode.sql`
 - Variable `WG_ENABLED` supprimée (cosmétique, non reconnue par l'image)
 - `hubctl vpn` : `WG_SERVICE` mis à jour
+
+### Corrections
+- **Changement de port via l'UI réellement appliqué** : le conteneur
+  `hub-wireguard` est redémarré lorsque le `ListenPort` change (`wg syncconf`
+  ne modifie pas le `ListenPort` à chaud — bug silencieux corrigé)
+- **Retrait du DNS imposé au client** : suppression de `DNS = 10.8.0.1` dans
+  les `.conf` clients — le client conserve son résolveur habituel (évite que
+  le DNS du VPN casse internet quand le tunnel n'est pas monté)
+- **`api.js`** : gestion du nouveau format d'erreur Pydantic `{field, message}`
+  en plus du format historique `{loc, msg}`
 
 ---
 
