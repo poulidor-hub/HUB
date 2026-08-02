@@ -5,6 +5,22 @@
 
 ---
 
+## [3.22.0] - 2 août 2026
+
+### ⚡ Restauration self-backup du HUB
+
+- **POST `/api/admin/restore`** : nouvel endpoint permettant de restaurer la configuration
+  du HUB (users, apps, service accounts, rôles) depuis un backup ZIP contenant
+  `environment.json`. Auth admin et M2M (service accounts).
+- **`import_environment()`** : pipeline d'import en mode update, best-effort avec
+  savepoints par entité — une erreur sur une entité n'interrompt pas l'import global.
+- **Service Account HUB** : script `create_hub_sa.py` pour créer un SA dédié au HUB,
+  nécessaire au flux de restauration existant `restore_backup_to_app(slug="hub")`.
+- **Tests** : 14 tests couvrant l'import (users, apps, SAs, rôles), l'auth (admin + M2M),
+  les erreurs (ZIP corrompu, fichier manquant) et un test d'intégration complet.
+
+---
+
 ## [3.21.0] - 2 août 2026
 
 ### Ajouts
