@@ -244,3 +244,84 @@ async def test_import_full_zip(async_session, monkeypatch, tmp_path):
     assert result.service_accounts_created == 1
     assert result.user_app_roles_created == 1
     assert result.errors == []
+
+
+@pytest.mark.asyncio
+async def test_endpoint_restore_admin_auth(client, admin_token, monkeypatch, tmp_path):
+    import app.routes.hub_restore as mod
+    monkeypatch.setattr(mod, "SECRETS_DIR", tmp_path)
+    monkeypatch.setattr(
+        "app.routes.service_accounts.SECRETS_DIR", tmp_path, raising=True
+    )
+    env = {
+        "version": "1.0", "exported_at": "2026-08-02T12:00:00", "exported_by": "admin",
+        "users": [{
+            "username": "epuser", "email": "ep@test.com",
+            "hashed_password": get_password_hash("p"), "is_active": True, "is_admin": False,
+        }],
+    }
+    zip_bytes = _make_zip(env)
+    resp = await client.post(
+        "/api/admin/restore",
+        headers={"Authorization": f"Bearer {admin_token}"},
+        files={"file": ("backup.zip", zip_bytes, "application/zip")},
+    )
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert data["success"] is True
+    assert data["users_created"] == 1
+
+
+@pytest.mark.asyncio
+async def test_endpoint_restore_m2m_auth(client, service_account):
+    sa_token, _, _ = create_access_token(
+        username=service_account.client_id,
+        apps={"test-app": "admin"},
+        is_service_account=True,
+    )
+    env = {"version": "1.0", "exported_at": "2026-08-02T12:00:00", "exported_by": "sa",
+           "users": [], "applications": [], "service_accounts": [], "user_app_roles": []}
+    zip_bytes = _make_zip(env)
+    resp = await client.post(
+        "/api/admin/restore",
+        headers={"Authorization": f"Bearer {sa_token}"},
+        files={"file": ("backup.zip", zip_bytes, "application/zip")},
+    )
+    assert resp.status_code == 200, resp.text
+
+
+@pytest.mark.asyncio
+async def test_endpoint_restore_unauthorized(client, user_token):
+    env = {"version": "1.0", "exported_at": "2026-08-02T12:00:00", "exported_by": "u"}
+    zip_bytes = _make_zip(env)
+    resp = await client.post(
+        "/api/admin/restore",
+        headers={"Authorization": f"Bearer {user_token}"},
+        files={"file": ("backup.zip", zip_bytes, "application/zip")},
+    )
+    assert resp.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_endpoint_restore_corrupted_zip(client, admin_token):
+    resp = await client.post(
+        "/api/admin/restore",
+        headers={"Authorization": f"Bearer {admin_token}"},
+        files={"file": ("bad.zip", b"not a zip", "application/zip")},
+    )
+    assert resp.status_code == 400
+    assert "corrompu" in resp.json()["detail"].lower()
+
+
+@pytest.mark.asyncio
+async def test_endpoint_restore_no_env_json(client, admin_token):
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("other.txt", "hello")
+    resp = await client.post(
+        "/api/admin/restore",
+        headers={"Authorization": f"Bearer {admin_token}"},
+        files={"file": ("backup.zip", buf.getvalue(), "application/zip")},
+    )
+    assert resp.status_code == 400
+    assert "environment.json" in resp.json()["detail"]

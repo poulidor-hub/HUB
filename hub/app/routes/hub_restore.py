@@ -12,7 +12,7 @@ import logging
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, Depends, File, HTTPException, Request, status
+from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -297,3 +297,64 @@ def build_backup_import_from_zip_bytes(zip_bytes: bytes) -> BackupImport:
         jwt_private_key_b64=env.get("jwt_private_key_b64"),
         jwt_public_key_b64=env.get("jwt_public_key_b64"),
     )
+
+
+@router.post("/api/admin/restore", response_model=ImportResult)
+async def restore_hub_environment(
+    request: Request,
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+    current_entity=Depends(get_current_entity),
+):
+    from app.routes.audit import log_action
+
+    if isinstance(current_entity, User):
+        if not current_entity.is_admin:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Accès administrateur requis",
+            )
+        actor_id = current_entity.id
+        actor_sa_id = None
+    elif isinstance(current_entity, ServiceAccount):
+        actor_id = None
+        actor_sa_id = current_entity.id
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Type d'authentification non reconnu",
+        )
+
+    zip_bytes = await file.read()
+    if not zip_bytes:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Aucun fichier fourni",
+        )
+
+    import_data = build_backup_import_from_zip_bytes(zip_bytes)
+    result = await import_environment(db, import_data)
+
+    await log_action(
+        db=db,
+        user_id=actor_id,
+        service_account_id=actor_sa_id,
+        action="hub_restore_environment",
+        target="hub",
+        request=request,
+        response_status=200 if result.success else 500,
+        details=json.dumps(
+            {
+                "users_created": result.users_created,
+                "users_updated": result.users_updated,
+                "apps_created": result.apps_created,
+                "apps_updated": result.apps_updated,
+                "service_accounts_created": result.service_accounts_created,
+                "service_accounts_updated": result.service_accounts_updated,
+                "errors_count": len(result.errors),
+            },
+            ensure_ascii=False,
+        ),
+    )
+    await db.commit()
+    return result
