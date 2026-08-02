@@ -131,8 +131,7 @@ async def _import_applications(db: AsyncSession, data: BackupImport, result: Imp
         except Exception as e:
             logger.warning(f"Import app {app_export.slug} échoué: {e}")
             result.errors.append(f"app {app_export.slug}: {e}")
-            await db.rollback()
-
+            # savepoint auto-rolled back by begin_nested() on exception
 
 def build_backup_import_from_zip_bytes(zip_bytes: bytes) -> BackupImport:
     """
