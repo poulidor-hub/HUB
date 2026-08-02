@@ -12,6 +12,13 @@
 const VPN_POLL_INTERVAL = 10000;
 let vpnPollTimer = null;
 
+// ── État des filtres (refonte grille) ───────────────────
+let vpnFilterQuery = '';
+let vpnFilterStatus = 'all';
+let vpnCurrentPage = 1;
+const VPN_USERS_PER_PAGE = 30;
+let vpnLastGrouped = [];
+
 // ── Status ──────────────────────────────────────────────
 
 async function loadVpnStatus() {
@@ -241,6 +248,52 @@ function groupPeersByUser(peers) {
     });
 }
 
+function filterVpnUsers(grouped) {
+    const query = vpnFilterQuery.toLowerCase().trim();
+    const status = vpnFilterStatus;
+
+    return grouped.filter(user => {
+        if (query) {
+            const matchUser = user.username.toLowerCase().includes(query);
+            const matchDevice = user.devices.some(d =>
+                (d.name || '').toLowerCase().includes(query)
+            );
+            if (!matchUser && !matchDevice) return false;
+        }
+        if (status === 'connected' && user.connectedDevices === 0) return false;
+        if (status === 'disconnected' && user.connectedDevices > 0) return false;
+        return true;
+    });
+}
+
+function initVpnFilters() {
+    const search = document.getElementById('vpnFilterSearch');
+    if (search && !search.dataset.bound) {
+        search.addEventListener('input', () => {
+            vpnFilterQuery = search.value;
+            vpnCurrentPage = 1;
+            if (typeof renderPeersGrouped === 'function') {
+                renderPeersGrouped(vpnLastGrouped, true);
+            }
+        });
+        search.dataset.bound = '1';
+    }
+
+    document.querySelectorAll('.vpn-filter-chip').forEach(chip => {
+        if (chip.dataset.bound) return;
+        chip.addEventListener('click', () => {
+            document.querySelectorAll('.vpn-filter-chip').forEach(c => c.classList.remove('active'));
+            chip.classList.add('active');
+            vpnFilterStatus = chip.dataset.filter || 'all';
+            vpnCurrentPage = 1;
+            if (typeof renderPeersGrouped === 'function') {
+                renderPeersGrouped(vpnLastGrouped, true);
+            }
+        });
+        chip.dataset.bound = '1';
+    });
+}
+
 /**
  * Détermine l'icône Bootstrap Icon selon le nom du device.
  * @param {string} name - Nom du device (ex: "iPhone 15", "Laptop Pro")
@@ -438,6 +491,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const vpnTab = document.getElementById('vpn-tab');
     if (vpnTab) {
         vpnTab.addEventListener('shown.bs.tab', async () => {
+            initVpnFilters();
             await loadVpnServerConfig();
             await loadVpnStatus();
             await loadVpnPeers();
