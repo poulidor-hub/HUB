@@ -189,18 +189,18 @@ async def _import_service_accounts(
                     )
                     existing.applications = apps
                     updated = True
+                # Write .env file inside savepoint — rollback DB if I/O fails
+                file_name = sa_export.app_slugs[0] if sa_export.app_slugs else sa_export.name
+                save_service_account_credentials(
+                    name=file_name,
+                    client_id=sa_export.client_id,
+                    client_secret=sa_export.client_secret_plain,
+                    app_slugs=app_slugs,
+                )
             if created:
                 result.service_accounts_created += 1
             if updated:
                 result.service_accounts_updated += 1
-
-            file_name = sa_export.app_slugs[0] if sa_export.app_slugs else sa_export.name
-            save_service_account_credentials(
-                name=file_name,
-                client_id=sa_export.client_id,
-                client_secret=sa_export.client_secret_plain,
-                app_slugs=app_slugs,
-            )
         except Exception as e:
             logger.warning(f"Import SA {sa_export.client_id} échoué: {e}")
             result.errors.append(f"service_account {sa_export.client_id}: {e}")
@@ -212,6 +212,7 @@ async def _import_user_app_roles(
 ) -> None:
     for role_export in data.user_app_roles:
         created = False
+        updated = False
         try:
             user = (await db.execute(
                 select(User).where(User.username == role_export.username)
@@ -248,8 +249,11 @@ async def _import_user_app_roles(
                 else:
                     existing.role = role_export.role
                     existing.source = role_export.source
+                    updated = True
             if created:
                 result.user_app_roles_created += 1
+            if updated:
+                result.user_app_roles_updated += 1
         except Exception as e:
             logger.warning(
                 f"Import role {role_export.username}->{role_export.app_slug} échoué: {e}"
@@ -274,13 +278,12 @@ def build_backup_import_from_zip_bytes(zip_bytes: bytes) -> BackupImport:
                     detail="environment.json non trouvé dans l'archive",
                 )
             raw = zf.read("environment.json")
+            env = json.loads(raw)
     except zipfile.BadZipFile:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Fichier ZIP corrompu ou invalide",
         )
-    try:
-        env = json.loads(raw)
     except json.JSONDecodeError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
