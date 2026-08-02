@@ -59,3 +59,61 @@ async def test_import_users_create(async_session):
     )).scalar_one()
     assert db_user.email == "new@test.com"
     assert db_user.is_active is True
+
+
+@pytest.mark.asyncio
+async def test_import_users_update(async_session, admin_user):
+    """User existant → mis à jour (email, is_admin)."""
+    import_data = BackupImport(
+        users=[UserExport(
+            username="admin",
+            email="new-admin-email@test.com",
+            hashed_password=get_password_hash("newpass123"),
+            is_active=True,
+            is_admin=False,  # changement : admin devient user
+        )],
+    )
+    result = await import_environment(async_session, import_data)
+    assert result.users_updated == 1
+    assert result.users_created == 0
+    await async_session.refresh(admin_user)
+    assert admin_user.email == "new-admin-email@test.com"
+    assert admin_user.is_admin is False
+
+
+@pytest.mark.asyncio
+async def test_import_apps_create(async_session):
+    """Nouvelle app → créée."""
+    from app.schemas import AppExport
+    import_data = BackupImport(
+        applications=[AppExport(
+            name="Imported App",
+            slug="imported-app",
+            api_url="http://localhost:9999",
+            frontend_url="http://localhost:4999",
+        )],
+    )
+    result = await import_environment(async_session, import_data)
+    assert result.apps_created == 1
+    db_app = (await async_session.execute(
+        select(Application).where(Application.slug == "imported-app")
+    )).scalar_one()
+    assert db_app.name == "Imported App"
+
+
+@pytest.mark.asyncio
+async def test_import_apps_update(async_session, test_app):
+    """App existante → mise à jour."""
+    from app.schemas import AppExport
+    import_data = BackupImport(
+        applications=[AppExport(
+            name="Renamed App",
+            slug="test-app",
+            api_url="http://localhost:8888",
+        )],
+    )
+    result = await import_environment(async_session, import_data)
+    assert result.apps_updated == 1
+    await async_session.refresh(test_app)
+    assert test_app.name == "Renamed App"
+    assert test_app.api_url == "http://localhost:8888"

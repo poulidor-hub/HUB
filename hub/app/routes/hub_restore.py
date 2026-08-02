@@ -41,6 +41,7 @@ async def import_environment(db: AsyncSession, data: BackupImport) -> ImportResu
     """
     result = ImportResult(success=True)
     await _import_users(db, data, result)
+    await _import_applications(db, data, result)
     await db.commit()
     return result
 
@@ -82,6 +83,55 @@ async def _import_users(db: AsyncSession, data: BackupImport, result: ImportResu
             logger.warning(f"Import user {user_export.username} échoué: {e}")
             result.errors.append(f"user {user_export.username}: {e}")
             # savepoint auto-rolled back by begin_nested() on exception
+
+
+async def _import_applications(db: AsyncSession, data: BackupImport, result: ImportResult) -> None:
+    for app_export in data.applications:
+        created = False
+        updated = False
+        try:
+            async with db.begin_nested():
+                existing = (await db.execute(
+                    select(Application).where(Application.slug == app_export.slug)
+                )).scalar_one_or_none()
+                if existing is None:
+                    db.add(Application(
+                        name=app_export.name,
+                        slug=app_export.slug,
+                        description=app_export.description,
+                        icon=app_export.icon,
+                        color=app_export.color,
+                        api_url=app_export.api_url,
+                        frontend_url=app_export.frontend_url,
+                        callback_url=app_export.callback_url,
+                        is_active=app_export.is_active,
+                        requires_auth=app_export.requires_auth,
+                        is_shared_service=app_export.is_shared_service,
+                    ))
+                    created = True
+                else:
+                    existing.name = app_export.name
+                    if app_export.description is not None:
+                        existing.description = app_export.description
+                    existing.icon = app_export.icon
+                    existing.color = app_export.color
+                    existing.api_url = app_export.api_url
+                    if app_export.frontend_url is not None:
+                        existing.frontend_url = app_export.frontend_url
+                    if app_export.callback_url is not None:
+                        existing.callback_url = app_export.callback_url
+                    existing.is_active = app_export.is_active
+                    existing.requires_auth = app_export.requires_auth
+                    existing.is_shared_service = app_export.is_shared_service
+                    updated = True
+            if created:
+                result.apps_created += 1
+            if updated:
+                result.apps_updated += 1
+        except Exception as e:
+            logger.warning(f"Import app {app_export.slug} échoué: {e}")
+            result.errors.append(f"app {app_export.slug}: {e}")
+            await db.rollback()
 
 
 def build_backup_import_from_zip_bytes(zip_bytes: bytes) -> BackupImport:
