@@ -140,19 +140,28 @@ def _generate_client_conf(
     server_pubkey: str,
     endpoint: str,
     listen_port: int,
+    subnet: str = "10.8.0.0/24",
 ) -> str:
-    """Génère le .conf client pour un peer (téléchargement par l'utilisateur)."""
+    """Génère le .conf client pour un peer (téléchargement par l'utilisateur).
+
+    AllowedIPs dynamiques (aucune IP en dur dans le code) :
+      - vpn_server_ip/32 : le HUB via le tunnel (dérivé du sous-réseau VPN)
+      - hub_host/32       : TOUTES les apps du host, tous ports (présentes et
+                            futures) — depuis HUB_HOST/.env via get_hub_host()
+    Aucune ligne DNS imposée : le client conserve son résolveur habituel.
+    """
     peer_ip = peer.vpn_ip.split("/")[0]
+    vpn_server_ip = str(ipaddress.IPv4Network(subnet, strict=False).network_address + 1)
+    hub_host = get_settings().get_hub_host()
     return (
         "[Interface]\n"
         f"PrivateKey = {peer.private_key}\n"
         f"Address = {peer_ip}/32\n"
-        f"DNS = 10.8.0.1\n"
         "\n"
         "[Peer]\n"
         f"PublicKey = {server_pubkey}\n"
         f"Endpoint = {endpoint}:{listen_port}\n"
-        f"AllowedIPs = 10.8.0.1/32\n"
+        f"AllowedIPs = {vpn_server_ip}/32, {hub_host}/32\n"
         "PersistentKeepalive = 25\n"
     )
 
@@ -178,13 +187,45 @@ async def _allocate_peer_ip(db: AsyncSession, subnet: str) -> str:
     )
 
 
+def _get_current_listen_port() -> int | None:
+    """Retourne le ListenPort actuellement actif sur wg0, ou None si indisponible."""
+    try:
+        result = subprocess.run(
+            ["docker", "exec", "hub-wireguard", "wg", "show", "wg0", "listen-port"],
+            capture_output=True, text=True, timeout=10,
+        )
+        if result.returncode == 0 and result.stdout.strip().isdigit():
+            return int(result.stdout.strip())
+    except (subprocess.SubprocessError, FileNotFoundError, ValueError):
+        pass
+    return None
+
+
+def _restart_wireguard_interface() -> bool:
+    """Redémarre le conteneur hub-wireguard pour appliquer un changement de
+    ListenPort/Address/PrivateKey (wg syncconf ne les modifie pas à chaud)."""
+    try:
+        result = subprocess.run(
+            ["docker", "restart", "hub-wireguard"],
+            capture_output=True, text=True, timeout=30,
+        )
+        return result.returncode == 0
+    except (subprocess.SubprocessError, FileNotFoundError):
+        return False
+
+
 async def _regenerate_and_sync(
     db: AsyncSession,
     server_privkey: str,
     listen_port: int,
     subnet: str,
 ) -> None:
-    """Régénère le wg0.conf depuis les peers en DB et applique via wg syncconf."""
+    """Régénère le wg0.conf depuis les peers en DB et applique la config.
+
+    - Si le ListenPort change : restart du conteneur (wg syncconf ne modifie pas
+      le ListenPort à chaud — sinon le changement de port via l'UI restait sans effet).
+    - Sinon : wg syncconf (léger, synchronise uniquement les peers).
+    """
     result = await db.execute(
         select(VpnPeer).order_by(VpnPeer.id)
     )
@@ -197,7 +238,21 @@ async def _regenerate_and_sync(
     conf_path.write_text(conf_content)
     conf_path.chmod(0o600)
 
-    # Appliquer à chaud si le conteneur tourne
+    # Détecter un changement de ListenPort (wg syncconf ne l'applique pas à chaud)
+    current_port = _get_current_listen_port()
+    if current_port is not None and current_port != listen_port:
+        if _restart_wireguard_interface():
+            logger.info(
+                f"WireGuard redémarré (ListenPort {current_port} → {listen_port})"
+            )
+        else:
+            logger.error(
+                f"Échec restart WireGuard (port {current_port} → {listen_port}) "
+                f"— la conf sera appliquée au prochain démarrage du conteneur"
+            )
+        return
+
+    # Port inchangé (ou conteneur arrêté) : syncconf léger pour les peers
     try:
         subprocess.run(
             ["docker", "exec", "hub-wireguard",
@@ -629,11 +684,12 @@ async def download_peer_config(
     server_pubkey = await _get_setting(db, VPN_SERVER_PUBKEY)
     endpoint = await _get_setting(db, VPN_ENDPOINT)
     listen_port_str = await _get_setting(db, VPN_LISTEN_PORT) or "51820"
+    subnet_str = await _get_setting(db, VPN_SUBNET) or "10.8.0.0/24"
 
     if not server_pubkey or not endpoint:
         raise HTTPException(status_code=400, detail="Serveur non initialisé")
 
-    conf = _generate_client_conf(peer, server_pubkey, endpoint, int(listen_port_str))
+    conf = _generate_client_conf(peer, server_pubkey, endpoint, int(listen_port_str), subnet_str)
 
     safe_name = peer.name.replace(" ", "_").lower()
     filename = f"hub-{peer.user.username}-{safe_name}.conf"
@@ -659,11 +715,12 @@ async def get_peer_qrcode(
     server_pubkey = await _get_setting(db, VPN_SERVER_PUBKEY)
     endpoint = await _get_setting(db, VPN_ENDPOINT)
     listen_port_str = await _get_setting(db, VPN_LISTEN_PORT) or "51820"
+    subnet_str = await _get_setting(db, VPN_SUBNET) or "10.8.0.0/24"
 
     if not server_pubkey or not endpoint:
         raise HTTPException(status_code=400, detail="Serveur non initialisé")
 
-    conf = _generate_client_conf(peer, server_pubkey, endpoint, int(listen_port_str))
+    conf = _generate_client_conf(peer, server_pubkey, endpoint, int(listen_port_str), subnet_str)
 
     factory = qrcode.image.svg.SvgPathImage
     img = qrcode.make(conf.encode(), image_factory=factory)

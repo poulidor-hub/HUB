@@ -301,27 +301,36 @@ class TestVpnPeerConfig:
 
     async def test_download_config(
         self, client: AsyncClient, async_session: AsyncSession,
-        admin_token: str, admin_user: User, vpn_temp_dir: str,
+        admin_token: str, admin_user: User, vpn_temp_dir: str, monkeypatch,
     ):
-        await _seed_server_settings(async_session, initialized=True)
+        # HUB_HOST fixe → AllowedIPs déterministes (hub_host via get_hub_host()).
+        monkeypatch.setenv("HUB_HOST", "203.0.113.42")
+        from app.config import get_settings
+        get_settings.cache_clear()
+        try:
+            await _seed_server_settings(async_session, initialized=True)
 
-        peer = VpnPeer(
-            user_id=admin_user.id, name="Laptop Pro",
-            public_key=_VALID_PUBKEY, private_key=_VALID_PRIVKEY,
-            vpn_ip="10.8.0.2/32", enabled=True,
-        )
-        async_session.add(peer)
-        await async_session.commit()
-        await async_session.refresh(peer)
+            peer = VpnPeer(
+                user_id=admin_user.id, name="Laptop Pro",
+                public_key=_VALID_PUBKEY, private_key=_VALID_PRIVKEY,
+                vpn_ip="10.8.0.2/32", enabled=True,
+            )
+            async_session.add(peer)
+            await async_session.commit()
+            await async_session.refresh(peer)
 
-        auth = get_auth_header(admin_token)
-        resp = await client.get(f"/api/vpn/peers/{peer.id}/config", headers=auth)
-        assert resp.status_code == 200
-        assert "attachment" in resp.headers.get("content-disposition", "")
-        body = resp.content.decode()
-        assert "[Interface]" in body
-        assert "[Peer]" in body
-        assert "10.8.0.1/32" in body  # split tunnel
+            auth = get_auth_header(admin_token)
+            resp = await client.get(f"/api/vpn/peers/{peer.id}/config", headers=auth)
+            assert resp.status_code == 200
+            assert "attachment" in resp.headers.get("content-disposition", "")
+            body = resp.content.decode()
+            assert "[Interface]" in body
+            assert "[Peer]" in body
+            assert "DNS =" not in body            # aucun résolveur imposé au client
+            assert "10.8.0.1/32" in body          # serveur VPN (gateway) via tunnel
+            assert "203.0.113.42/32" in body      # hub_host : toutes les apps du host
+        finally:
+            get_settings.cache_clear()
 
 
 # =============================================================================
@@ -358,3 +367,66 @@ class TestVpnToggle:
         resp = await client.put("/api/vpn/toggle", json={"enabled": True}, headers=auth)
         assert resp.status_code == 200
         assert resp.json()["vpn_enabled"] is True
+
+
+# =============================================================================
+# _regenerate_and_sync — application des changements (fix wg syncconf)
+# =============================================================================
+
+class TestRegenerateAndSync:
+    """wg syncconf ne modifie pas le ListenPort à chaud : un changement de port
+    doit déclencher un redémarrage du conteneur hub-wireguard."""
+
+    async def test_port_change_triggers_restart(
+        self, async_session: AsyncSession, vpn_temp_dir: str, monkeypatch,
+    ):
+        import app.routes.vpn as vpn_mod
+
+        calls: list[list[str]] = []
+
+        def fake_run(cmd, *args, **kwargs):
+            calls.append(list(cmd) if isinstance(cmd, list) else cmd)
+            class R:
+                returncode = 0
+                # Port actif simulé = 51820 (différent du 51821 demandé)
+                stdout = "51820\n" if "listen-port" in " ".join(cmd) else ""
+                stderr = ""
+            return R()
+
+        monkeypatch.setattr(vpn_mod.subprocess, "run", fake_run)
+
+        # listen_port=51821 alors que le mock renvoie 51820 → port a changé
+        await vpn_mod._regenerate_and_sync(
+            async_session, "PRIVKEY", 51821, "10.8.0.0/24"
+        )
+
+        restart_calls = [c for c in calls if c[:2] == ["docker", "restart"]]
+        assert len(restart_calls) == 1
+        assert restart_calls[0] == ["docker", "restart", "hub-wireguard"]
+
+    async def test_port_unchanged_uses_syncconf(
+        self, async_session: AsyncSession, vpn_temp_dir: str, monkeypatch,
+    ):
+        import app.routes.vpn as vpn_mod
+
+        calls: list[list[str]] = []
+
+        def fake_run(cmd, *args, **kwargs):
+            calls.append(list(cmd) if isinstance(cmd, list) else cmd)
+            class R:
+                returncode = 0
+                # Port actif simulé = 51820 = port demandé → inchangé
+                stdout = "51820\n" if "listen-port" in " ".join(cmd) else ""
+                stderr = ""
+            return R()
+
+        monkeypatch.setattr(vpn_mod.subprocess, "run", fake_run)
+
+        await vpn_mod._regenerate_and_sync(
+            async_session, "PRIVKEY", 51820, "10.8.0.0/24"
+        )
+
+        restart_calls = [c for c in calls if c[:2] == ["docker", "restart"]]
+        assert restart_calls == [], "Aucun restart attendu si le port ne change pas"
+        syncconf_calls = [c for c in calls if "syncconf" in " ".join(c)]
+        assert len(syncconf_calls) == 1, "syncconf doit être appelé si port inchangé"

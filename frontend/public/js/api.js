@@ -329,10 +329,13 @@ class HubAPI {
                 let errorMessage = 'Erreur serveur';
                 if (error.detail) {
                     if (Array.isArray(error.detail)) {
-                        // Erreur de validation Pydantic
+                        // Erreur de validation Pydantic (format simplifié : field + message)
                         errorMessage = error.detail.map(e => {
-                            const field = e.loc ? e.loc.slice(1).join('.') : '';
-                            return field ? `${field}: ${e.msg}` : e.msg;
+                            // Format serveur : { field, message }
+                            // Fallback sur l'ancien format Pydantic : { loc, msg }
+                            const field = e.field || (e.loc ? e.loc.slice(1).join('.') : '');
+                            const msg = e.message || e.msg || '';
+                            return field ? `${field}: ${msg}` : msg;
                         }).join(', ');
                     } else {
                         errorMessage = error.detail;
