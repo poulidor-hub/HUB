@@ -144,7 +144,9 @@ async function loadVpnPeers() {
     if (!api.token) return;
     try {
         const data = await api.request('/vpn/peers');
-        renderPeers(data.peers || []);
+        const peers = data.peers || [];
+        renderVpnKpi(peers);
+        // renderPeersGrouped(peers); // ← activé en Task 6
     } catch (e) {
         console.error('loadVpnPeers:', e);
     }
@@ -277,6 +279,37 @@ function formatBytes(bytes) {
     let val = bytes;
     while (val >= 1024 && i < units.length - 1) { val /= 1024; i++; }
     return val.toFixed(val >= 100 ? 0 : (val >= 10 ? 1 : 2)) + ' ' + units[i];
+}
+
+/**
+ * Met à jour les 4 cartes KPI du dashboard VPN.
+ * @param {Array} peers - Liste brute des peers depuis l'API
+ */
+function renderVpnKpi(peers) {
+    const users = new Set(peers.map(p => p.user_id));
+    const connected = peers.filter(p => p.connected).length;
+
+    let totalRx = 0, totalTx = 0;
+    for (const p of peers) {
+        totalRx += parseTrafficToBytes(p.transfer_rx);
+        totalTx += parseTrafficToBytes(p.transfer_tx);
+    }
+
+    const elUsers = document.getElementById('vpnKpiUsers');
+    const elPeers = document.getElementById('vpnKpiPeers');
+    const elConn = document.getElementById('vpnKpiConnected');
+    const elConnSub = document.getElementById('vpnKpiConnectedSub');
+    const elTraffic = document.getElementById('vpnKpiTraffic');
+
+    if (elUsers) elUsers.textContent = users.size;
+    if (elPeers) elPeers.textContent = peers.length;
+    if (elConn) elConn.textContent = connected;
+    if (elConnSub && peers.length > 0) {
+        elConnSub.textContent = `connectés · ${Math.round(connected / peers.length * 100)}%`;
+    }
+    if (elTraffic) {
+        elTraffic.textContent = `↓${formatBytes(totalRx)} ↑${formatBytes(totalTx)}`;
+    }
 }
 
 async function loadVpnUsers() {
