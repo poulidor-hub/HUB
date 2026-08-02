@@ -18,6 +18,7 @@ let vpnFilterStatus = 'all';
 let vpnCurrentPage = 1;
 const VPN_USERS_PER_PAGE = 30;
 let vpnLastGrouped = [];
+let vpnLastPeersJson = '';
 
 // ── Status ──────────────────────────────────────────────
 
@@ -152,54 +153,17 @@ async function loadVpnPeers() {
     try {
         const data = await api.request('/vpn/peers');
         const peers = data.peers || [];
+        const sig = JSON.stringify(peers.map(p => ({
+            id: p.id, connected: p.connected, enabled: p.enabled,
+            rx: p.transfer_rx, tx: p.transfer_tx, hs: p.last_handshake
+        })));
+        if (sig === vpnLastPeersJson) return;
+        vpnLastPeersJson = sig;
         renderVpnKpi(peers);
         renderPeersGrouped(peers);
     } catch (e) {
         console.error('loadVpnPeers:', e);
     }
-}
-
-function renderPeers(peers) {
-    const container = document.getElementById('vpnPeersList');
-    if (!container) return;
-
-    if (peers.length === 0) {
-        container.innerHTML = '<p class="text-muted text-center py-4">Aucun peer. Ajoutez-en un pour commencer.</p>';
-        return;
-    }
-
-    container.innerHTML = peers.map(p => `
-        <div class="vpn-peer-card ${p.enabled ? '' : 'disabled'}">
-            <div class="vpn-peer-avatar">${(p.username || '?')[0].toUpperCase()}</div>
-            <div class="vpn-peer-info">
-                <div class="vpn-peer-name">${escapeHtml(p.username)} — ${escapeHtml(p.name)}</div>
-                <div class="vpn-peer-meta">
-                    ${escapeHtml(p.vpn_ip)}
-                    ${p.last_handshake ? ' · ' + escapeHtml(p.last_handshake) : ' · jamais connecté'}
-                </div>
-            </div>
-            <div class="vpn-peer-tx">
-                ${p.transfer_rx ? '↓' + escapeHtml(p.transfer_rx) : ''}
-                ${p.transfer_tx ? ' ↑' + escapeHtml(p.transfer_tx) : ''}
-            </div>
-            <div class="vpn-peer-status ${p.connected ? 'connected' : ''}"
-                 title="${p.connected ? 'Connecté' : 'Hors ligne'}"></div>
-            <div class="vpn-peer-actions">
-                <button class="btn btn-outline-secondary btn-sm" onclick="downloadPeerConfig(${p.id})" title="Télécharger .conf">
-                    <i class="bi bi-download"></i>
-                </button>
-                <button class="btn btn-outline-secondary btn-sm" onclick="showPeerQrCode(${p.id}, '${escapeHtml(p.username)}', '${escapeHtml(p.name)}')" title="QR code">
-                    <i class="bi bi-qr-code"></i>
-                </button>
-                <button class="btn btn-outline-secondary btn-sm" onclick="handleTogglePeer(${p.id})" title="${p.enabled ? 'Désactiver' : 'Activer'}">
-                    <i class="bi bi-${p.enabled ? 'toggle-on' : 'toggle-off'}"></i>
-                </button>
-                <button class="btn btn-outline-danger btn-sm" onclick="handleDeletePeer(${p.id}, '${escapeHtml(p.username)}', '${escapeHtml(p.name)}')" title="Supprimer">
-                    <i class="bi bi-trash"></i>
-                </button>
-            </div>
-        </div>
-    `).join('');
 }
 
 function escapeHtml(str) {
