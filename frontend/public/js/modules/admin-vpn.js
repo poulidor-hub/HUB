@@ -324,7 +324,7 @@ function renderUserCard(user) {
             <div class="vpn-device-list">${devicesHtml}</div>
             <div class="vpn-user-footer">
                 <button class="btn btn-sm btn-outline-primary"
-                        onclick="openAddPeerForUser(${user.user_id}, '${escapeHtml(user.username)}')">
+                        onclick="openAddPeerForUser(${user.user_id}, ${JSON.stringify(user.username)})">
                     <i class="bi bi-plus-lg"></i> Ajouter un device
                 </button>
             </div>
@@ -357,14 +357,14 @@ function renderDeviceCard(d) {
                     <i class="bi bi-download"></i>
                 </button>
                 <button class="btn btn-outline-secondary"
-                        onclick="showPeerQrCode(${d.id}, '${escapeHtml(d.username)}', '${escapeHtml(d.name)}')" title="QR code">
+                        onclick="showPeerQrCode(${d.id}, ${JSON.stringify(d.username)}, ${JSON.stringify(d.name)})" title="QR code">
                     <i class="bi bi-qr-code"></i>
                 </button>
                 <button class="btn btn-outline-secondary" onclick="handleTogglePeer(${d.id})" title="${d.enabled ? 'Désactiver' : 'Activer'}">
                     <i class="bi ${toggleIcon}"></i>
                 </button>
                 <button class="btn btn-outline-danger"
-                        onclick="handleDeletePeer(${d.id}, '${escapeHtml(d.username)}', '${escapeHtml(d.name)}')" title="Supprimer">
+                        onclick="handleDeletePeer(${d.id}, ${JSON.stringify(d.username)}, ${JSON.stringify(d.name)})" title="Supprimer">
                     <i class="bi bi-trash"></i>
                 </button>
             </div>
