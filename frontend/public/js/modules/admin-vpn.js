@@ -199,6 +199,86 @@ function escapeHtml(str) {
     return div.innerHTML;
 }
 
+// ── Utilitaires refonte grille ─────────────────────────
+
+/**
+ * Regroupe les peers par utilisateur.
+ * @param {Array} peers - Liste brute des peers depuis l'API
+ * @returns {Array} Utilisateurs groupés, triés (connectés d'abord, puis alpha)
+ */
+function groupPeersByUser(peers) {
+    const grouped = {};
+    for (const p of peers) {
+        const uid = p.user_id;
+        if (!grouped[uid]) {
+            grouped[uid] = {
+                user_id: uid,
+                username: p.username || 'Inconnu',
+                devices: [],
+                totalDevices: 0,
+                connectedDevices: 0,
+                lastActivity: null
+            };
+        }
+        grouped[uid].devices.push(p);
+        grouped[uid].totalDevices++;
+        if (p.connected) {
+            grouped[uid].connectedDevices++;
+            // Priorité au handshake d'un device connecté
+            grouped[uid].lastActivity = p.last_handshake || grouped[uid].lastActivity;
+        } else if (!grouped[uid].lastActivity && p.last_handshake) {
+            grouped[uid].lastActivity = p.last_handshake;
+        }
+    }
+    // Tri : utilisateurs avec ≥1 connecté d'abord, puis par username
+    return Object.values(grouped).sort((a, b) => {
+        const aOn = a.connectedDevices > 0 ? 1 : 0;
+        const bOn = b.connectedDevices > 0 ? 1 : 0;
+        if (aOn !== bOn) return bOn - aOn;
+        return a.username.localeCompare(b.username);
+    });
+}
+
+/**
+ * Détermine l'icône Bootstrap Icon selon le nom du device.
+ * @param {string} name - Nom du device (ex: "iPhone 15", "Laptop Pro")
+ * @returns {string} Classe Bootstrap Icon (ex: "bi-phone")
+ */
+function getDeviceIcon(name) {
+    const n = (name || '').toLowerCase();
+    if (/phone|mobile|iphone|android|samsung|pixel|smartphone|téléphone|galaxy/.test(n)) return 'bi-phone';
+    if (/desktop|pc[\s-]|tour|bureau|workstation|serveur|server|imac|mac mini/.test(n)) return 'bi-pc-display';
+    return 'bi-laptop';
+}
+
+/**
+ * Parse une string de trafic formatée ("1.50 GiB", "800 MiB") en bytes.
+ * @param {string} str - String depuis l'API WireGuard
+ * @returns {number} Nombre de bytes
+ */
+function parseTrafficToBytes(str) {
+    if (!str) return 0;
+    const match = String(str).trim().match(/^([\d.]+)\s*(B|KiB|MiB|GiB|TiB)$/);
+    if (!match) return 0;
+    const value = parseFloat(match[1]);
+    const mult = { B: 1, KiB: 1024, MiB: 1024 ** 2, GiB: 1024 ** 3, TiB: 1024 ** 4 };
+    return value * (mult[match[2]] || 1);
+}
+
+/**
+ * Formate un nombre de bytes en string lisible.
+ * @param {number} bytes
+ * @returns {string} ex: "1.50 GiB", "800 MiB"
+ */
+function formatBytes(bytes) {
+    if (!bytes || bytes <= 0) return '0 B';
+    const units = ['B', 'KiB', 'MiB', 'GiB', 'TiB'];
+    let i = 0;
+    let val = bytes;
+    while (val >= 1024 && i < units.length - 1) { val /= 1024; i++; }
+    return val.toFixed(val >= 100 ? 0 : (val >= 10 ? 1 : 2)) + ' ' + units[i];
+}
+
 async function loadVpnUsers() {
     try {
         const data = await api.request('/users?per_page=100');
