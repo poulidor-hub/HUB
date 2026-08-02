@@ -353,6 +353,7 @@ async function archiveMessageAction(id) {
         await api.archiveMessage(id);
         showToast('Archivee', 'La notification a ete archivee', 'success');
         await loadMessagesPage();
+        if (currentUser?.is_admin) updateNavMessagesBadge();
     } catch (e) {
         showToast('Erreur', e.message, 'danger');
     }
@@ -374,6 +375,7 @@ async function hardDeleteMessageAction(id) {
         await api.hardDeleteMessage(id);
         showToast('Supprimee', 'La notification a ete supprimee definitivement', 'success');
         await loadMessagesPage();
+        if (currentUser?.is_admin) updateNavMessagesBadge();
     } catch (e) {
         showToast('Erreur', e.message, 'danger');
     }
@@ -405,6 +407,7 @@ async function archiveSelectedMessages() {
         const result = await api.deleteMessagesByIds(selected, false);
         showToast('Succes', result.message, 'success');
         await loadMessagesPage();
+        if (currentUser?.is_admin) updateNavMessagesBadge();
     } catch (error) {
         showToast('Erreur', error.message, 'danger');
     }
@@ -418,6 +421,7 @@ async function hardDeleteSelectedMessages() {
         const result = await api.deleteMessagesByIds(selected, true);
         showToast('Succes', result.message, 'success');
         await loadMessagesPage();
+        if (currentUser?.is_admin) updateNavMessagesBadge();
     } catch (error) {
         showToast('Erreur', error.message, 'danger');
     }

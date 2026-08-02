@@ -7,6 +7,22 @@
 
 // ===== Server-Sent Events (SSE) pour mises à jour temps réel =====
 
+// Polling de sécurité : resynchronise les badges toutes les 30s
+// pour couvrir les cas où le SSE est silencieux (déconnexion, onglet arrière-plan, cooldown)
+let _badgeRefreshInterval = null;
+
+function startBadgePolling() {
+    if (_badgeRefreshInterval) return;
+    _badgeRefreshInterval = setInterval(refreshAllBadges, 30000);
+}
+
+function stopBadgePolling() {
+    if (_badgeRefreshInterval) {
+        clearInterval(_badgeRefreshInterval);
+        _badgeRefreshInterval = null;
+    }
+}
+
 /**
  * Initialise la connexion SSE pour recevoir les mises à jour en temps réel
  * Passe l'user_id en query param pour le tracking de session côté serveur
@@ -47,6 +63,7 @@ function initEventSource(isReconnect = false) {
                 refreshAfterReconnect();
             }
             sseWasConnected = true;
+            startBadgePolling();
         };
         
         eventSource.onmessage = (event) => {
@@ -173,6 +190,7 @@ function refreshAllBadges() {
  * Ferme la connexion SSE
  */
 function closeEventSource() {
+    stopBadgePolling();
     if (eventSource) {
         eventSource.close();
         eventSource = null;
