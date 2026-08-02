@@ -170,3 +170,77 @@ async def test_import_sa_without_secret(async_session, test_app):
     assert result.service_accounts_created == 0
     assert result.service_accounts_skipped == 1
     assert any("sa_nosecret456" in w for w in result.warnings)
+
+
+@pytest.mark.asyncio
+async def test_import_roles_create(async_session, test_user, test_app):
+    """Nouveau user-app-role → créé."""
+    from app.schemas import UserAppRoleExport
+    import_data = BackupImport(
+        user_app_roles=[UserAppRoleExport(
+            username="testuser",
+            app_slug="test-app",
+            role="admin",
+            source="manual",
+        )],
+    )
+    result = await import_environment(async_session, import_data)
+    assert result.user_app_roles_created == 1
+    uar = (await async_session.execute(
+        select(UserAppRole).where(
+            UserAppRole.user_id == test_user.id,
+            UserAppRole.app_id == test_app.id,
+        )
+    )).scalar_one()
+    assert uar.role == "admin"
+
+
+@pytest.mark.asyncio
+async def test_import_full_zip(async_session, monkeypatch, tmp_path):
+    """End-to-end : ZIP complet avec users + apps + SA + rôles."""
+    import app.routes.hub_restore as mod
+    monkeypatch.setattr(mod, "SECRETS_DIR", tmp_path)
+    monkeypatch.setattr(
+        "app.routes.service_accounts.SECRETS_DIR", tmp_path, raising=True
+    )
+
+    env = {
+        "version": "1.0",
+        "exported_at": "2026-08-02T12:00:00",
+        "exported_by": "admin",
+        "users": [{
+            "username": "fulluser",
+            "email": "full@test.com",
+            "hashed_password": get_password_hash("pass123"),
+            "is_active": True,
+            "is_admin": False,
+        }],
+        "applications": [{
+            "name": "Full App",
+            "slug": "full-app",
+            "api_url": "http://localhost:7777",
+        }],
+        "service_accounts": [{
+            "name": "SA - Full",
+            "client_id": "sa_full123",
+            "client_secret_hash": "dummy",
+            "client_secret_plain": "full-secret",
+            "is_active": True,
+            "app_slugs": ["full-app"],
+        }],
+        "user_app_roles": [{
+            "username": "fulluser",
+            "app_slug": "full-app",
+            "role": "user",
+            "source": "manual",
+        }],
+    }
+    zip_bytes = _make_zip(env)
+    import_data = build_backup_import_from_zip_bytes(zip_bytes)
+    result = await import_environment(async_session, import_data)
+    assert result.success is True
+    assert result.users_created == 1
+    assert result.apps_created == 1
+    assert result.service_accounts_created == 1
+    assert result.user_app_roles_created == 1
+    assert result.errors == []

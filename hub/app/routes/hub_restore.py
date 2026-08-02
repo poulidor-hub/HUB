@@ -46,6 +46,7 @@ async def import_environment(db: AsyncSession, data: BackupImport) -> ImportResu
     await _import_users(db, data, result)
     await _import_applications(db, data, result)
     await _import_service_accounts(db, data, result)
+    await _import_user_app_roles(db, data, result)
     await db.commit()
     return result
 
@@ -203,6 +204,59 @@ async def _import_service_accounts(
         except Exception as e:
             logger.warning(f"Import SA {sa_export.client_id} échoué: {e}")
             result.errors.append(f"service_account {sa_export.client_id}: {e}")
+            # savepoint auto-rolled back by begin_nested() on exception
+
+
+async def _import_user_app_roles(
+    db: AsyncSession, data: BackupImport, result: ImportResult
+) -> None:
+    for role_export in data.user_app_roles:
+        created = False
+        try:
+            user = (await db.execute(
+                select(User).where(User.username == role_export.username)
+            )).scalar_one_or_none()
+            app = (await db.execute(
+                select(Application).where(Application.slug == role_export.app_slug)
+            )).scalar_one_or_none()
+            if not user:
+                result.warnings.append(
+                    f"role {role_export.username}->{role_export.app_slug}: user manquant"
+                )
+                continue
+            if not app:
+                result.warnings.append(
+                    f"role {role_export.username}->{role_export.app_slug}: app manquante"
+                )
+                continue
+
+            async with db.begin_nested():
+                existing = (await db.execute(
+                    select(UserAppRole).where(
+                        UserAppRole.user_id == user.id,
+                        UserAppRole.app_id == app.id,
+                    )
+                )).scalar_one_or_none()
+                if existing is None:
+                    db.add(UserAppRole(
+                        user_id=user.id,
+                        app_id=app.id,
+                        role=role_export.role,
+                        source=role_export.source,
+                    ))
+                    created = True
+                else:
+                    existing.role = role_export.role
+                    existing.source = role_export.source
+            if created:
+                result.user_app_roles_created += 1
+        except Exception as e:
+            logger.warning(
+                f"Import role {role_export.username}->{role_export.app_slug} échoué: {e}"
+            )
+            result.errors.append(
+                f"role {role_export.username}->{role_export.app_slug}: {e}"
+            )
             # savepoint auto-rolled back by begin_nested() on exception
 
 
