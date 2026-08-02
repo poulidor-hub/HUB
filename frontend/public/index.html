@@ -1351,7 +1351,7 @@
 
                             <!-- État : initialisé -->
                             <div id="vpnMainPanel" class="d-none">
-                                <!-- Barre d'actions -->
+                                <!-- Barre d'actions haute -->
                                 <div class="d-flex justify-content-between align-items-center mb-3">
                                     <div>
                                         <button class="btn btn-primary btn-sm" data-action="handleAddPeer"
@@ -1368,12 +1368,60 @@
                                     </div>
                                 </div>
 
-                                <!-- Liste des peers -->
-                                <div id="vpnPeersList">
+                                <!-- ZONE 1 : KPI -->
+                                <div class="vpn-kpi-row" id="vpnKpiRow">
+                                    <div class="vpn-kpi-card">
+                                        <div class="vpn-kpi-icon users"><i class="bi bi-people-fill"></i></div>
+                                        <div>
+                                            <div class="vpn-kpi-value" id="vpnKpiUsers">—</div>
+                                            <div class="vpn-kpi-sub">utilisateurs actifs</div>
+                                        </div>
+                                    </div>
+                                    <div class="vpn-kpi-card">
+                                        <div class="vpn-kpi-icon peers"><i class="bi bi-key-fill"></i></div>
+                                        <div>
+                                            <div class="vpn-kpi-value" id="vpnKpiPeers">—</div>
+                                            <div class="vpn-kpi-sub">peers total</div>
+                                        </div>
+                                    </div>
+                                    <div class="vpn-kpi-card">
+                                        <div class="vpn-kpi-icon connected"><i class="bi bi-record-circle-fill"></i></div>
+                                        <div>
+                                            <div class="vpn-kpi-value" id="vpnKpiConnected">—</div>
+                                            <div class="vpn-kpi-sub" id="vpnKpiConnectedSub">connectés</div>
+                                        </div>
+                                    </div>
+                                    <div class="vpn-kpi-card">
+                                        <div class="vpn-kpi-icon traffic"><i class="bi bi-arrow-down-up"></i></div>
+                                        <div>
+                                            <div class="vpn-kpi-value" id="vpnKpiTraffic" style="font-size:1.1rem;">—</div>
+                                            <div class="vpn-kpi-sub">trafic global</div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- ZONE 2 : Filtres -->
+                                <div class="vpn-filter-bar">
+                                    <input type="search" class="vpn-filter-search" id="vpnFilterSearch"
+                                           placeholder="Rechercher un utilisateur ou device...">
+                                    <span class="vpn-filter-chip active" data-filter="all">Tous</span>
+                                    <span class="vpn-filter-chip" data-filter="connected">Connectés</span>
+                                    <span class="vpn-filter-chip" data-filter="disconnected">Tous déconnectés</span>
+                                </div>
+
+                                <!-- ZONE 3 : Grille cartes utilisateur -->
+                                <div id="vpnUsersGrid" class="vpn-users-grid">
                                     <p class="text-muted text-center py-4">Aucun peer. Ajoutez-en un pour commencer.</p>
                                 </div>
 
-                                <!-- Réglages serveur -->
+                                <!-- ZONE 4 : Pagination -->
+                                <div class="vpn-pagination" id="vpnPagination" style="display:none;">
+                                    <button class="btn btn-sm btn-outline-secondary" id="vpnPagePrev">← Précédent</button>
+                                    <span class="page-info" id="vpnPageInfo">Page 1 sur 1</span>
+                                    <button class="btn btn-sm btn-outline-secondary" id="vpnPageNext">Suivant →</button>
+                                </div>
+
+                                <!-- Réglages serveur (conservé) -->
                                 <div class="collapse mt-3" id="vpnServerSettings">
                                     <div class="card card-body bg-light">
                                         <div class="row g-3">
@@ -1398,6 +1446,7 @@
                                     </div>
                                 </div>
                             </div>
+
 
                         </div>
                     </div>
@@ -3675,6 +3724,6 @@ docker compose exec db pg_dump -U hubadmin hub_auth > backup.sql</code></pre>
     <script src="js/modules/admin-apps-github.js?v=3.22.0"></script>
     <script src="js/app.js?v=3.22.0"></script>
     <script src="js/modules/init.js?v=3.22.0"></script>
-    <script src="js/modules/admin-vpn.js?v=3.22.0"></script>
+    <script src="js/modules/admin-vpn.js?v=3.23.0"></script>
 </body>
 </html>
