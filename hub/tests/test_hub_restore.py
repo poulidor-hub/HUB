@@ -117,3 +117,56 @@ async def test_import_apps_update(async_session, test_app):
     await async_session.refresh(test_app)
     assert test_app.name == "Renamed App"
     assert test_app.api_url == "http://localhost:8888"
+
+
+@pytest.mark.asyncio
+async def test_import_sa_with_secret(async_session, test_app, monkeypatch, tmp_path):
+    """SA avec client_secret_plain → créé + fichier .env écrit."""
+    from app.schemas import ServiceAccountExport
+    import app.routes.hub_restore as mod
+    monkeypatch.setattr(mod, "SECRETS_DIR", tmp_path)
+    monkeypatch.setattr(
+        "app.routes.service_accounts.SECRETS_DIR", tmp_path, raising=True
+    )
+
+    import_data = BackupImport(
+        service_accounts=[ServiceAccountExport(
+            name="SA - Imported",
+            client_id="sa_imported123",
+            client_secret_hash="dummy_hash",
+            client_secret_plain="super-secret-123",
+            is_active=True,
+            app_slugs=["test-app"],
+        )],
+    )
+    result = await import_environment(async_session, import_data)
+    assert result.service_accounts_created == 1
+    db_sa = (await async_session.execute(
+        select(ServiceAccount).where(ServiceAccount.client_id == "sa_imported123")
+    )).scalar_one()
+    assert db_sa.name == "SA - Imported"
+    env_file = tmp_path / "sa_test-app.env"
+    assert env_file.exists()
+    content = env_file.read_text()
+    assert "CLIENT_ID=sa_imported123" in content
+    assert "super-secret-123" in content or "ENC:" in content
+
+
+@pytest.mark.asyncio
+async def test_import_sa_without_secret(async_session, test_app):
+    """SA sans client_secret_plain → skip + warning."""
+    from app.schemas import ServiceAccountExport
+    import_data = BackupImport(
+        service_accounts=[ServiceAccountExport(
+            name="SA - No Secret",
+            client_id="sa_nosecret456",
+            client_secret_hash="dummy_hash",
+            client_secret_plain=None,
+            is_active=True,
+            app_slugs=["test-app"],
+        )],
+    )
+    result = await import_environment(async_session, import_data)
+    assert result.service_accounts_created == 0
+    assert result.service_accounts_skipped == 1
+    assert any("sa_nosecret456" in w for w in result.warnings)

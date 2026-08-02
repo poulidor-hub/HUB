@@ -9,6 +9,7 @@ import io
 import json
 import zipfile
 import logging
+from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, Depends, File, HTTPException, Request, status
@@ -29,9 +30,11 @@ from app.schemas import (
     UserAppRoleExport,
 )
 from app.auth import get_current_entity, get_password_hash
+from app.routes.service_accounts import save_service_account_credentials
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["Hub Restore"])
+SECRETS_DIR = Path("/code/secrets/service_accounts")
 
 
 async def import_environment(db: AsyncSession, data: BackupImport) -> ImportResult:
@@ -42,6 +45,7 @@ async def import_environment(db: AsyncSession, data: BackupImport) -> ImportResu
     result = ImportResult(success=True)
     await _import_users(db, data, result)
     await _import_applications(db, data, result)
+    await _import_service_accounts(db, data, result)
     await db.commit()
     return result
 
@@ -132,6 +136,75 @@ async def _import_applications(db: AsyncSession, data: BackupImport, result: Imp
             logger.warning(f"Import app {app_export.slug} échoué: {e}")
             result.errors.append(f"app {app_export.slug}: {e}")
             # savepoint auto-rolled back by begin_nested() on exception
+
+
+async def _import_service_accounts(
+    db: AsyncSession, data: BackupImport, result: ImportResult
+) -> None:
+    for sa_export in data.service_accounts:
+        if not sa_export.client_secret_plain:
+            msg = f"SA {sa_export.client_id} sans client_secret_plain — ignoré"
+            logger.warning(msg)
+            result.warnings.append(msg)
+            result.service_accounts_skipped += 1
+            continue
+
+        created = False
+        updated = False
+        try:
+            async with db.begin_nested():
+                existing = (await db.execute(
+                    select(ServiceAccount).where(
+                        ServiceAccount.client_id == sa_export.client_id
+                    )
+                )).scalar_one_or_none()
+
+                app_slugs = sa_export.app_slugs or []
+                apps = []
+                if app_slugs:
+                    apps_result = await db.execute(
+                        select(Application).where(Application.slug.in_(app_slugs))
+                    )
+                    apps = list(apps_result.scalars().all())
+
+                if existing is None:
+                    sa = ServiceAccount(
+                        name=sa_export.name,
+                        description=sa_export.description,
+                        client_id=sa_export.client_id,
+                        client_secret_hash=get_password_hash(sa_export.client_secret_plain),
+                        is_active=sa_export.is_active,
+                    )
+                    sa.applications = apps
+                    db.add(sa)
+                    created = True
+                else:
+                    existing.name = sa_export.name
+                    if sa_export.description is not None:
+                        existing.description = sa_export.description
+                    existing.is_active = sa_export.is_active
+                    existing.client_secret_hash = get_password_hash(
+                        sa_export.client_secret_plain
+                    )
+                    existing.applications = apps
+                    updated = True
+            if created:
+                result.service_accounts_created += 1
+            if updated:
+                result.service_accounts_updated += 1
+
+            file_name = sa_export.app_slugs[0] if sa_export.app_slugs else sa_export.name
+            save_service_account_credentials(
+                name=file_name,
+                client_id=sa_export.client_id,
+                client_secret=sa_export.client_secret_plain,
+                app_slugs=app_slugs,
+            )
+        except Exception as e:
+            logger.warning(f"Import SA {sa_export.client_id} échoué: {e}")
+            result.errors.append(f"service_account {sa_export.client_id}: {e}")
+            # savepoint auto-rolled back by begin_nested() on exception
+
 
 def build_backup_import_from_zip_bytes(zip_bytes: bytes) -> BackupImport:
     """
