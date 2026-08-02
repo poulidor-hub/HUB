@@ -5,6 +5,37 @@
 
 ---
 
+## [3.23.0] - 2 août 2026
+
+### ⚡ Guide modal + health enrichi + audit IP réelle + VPN fiabilisé
+
+- **Guide de maintenance** : passe d'une section inline dans le dashboard à une modale
+  Bootstrap chargée à la demande (bouton Guide réservé aux admins).
+- **Apps santé** : badge « Système » sur la carte du HUB, masquage des boutons ▶/■/⟳/📋
+  sur les apps système (le HUB ne se start/stop pas depuis cette vue).
+- **`/api/health`** expose la version (`get_hub_version()`) et l'uptime processus HUB
+  (via `/proc/self/stat`). Le health check des apps enrichit le champ `is_system_app`.
+- **Audit IP réelle** : `_get_client_ip()` remplace `request.client.host` dans toutes
+  les routes auth et audit. Derrière le proxy nginx, l'IP du client réel est désormais
+  correctement loguée (X-Forwarded-For/X-Real-IP).
+- **App système `git_repo_url`** : le champ est persisté dans `ensure_hub_system_application()`
+  et modifiable via l'UI (nécessaire pour l'update-check et le changelog). Schema `AppUpdate`
+  enrichi.
+- **VPN — migration API Docker** : `subprocess.run(["docker", ...])` remplacé par l'API
+  Python Docker (`docker.from_env().containers.get(...).exec_run()`). Le CLI `docker`
+  n'est pas installé dans l'image hub-api — tout passe désormais par le socket Docker.
+- **VPN — parsing handshake** : `_parse_handshake_age()` utilise une regex pour convertir
+  les durées `wg show` (secondes, minutes, heures, jours, combinaisons) en secondes.
+  `_peer_connected()` applique un seuil de 180s. Corrige le bug où « 1 hour, 5 minutes ago »
+  était compté comme connecté (contenait « minute »).
+- **VPN — transfer pretty** : parsing du format « 1.50 GiB received, 789.00 MiB sent ».
+- **Dashboard** : sélecteur CSS `[data-filter]` plus précis pour éviter de matcher
+  le bouton Guide.
+- **Tests VPN enrichis** : `_parse_handshake_age` et `_peer_connected`.
+- **Spec** : hub-self-restore design ajoutée.
+
+---
+
 ## [3.22.0] - 2 août 2026
 
 ### ⚡ Restauration self-backup du HUB
