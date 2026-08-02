@@ -291,6 +291,7 @@ class AppUpdate(BaseModel):
     is_shared_service: Optional[bool] = None
     m2m_enforcement_mode: Optional[str] = None  # 'compat' ou 'enforced'
     is_unmanaged: Optional[bool] = None  # True = launcher-only (non gérée)
+    git_repo_url: Optional[str] = Field(None, max_length=512, description="URL du dépôt Git (GitHub) pour le changelog et la détection de mises à jour")
 
 
 

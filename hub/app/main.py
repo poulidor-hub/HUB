@@ -700,7 +700,8 @@ app.include_router(hub_restore.router)
 @app.get("/api/health", include_in_schema=False)
 @app.get("/health")
 async def health_check():
-    return {"status": "healthy", "service": "hub-auth"}
+    from app.routes.docs import get_hub_version
+    return {"status": "healthy", "service": "hub-auth", "version": get_hub_version()}
 
 
 @app.get("/api/system/time")

@@ -80,6 +80,8 @@ function formatUptime(seconds) {
 }
 
 function renderAppCard(app) {
+    var isSystemApp = app.is_system_app === true || app.slug === 'hub';
+
     var statusStyle = {
         online:   { bg: '#16a34a', text: 'Online', cardBg: '#fff', border: '#e2e8f0' },
         offline:  { bg: '#dc2626', text: 'Offline', cardBg: '#fef2f2', border: '#fecaca' },
@@ -95,6 +97,11 @@ function renderAppCard(app) {
     var uptime = formatUptime(app.uptime_seconds);
     var error = app.error
         ? '<div style="font-size:11px;color:#dc2626;margin-top:4px;">' + escapeHtml(app.error.substring(0, 100)) + '</div>'
+        : '';
+
+    // Badge "Systeme" pour les apps systeme (HUB)
+    var systemBadge = isSystemApp
+        ? '<span style="background:#e0e7ff;color:#4338ca;font-size:11px;padding:2px 8px;border-radius:10px;font-weight:600;">Système</span>'
         : '';
 
     // Ligne metriques : latence, version, uptime
@@ -123,7 +130,8 @@ function renderAppCard(app) {
 
     // L'app est joignable mais sans aucune donnee sante (ni version, ni uptime,
     // ni integration Hub, ni erreur) → vraiment aucun endpoint /health exploitable.
-    var noHealth = (app.status === 'online' && !version && !uptime && !integrationBadges.length && !error);
+    // Ne s'applique PAS aux apps systeme (le HUB se sonde lui-meme).
+    var noHealth = (!isSystemApp && app.status === 'online' && !version && !uptime && !integrationBadges.length && !error);
     var healthNote = noHealth
         ? '<div style="font-size:11px;color:#94a3b8;margin-top:4px;"><i class="bi bi-info-circle me-1"></i>Serveur joignable — pas d\'endpoint /health standard</div>'
         : '';
@@ -133,15 +141,32 @@ function renderAppCard(app) {
         degradedInfo = ' <i class="bi bi-info-circle" title="' + escapeHtml(app.error) + '" style="cursor:help;font-size:11px;"></i>';
     }
 
+    // Boutons d'action (masques pour les apps systeme)
+    var actionButtons = '';
+    if (!isSystemApp) {
+        actionButtons =
+            '<div style="display:flex;gap:4px;">' +
+                '<button onclick="startApp(\'' + slug + '\')" class="btn btn-sm btn-outline-success py-0 px-2" style="font-size:11px;" title="Demarrer">▶</button>' +
+                '<button onclick="stopApp(\'' + slug + '\')" class="btn btn-sm btn-outline-danger py-0 px-2" style="font-size:11px;" title="Arreter">■</button>' +
+                '<button onclick="restartApp(\'' + slug + '\')" class="btn btn-sm btn-outline-secondary py-0 px-2" style="font-size:11px;" id="restartBtn_' + slug + '" title="Redemarrer">⟳</button>' +
+                '<button onclick="showLogs(\'' + slug + '\')" class="btn btn-sm btn-outline-secondary py-0 px-2" style="font-size:11px;" title="Logs">📋</button>' +
+            '</div>';
+    }
+
+    // Couleur de fond speciale pour le HUB (leger fond bleute)
+    var cardBg = isSystemApp ? '#f8faff' : statusStyle.cardBg;
+
     return (
         '<div class="col-12 col-md-6 col-lg-4">' +
-        '<div style="background:' + statusStyle.cardBg + ';border:1px solid ' + statusStyle.border + ';border-radius:8px;padding:16px;display:flex;flex-direction:column;gap:10px;height:100%;">' +
+        '<div style="background:' + cardBg + ';border:1px solid ' + statusStyle.border + ';border-radius:8px;padding:16px;display:flex;flex-direction:column;gap:10px;height:100%;">' +
             '<div style="display:flex;align-items:center;gap:10px;">' +
                 '<div style="width:40px;height:40px;border-radius:8px;background:' + color + ';display:flex;align-items:center;justify-content:center;color:white;font-size:18px;flex-shrink:0;">' +
                     '<i class="bi ' + icon + '"></i>' +
                 '</div>' +
                 '<div style="flex:1;min-width:0;">' +
-                    '<div style="font-weight:600;font-size:14px;color:#1e293b;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + name + '</div>' +
+                    '<div style="font-weight:600;font-size:14px;color:#1e293b;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + name +
+                    (systemBadge ? ' ' + systemBadge : '') +
+                    '</div>' +
                     '<div style="font-size:12px;color:#94a3b8;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + slug + '</div>' +
                 '</div>' +
                 '<span style="background:' + statusStyle.bg + ';color:white;font-size:11px;padding:3px 8px;border-radius:12px;font-weight:500;flex-shrink:0;">' + statusStyle.text + degradedInfo + '</span>' +
@@ -155,12 +180,7 @@ function renderAppCard(app) {
                 '<span style="font-size:11px;color:#94a3b8;">' +
                     'Verifie il y a <span class="apps-health-timestamp" data-ts="' + (app.checked_at || '') + '">…</span>' +
                 '</span>' +
-                '<div style="display:flex;gap:4px;">' +
-                    '<button onclick="startApp(\'' + slug + '\')" class="btn btn-sm btn-outline-success py-0 px-2" style="font-size:11px;" title="Demarrer">▶</button>' +
-                    '<button onclick="stopApp(\'' + slug + '\')" class="btn btn-sm btn-outline-danger py-0 px-2" style="font-size:11px;" title="Arreter">■</button>' +
-                    '<button onclick="restartApp(\'' + slug + '\')" class="btn btn-sm btn-outline-secondary py-0 px-2" style="font-size:11px;" id="restartBtn_' + slug + '" title="Redemarrer">⟳</button>' +
-                    '<button onclick="showLogs(\'' + slug + '\')" class="btn btn-sm btn-outline-secondary py-0 px-2" style="font-size:11px;" title="Logs">📋</button>' +
-                '</div>' +
+                actionButtons +
             '</div>' +
         '</div>' +
         '</div>'

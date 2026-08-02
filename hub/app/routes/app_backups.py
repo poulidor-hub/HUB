@@ -541,6 +541,7 @@ async def ensure_hub_system_application(db: AsyncSession) -> Application:
             category="Système",
             api_url="http://hub-api:8000",
             frontend_url="/",
+            git_repo_url="https://github.com/POULIDOR-Audit-Developpement/POULIDOR.git",
             is_active=True,
             requires_auth=True,
             is_shared_service=False,
@@ -561,6 +562,9 @@ async def ensure_hub_system_application(db: AsyncSession) -> Application:
         changed = True
     if not app.category:
         app.category = "Système"
+        changed = True
+    if not getattr(app, "git_repo_url", None):
+        app.git_repo_url = "https://github.com/POULIDOR-Audit-Developpement/POULIDOR.git"
         changed = True
     if not app.backup_mode or app.backup_mode not in _VALID_BACKUP_MODES:
         app.backup_mode = "manual"

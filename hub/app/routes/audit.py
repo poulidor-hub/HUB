@@ -114,7 +114,13 @@ async def log_action(
         
         # Utiliser les valeurs de la requête si non fournies
         if not ip_address and request.client:
-            ip_address = request.client.host
+            # IMPORTANT : derrière le reverse proxy nginx (hub-frontend),
+            # request.client.host est l'IP du proxy (ex: 10.42.0.4), pas celle
+            # du client réel. On honore X-Forwarded-For/X-Real-IP via le helper
+            # dédié qui ne truste ces headers que si l'IP directe est interne
+            # au réseau Docker (= proxy de confiance).
+            from app.routes.auth import _get_client_ip
+            ip_address = _get_client_ip(request)
         if not user_agent:
             user_agent = request.headers.get("User-Agent")
     

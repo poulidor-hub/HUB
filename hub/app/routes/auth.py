@@ -146,7 +146,7 @@ async def login_for_token(
         
         result = await rotate_refresh_token(
             db, refresh_token,
-            ip_address=request.client.host if request.client else None,
+            ip_address=_get_client_ip(request),
             user_agent=request.headers.get("user-agent", "")
         )
         
@@ -240,7 +240,7 @@ async def login_for_token(
         audit = AuditLog(
             action="service_account_login",
             target=service_account.name,
-            ip_address=request.client.host if request.client else None,
+            ip_address=_get_client_ip(request),
             user_agent=request.headers.get("user-agent", "")[:255]
         )
         db.add(audit)
@@ -292,7 +292,7 @@ async def login_for_token(
     new_refresh_token = await create_refresh_token(
         db,
         user_id=user.id,
-        ip_address=request.client.host if request.client else None,
+        ip_address=_get_client_ip(request),
         user_agent=request.headers.get("user-agent", "")
     )
     
@@ -300,7 +300,7 @@ async def login_for_token(
     await start_session(
         db,
         user_id=user.id,
-        ip_address=request.client.host if request.client else None,
+        ip_address=_get_client_ip(request),
         user_agent=request.headers.get("user-agent", "")
     )
     
@@ -373,7 +373,7 @@ async def login_with_redirect(
     new_refresh_token = await create_refresh_token(
         db,
         user_id=user.id,
-        ip_address=request.client.host if request.client else None,
+        ip_address=_get_client_ip(request),
         user_agent=request.headers.get("user-agent", "")
     )
     
@@ -381,7 +381,7 @@ async def login_with_redirect(
     await start_session(
         db,
         user_id=user.id,
-        ip_address=request.client.host if request.client else None,
+        ip_address=_get_client_ip(request),
         user_agent=request.headers.get("user-agent", "")
     )
     
@@ -433,7 +433,7 @@ async def get_current_user_info(
         await start_session(
             db,
             user_id=current_user.id,
-            ip_address=request.client.host if request.client else None,
+            ip_address=_get_client_ip(request),
             user_agent=request.headers.get("user-agent", "")
         )
         await db.commit()
@@ -502,7 +502,7 @@ async def change_password(
     audit = AuditLog(
         user_id=current_user.id,
         action="password_changed",
-        ip_address=request.client.host if request.client else None,
+        ip_address=_get_client_ip(request),
         user_agent=request.headers.get("user-agent", "")[:255]
     )
     db.add(audit)
@@ -560,7 +560,7 @@ async def totp_confirm(
     db.add(AuditLog(
         user_id=current_user.id,
         action="totp_enabled",
-        ip_address=request.client.host if request.client else None,
+        ip_address=_get_client_ip(request),
         user_agent=request.headers.get("user-agent", "")[:255],
     ))
     await db.commit()
@@ -586,7 +586,7 @@ async def totp_disable(
     db.add(AuditLog(
         user_id=current_user.id,
         action="totp_disabled",
-        ip_address=request.client.host if request.client else None,
+        ip_address=_get_client_ip(request),
         user_agent=request.headers.get("user-agent", "")[:255],
     ))
     await db.commit()
@@ -716,7 +716,7 @@ async def logout(
         user_id=current_user.id,
         action="logout",
         details="all_tokens_revoked" if revoke_all else "single_token",
-        ip_address=request.client.host if request.client else None
+        ip_address=_get_client_ip(request)
     )
     db.add(audit)
     await db.commit()
@@ -756,7 +756,7 @@ async def beacon_logout(
         
         # Vérifier le beacon token
         if not beacon_token or not verify_beacon_token(user_id, beacon_token):
-            logger.warning(f"⚠️ beacon-logout rejeté: token invalide pour user_id={user_id} depuis {request.client.host if request.client else 'unknown'}")
+            logger.warning(f"⚠️ beacon-logout rejeté: token invalide pour user_id={user_id} depuis {_get_client_ip(request)}")
             return {"message": "Token invalide"}
         
         # Fermer la session de l'utilisateur
@@ -896,7 +896,7 @@ async def refresh_access_token(
     """
     result = await rotate_refresh_token(
         db, refresh_data.refresh_token,
-        ip_address=request.client.host if request.client else None,
+        ip_address=_get_client_ip(request),
         user_agent=request.headers.get("user-agent", "")
     )
     
@@ -1110,7 +1110,7 @@ async def sso_login(
         user_id=user.id,
         action="sso_login",
         target=app_slug,
-        ip_address=request.client.host if request.client else None,
+        ip_address=_get_client_ip(request),
         user_agent=request.headers.get("user-agent", "")[:255]
     )
     db.add(audit)

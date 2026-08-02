@@ -20,6 +20,7 @@ Endpoints admin :
 import ipaddress
 import io
 import logging
+import re
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
@@ -49,6 +50,82 @@ VPN_SERVER_PUBKEY = "vpn_server_public_key"
 VPN_ENDPOINT = "vpn_endpoint"
 VPN_LISTEN_PORT = "vpn_listen_port"
 VPN_SUBNET = "vpn_subnet"
+
+# Conteneur Docker hébergeant l'interface wg0 (linuxserver/wireguard).
+_WG_CONTAINER = "hub-wireguard"
+
+# Un peer WireGuard est considéré comme "connecté" si son dernier handshake
+# date de moins de ce seuil. WireGuard lui-même déclare un peer inactif au-delà
+# de ~120-180s (PersistentKeepalive=25 côté client garantit un handshake
+# régulier environ toutes les 25 s tant que le tunnel est monté).
+# ATTENTION : la sortie `wg show` est en anglais (langue du conteneur).
+_PEER_CONNECTED_THRESHOLD_SECONDS = 180
+
+
+def _docker_exec(container: str, cmd: list[str]) -> tuple[int, str]:
+    """Exécute une commande dans un conteneur via l'API Docker (socket unix).
+
+    Utilise la lib Python `docker` (déjà utilisée par docker_scanner.py) plutôt
+    que le CLI `docker` qui n'est PAS installé dans l'image hub-api. Le socket
+    Docker est monté en RO via /var/run/docker.sock:/var/run/docker.sock:ro.
+
+    Retourne (exit_code, stdout+stderr combiné).
+    Lève une exception si l'API Docker ou le conteneur est indisponible.
+    """
+    import docker  # lazy : dépendance optionnelle si VPN non utilisé
+    client = docker.from_env()
+    result = client.containers.get(container).exec_run(cmd, demux=False)
+    output = result.output
+    if isinstance(output, bytes):
+        output = output.decode("utf-8", errors="replace")
+    return result.exit_code if result.exit_code is not None else -1, output
+
+
+def _docker_restart(container: str) -> bool:
+    """Redémarre un conteneur via l'API Docker. Retourne True si OK."""
+    import docker
+    client = docker.from_env()
+    client.containers.get(container).restart(timeout=30)
+    return True
+
+
+def _parse_handshake_age(raw: str | None) -> int | None:
+    """Convertit la chaîne 'latest handshake' de `wg show` en secondes.
+
+    `wg show` formate les durées en anglais, ex :
+      - '20 seconds ago'                       → 20
+      - '5 minutes ago'                        → 300
+      - '2 minutes, 15 seconds ago'            → 135
+      - '1 hour, 5 minutes ago'                → 3900
+      - '1 day, 3 hours, 2 minutes ago'        → 97320
+
+    Retourne None si la chaîne est vide ou non parsable.
+    """
+    if not raw:
+        return None
+    text = raw.lower()
+    total = 0
+    found = False
+    # On cherche toutes les paires '<nombre> <unité>' dans la chaîne.
+    for match in re.finditer(r"(\d+)\s*(second|minute|hour|day)s?", text):
+        found = True
+        value = int(match.group(1))
+        unit = match.group(2)
+        if unit == "second":
+            total += value
+        elif unit == "minute":
+            total += value * 60
+        elif unit == "hour":
+            total += value * 3600
+        elif unit == "day":
+            total += value * 86400
+    return total if found else None
+
+
+def _peer_connected(handshake_raw: str | None) -> bool:
+    """Détermine si un peer est connecté (handshake récent < seuil)."""
+    age = _parse_handshake_age(handshake_raw)
+    return age is not None and age <= _PEER_CONNECTED_THRESHOLD_SECONDS
 
 
 def _wg_conf_path() -> Path:
@@ -190,13 +267,14 @@ async def _allocate_peer_ip(db: AsyncSession, subnet: str) -> str:
 def _get_current_listen_port() -> int | None:
     """Retourne le ListenPort actuellement actif sur wg0, ou None si indisponible."""
     try:
-        result = subprocess.run(
-            ["docker", "exec", "hub-wireguard", "wg", "show", "wg0", "listen-port"],
-            capture_output=True, text=True, timeout=10,
+        exit_code, output = _docker_exec(
+            _WG_CONTAINER, ["wg", "show", "wg0", "listen-port"]
         )
-        if result.returncode == 0 and result.stdout.strip().isdigit():
-            return int(result.stdout.strip())
-    except (subprocess.SubprocessError, FileNotFoundError, ValueError):
+        if exit_code == 0:
+            port_str = output.strip()
+            if port_str.isdigit():
+                return int(port_str)
+    except Exception:
         pass
     return None
 
@@ -205,12 +283,8 @@ def _restart_wireguard_interface() -> bool:
     """Redémarre le conteneur hub-wireguard pour appliquer un changement de
     ListenPort/Address/PrivateKey (wg syncconf ne les modifie pas à chaud)."""
     try:
-        result = subprocess.run(
-            ["docker", "restart", "hub-wireguard"],
-            capture_output=True, text=True, timeout=30,
-        )
-        return result.returncode == 0
-    except (subprocess.SubprocessError, FileNotFoundError):
+        return _docker_restart(_WG_CONTAINER)
+    except Exception:
         return False
 
 
@@ -254,25 +328,21 @@ async def _regenerate_and_sync(
 
     # Port inchangé (ou conteneur arrêté) : syncconf léger pour les peers
     try:
-        subprocess.run(
-            ["docker", "exec", "hub-wireguard",
-             "bash", "-c", "wg syncconf wg0 <(wg-quick strip wg0)"],
-            capture_output=True, text=True, timeout=10,
+        _docker_exec(
+            _WG_CONTAINER,
+            ["bash", "-c", "wg syncconf wg0 <(wg-quick strip wg0)"],
         )
-    except (subprocess.SubprocessError, FileNotFoundError):
+    except Exception:
         logger.warning("wg syncconf failed (container may be stopped)")
 
 
 def _wg_status() -> dict | None:
     """Lit l'état du tunnel via docker exec wg show."""
     try:
-        result = subprocess.run(
-            ["docker", "exec", "hub-wireguard", "wg", "show", "wg0"],
-            capture_output=True, text=True, timeout=10
-        )
-        if result.returncode != 0:
+        exit_code, output = _docker_exec(_WG_CONTAINER, ["wg", "show", "wg0"])
+        if exit_code != 0:
             return None
-        output = result.stdout.strip()
+        output = output.strip()
         if not output:
             return None
         return _parse_wg_show_output(output)
@@ -359,10 +429,7 @@ async def get_vpn_status(
         wg = _wg_status()
         if wg:
             for p in wg.get("peers", []):
-                handshake = p.get("latest handshake")
-                if handshake and "minute" in handshake:
-                    connected_count += 1
-                elif handshake and "second" in handshake:
+                if _peer_connected(p.get("latest handshake")):
                     connected_count += 1
 
     return {
@@ -521,15 +588,17 @@ async def list_peers(
     for peer in peers:
         stats = wg_stats.get(peer.public_key, {})
         handshake_raw = stats.get("latest handshake")
-
-        connected = False
-        if handshake_raw:
-            connected = "minute" in handshake_raw or "second" in handshake_raw
+        connected = _peer_connected(handshake_raw)
 
         transfer_parts = stats.get("transfer", "").split() if stats.get("transfer") else []
         transfer_rx = None
         transfer_tx = None
-        if len(transfer_parts) >= 3:
+        if len(transfer_parts) >= 6:
+            # Format pretty (ex: "1.50 GiB received, 789.00 MiB sent")
+            transfer_rx = f"{transfer_parts[0]} {transfer_parts[1]}"
+            transfer_tx = f"{transfer_parts[3]} {transfer_parts[4]}"
+        elif len(transfer_parts) == 4:
+            # Format raw bytes (ex: "123456 received, 789012 sent")
             transfer_rx = transfer_parts[0]
             transfer_tx = transfer_parts[2]
 

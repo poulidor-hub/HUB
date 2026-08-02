@@ -3043,10 +3043,22 @@ async def update_app(
         )
 
     if getattr(app, "is_system_app", False):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="L'application système Hub ne se modifie pas depuis cette vue"
-        )
+        # Pour les apps systeme (HUB), autoriser UNIQUEMENT la modification
+        # du git_repo_url (utile pour l'update-check et le changelog).
+        update_data = app_data.model_dump(exclude_unset=True)
+        allowed_system_fields = {"git_repo_url"}
+        system_updates = {k: v for k, v in update_data.items() if k in allowed_system_fields}
+        if not system_updates:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="L'application système Hub n'est pas modifiable via cette vue"
+            )
+        for field, value in system_updates.items():
+            setattr(app, field, value)
+        await db.commit()
+        await db.refresh(app)
+        notify_event("apps_updated", {"action": "updated", "app_slug": app.slug, "app_name": app.name})
+        return app
     
     update_data = app_data.model_dump(exclude_unset=True)
     

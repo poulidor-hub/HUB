@@ -64,7 +64,7 @@ function buildCategoryFilters(apps) {
 
 function setDashboardFilter(filter) {
     dashboardFilter = filter;
-    document.querySelectorAll('.dash-filter-btn').forEach(btn => {
+    document.querySelectorAll('.dash-filter-btn[data-filter]').forEach(btn => {
         btn.classList.toggle('active', btn.getAttribute('data-filter') === filter);
     });
     filterDashboardApps();

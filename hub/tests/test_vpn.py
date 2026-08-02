@@ -382,51 +382,133 @@ class TestRegenerateAndSync:
     ):
         import app.routes.vpn as vpn_mod
 
-        calls: list[list[str]] = []
+        exec_calls: list[tuple[str, list[str]]] = []
+        restart_calls: list[str] = []
 
-        def fake_run(cmd, *args, **kwargs):
-            calls.append(list(cmd) if isinstance(cmd, list) else cmd)
-            class R:
-                returncode = 0
-                # Port actif simulé = 51820 (différent du 51821 demandé)
-                stdout = "51820\n" if "listen-port" in " ".join(cmd) else ""
-                stderr = ""
-            return R()
+        def fake_exec(container, cmd):
+            exec_calls.append((container, list(cmd)))
+            # Port actif simulé = 51820 (différent du 51821 demandé)
+            if cmd == ["wg", "show", "wg0", "listen-port"]:
+                return 0, "51820\n"
+            return 0, ""
 
-        monkeypatch.setattr(vpn_mod.subprocess, "run", fake_run)
+        def fake_restart(container):
+            restart_calls.append(container)
+            return True
+
+        monkeypatch.setattr(vpn_mod, "_docker_exec", fake_exec)
+        monkeypatch.setattr(vpn_mod, "_docker_restart", fake_restart)
 
         # listen_port=51821 alors que le mock renvoie 51820 → port a changé
         await vpn_mod._regenerate_and_sync(
             async_session, "PRIVKEY", 51821, "10.8.0.0/24"
         )
 
-        restart_calls = [c for c in calls if c[:2] == ["docker", "restart"]]
         assert len(restart_calls) == 1
-        assert restart_calls[0] == ["docker", "restart", "hub-wireguard"]
+        assert restart_calls[0] == "hub-wireguard"
+        # syncconf ne doit PAS être appelé si le port a changé (restart uniquement)
+        syncconf_calls = [cmd for _, cmd in exec_calls if "syncconf" in " ".join(cmd)]
+        assert syncconf_calls == [], "syncconf ne doit pas être appelé si restart"
 
     async def test_port_unchanged_uses_syncconf(
         self, async_session: AsyncSession, vpn_temp_dir: str, monkeypatch,
     ):
         import app.routes.vpn as vpn_mod
 
-        calls: list[list[str]] = []
+        exec_calls: list[tuple[str, list[str]]] = []
+        restart_calls: list[str] = []
 
-        def fake_run(cmd, *args, **kwargs):
-            calls.append(list(cmd) if isinstance(cmd, list) else cmd)
-            class R:
-                returncode = 0
-                # Port actif simulé = 51820 = port demandé → inchangé
-                stdout = "51820\n" if "listen-port" in " ".join(cmd) else ""
-                stderr = ""
-            return R()
+        def fake_exec(container, cmd):
+            exec_calls.append((container, list(cmd)))
+            # Port actif simulé = 51820 = port demandé → inchangé
+            if cmd == ["wg", "show", "wg0", "listen-port"]:
+                return 0, "51820\n"
+            return 0, ""
 
-        monkeypatch.setattr(vpn_mod.subprocess, "run", fake_run)
+        def fake_restart(container):
+            restart_calls.append(container)
+            return True
+
+        monkeypatch.setattr(vpn_mod, "_docker_exec", fake_exec)
+        monkeypatch.setattr(vpn_mod, "_docker_restart", fake_restart)
 
         await vpn_mod._regenerate_and_sync(
             async_session, "PRIVKEY", 51820, "10.8.0.0/24"
         )
 
-        restart_calls = [c for c in calls if c[:2] == ["docker", "restart"]]
         assert restart_calls == [], "Aucun restart attendu si le port ne change pas"
-        syncconf_calls = [c for c in calls if "syncconf" in " ".join(c)]
+        syncconf_calls = [cmd for _, cmd in exec_calls if "syncconf" in " ".join(cmd)]
         assert len(syncconf_calls) == 1, "syncconf doit être appelé si port inchangé"
+
+
+# =============================================================================
+# _parse_handshake_age — parsing de la durée 'latest handshake' de wg show
+# =============================================================================
+
+class TestParseHandshakeAge:
+    """Le parsing de la durée brute de `wg show` doit convertir en secondes,
+    indépendamment de la combinaison d'unités (s/m/h/d)."""
+
+    def test_seconds_only(self):
+        from app.routes.vpn import _parse_handshake_age
+        assert _parse_handshake_age("20 seconds ago") == 20
+
+    def test_minutes_only(self):
+        from app.routes.vpn import _parse_handshake_age
+        assert _parse_handshake_age("5 minutes ago") == 300
+
+    def test_mixed_minutes_seconds(self):
+        from app.routes.vpn import _parse_handshake_age
+        assert _parse_handshake_age("2 minutes, 15 seconds ago") == 135
+
+    def test_hours_minutes(self):
+        from app.routes.vpn import _parse_handshake_age
+        assert _parse_handshake_age("1 hour, 5 minutes ago") == 3900
+
+    def test_days_hours_minutes(self):
+        from app.routes.vpn import _parse_handshake_age
+        assert _parse_handshake_age("1 day, 3 hours, 2 minutes ago") == 97320
+
+    def test_singular_units(self):
+        from app.routes.vpn import _parse_handshake_age
+        assert _parse_handshake_age("1 minute, 1 second ago") == 61
+
+    def test_empty_or_none(self):
+        from app.routes.vpn import _parse_handshake_age
+        assert _parse_handshake_age(None) is None
+        assert _parse_handshake_age("") is None
+
+    def test_unparseable(self):
+        from app.routes.vpn import _parse_handshake_age
+        assert _parse_handshake_age("jamais") is None
+
+
+class TestPeerConnected:
+    """Seuil de 'connecté' : un peer est connecté si son dernier handshake
+    date de moins de _PEER_CONNECTED_THRESHOLD_SECONDS (180s = 3 min)."""
+
+    def test_recent_handshake_connected(self):
+        from app.routes.vpn import _peer_connected
+        assert _peer_connected("45 seconds ago") is True
+        assert _peer_connected("2 minutes, 30 seconds ago") is True  # 150s < 180
+
+    def test_old_handshake_disconnected(self):
+        from app.routes.vpn import _peer_connected
+        # Bug de régression : avant, "5 minutes ago" était compté comme connecté
+        # car contenait "minute". Maintenant 300s > 180s → déconnecté.
+        assert _peer_connected("5 minutes ago") is False
+        # "1 hour, 5 minutes" contenait "minute" → bug. Désormais déconnecté.
+        assert _peer_connected("1 hour, 5 minutes ago") is False
+        assert _peer_connected("1 hour ago") is False
+
+    def test_no_handshake_disconnected(self):
+        from app.routes.vpn import _peer_connected
+        assert _peer_connected(None) is False
+        assert _peer_connected("") is False
+
+    def test_boundary_exactly_threshold(self):
+        from app.routes.vpn import _peer_connected
+        # 180s exactement = seuil = encore connecté (<=)
+        assert _peer_connected("3 minutes ago") is True
+        # 181s = déconnecté
+        assert _peer_connected("3 minutes, 1 second ago") is False

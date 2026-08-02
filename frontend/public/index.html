@@ -58,11 +58,6 @@
                                 <span class="badge bg-info ms-1" id="navMessagesBadge" style="display: none; font-size: 0.65em;">0</span>
                             </a>
                         </li>
-                        <li class="nav-item">
-                            <a class="nav-link" href="#"data-action="showPage" data-args="guide" id="navGuide">
-                                <i class="bi bi-book me-1"></i>Guide
-                            </a>
-                        </li>
                     </ul>
                 </div>
                 
@@ -78,6 +73,9 @@
                             <span class="badge bg-danger position-absolute top-0 start-100 translate-middle rounded-pill" id="messageBellBadge" style="display: none; font-size: 0.6em;">0</span>
                         </button>
                     </div>
+                    <button id="guideBtn" class="btn btn-outline-light btn-sm me-2 d-none rounded-circle d-flex align-items-center justify-content-center" style="width: 32px; height: 32px; padding: 0; font-weight: 700;" data-action="showGuideModal" title="Guide de maintenance">
+                        <span>?</span>
+                    </button>
                     <button id="changePasswordBtn" class="btn btn-outline-light btn-sm me-2 d-none"data-action="showChangePasswordModal" data-args="false" title="Changer le mot de passe">
                         <i class="bi bi-key"></i>
                     </button>
@@ -1447,7 +1445,6 @@
                                 </div>
                             </div>
 
-
                         </div>
                     </div>
                 </div>
@@ -2659,173 +2656,6 @@
         </div>
     </div>
 
-    <!-- Section Guide de maintenance (admin) -->
-    <div id="guideSection" class="container-fluid py-4 d-none" style="margin-top: 70px;">
-        <div class="container" style="max-width: 900px;">
-            <div class="d-flex justify-content-between align-items-center mb-4">
-                <div>
-                    <h1 class="h3 mb-1"><i class="bi bi-book me-2"></i>Guide de maintenance</h1>
-                    <p class="text-muted mb-0">Opérations courantes pour gérer le Hub et ses applications au quotidien</p>
-                </div>
-                <span class="badge bg-secondary" id="guideHubVersion">v?.?</span>
-            </div>
-
-            <!-- Utilisateurs -->
-            <div class="card mb-3">
-                <div class="card-header" data-bs-toggle="collapse" data-bs-target="#guideUsers" role="button">
-                    <h5 class="mb-0"><i class="bi bi-people me-2"></i>Gestion des utilisateurs</h5>
-                </div>
-                <div class="collapse show" id="guideUsers">
-                    <div class="card-body">
-                        <h6>Ajouter un utilisateur</h6>
-                        <ol>
-                            <li><b>Administration → Utilisateurs → Ajouter</b></li>
-                            <li>Saisir identifiant, mot de passe, email</li>
-                            <li>Choisir un rôle : <b>Admin</b>, <b>Manager</b>, <b>User</b>, <b>Viewer</b></li>
-                            <li>Optionnel : assigner à une ou plusieurs applications</li>
-                        </ol>
-                        <p class="small text-muted">Opérations en masse : <b>Importer CSV</b> (⋮ → Importer depuis CSV) ou <b>Assigner des rôles</b> (sélection multiple → ⋮).</p>
-
-                        <h6 class="mt-3">Profils d'accès</h6>
-                        <p>Un profil est un <b>modèle de rôles</b> applicable en un clic. Administration → Utilisateurs → Profils → Nouveau profil.</p>
-
-                        <h6 class="mt-3">Supprimer / désactiver</h6>
-                        <p>Table des utilisateurs → crayon → <b>Désactiver</b>. L'utilisateur ne peut plus se connecter mais ses données sont conservées.</p>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Applications -->
-            <div class="card mb-3">
-                <div class="card-header" data-bs-toggle="collapse" data-bs-target="#guideApps" role="button">
-                    <h5 class="mb-0"><i class="bi bi-grid me-2"></i>Gestion des applications</h5>
-                </div>
-                <div class="collapse" id="guideApps">
-                    <div class="card-body">
-                        <h6>Ajouter une application</h6>
-                        <ol>
-                            <li>Déployer l'app sur le serveur (voir guide d'installation)</li>
-                            <li>L'app s'auto-enregistre → apparaît <b>En attente</b> dans Admin → Applications</li>
-                            <li><b>Approuver</b> : bouton ✓ pour passer en Actif</li>
-                        </ol>
-
-                        <h6 class="mt-3">Pool de ports</h6>
-                        <p>Le Hub alloue automatiquement les ports des nouvelles apps. Voir l'état : <b>Administration → Pool de ports</b>.</p>
-                        <p class="small text-muted">Plages : API 9000-9499, Frontend 4200-4699. Configurable dans <code>.env</code>.</p>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Sauvegardes -->
-            <div class="card mb-3">
-                <div class="card-header" data-bs-toggle="collapse" data-bs-target="#guideBackups" role="button">
-                    <h5 class="mb-0"><i class="bi bi-archive me-2"></i>Sauvegardes</h5>
-                </div>
-                <div class="collapse" id="guideBackups">
-                    <div class="card-body">
-                        <h6>Sauvegarde planifiée</h6>
-                        <p>Administration → Sauvegardes → configurer par app : mode <b>scheduled</b>, cron (ex : <code>0 2 * * *</code>), rétention.</p>
-
-                        <h6 class="mt-3">Restaurer</h6>
-                        <p>Administration → Sauvegardes → ↺ sur l'app. ⚠️ <code>clear_existing=true</code> efface toutes les données.</p>
-
-                        <h6 class="mt-3">Snapshot système</h6>
-                        <p>Sauvegarde la configuration du Hub (apps, comptes, utilisateurs). Administration → Sauvegardes → Snapshots.</p>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Audit -->
-            <div class="card mb-3">
-                <div class="card-header" data-bs-toggle="collapse" data-bs-target="#guideAudit" role="button">
-                    <h5 class="mb-0"><i class="bi bi-graph-up me-2"></i>Audit et monitoring</h5>
-                </div>
-                <div class="collapse" id="guideAudit">
-                    <div class="card-body">
-                        <p>Le tableau de bord <b>Audit & Suivi</b> offre :</p>
-                        <ul>
-                            <li><b>Vue d'ensemble</b> : KPIs, alertes, sessions actives</li>
-                            <li><b>Par application</b> : stats, top utilisateurs</li>
-                            <li><b>Logs détaillés</b> : recherche par action, app, utilisateur, IP</li>
-                            <li><b>Erreurs</b> : 401, 403, 500 avec filtres</li>
-                        </ul>
-                        <p class="small text-muted">Rétention configurable : <code>AUDIT_RETENTION_DAYS=90</code>, <code>ERROR_RETENTION_DAYS=30</code>.</p>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Messagerie -->
-            <div class="card mb-3">
-                <div class="card-header" data-bs-toggle="collapse" data-bs-target="#guideMessages" role="button">
-                    <h5 class="mb-0"><i class="bi bi-chat-dots me-2"></i>Messagerie interne</h5>
-                </div>
-                <div class="collapse" id="guideMessages">
-                    <div class="card-body">
-                        <p><b>Messages → Nouveau</b> : cible (tous ou spécifiques), priorité (Info/Warning/Urgent), expiration.</p>
-                        <p>Les messages apparaissent dans le Hub (🔔) et dans chaque application.</p>
-                    </div>
-                </div>
-            </div>
-
-            <!-- VPN -->
-            <div class="card mb-3">
-                <div class="card-header" data-bs-toggle="collapse" data-bs-target="#guideVpn" role="button">
-                    <h5 class="mb-0"><i class="bi bi-shield-lock me-2"></i>VPN WireGuard</h5>
-                </div>
-                <div class="collapse" id="guideVpn">
-                    <div class="card-body">
-                        <p>Administration → VPN : activer, renseigner clé privée/publique, adresse, endpoint. Cliquer <b>Déployer</b>.</p>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Commandes -->
-            <div class="card mb-3">
-                <div class="card-header" data-bs-toggle="collapse" data-bs-target="#guideCli" role="button">
-                    <h5 class="mb-0"><i class="bi bi-terminal me-2"></i>Commandes utiles (terminal)</h5>
-                </div>
-                <div class="collapse" id="guideCli">
-                    <div class="card-body">
-                        <pre class="bg-dark text-light p-3 rounded small"><code># État des services
-docker compose ps
-
-# Logs en direct
-docker compose logs -f hub-api
-
-# Redémarrer après modification du .env
-docker compose down && docker compose up -d
-
-# Mise à jour
-git pull && docker compose up -d --build
-
-# Sauvegarde manuelle de la DB
-docker compose exec db pg_dump -U hubadmin hub_auth > backup.sql</code></pre>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Sécurité -->
-            <div class="card mb-3 border-warning">
-                <div class="card-header bg-warning bg-opacity-10" data-bs-toggle="collapse" data-bs-target="#guideSecurity" role="button">
-                    <h5 class="mb-0"><i class="bi bi-shield-check me-2"></i>Sécurité — checklist</h5>
-                </div>
-                <div class="collapse" id="guideSecurity">
-                    <div class="card-body">
-                        <ul class="list-unstyled">
-                            <li>✅ Mot de passe admin changé au premier login</li>
-                            <li>✅ <code>SECRETS_ENCRYPTION_KEY</code> définie</li>
-                            <li>✅ <code>ALLOWED_ORIGINS</code> restreint aux domaines connus</li>
-                            <li>✅ <code>APP_WHITELIST_NETWORKS</code> limité</li>
-                            <li>✅ <code>ACCESS_TOKEN_EXPIRE_MINUTES=30</code></li>
-                            <li>✅ <code>.env</code> non versionné (pas dans Git)</li>
-                            <li>✅ Ports non exposés sur Internet</li>
-                        </ul>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </div>
-
     <!-- Change Password Modal -->
     <div class="modal fade" id="changePasswordModal" tabindex="-1">
         <div class="modal-dialog modal-dialog-centered">
@@ -3675,6 +3505,176 @@ docker compose exec db pg_dump -U hubadmin hub_auth > backup.sql</code></pre>
         </div>
     </div>
 
+    <!-- Guide de maintenance (modal) -->
+    <div class="modal fade" id="guideModal" tabindex="-1">
+        <div class="modal-dialog modal-lg modal-dialog-scrollable">
+            <div class="modal-content">
+                <div class="modal-header bg-dark text-white">
+                    <h5 class="modal-title"><i class="bi bi-book me-2"></i>Guide de maintenance</h5>
+                    <span class="badge bg-secondary me-2" id="guideHubVersion">v?.?</span>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Fermer"></button>
+                </div>
+                <div class="modal-body">
+
+            <!-- Utilisateurs -->
+            <div class="card mb-3">
+                <div class="card-header" data-bs-toggle="collapse" data-bs-target="#guideUsers" role="button">
+                    <h6 class="mb-0"><i class="bi bi-people me-2"></i>Gestion des utilisateurs</h6>
+                </div>
+                <div class="collapse show" id="guideUsers">
+                    <div class="card-body">
+                        <h6>Ajouter un utilisateur</h6>
+                        <ol>
+                            <li><b>Administration → Utilisateurs → Ajouter</b></li>
+                            <li>Saisir identifiant, mot de passe, email</li>
+                            <li>Choisir un rôle : <b>Admin</b>, <b>Manager</b>, <b>User</b>, <b>Viewer</b></li>
+                            <li>Optionnel : assigner à une ou plusieurs applications</li>
+                        </ol>
+                        <p class="small text-muted">Opérations en masse : <b>Importer CSV</b> (⋮ → Importer depuis CSV) ou <b>Assigner des rôles</b> (sélection multiple → ⋮).</p>
+
+                        <h6 class="mt-3">Profils d'accès</h6>
+                        <p>Un profil est un <b>modèle de rôles</b> applicable en un clic. Administration → Utilisateurs → Profils → Nouveau profil.</p>
+
+                        <h6 class="mt-3">Supprimer / désactiver</h6>
+                        <p>Table des utilisateurs → crayon → <b>Désactiver</b>. L'utilisateur ne peut plus se connecter mais ses données sont conservées.</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Applications -->
+            <div class="card mb-3">
+                <div class="card-header" data-bs-toggle="collapse" data-bs-target="#guideApps" role="button">
+                    <h6 class="mb-0"><i class="bi bi-grid me-2"></i>Gestion des applications</h6>
+                </div>
+                <div class="collapse" id="guideApps">
+                    <div class="card-body">
+                        <h6>Ajouter une application</h6>
+                        <ol>
+                            <li>Déployer l'app sur le serveur (voir guide d'installation)</li>
+                            <li>L'app s'auto-enregistre → apparaît <b>En attente</b> dans Admin → Applications</li>
+                            <li><b>Approuver</b> : bouton ✓ pour passer en Actif</li>
+                        </ol>
+
+                        <h6 class="mt-3">Pool de ports</h6>
+                        <p>Le Hub alloue automatiquement les ports des nouvelles apps. Voir l'état : <b>Administration → Pool de ports</b>.</p>
+                        <p class="small text-muted">Plages : API 9000-9499, Frontend 4200-4699. Configurable dans <code>.env</code>.</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Sauvegardes -->
+            <div class="card mb-3">
+                <div class="card-header" data-bs-toggle="collapse" data-bs-target="#guideBackups" role="button">
+                    <h6 class="mb-0"><i class="bi bi-archive me-2"></i>Sauvegardes</h6>
+                </div>
+                <div class="collapse" id="guideBackups">
+                    <div class="card-body">
+                        <h6>Sauvegarde planifiée</h6>
+                        <p>Administration → Sauvegardes → configurer par app : mode <b>scheduled</b>, cron (ex : <code>0 2 * * *</code>), rétention.</p>
+
+                        <h6 class="mt-3">Restaurer</h6>
+                        <p>Administration → Sauvegardes → ↺ sur l'app. ⚠️ <code>clear_existing=true</code> efface toutes les données.</p>
+
+                        <h6 class="mt-3">Snapshot système</h6>
+                        <p>Sauvegarde la configuration du Hub (apps, comptes, utilisateurs). Administration → Sauvegardes → Snapshots.</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Audit -->
+            <div class="card mb-3">
+                <div class="card-header" data-bs-toggle="collapse" data-bs-target="#guideAudit" role="button">
+                    <h6 class="mb-0"><i class="bi bi-graph-up me-2"></i>Audit et monitoring</h6>
+                </div>
+                <div class="collapse" id="guideAudit">
+                    <div class="card-body">
+                        <p>Le tableau de bord <b>Audit & Suivi</b> offre :</p>
+                        <ul>
+                            <li><b>Vue d'ensemble</b> : KPIs, alertes, sessions actives</li>
+                            <li><b>Par application</b> : stats, top utilisateurs</li>
+                            <li><b>Logs détaillés</b> : recherche par action, app, utilisateur, IP</li>
+                            <li><b>Erreurs</b> : 401, 403, 500 avec filtres</li>
+                        </ul>
+                        <p class="small text-muted">Rétention configurable : <code>AUDIT_RETENTION_DAYS=90</code>, <code>ERROR_RETENTION_DAYS=30</code>.</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Messagerie -->
+            <div class="card mb-3">
+                <div class="card-header" data-bs-toggle="collapse" data-bs-target="#guideMessages" role="button">
+                    <h6 class="mb-0"><i class="bi bi-chat-dots me-2"></i>Messagerie interne</h6>
+                </div>
+                <div class="collapse" id="guideMessages">
+                    <div class="card-body">
+                        <p><b>Messages → Nouveau</b> : cible (tous ou spécifiques), priorité (Info/Warning/Urgent), expiration.</p>
+                        <p>Les messages apparaissent dans le Hub (🔔) et dans chaque application.</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- VPN -->
+            <div class="card mb-3">
+                <div class="card-header" data-bs-toggle="collapse" data-bs-target="#guideVpn" role="button">
+                    <h6 class="mb-0"><i class="bi bi-shield-lock me-2"></i>VPN WireGuard</h6>
+                </div>
+                <div class="collapse" id="guideVpn">
+                    <div class="card-body">
+                        <p>Administration → VPN : activer, renseigner clé privée/publique, adresse, endpoint. Cliquer <b>Déployer</b>.</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Commandes -->
+            <div class="card mb-3">
+                <div class="card-header" data-bs-toggle="collapse" data-bs-target="#guideCli" role="button">
+                    <h6 class="mb-0"><i class="bi bi-terminal me-2"></i>Commandes utiles (terminal)</h6>
+                </div>
+                <div class="collapse" id="guideCli">
+                    <div class="card-body">
+                        <pre class="bg-dark text-light p-3 rounded small"><code># État des services
+docker compose ps
+
+# Logs en direct
+docker compose logs -f hub-api
+
+# Redémarrer après modification du .env
+docker compose down && docker compose up -d
+
+# Mise à jour
+git pull && docker compose up -d --build
+
+# Sauvegarde manuelle de la DB
+docker compose exec db pg_dump -U hubadmin hub_auth > backup.sql</code></pre>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Sécurité -->
+            <div class="card border-warning">
+                <div class="card-header bg-warning bg-opacity-10" data-bs-toggle="collapse" data-bs-target="#guideSecurity" role="button">
+                    <h6 class="mb-0"><i class="bi bi-shield-check me-2"></i>Sécurité — checklist</h6>
+                </div>
+                <div class="collapse" id="guideSecurity">
+                    <div class="card-body">
+                        <ul class="list-unstyled">
+                            <li>✅ Mot de passe admin changé au premier login</li>
+                            <li>✅ <code>SECRETS_ENCRYPTION_KEY</code> définie</li>
+                            <li>✅ <code>ALLOWED_ORIGINS</code> restreint aux domaines connus</li>
+                            <li>✅ <code>APP_WHITELIST_NETWORKS</code> limité</li>
+                            <li>✅ <code>ACCESS_TOKEN_EXPIRE_MINUTES=30</code></li>
+                            <li>✅ <code>.env</code> non versionné (pas dans Git)</li>
+                            <li>✅ Ports non exposés sur Internet</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Toast Container -->
     <div class="toast-container position-fixed bottom-0 end-0 p-3">
         <div id="toast" class="toast" role="alert">
@@ -3724,6 +3724,6 @@ docker compose exec db pg_dump -U hubadmin hub_auth > backup.sql</code></pre>
     <script src="js/modules/admin-apps-github.js?v=3.22.0"></script>
     <script src="js/app.js?v=3.22.0"></script>
     <script src="js/modules/init.js?v=3.22.0"></script>
-    <script src="js/modules/admin-vpn.js?v=3.23.0"></script>
+    <script src="js/modules/admin-vpn.js?v=3.27.0"></script>
 </body>
 </html>

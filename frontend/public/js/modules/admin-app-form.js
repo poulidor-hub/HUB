@@ -404,6 +404,7 @@ async function editApp(id) {
     document.getElementById('appRequiresAuth').checked = app.requires_auth;
     document.getElementById('appIsSharedService').checked = app.is_shared_service || false;
     document.getElementById('appIsUnmanaged').checked = app.is_unmanaged || false;
+    document.getElementById('appGitRepoUrl').value = app.git_repo_url || '';
     
     // Mode édition : URLs directes
     document.getElementById('simplePortsSection').classList.add('d-none');
@@ -492,6 +493,10 @@ async function handleSaveApp(event) {
             else if (frontendUrl === '') data.frontend_url = null;  // Permettre de vider explicitement
             if (callbackUrl) data.callback_url = callbackUrl;
             else if (callbackUrl === '') data.callback_url = null;  // Permettre de vider explicitement
+
+            const gitRepoUrl = document.getElementById('appGitRepoUrl')?.value?.trim() || null;
+            if (gitRepoUrl) data.git_repo_url = gitRepoUrl;
+            else data.git_repo_url = null;  // Permettre de vider explicitement
             
             await api.updateApp(id, data);
             showToast('Succès', 'Application modifiée', 'success');

@@ -51,6 +51,8 @@ class AppHealthItem(BaseModel):
     hub_connected: Optional[bool] = None
     services_count: Optional[int] = None
     m2m_token_available: Optional[bool] = None
+    # App système (HUB lui-même) — traité différemment côté UI
+    is_system_app: bool = False
 
 class HealthSummary(BaseModel):
     online: int = 0
@@ -191,7 +193,10 @@ async def get_apps_health(
         hub_connected = None
         services_count = None
         m2m_token_available = None
+        is_system = bool(getattr(app, "is_system_app", False))
+        is_hub = is_system and app.slug == "hub"
 
+        # Pour le HUB lui-meme : sonde normale + version lue localement
         async with _get_httpx_client() as client:
             # Phase 1 : trouver un endpoint sante joignable.
             # On ne s'arrete que sur un 2xx (vrai health endpoint) ou un 5xx
@@ -253,6 +258,28 @@ async def get_apps_health(
         if status == "offline" and not error:
             error = "Aucune reponse sur /health, /api/health, /"
 
+        # Pour le HUB : enrichir avec la version lue localement
+        # et les metriques internes (pas de /api/health/detailed expose)
+        if is_hub:
+            if not version:
+                from app.routes.docs import get_hub_version as _get_hub_version
+                version = _get_hub_version()
+            # Uptime processus calcule depuis /proc/self/stat (Linux)
+            if uptime_seconds is None:
+                try:
+                    with open("/proc/self/stat") as f:
+                        # Le champ 22 est starttime en ticks depuis le boot
+                        fields = f.read().split()
+                        if len(fields) > 21:
+                            uptime_ticks = int(fields[21])
+                            with open("/proc/uptime") as fu:
+                                system_uptime_s = float(fu.read().split()[0])
+                            CLK_TCK = 100  # sysconf(_SC_CLK_TCK) typique
+                            process_start_s = uptime_ticks / CLK_TCK
+                            uptime_seconds = max(0, system_uptime_s - process_start_s)
+                except Exception:
+                    pass
+
         return AppHealthItem(
             id=app.id,
             slug=app.slug,
@@ -269,6 +296,7 @@ async def get_apps_health(
             hub_connected=hub_connected,
             services_count=services_count,
             m2m_token_available=m2m_token_available,
+            is_system_app=is_system,
         )
 
     import asyncio
