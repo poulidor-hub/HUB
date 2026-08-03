@@ -5,6 +5,33 @@
 
 ---
 
+## [3.24.0] - 3 août 2026
+
+### ⚡ Préférences utilisateur globales + JWT tags + UI admin
+
+- **Système de préférences utilisateur** : les admins peuvent définir des catégories
+  de préférences (ex: secteur, équipe) avec des valeurs importées via CSV ou M2M depuis
+  une app source. Les utilisateurs sélectionnent leurs valeurs depuis leur dashboard.
+  Les apps consomment ces préférences automatiquement via le claim JWT `tags`.
+- **JWT `tags` claim** : `create_access_token()` inclut désormais les préférences de
+  l'utilisateur dans le payload JWT (`tags: {slug: [values]}`). Les apps qui ne gèrent
+  pas une préférence l'ignorent silencieusement.
+- **API REST** (`/api/tags`) : 12 endpoints — CRUD catégories (admin), import CSV/M2M,
+  GET/PUT préférences utilisateur (`/my`), liste et modification des préférences par
+  utilisateur (`/users`, `/user/{username}`), endpoint M2M pour les apps.
+- **Migration 047** : tables `tag_categories` et `user_tags` (idempotente `IF NOT EXISTS`).
+- **UI admin** : page « Préférences utilisateur » avec 3 onglets — Catégories (CRUD +
+  stats), Utilisateurs (vue table + modal d'édition des préférences de chaque user),
+  Mes préférences (sélection personnelle de l'admin).
+- **Widget dashboard** : « Mes préférences » pour les utilisateurs non-admin, avec
+  checkboxes (choix multiples) ou radios (choix unique).
+- **SSE** : événement `tags_updated` pour rafraîchir les widgets en temps réel.
+- **Tests** : 14 tests d'intégration (CRUD, validation, cascade, JWT, e2e login→tags).
+- **Correctifs** : proxy SSL redirect (`proxy_redirect` + `X-Forwarded-Proto`), grille
+  VPN peers UI, healthcheck frontend.
+
+---
+
 ## [3.23.0] - 2 août 2026
 
 ### ⚡ Guide modal + health enrichi + audit IP réelle + VPN fiabilisé
