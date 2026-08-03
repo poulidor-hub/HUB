@@ -210,14 +210,11 @@ class User(Base):
 
     def get_tags(self) -> dict[str, list[str]]:
         """Retourne les tags de l'utilisateur sous forme {category_slug: [values]}"""
-        try:
-            result: dict[str, list[str]] = {}
-            for ut in self.tags:
-                if ut.category.is_active:
-                    result.setdefault(ut.category.slug, []).append(ut.value)
-            return result
-        except Exception:
-            return {}
+        result: dict[str, list[str]] = {}
+        for ut in self.tags:
+            if ut.category.is_active:
+                result.setdefault(ut.category.slug, []).append(ut.value)
+        return result
     
     def __repr__(self):
         return f"<User {self.username}>"

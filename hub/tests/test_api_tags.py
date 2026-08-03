@@ -177,6 +177,42 @@ class TestUserTags:
         response = await client.get("/api/tags/my", headers=user_headers)
         assert "act" not in response.json()["tags"]
 
+    @pytest.mark.asyncio
+    async def test_login_produces_jwt_with_tags(
+        self, client: AsyncClient, async_session: AsyncSession,
+        admin_user: User, test_user: User
+    ):
+        """Login via password grant produces a JWT containing the user's tags."""
+        from app.models import TagCategory, UserTag
+
+        # Create a category
+        cat = TagCategory(slug="zone", label="Zone", source="csv",
+                          is_multiple=True, values=["Nord", "Sud"])
+        async_session.add(cat)
+        await async_session.commit()
+        await async_session.refresh(cat)
+
+        # Assign tags to test_user
+        async_session.add(UserTag(user_id=test_user.id, category_id=cat.id, value="Nord"))
+        await async_session.commit()
+
+        # Login via password grant
+        response = await client.post("/api/auth/token", data={
+            "grant_type": "password",
+            "username": test_user.username,
+            "password": "testpass123",
+        })
+        assert response.status_code == 200
+        token = response.json()["access_token"]
+
+        # Decode JWT and verify tags
+        import jwt as pyjwt
+        from app.config import get_settings
+        settings = get_settings()
+        payload = pyjwt.decode(token, settings.jwt_public_key, algorithms=[settings.jwt_algorithm])
+        assert "tags" in payload, f"tags claim missing from JWT. Payload keys: {list(payload.keys())}"
+        assert payload["tags"] == {"zone": ["Nord"]}
+
 
 class TestJWTTagsClaim:
 

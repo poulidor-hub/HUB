@@ -11,7 +11,7 @@ import secrets
 import logging
 
 from app.database import get_db
-from app.models import User, AuditLog, ServiceAccount, UserAppRole, UserSession, Application, utcnow
+from app.models import User, AuditLog, ServiceAccount, UserAppRole, UserSession, Application, UserTag, utcnow
 from app.schemas import (
     Token, LoginRequest, TokenIntrospection, RefreshTokenRequest, LogoutRequest,
     PasswordChangeRequest, AppLaunchResponse,
@@ -265,7 +265,10 @@ async def login_for_token(
     
     result = await db.execute(
         select(User)
-        .options(selectinload(User.app_roles).selectinload(UserAppRole.application))
+        .options(
+            selectinload(User.app_roles).selectinload(UserAppRole.application),
+            selectinload(User.tags).selectinload(UserTag.category),
+        )
         .where(User.username == username)
     )
     user = result.scalar_one_or_none()
@@ -349,7 +352,10 @@ async def login_with_redirect(
     
     result = await db.execute(
         select(User)
-        .options(selectinload(User.app_roles).selectinload(UserAppRole.application))
+        .options(
+            selectinload(User.app_roles).selectinload(UserAppRole.application),
+            selectinload(User.tags).selectinload(UserTag.category),
+        )
         .where(User.username == login_data.username)
     )
     user = result.scalar_one_or_none()
@@ -1058,7 +1064,10 @@ async def sso_login(
     # 1. Vérifier l'utilisateur
     result = await db.execute(
         select(User)
-        .options(selectinload(User.app_roles).selectinload(UserAppRole.application))
+        .options(
+            selectinload(User.app_roles).selectinload(UserAppRole.application),
+            selectinload(User.tags).selectinload(UserTag.category),
+        )
         .where(User.username == username)
     )
     user = result.scalar_one_or_none()

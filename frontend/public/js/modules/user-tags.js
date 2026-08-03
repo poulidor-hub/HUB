@@ -9,9 +9,9 @@ async function loadUserTagsWidget() {
 
     try {
         const [categoriesData, myTagsData] = await Promise.all([
-            api.getTagCategories(), api.getMyTags()
+            api.getActiveTagCategories(), api.getMyTags()
         ]);
-        const categories = (categoriesData.categories || []).filter(c => c.is_active);
+        const categories = categoriesData.categories || [];
         const myTags = myTagsData.tags || {};
 
         if (!categories.length) { container.classList.add('d-none'); return; }

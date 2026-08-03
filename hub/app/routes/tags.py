@@ -2,13 +2,14 @@
 Routes pour la gestion des tags utilisateur globaux.
 """
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query, status
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, delete
 from sqlalchemy.orm import selectinload
+import httpx
 
 from app.database import get_db
-from app.auth import get_current_admin, get_current_user
+from app.auth import get_current_admin, get_current_user, get_current_entity
 from app.models import User, Application, TagCategory, UserTag
 from app.schemas import (
     TagCategoryCreate,
@@ -58,6 +59,22 @@ async def list_categories(
     _: User = Depends(get_current_admin),
 ):
     result = await db.execute(select(TagCategory).order_by(TagCategory.label))
+    categories = result.scalars().all()
+    return TagCategoryListResponse(
+        categories=[TagCategoryResponse.model_validate(c) for c in categories],
+        total=len(categories),
+    )
+
+
+@router.get("/categories/active", response_model=TagCategoryListResponse)
+async def list_active_categories(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Retourne uniquement les catégories actives (pour le widget utilisateur)."""
+    result = await db.execute(
+        select(TagCategory).where(TagCategory.is_active == True).order_by(TagCategory.label)
+    )
     categories = result.scalars().all()
     return TagCategoryListResponse(
         categories=[TagCategoryResponse.model_validate(c) for c in categories],
@@ -288,7 +305,7 @@ async def update_my_tags(
 async def get_user_tags_m2m(
     username: str,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_admin),
+    _: User = Depends(get_current_entity),
 ):
     result = await db.execute(
         select(User).where(User.username == username)

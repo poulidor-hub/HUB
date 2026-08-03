@@ -12,7 +12,7 @@ from sqlalchemy.orm import selectinload
 
 from app.config import get_settings
 from app.database import get_db
-from app.models import User, ServiceAccount, RefreshToken, RevokedToken, UserAppRole, utcnow
+from app.models import User, ServiceAccount, RefreshToken, RevokedToken, UserAppRole, UserTag, utcnow
 
 settings = get_settings()
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -170,6 +170,7 @@ async def verify_refresh_token(
         select(RefreshToken)
         .options(
             selectinload(RefreshToken.user).selectinload(User.app_roles).selectinload(UserAppRole.application),
+            selectinload(RefreshToken.user).selectinload(User.tags).selectinload(UserTag.category),
             selectinload(RefreshToken.service_account).selectinload(ServiceAccount.applications)
         )
         .where(RefreshToken.token_hash == token_hash)
@@ -333,7 +334,10 @@ async def get_current_user(
     
     result = await db.execute(
         select(User)
-        .options(selectinload(User.app_roles).selectinload(UserAppRole.application))
+        .options(
+            selectinload(User.app_roles).selectinload(UserAppRole.application),
+            selectinload(User.tags).selectinload(UserTag.category),
+        )
         .where(User.username == username)
     )
     user = result.scalar_one_or_none()
@@ -382,7 +386,10 @@ async def get_current_entity(
     else:
         result = await db.execute(
             select(User)
-            .options(selectinload(User.app_roles).selectinload(UserAppRole.application))
+            .options(
+                selectinload(User.app_roles).selectinload(UserAppRole.application),
+                selectinload(User.tags).selectinload(UserTag.category),
+            )
             .where(User.username == identifier)
         )
         entity = result.scalar_one_or_none()

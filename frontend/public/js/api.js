@@ -616,6 +616,10 @@ class HubAPI {
         return this.request('/tags/categories');
     }
 
+    async getActiveTagCategories() {
+        return this.request('/tags/categories/active');
+    }
+
     async createTagCategory(data) {
         return this.request('/tags/categories', {
             method: 'POST', body: JSON.stringify(data)

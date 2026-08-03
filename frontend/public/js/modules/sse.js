@@ -514,8 +514,8 @@ function handleSSEEvent(data) {
             break;
 
         case 'tags_updated':
-            var action = data?.action;
-            var affectedUserId = data?.user_id;
+            var action = data.data?.action;
+            var affectedUserId = data.data?.user_id;
             if (action === 'user_tags_changed' && currentUser && affectedUserId === currentUser.id) {
                 if (typeof refreshTokenAfterAppChange === 'function') refreshTokenAfterAppChange();
                 if (typeof loadUserTagsWidget === 'function') loadUserTagsWidget();

@@ -23,7 +23,7 @@ import json
 
 from app.database import get_db
 from app.models import (
-    User, UserAppRole, AccountRequest, AppSetting, UserMessage,
+    User, UserAppRole, UserTag, AccountRequest, AppSetting, UserMessage,
     user_profiles, utcnow,
 )
 from app.auth import get_password_hash, get_current_admin
@@ -205,7 +205,9 @@ async def auto_login_with_token(
         select(User)
         .options(
             selectinload(User.app_roles)
-            .selectinload(UserAppRole.application)
+            .selectinload(UserAppRole.application),
+            selectinload(User.tags)
+            .selectinload(UserTag.category),
         )
         .where(User.username == req.username)
     )
