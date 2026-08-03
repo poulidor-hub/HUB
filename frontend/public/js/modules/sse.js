@@ -512,6 +512,25 @@ function handleSSEEvent(data) {
                 if (toggle) toggle.checked = data.data.value === 'true';
             }
             break;
+
+        case 'tags_updated':
+            var action = data?.action;
+            var affectedUserId = data?.user_id;
+            if (action === 'user_tags_changed' && currentUser && affectedUserId === currentUser.id) {
+                if (typeof refreshTokenAfterAppChange === 'function') refreshTokenAfterAppChange();
+                if (typeof loadUserTagsWidget === 'function') loadUserTagsWidget();
+            } else if (['category_created', 'category_updated', 'category_deleted',
+                         'category_csv_import', 'category_m2m_import'].indexOf(action) !== -1) {
+                if (typeof loadUserTagsWidget === 'function' &&
+                    !document.getElementById('userTagsWidget')?.classList.contains('d-none')) {
+                    loadUserTagsWidget();
+                }
+                if (typeof currentPage !== 'undefined' && currentPage === 'admin-user-tags' &&
+                    typeof loadUserTagsAdmin === 'function') {
+                    loadUserTagsAdmin();
+                }
+            }
+            break;
     }
 }
 
