@@ -1,7 +1,7 @@
 -- 047_user_tags.sql
 -- User tags: admin-defined categories, user-selectable values
 
-CREATE TABLE tag_categories (
+CREATE TABLE IF NOT EXISTS tag_categories (
     id SERIAL PRIMARY KEY,
     slug VARCHAR(80) UNIQUE NOT NULL,
     label VARCHAR(150) NOT NULL,
@@ -14,7 +14,7 @@ CREATE TABLE tag_categories (
     updated_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
 
-CREATE TABLE user_tags (
+CREATE TABLE IF NOT EXISTS user_tags (
     id SERIAL PRIMARY KEY,
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     category_id INTEGER NOT NULL REFERENCES tag_categories(id) ON DELETE CASCADE,
@@ -23,5 +23,5 @@ CREATE TABLE user_tags (
     UNIQUE(user_id, category_id, value)
 );
 
-CREATE INDEX idx_user_tags_user ON user_tags(user_id);
-CREATE INDEX idx_user_tags_category ON user_tags(category_id);
+CREATE INDEX IF NOT EXISTS idx_user_tags_user ON user_tags(user_id);
+CREATE INDEX IF NOT EXISTS idx_user_tags_category ON user_tags(category_id);
