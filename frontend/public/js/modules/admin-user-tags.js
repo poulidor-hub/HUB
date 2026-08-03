@@ -1,6 +1,6 @@
 /**
  * admin-user-tags.js
- * Module admin pour la gestion des catégories de tags utilisateur
+ * Module admin pour la gestion des préférences utilisateur
  */
 
 // ─── Chargement ───────────────────────────────────────────────────
@@ -12,9 +12,9 @@ async function loadUserTagsAdmin() {
         renderTagCategoriesTable(categories);
         updateTagStats(categories);
     } catch (error) {
-        console.error('Erreur chargement tags:', error);
+        console.error('Erreur chargement préférences:', error);
         document.getElementById('adminUserTagsTable').innerHTML =
-            '<div class="data-error">Erreur lors du chargement des catégories</div>';
+            '<div class="data-error">Erreur lors du chargement</div>';
     }
 }
 
@@ -25,20 +25,32 @@ function updateTagStats(categories) {
     document.getElementById('tagStatsUnique').textContent = categories.filter(c => !c.is_multiple).length;
 }
 
+// ─── Slug auto-généré ─────────────────────────────────────────────
+
+function slugify(text) {
+    return text
+        .toString()
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '') // enlever les accents
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '')
+        .substring(0, 80);
+}
+
 // ─── Rendu table ──────────────────────────────────────────────────
 
 function renderTagCategoriesTable(categories) {
     const container = document.getElementById('adminUserTagsTable');
     if (!categories.length) {
-        container.innerHTML = '<div class="data-empty">Aucune catégorie de tags définie</div>';
+        container.innerHTML = '<div class="data-empty">Aucune préférence définie</div>';
         return;
     }
     const rows = categories.map(cat => `
         <tr>
-            <td><strong>${escapeHtml(cat.label)}</strong><br><small class="text-muted">${escapeHtml(cat.slug)}</small></td>
-            <td>${cat.is_multiple ? '<span class="badge bg-info">Multiple</span>' : '<span class="badge bg-secondary">Unique</span>'}</td>
-            <td>${cat.source === 'm2m' ? '<span class="badge bg-primary">M2M</span>' : '<span class="badge bg-success">CSV</span>'}</td>
-            <td>${(cat.values || []).length}</td>
+            <td><strong>${escapeHtml(cat.label)}</strong></td>
+            <td>${cat.is_multiple ? '<span class="badge bg-info">Multiples</span>' : '<span class="badge bg-secondary">Unique</span>'}</td>
+            <td>${(cat.values || []).length} choix</td>
             <td>${cat.is_active ? '<span class="badge bg-success">Actif</span>' : '<span class="badge bg-danger">Inactif</span>'}</td>
             <td>
                 <button class="btn btn-sm btn-primary me-1" onclick="showTagCategoryModal('${cat.slug}')"><i class="bi bi-pencil"></i></button>
@@ -47,8 +59,8 @@ function renderTagCategoriesTable(categories) {
         </tr>
     `).join('');
     container.innerHTML = `
-        <table class="table table-hover data-table">
-            <thead><tr><th>Catégorie</th><th>Type</th><th>Source</th><th>Nb valeurs</th><th>Statut</th><th>Actions</th></tr></thead>
+        <table class="table table-hover align-middle mb-0">
+            <thead><tr><th>Préférence</th><th>Type</th><th>Choix</th><th>Statut</th><th>Actions</th></tr></thead>
             <tbody>${rows}</tbody>
         </table>`;
 }
@@ -61,8 +73,7 @@ async function showTagCategoryModal(slug) {
     const modalEl = document.getElementById('tagCategoryModal');
     if (!tagModalInstance) tagModalInstance = new bootstrap.Modal(modalEl);
 
-    document.getElementById('tagModalTitle').textContent = slug ? 'Modifier la catégorie' : 'Nouvelle catégorie';
-    document.getElementById('tagFormSlug').value = '';
+    document.getElementById('tagModalTitle').textContent = slug ? 'Modifier la préférence' : 'Nouvelle préférence';
     document.getElementById('tagFormLabel').value = '';
     document.getElementById('tagFormIsMultiple').checked = false;
     document.getElementById('tagFormSourceCsv').checked = true;
@@ -70,7 +81,6 @@ async function showTagCategoryModal(slug) {
     document.getElementById('tagFormSourceApp').value = '';
     document.getElementById('tagFormSourceAppGroup').classList.add('d-none');
     document.getElementById('tagFormValues').value = '';
-    document.getElementById('tagFormSlug').disabled = false;
 
     await loadSourceAppsDropdown();
 
@@ -79,8 +89,6 @@ async function showTagCategoryModal(slug) {
             const data = await api.getTagCategories();
             const cat = (data.categories || []).find(c => c.slug === slug);
             if (cat) {
-                document.getElementById('tagFormSlug').value = cat.slug;
-                document.getElementById('tagFormSlug').disabled = true;
                 document.getElementById('tagFormLabel').value = cat.label;
                 document.getElementById('tagFormIsMultiple').checked = cat.is_multiple;
                 if (cat.source === 'm2m') {
@@ -91,12 +99,11 @@ async function showTagCategoryModal(slug) {
                 document.getElementById('tagFormValues').value = (cat.values || []).join('\n');
             }
         } catch (e) {
-            showToast('Erreur lors du chargement de la catégorie', 'danger');
+            showToast('Erreur lors du chargement', 'danger');
             return;
         }
     }
 
-    // Wrapper CSV import button
     const csvBtn = document.getElementById('btnImportCsvTag');
     if (csvBtn) csvBtn.onclick = () => handleImportTagCsv(slug);
 
@@ -122,7 +129,6 @@ function toggleTagSource() {
 }
 
 async function handleSaveTagCategory() {
-    const slug = document.getElementById('tagFormSlug').value.trim();
     const label = document.getElementById('tagFormLabel').value.trim();
     const isMultiple = document.getElementById('tagFormIsMultiple').checked;
     const source = document.getElementById('tagFormSourceM2m').checked ? 'm2m' : 'csv';
@@ -130,19 +136,22 @@ async function handleSaveTagCategory() {
     const valuesRaw = document.getElementById('tagFormValues').value.trim();
     const values = valuesRaw ? valuesRaw.split('\n').map(v => v.trim()).filter(v => v) : [];
 
-    if (!slug || !label) { showToast('Slug et label sont obligatoires', 'danger'); return; }
+    if (!label) { showToast('Le nom de la préférence est obligatoire', 'danger'); return; }
 
     try {
         const existingData = await api.getTagCategories();
-        const existing = (existingData.categories || []).find(c => c.slug === slug);
+        const existing = (existingData.categories || []).find(c => c.label === label);
+        const slug = existing ? existing.slug : slugify(label);
+
         if (existing) {
             await api.updateTagCategory(slug, {
                 label, is_multiple: isMultiple, values, is_active: existing.is_active
             });
-            showToast('Catégorie mise à jour', 'success');
+            showToast('Préférence mise à jour', 'success');
         } else {
+            if (!slug) { showToast('Le nom ne permet pas de générer un identifiant valide', 'danger'); return; }
             await api.createTagCategory({ slug, label, is_multiple: isMultiple, source, source_app_id: sourceAppId, values });
-            showToast('Catégorie créée', 'success');
+            showToast('Préférence créée', 'success');
         }
         tagModalInstance.hide();
         loadUserTagsAdmin();
@@ -152,10 +161,10 @@ async function handleSaveTagCategory() {
 }
 
 async function deleteTagCategory(slug) {
-    if (!confirm(`Supprimer définitivement la catégorie "${slug}" ? Les sélections utilisateur seront perdues.`)) return;
+    if (!confirm('Supprimer cette préférence ? Les choix des utilisateurs seront perdus.')) return;
     try {
         await api.deleteTagCategory(slug);
-        showToast('Catégorie supprimée', 'success');
+        showToast('Préférence supprimée', 'success');
         loadUserTagsAdmin();
     } catch (error) {
         showToast(error.message || 'Erreur lors de la suppression', 'danger');
@@ -173,10 +182,10 @@ function handleImportTagCsv(slug) {
         if (!file) return;
         try {
             const result = await api.importTagCsv(slug, file, 'replace');
-            showToast(`Import réussi : ${result.values ? result.values.length : 0} valeurs importées`, 'success');
+            showToast(result.values.length + ' choix importés', 'success');
             loadUserTagsAdmin();
         } catch (error) {
-            showToast(error.message || 'Erreur lors de l\'import CSV', 'danger');
+            showToast(error.message || 'Erreur lors de l\'import', 'danger');
         }
     };
     input.click();
@@ -185,9 +194,9 @@ function handleImportTagCsv(slug) {
 async function handleImportTagM2m(slug) {
     try {
         const result = await api.importTagM2m(slug);
-        showToast(`Sync M2M réussie : ${result.values ? result.values.length : 0} valeurs importées`, 'success');
+        showToast(result.values.length + ' choix importés depuis l\'application', 'success');
         loadUserTagsAdmin();
     } catch (error) {
-        showToast(error.message || 'Erreur lors de la synchronisation M2M', 'danger');
+        showToast(error.message || 'Erreur lors de la synchronisation', 'danger');
     }
 }

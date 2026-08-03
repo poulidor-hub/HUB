@@ -58,11 +58,11 @@
                                 <span class="badge bg-info ms-1" id="navMessagesBadge" style="display: none; font-size: 0.65em;">0</span>
                             </a>
                         </li>
-                        <li class="nav-item">
-                            <a class="nav-link" href="#" data-action="showPage" data-args="admin-user-tags" id="navUserTags">
-                                <i class="bi bi-tags me-1"></i>Tags utilisateurs
-                            </a>
-                        </li>
+<li class="nav-item">
+    <a class="nav-link" href="#" data-action="showPage" data-args="admin-user-tags" id="navUserTags">
+        <i class="bi bi-sliders2 me-1"></i>Préférences
+    </a>
+</li>
                     </ul>
                 </div>
                 
@@ -1509,12 +1509,12 @@
             <!-- En-tête -->
             <div class="d-flex justify-content-between align-items-center mb-4">
                 <div>
-                    <h1 class="h3 mb-1"><i class="bi bi-tags me-2"></i>Tags utilisateurs</h1>
-                    <p class="text-muted mb-0">Gérer les catégories de tags et leurs valeurs</p>
+                    <h1 class="h3 mb-1"><i class="bi bi-sliders2 me-2"></i>Préférences utilisateur</h1>
+                    <p class="text-muted mb-0">Définir des choix que les utilisateurs pourront sélectionner pour personnaliser leur expérience</p>
                 </div>
                 <div class="d-flex gap-2">
                     <button class="btn btn-primary btn-sm" onclick="showTagCategoryModal()">
-                        <i class="bi bi-plus-lg me-1"></i>Nouvelle catégorie
+                        <i class="bi bi-plus-lg me-1"></i>Nouvelle préférence
                     </button>
                 </div>
             </div>
@@ -1571,39 +1571,34 @@
     <div class="modal-dialog modal-lg">
         <div class="modal-content">
             <div class="modal-header">
-                <h5 class="modal-title" id="tagModalTitle">Nouvelle catégorie</h5>
+                <h5 class="modal-title" id="tagModalTitle">Nouvelle préférence</h5>
                 <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Fermer"></button>
             </div>
             <div class="modal-body">
                 <div class="mb-3">
-                    <label class="form-label">Slug *</label>
-                    <input type="text" class="form-control" id="tagFormSlug"
-                           placeholder="ex: secteur-geo" pattern="[a-z0-9_-]+">
-                    <small class="text-muted">Identifiant unique (minuscules, chiffres, tirets, underscores)</small>
-                </div>
-                <div class="mb-3">
-                    <label class="form-label">Label *</label>
+                    <label class="form-label">Nom de la préférence *</label>
                     <input type="text" class="form-control" id="tagFormLabel"
                            placeholder="ex: Secteur géographique">
                 </div>
                 <div class="mb-3">
+                    <label class="form-label">Type de choix</label>
                     <div class="form-check">
                         <input class="form-check-input" type="checkbox" id="tagFormIsMultiple">
-                        <label class="form-check-label" for="tagFormIsMultiple">Choix multiple (checkboxes)</label>
-                        <small class="text-muted d-block">Décoché = choix unique (radios)</small>
+                        <label class="form-check-label" for="tagFormIsMultiple">Choix multiples (l'utilisateur peut en sélectionner plusieurs)</label>
                     </div>
+                    <small class="text-muted">Décoché = un seul choix possible</small>
                 </div>
                 <div class="mb-3">
-                    <label class="form-label">Source des valeurs</label>
+                    <label class="form-label">Alimentation des choix</label>
                     <div class="form-check">
                         <input class="form-check-input" type="radio" name="tagSource"
                                id="tagFormSourceCsv" checked onchange="toggleTagSource()">
-                        <label class="form-check-label" for="tagFormSourceCsv">CSV (import fichier)</label>
+                        <label class="form-check-label" for="tagFormSourceCsv">Saisie manuelle ou fichier CSV</label>
                     </div>
                     <div class="form-check">
                         <input class="form-check-input" type="radio" name="tagSource"
                                id="tagFormSourceM2m" onchange="toggleTagSource()">
-                        <label class="form-check-label" for="tagFormSourceM2m">M2M (import depuis une app)</label>
+                        <label class="form-check-label" for="tagFormSourceM2m">Importer depuis une application</label>
                     </div>
                     <div id="tagFormSourceAppGroup" class="mt-2 d-none">
                         <label class="form-label">Application source</label>
@@ -1613,11 +1608,11 @@
                     </div>
                 </div>
                 <div class="mb-3">
-                    <label class="form-label">Valeurs (une par ligne)</label>
-                    <textarea class="form-control" id="tagFormValues" rows="8"
+                    <label class="form-label">Choix disponibles (un par ligne)</label>
+                    <textarea class="form-control" id="tagFormValues" rows="6"
                               placeholder="Nord&#10;Sud&#10;Est&#10;Ouest"></textarea>
                     <button type="button" class="btn btn-sm btn-outline-secondary mt-1" id="btnImportCsvTag">
-                        <i class="bi bi-upload me-1"></i>Importer CSV
+                        <i class="bi bi-upload me-1"></i>Importer un fichier CSV
                     </button>
                 </div>
             </div>
