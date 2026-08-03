@@ -58,6 +58,11 @@
                                 <span class="badge bg-info ms-1" id="navMessagesBadge" style="display: none; font-size: 0.65em;">0</span>
                             </a>
                         </li>
+                        <li class="nav-item">
+                            <a class="nav-link" href="#" data-action="showPage" data-args="admin-user-tags" id="navUserTags">
+                                <i class="bi bi-tags me-1"></i>Tags utilisateurs
+                            </a>
+                        </li>
                     </ul>
                 </div>
                 
@@ -271,6 +276,7 @@
         <div id="appsGrid" class="row g-4">
             <!-- Apps will be loaded here -->
         </div>
+        <div id="userTagsWidget" class="mt-4 d-none"></div>
     </div>
 
     <!-- Section Audit (page dédiée) -->
@@ -1349,23 +1355,6 @@
 
                             <!-- État : initialisé -->
                             <div id="vpnMainPanel" class="d-none">
-                                <!-- Barre d'actions haute -->
-                                <div class="d-flex justify-content-between align-items-center mb-3">
-                                    <div>
-                                        <button class="btn btn-primary btn-sm" data-action="handleAddPeer"
-                                                data-bs-toggle="modal" data-bs-target="#vpnAddPeerModal">
-                                            <i class="bi bi-person-plus me-1"></i>Ajouter un peer
-                                        </button>
-                                    </div>
-                                    <div>
-                                        <span class="text-muted small me-2" id="vpnPeerCount"></span>
-                                        <button class="vpn-advanced-toggle" type="button"
-                                                data-bs-toggle="collapse" data-bs-target="#vpnServerSettings">
-                                            <i class="bi bi-gear me-1"></i>Réglages
-                                        </button>
-                                    </div>
-                                </div>
-
                                 <!-- ZONE 1 : KPI -->
                                 <div class="vpn-kpi-row" id="vpnKpiRow">
                                     <div class="vpn-kpi-card">
@@ -1398,13 +1387,28 @@
                                     </div>
                                 </div>
 
-                                <!-- ZONE 2 : Filtres -->
-                                <div class="vpn-filter-bar">
-                                    <input type="search" class="vpn-filter-search" id="vpnFilterSearch"
-                                           placeholder="Rechercher un utilisateur ou device...">
-                                    <span class="vpn-filter-chip active" data-filter="all">Tous</span>
-                                    <span class="vpn-filter-chip" data-filter="connected">Connectés</span>
-                                    <span class="vpn-filter-chip" data-filter="disconnected">Tous déconnectés</span>
+                                <!-- ZONE 2 : Contrôles (ajout + recherche + filtres + réglages) -->
+                                <div class="vpn-controls">
+                                    <div class="vpn-controls-left">
+                                        <button class="btn btn-primary btn-sm" data-action="handleAddPeer"
+                                                data-bs-toggle="modal" data-bs-target="#vpnAddPeerModal">
+                                            <i class="bi bi-person-plus me-1"></i>Ajouter un peer
+                                        </button>
+                                        <span class="vpn-peer-count" id="vpnPeerCount"></span>
+                                    </div>
+                                    <div class="vpn-controls-right">
+                                        <input type="search" class="vpn-filter-search" id="vpnFilterSearch"
+                                               placeholder="Rechercher...">
+                                        <div class="vpn-filter-chips">
+                                            <span class="vpn-filter-chip active" data-filter="all">Tous</span>
+                                            <span class="vpn-filter-chip" data-filter="connected">Connectés</span>
+                                        </div>
+                                        <button class="vpn-advanced-toggle" type="button"
+                                                data-bs-toggle="collapse" data-bs-target="#vpnServerSettings"
+                                                title="Réglages serveur">
+                                            <i class="bi bi-gear me-1"></i><span class="d-none d-lg-inline">Réglages</span>
+                                        </button>
+                                    </div>
                                 </div>
 
                                 <!-- ZONE 3 : Grille cartes utilisateur -->
@@ -1498,6 +1502,96 @@
             </div>
         </div>
     </div>
+
+<!-- Section Admin User Tags -->
+<div id="adminUserTagsSection" class="container py-5 d-none" style="margin-top: 70px;">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h1><i class="bi bi-tags me-2"></i>Tags utilisateurs</h1>
+        <button class="btn btn-primary" onclick="showTagCategoryModal()">
+            <i class="bi bi-plus-lg me-1"></i>Nouvelle catégorie
+        </button>
+    </div>
+
+    <div class="row mb-4">
+        <div class="col-md-3"><div class="card border-start border-primary"><div class="card-body">
+            <h6 class="text-muted">Total</h6><h3 id="tagStatsTotal">0</h3>
+        </div></div></div>
+        <div class="col-md-3"><div class="card border-start border-success"><div class="card-body">
+            <h6 class="text-muted">Actives</h6><h3 id="tagStatsActive">0</h3>
+        </div></div></div>
+        <div class="col-md-3"><div class="card border-start border-info"><div class="card-body">
+            <h6 class="text-muted">Multiples</h6><h3 id="tagStatsMultiple">0</h3>
+        </div></div></div>
+        <div class="col-md-3"><div class="card border-start border-secondary"><div class="card-body">
+            <h6 class="text-muted">Uniques</h6><h3 id="tagStatsUnique">0</h3>
+        </div></div></div>
+    </div>
+
+    <div class="card"><div id="adminUserTagsTable"><div class="data-loading">Chargement...</div></div></div>
+</div>
+
+<!-- Modal Tag Category -->
+<div class="modal fade" id="tagCategoryModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="tagModalTitle">Nouvelle catégorie</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Fermer"></button>
+            </div>
+            <div class="modal-body">
+                <div class="mb-3">
+                    <label class="form-label">Slug *</label>
+                    <input type="text" class="form-control" id="tagFormSlug"
+                           placeholder="ex: secteur-geo" pattern="[a-z0-9_-]+">
+                    <small class="text-muted">Identifiant unique (minuscules, chiffres, tirets, underscores)</small>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">Label *</label>
+                    <input type="text" class="form-control" id="tagFormLabel"
+                           placeholder="ex: Secteur géographique">
+                </div>
+                <div class="mb-3">
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" id="tagFormIsMultiple">
+                        <label class="form-check-label" for="tagFormIsMultiple">Choix multiple (checkboxes)</label>
+                        <small class="text-muted d-block">Décoché = choix unique (radios)</small>
+                    </div>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">Source des valeurs</label>
+                    <div class="form-check">
+                        <input class="form-check-input" type="radio" name="tagSource"
+                               id="tagFormSourceCsv" checked onchange="toggleTagSource()">
+                        <label class="form-check-label" for="tagFormSourceCsv">CSV (import fichier)</label>
+                    </div>
+                    <div class="form-check">
+                        <input class="form-check-input" type="radio" name="tagSource"
+                               id="tagFormSourceM2m" onchange="toggleTagSource()">
+                        <label class="form-check-label" for="tagFormSourceM2m">M2M (import depuis une app)</label>
+                    </div>
+                    <div id="tagFormSourceAppGroup" class="mt-2 d-none">
+                        <label class="form-label">Application source</label>
+                        <select class="form-select" id="tagFormSourceApp">
+                            <option value="">-- Sélectionner --</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">Valeurs (une par ligne)</label>
+                    <textarea class="form-control" id="tagFormValues" rows="8"
+                              placeholder="Nord&#10;Sud&#10;Est&#10;Ouest"></textarea>
+                    <button type="button" class="btn btn-sm btn-outline-secondary mt-1" id="btnImportCsvTag">
+                        <i class="bi bi-upload me-1"></i>Importer CSV
+                    </button>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuler</button>
+                <button type="button" class="btn btn-primary" onclick="handleSaveTagCategory()">Enregistrer</button>
+            </div>
+        </div>
+    </div>
+</div>
 
     <!-- ================================================================= -->
     <!-- Section Messages (Admin) — Layout 3 volets -->
@@ -3713,6 +3807,8 @@ docker compose exec db pg_dump -U hubadmin hub_auth > backup.sql</code></pre>
     <script src="js/modules/admin-ports.js?v=3.23.0"></script>
     <script src="js/modules/audit-page.js?v=3.23.0"></script>
     <script src="js/modules/admin-users-profiles.js?v=3.23.0"></script>
+    <script src="js/modules/admin-user-tags.js?v=20260803"></script>
+    <script src="js/modules/user-tags.js?v=20260803"></script>
     <script src="js/modules/audit-errors.js?v=3.23.0"></script>
     <script src="js/modules/apps-health.js?v=3.23.0"></script>
     <script src="js/modules/backup-import.js?v=3.23.0"></script>
