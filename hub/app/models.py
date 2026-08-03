@@ -95,6 +95,40 @@ class Profile(Base):
         return f"<Profile {self.name}>"
 
 
+class TagCategory(Base):
+    __tablename__ = "tag_categories"
+
+    id = Column(Integer, primary_key=True, index=True)
+    slug = Column(String(80), unique=True, nullable=False)
+    label = Column(String(150), nullable=False)
+    is_multiple = Column(Boolean, default=False, nullable=False)
+    source = Column(String(20), nullable=False)  # "csv" ou "m2m"
+    source_app_id = Column(Integer, ForeignKey('applications.id', ondelete='SET NULL'), nullable=True)
+    values = Column(JSON, nullable=False, default=list)
+    is_active = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime, default=utcnow)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
+
+    source_app = relationship("Application", lazy="raise")
+    user_tags = relationship("UserTag", back_populates="category", cascade="all, delete-orphan", lazy="raise")
+
+
+class UserTag(Base):
+    __tablename__ = "user_tags"
+    __table_args__ = (
+        UniqueConstraint('user_id', 'category_id', 'value', name='uq_user_tags_user_category_value'),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
+    category_id = Column(Integer, ForeignKey('tag_categories.id', ondelete='CASCADE'), nullable=False)
+    value = Column(String(255), nullable=False)
+    created_at = Column(DateTime, default=utcnow)
+
+    user = relationship("User", back_populates="tags", lazy="raise")
+    category = relationship("TagCategory", back_populates="user_tags", lazy="raise")
+
+
 class UserAppRole(Base):
     """Table d'association User <-> Application avec rôle"""
     __tablename__ = "user_app_roles"
@@ -156,6 +190,7 @@ class User(Base):
     favorites = relationship("UserFavorite", back_populates="user", cascade="all, delete-orphan", lazy="raise")
     refresh_tokens = relationship("RefreshToken", back_populates="user", cascade="all, delete-orphan")
     sessions = relationship("UserSession", back_populates="user", cascade="all, delete-orphan")
+    tags = relationship("UserTag", back_populates="user", cascade="all, delete-orphan", lazy="raise")
     
     @property
     def applications(self):
@@ -172,6 +207,14 @@ class User(Base):
     def get_apps_with_roles(self) -> dict:
         """Retourne un dict {app_slug: role}"""
         return {ar.application.slug: ar.role for ar in self.app_roles}
+
+    def get_tags(self) -> dict[str, list[str]]:
+        """Retourne les tags de l'utilisateur sous forme {category_slug: [values]}"""
+        result: dict[str, list[str]] = {}
+        for ut in self.tags:
+            if ut.category.is_active:
+                result.setdefault(ut.category.slug, []).append(ut.value)
+        return result
     
     def __repr__(self):
         return f"<User {self.username}>"

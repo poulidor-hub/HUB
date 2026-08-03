@@ -170,6 +170,7 @@ function showPage(page) {
     document.getElementById('adminSection').classList.add('d-none');
     document.getElementById('messagesSection').classList.add('d-none');
     document.getElementById('userInboxSection')?.classList.add('d-none');
+    document.getElementById('adminUserTagsSection')?.classList.add('d-none');
     _clearInboxMarkReadTimer();
     _resetInboxDetailView();
     
@@ -186,6 +187,7 @@ function showPage(page) {
     switch(page) {
         case 'dashboard':
             document.getElementById('dashboardSection').classList.remove('d-none');
+            if (typeof loadUserTagsWidget === 'function') loadUserTagsWidget();
             break;
         case 'audit':
             if (!currentUser?.is_admin) {
@@ -237,6 +239,17 @@ function showPage(page) {
             document.getElementById('messagesSection').classList.remove('d-none');
             document.getElementById('navMessages')?.classList.add('active');
             loadMessagesPage();
+            break;
+        case 'admin-user-tags':
+            if (!currentUser?.is_admin) {
+                showToast('Accès refusé', 'Vous devez être administrateur', 'danger');
+                return;
+            }
+            document.getElementById('adminUserTagsSection').classList.remove('d-none');
+            document.getElementById('navUserTags')?.classList.add('active');
+            loadUserTagsAdmin();
+            loadAdminMyTags();
+            loadAdminTagUsers();
             break;
         case 'inbox':
             document.getElementById('userInboxSection').classList.remove('d-none');

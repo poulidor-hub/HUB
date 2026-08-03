@@ -11,7 +11,7 @@ import secrets
 import logging
 
 from app.database import get_db
-from app.models import User, AuditLog, ServiceAccount, UserAppRole, UserSession, Application, utcnow
+from app.models import User, AuditLog, ServiceAccount, UserAppRole, UserSession, Application, UserTag, utcnow
 from app.schemas import (
     Token, LoginRequest, TokenIntrospection, RefreshTokenRequest, LogoutRequest,
     PasswordChangeRequest, AppLaunchResponse,
@@ -164,6 +164,7 @@ async def login_for_token(
             apps = user.get_apps_with_roles()  # Dict {app_slug: role}
             sub = user.username
             beacon_token = generate_beacon_token(user.id)
+            tags = user.get_tags()
             
             # Mettre à jour l'activité de la session (le refresh = activité)
             from app.routes.audit import update_session_activity
@@ -178,11 +179,13 @@ async def login_for_token(
             # Service accounts ont accès "service" aux apps
             apps = {app.slug: "service" for app in sa.applications}
             sub = sa.client_id
+            tags = None  # Service accounts n'ont pas de tags utilisateur
         
         token, expire, jti = create_access_token(
             username=sub,
             apps=apps,
-            is_service_account=refresh_obj.service_account_id is not None
+            is_service_account=refresh_obj.service_account_id is not None,
+            tags=tags,
         )
         
         await db.commit()
@@ -262,7 +265,10 @@ async def login_for_token(
     
     result = await db.execute(
         select(User)
-        .options(selectinload(User.app_roles).selectinload(UserAppRole.application))
+        .options(
+            selectinload(User.app_roles).selectinload(UserAppRole.application),
+            selectinload(User.tags).selectinload(UserTag.category),
+        )
         .where(User.username == username)
     )
     user = result.scalar_one_or_none()
@@ -285,7 +291,8 @@ async def login_for_token(
     
     token, expire, jti = create_access_token(
         username=user.username,
-        apps=apps
+        apps=apps,
+        tags=user.get_tags(),
     )
     
     # Créer un refresh token
@@ -345,7 +352,10 @@ async def login_with_redirect(
     
     result = await db.execute(
         select(User)
-        .options(selectinload(User.app_roles).selectinload(UserAppRole.application))
+        .options(
+            selectinload(User.app_roles).selectinload(UserAppRole.application),
+            selectinload(User.tags).selectinload(UserTag.category),
+        )
         .where(User.username == login_data.username)
     )
     user = result.scalar_one_or_none()
@@ -366,7 +376,8 @@ async def login_with_redirect(
     
     token, expire, jti = create_access_token(
         username=user.username,
-        apps=apps
+        apps=apps,
+        tags=user.get_tags(),
     )
     
     # Créer un refresh token
@@ -915,6 +926,7 @@ async def refresh_access_token(
         sub = user.username
         is_sa = False
         beacon_token = generate_beacon_token(user.id)
+        tags = user.get_tags()
 
         # Re-poser le cookie OIDC pour garder le SSO OIDC synchronisé avec
         # la session dashboard (sinon expiration après 8h malgré refresh 7j).
@@ -926,11 +938,13 @@ async def refresh_access_token(
         apps = {app.slug: "service" for app in sa.applications}
         sub = sa.client_id
         is_sa = True
+        tags = None  # Service accounts n'ont pas de tags utilisateur
     
     token, expire, jti = create_access_token(
         username=sub,
         apps=apps,
-        is_service_account=is_sa
+        is_service_account=is_sa,
+        tags=tags,
     )
     
     return Token(
@@ -998,7 +1012,8 @@ async def create_app_launch_token(
 
     token, expire, jti = create_access_token(
         username=current_username,
-        apps=apps
+        apps=apps,
+        tags=current_user.get_tags(),
     )
 
     from app.routes.audit import update_session_activity
@@ -1049,7 +1064,10 @@ async def sso_login(
     # 1. Vérifier l'utilisateur
     result = await db.execute(
         select(User)
-        .options(selectinload(User.app_roles).selectinload(UserAppRole.application))
+        .options(
+            selectinload(User.app_roles).selectinload(UserAppRole.application),
+            selectinload(User.tags).selectinload(UserTag.category),
+        )
         .where(User.username == username)
     )
     user = result.scalar_one_or_none()
@@ -1102,7 +1120,8 @@ async def sso_login(
     
     token, expire, jti = create_access_token(
         username=user.username,
-        apps=apps
+        apps=apps,
+        tags=user.get_tags(),
     )
     
     # 5. Log

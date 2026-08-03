@@ -1,4 +1,4 @@
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, model_validator
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 from enum import Enum
@@ -2023,3 +2023,55 @@ class GithubRepoRefreshResponse(BaseModel):
     token_configured: bool
     error: Optional[str] = None
     skipped: bool = False  # True si garde d'âge < 30s
+
+
+# ─── Tags Utilisateurs ─────────────────────────────────────────────
+
+class TagCategoryCreate(BaseModel):
+    slug: str = Field(..., min_length=1, max_length=80, pattern=r'^[a-z0-9_-]+$')
+    label: str = Field(..., min_length=1, max_length=150)
+    is_multiple: bool = Field(default=False)
+    source: str = Field(..., pattern=r'^(csv|m2m)$')
+    source_app_id: Optional[int] = None
+    values: list[str] = Field(default_factory=list)
+
+    @model_validator(mode='after')
+    def validate_source_app(self):
+        if self.source == 'm2m' and self.source_app_id is None:
+            raise ValueError('source_app_id est requis quand source=m2m')
+        return self
+
+
+class TagCategoryUpdate(BaseModel):
+    label: Optional[str] = Field(None, min_length=1, max_length=150)
+    is_multiple: Optional[bool] = None
+    values: Optional[list[str]] = None
+    is_active: Optional[bool] = None
+
+
+class TagCategoryResponse(BaseModel):
+    id: int
+    slug: str
+    label: str
+    is_multiple: bool
+    source: str
+    source_app_id: Optional[int] = None
+    values: list[str]
+    is_active: bool
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class TagCategoryListResponse(BaseModel):
+    categories: list[TagCategoryResponse]
+    total: int
+
+
+class UserTagsResponse(BaseModel):
+    tags: dict[str, list[str]]
+
+
+class UserTagsUpdate(BaseModel):
+    tags: dict[str, list[str]]
