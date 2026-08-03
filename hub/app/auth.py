@@ -44,6 +44,7 @@ def create_access_token(
     expires_delta: Optional[timedelta] = None,
     is_service_account: bool = False,
     is_workshop: bool = False,
+    tags: Optional[dict[str, list[str]]] = None,
 ) -> tuple[str, datetime, str]:
     """Crée un token JWT signé avec la clé privée RSA
     
@@ -52,6 +53,7 @@ def create_access_token(
         apps: Dict des applications avec leurs rôles {"app_slug": "role"}
         is_service_account: True si c'est un service account
         is_workshop: True si les apps liées sont toutes des ateliers (-ws)
+        tags: Dict optionnel {category_slug: [values]} inclus si non vide
     
     Returns:
         tuple: (token, expiration_datetime, jti)
@@ -72,6 +74,9 @@ def create_access_token(
         "type": "service_account" if is_service_account else "user",
         "is_workshop": is_workshop,
     }
+
+    if tags:
+        payload["tags"] = tags
     
     # Header avec kid pour identifier la clé de signature
     headers = {

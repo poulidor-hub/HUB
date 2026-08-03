@@ -219,7 +219,8 @@ async def auto_login_with_token(
     apps = user.get_apps_with_roles()
     token, expire, jti = create_access_token(
         username=user.username,
-        apps=apps
+        apps=apps,
+        tags=user.get_tags(),
     )
 
     ip = request.client.host if request.client else None
