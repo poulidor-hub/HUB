@@ -610,6 +610,65 @@ class HubAPI {
         });
     }
 
+    // ─── Tags API ────────────────────────────────────────────────
+
+    async getTagCategories() {
+        return this.request('/tags/categories');
+    }
+
+    async createTagCategory(data) {
+        return this.request('/tags/categories', {
+            method: 'POST', body: JSON.stringify(data)
+        });
+    }
+
+    async updateTagCategory(slug, data) {
+        return this.request(`/tags/categories/${encodeURIComponent(slug)}`, {
+            method: 'PATCH', body: JSON.stringify(data)
+        });
+    }
+
+    async deleteTagCategory(slug) {
+        return this.request(`/tags/categories/${encodeURIComponent(slug)}`, {
+            method: 'DELETE'
+        });
+    }
+
+    async importTagCsv(slug, file, mode = 'replace') {
+        const url = `/tags/categories/${encodeURIComponent(slug)}/import-csv?mode=${mode}`;
+        const formData = new FormData();
+        formData.append('file', file);
+        const headers = {};
+        if (this.token) {
+            headers['Authorization'] = `Bearer ${this.token}`;
+        }
+        const response = await fetch(`${API_BASE}${url}`, {
+            method: 'POST', headers: headers, body: formData
+        });
+        if (!response.ok) {
+            const err = await response.json().catch(() => ({ detail: 'Erreur inconnue' }));
+            throw new Error(err.detail || `Erreur ${response.status}`);
+        }
+        if (response.status === 204) return null;
+        return await response.json();
+    }
+
+    async importTagM2m(slug) {
+        return this.request(`/tags/categories/${encodeURIComponent(slug)}/import-m2m`, {
+            method: 'POST'
+        });
+    }
+
+    async getMyTags() {
+        return this.request('/tags/my');
+    }
+
+    async updateMyTags(data) {
+        return this.request('/tags/my', {
+            method: 'PUT', body: JSON.stringify(data)
+        });
+    }
+
     // Service Accounts (M2M)
     async getServiceAccounts() {
         return this.request('/service-accounts/');
