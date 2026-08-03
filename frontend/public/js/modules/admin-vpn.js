@@ -172,6 +172,14 @@ function escapeHtml(str) {
     return div.innerHTML;
 }
 
+/**
+ * Échappe une valeur pour usage dans un attribut HTML onclick.
+ * JSON.stringify() produit des guillemets doubles qui cassent l'attribut.
+ */
+function attrStr(x) {
+    return JSON.stringify(x).replace(/"/g, '&quot;');
+}
+
 // ── Utilitaires refonte grille ─────────────────────────
 
 /**
@@ -304,12 +312,12 @@ function renderUserCard(user) {
     const allOn = user.connectedDevices === user.totalDevices;
     const allOff = user.connectedDevices === 0;
     const badgeClass = allOn ? 'all-on' : (allOff ? 'all-off' : 'partial');
-    const badgeText = `${user.connectedDevices}/${user.totalDevices} connecté${user.connectedDevices > 1 ? 's' : ''}`;
+    const badgeText = `${user.connectedDevices}/${user.totalDevices} conn.`;
     const cardClass = allOff ? 'vpn-user-card all-off' : 'vpn-user-card';
     const initial = (user.username || '?')[0].toUpperCase();
-    const lastSeen = user.lastActivity ? `Dernière activité : ${escapeHtml(user.lastActivity)}` : 'Jamais connecté';
+    const lastSeen = user.lastActivity ? `Actif : ${escapeHtml(user.lastActivity)}` : 'Jamais connecté';
 
-    const devicesHtml = user.devices.map(d => renderDeviceCard(d)).join('');
+    const devicesHtml = user.devices.map(d => renderDeviceRow(d)).join('');
 
     return `
         <div class="${cardClass}">
@@ -323,8 +331,8 @@ function renderUserCard(user) {
             </div>
             <div class="vpn-device-list">${devicesHtml}</div>
             <div class="vpn-user-footer">
-                <button class="btn btn-sm btn-outline-primary"
-                        onclick="openAddPeerForUser(${user.user_id}, ${JSON.stringify(user.username)})">
+                <button class="vpn-add-device"
+                        onclick="openAddPeerForUser(${user.user_id}, ${attrStr(user.username)})">
                     <i class="bi bi-plus-lg"></i> Ajouter un device
                 </button>
             </div>
@@ -332,39 +340,47 @@ function renderUserCard(user) {
     `;
 }
 
-function renderDeviceCard(d) {
+function renderDeviceRow(d) {
     const icon = getDeviceIcon(d.name);
-    const cardClass = d.connected ? 'vpn-device-card' : 'vpn-device-card off';
+    const rowClass = d.connected ? 'vpn-device-row' : 'vpn-device-row off';
     const statusClass = d.connected ? 'on' : '';
     const handshake = d.last_handshake ? escapeHtml(d.last_handshake) : 'jamais';
-    const tx = (d.transfer_rx ? '↓' + escapeHtml(d.transfer_rx) : '') +
-               (d.transfer_tx ? ' ↑' + escapeHtml(d.transfer_tx) : '');
     const toggleIcon = d.enabled ? 'bi-toggle-on' : 'bi-toggle-off';
+    const toggleTitle = d.enabled ? 'Désactiver' : 'Activer';
+
+    // Méta : trafic si en ligne, sinon dernier handshake
+    let metaHtml = '';
+    if (d.connected) {
+        const rx = d.transfer_rx ? escapeHtml(d.transfer_rx) : '';
+        const tx = d.transfer_tx ? escapeHtml(d.transfer_tx) : '';
+        metaHtml = (rx || tx) ? `<span class="rx">${rx ? '↓' + rx : ''}</span><span class="tx">${tx ? '↑' + tx : ''}</span>` : `<span class="hs">${handshake}</span>`;
+    } else {
+        metaHtml = `<span class="hs">${handshake}</span>`;
+    }
 
     return `
-        <div class="${cardClass}">
+        <div class="${rowClass}">
             <span class="vpn-device-icon"><i class="bi ${icon}"></i></span>
             <div class="vpn-device-info">
-                <span class="vpn-device-name">${escapeHtml(d.name)}</span>
+                <span class="vpn-device-name" title="${escapeHtml(d.name)}">${escapeHtml(d.name)}</span>
                 <span class="vpn-device-ip">${escapeHtml(d.vpn_ip)}</span>
-                <span class="vpn-device-handshake">${handshake}</span>
             </div>
-            <span class="vpn-device-tx">${tx}</span>
+            <div class="vpn-device-meta">${metaHtml}</div>
             <span class="vpn-device-status ${statusClass}"
                   title="${d.connected ? 'Connecté' : 'Hors ligne'}"></span>
-            <div class="vpn-device-actions btn-group btn-group-sm">
-                <button class="btn btn-outline-secondary" onclick="downloadPeerConfig(${d.id})" title="Télécharger .conf">
+            <div class="vpn-device-actions">
+                <button class="vpn-device-btn" onclick="downloadPeerConfig(${d.id})" title="Télécharger .conf">
                     <i class="bi bi-download"></i>
                 </button>
-                <button class="btn btn-outline-secondary"
-                        onclick="showPeerQrCode(${d.id}, ${JSON.stringify(d.username)}, ${JSON.stringify(d.name)})" title="QR code">
+                <button class="vpn-device-btn"
+                        onclick="showPeerQrCode(${d.id}, ${attrStr(d.username)}, ${attrStr(d.name)})" title="QR code">
                     <i class="bi bi-qr-code"></i>
                 </button>
-                <button class="btn btn-outline-secondary" onclick="handleTogglePeer(${d.id})" title="${d.enabled ? 'Désactiver' : 'Activer'}">
+                <button class="vpn-device-btn toggle-on" onclick="handleTogglePeer(${d.id})" title="${toggleTitle}">
                     <i class="bi ${toggleIcon}"></i>
                 </button>
-                <button class="btn btn-outline-danger"
-                        onclick="handleDeletePeer(${d.id}, ${JSON.stringify(d.username)}, ${JSON.stringify(d.name)})" title="Supprimer">
+                <button class="vpn-device-btn delete"
+                        onclick="handleDeletePeer(${d.id}, ${attrStr(d.username)}, ${attrStr(d.name)})" title="Supprimer">
                     <i class="bi bi-trash"></i>
                 </button>
             </div>
