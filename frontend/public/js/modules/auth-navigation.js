@@ -248,6 +248,7 @@ function showPage(page) {
             document.getElementById('adminUserTagsSection').classList.remove('d-none');
             document.getElementById('navUserTags')?.classList.add('active');
             loadUserTagsAdmin();
+            loadAdminMyTags();
             break;
         case 'inbox':
             document.getElementById('userInboxSection').classList.remove('d-none');

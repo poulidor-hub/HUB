@@ -519,6 +519,10 @@ function handleSSEEvent(data) {
             if (action === 'user_tags_changed' && currentUser && affectedUserId === currentUser.id) {
                 if (typeof refreshTokenAfterAppChange === 'function') refreshTokenAfterAppChange();
                 if (typeof loadUserTagsWidget === 'function') loadUserTagsWidget();
+                if (typeof currentPage !== 'undefined' && currentPage === 'admin-user-tags' &&
+                    typeof loadAdminMyTags === 'function') {
+                    loadAdminMyTags();
+                }
             } else if (['category_created', 'category_updated', 'category_deleted',
                          'category_csv_import', 'category_m2m_import'].indexOf(action) !== -1) {
                 if (typeof loadUserTagsWidget === 'function' &&
@@ -528,6 +532,7 @@ function handleSSEEvent(data) {
                 if (typeof currentPage !== 'undefined' && currentPage === 'admin-user-tags' &&
                     typeof loadUserTagsAdmin === 'function') {
                     loadUserTagsAdmin();
+                    if (typeof loadAdminMyTags === 'function') loadAdminMyTags();
                 }
             }
             break;

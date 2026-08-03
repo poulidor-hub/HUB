@@ -200,3 +200,76 @@ async function handleImportTagM2m(slug) {
         showToast(error.message || 'Erreur lors de la synchronisation', 'danger');
     }
 }
+
+// ─── Mes préférences (sélection personnelle) ──────────────────────
+
+async function loadAdminMyTags() {
+    const fieldsContainer = document.getElementById('adminMyTagsFormFields');
+    if (!fieldsContainer) return;
+
+    try {
+        const [categoriesData, myTagsData] = await Promise.all([
+            api.getActiveTagCategories(), api.getMyTags()
+        ]);
+        const categories = categoriesData.categories || [];
+        const myTags = myTagsData.tags || {};
+
+        if (!categories.length) {
+            fieldsContainer.innerHTML = '<p class="text-muted mb-0">Aucune préférence disponible. Créez-en une ci-dessus.</p>';
+            return;
+        }
+
+        const sections = categories.map(cat => {
+            const selected = myTags[cat.slug] || [];
+            const inputType = cat.is_multiple ? 'checkbox' : 'radio';
+            const inputName = 'admin_tag_' + cat.slug;
+
+            const options = (cat.values || []).map(val => {
+                const checked = selected.includes(val) ? 'checked' : '';
+                const id = 'admin_tag_' + cat.slug + '_' + val.replace(/[^a-zA-Z0-9]/g, '_');
+                return `<div class="form-check form-check-inline">
+                    <input class="form-check-input" type="${inputType}" name="${inputName}"
+                        id="${id}" value="${escapeHtml(val)}" ${checked} data-category="${cat.slug}">
+                    <label class="form-check-label" for="${id}">${escapeHtml(val)}</label>
+                </div>`;
+            }).join('');
+
+            return `<div class="mb-3">
+                <label class="form-label fw-bold">${escapeHtml(cat.label)}</label>
+                <div>${options}</div>
+            </div>`;
+        }).join('');
+
+        fieldsContainer.innerHTML = sections;
+    } catch (error) {
+        console.error('Erreur chargement préférences admin:', error);
+        fieldsContainer.innerHTML = '<p class="text-danger mb-0">Erreur lors du chargement de vos préférences.</p>';
+    }
+}
+
+async function handleSaveAdminMyTags() {
+    const feedback = document.getElementById('adminMyTagsFeedback');
+    if (feedback) feedback.textContent = '';
+
+    const tags = {};
+    document.querySelectorAll('#adminMyTagsFormFields input:checked').forEach(input => {
+        const cat = input.getAttribute('data-category');
+        if (!tags[cat]) tags[cat] = [];
+        tags[cat].push(input.value);
+    });
+
+    try {
+        await api.updateMyTags({ tags });
+        if (feedback) {
+            feedback.textContent = 'Préférences enregistrées';
+            feedback.className = 'ms-2 small text-success';
+        }
+        showToast('Préférences enregistrées', 'success');
+    } catch (error) {
+        if (feedback) {
+            feedback.textContent = error.message || 'Erreur';
+            feedback.className = 'ms-2 small text-danger';
+        }
+        showToast(error.message || 'Erreur lors de l\'enregistrement', 'danger');
+    }
+}
