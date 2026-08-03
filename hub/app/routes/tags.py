@@ -325,3 +325,87 @@ async def get_user_tags_m2m(
             tags.setdefault(ut.category.slug, []).append(ut.value)
 
     return UserTagsResponse(tags=tags)
+
+
+# ─── Admin : gestion des préférences par utilisateur ──────────────
+
+
+@router.get("/users")
+async def list_users_with_tags(
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_admin),
+):
+    """Liste tous les utilisateurs avec leurs préférences actuelles."""
+    result = await db.execute(
+        select(User)
+        .options(selectinload(User.tags).selectinload(UserTag.category))
+        .order_by(User.username)
+    )
+    users = result.scalars().all()
+
+    out = []
+    for u in users:
+        tags: dict[str, list[str]] = {}
+        for ut in u.tags:
+            if ut.category.is_active:
+                tags.setdefault(ut.category.slug, []).append(ut.value)
+        out.append({"id": u.id, "username": u.username, "tags": tags})
+    return out
+
+
+@router.put("/user/{username}", response_model=UserTagsResponse)
+async def set_user_tags(
+    username: str,
+    data: UserTagsUpdate,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(get_current_admin),
+):
+    """Admin définit les préférences d'un utilisateur."""
+    result = await db.execute(select(User).where(User.username == username))
+    user = result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=404, detail=f"Utilisateur '{username}' introuvable")
+
+    # Valider catégories et valeurs
+    all_categories = await db.execute(
+        select(TagCategory).where(TagCategory.is_active == True)
+    )
+    valid_categories = {c.slug: c for c in all_categories.scalars()}
+
+    for slug in data.tags:
+        if slug not in valid_categories:
+            raise HTTPException(status_code=400, detail=f"Catégorie '{slug}' introuvable ou inactive")
+
+    for slug, selected_values in data.tags.items():
+        cat = valid_categories[slug]
+        allowed = set(cat.values or [])
+        for val in selected_values:
+            if val not in allowed:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"La valeur '{val}' n'est pas autorisée pour '{slug}'"
+                )
+        if not cat.is_multiple and len(selected_values) > 1:
+            raise HTTPException(
+                status_code=400,
+                detail=f"La catégorie '{slug}' n'accepte qu'une seule valeur"
+            )
+
+    await db.execute(delete(UserTag).where(UserTag.user_id == user.id))
+
+    for slug, selected_values in data.tags.items():
+        cat = valid_categories[slug]
+        for val in selected_values:
+            db.add(UserTag(user_id=user.id, category_id=cat.id, value=val))
+
+    await db.commit()
+
+    tags = await _get_user_tags(db, user.id)
+
+    notify_event("tags_updated", {
+        "action": "user_tags_changed",
+        "user_id": user.id,
+        "username": user.username,
+    })
+
+    return UserTagsResponse(tags=tags)

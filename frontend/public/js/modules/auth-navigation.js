@@ -249,6 +249,7 @@ function showPage(page) {
             document.getElementById('navUserTags')?.classList.add('active');
             loadUserTagsAdmin();
             loadAdminMyTags();
+            loadAdminTagUsers();
             break;
         case 'inbox':
             document.getElementById('userInboxSection').classList.remove('d-none');

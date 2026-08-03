@@ -673,6 +673,20 @@ class HubAPI {
         });
     }
 
+    async getUsersWithTags() {
+        return this.request('/tags/users');
+    }
+
+    async getUserTags(username) {
+        return this.request(`/tags/user/${encodeURIComponent(username)}`);
+    }
+
+    async setUserTags(username, data) {
+        return this.request(`/tags/user/${encodeURIComponent(username)}`, {
+            method: 'PUT', body: JSON.stringify(data)
+        });
+    }
+
     // Service Accounts (M2M)
     async getServiceAccounts() {
         return this.request('/service-accounts/');

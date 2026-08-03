@@ -273,3 +273,105 @@ async function handleSaveAdminMyTags() {
         showToast(error.message || 'Erreur lors de l\'enregistrement', 'danger');
     }
 }
+
+// ─── Onglet Utilisateurs (gestion par admin) ──────────────────────
+
+let _tagCategoryLabels = {};
+
+async function loadAdminTagUsers() {
+    const container = document.getElementById('adminTagUsersTable');
+    if (!container) return;
+    try {
+        const [users, categoriesData] = await Promise.all([
+            api.getUsersWithTags(), api.getTagCategories()
+        ]);
+        _tagCategoryLabels = {};
+        (categoriesData.categories || []).forEach(c => { _tagCategoryLabels[c.slug] = c.label; });
+        renderAdminTagUsersTable(users);
+    } catch (error) {
+        console.error('Erreur chargement utilisateurs tags:', error);
+        container.innerHTML = '<div class="data-error">Erreur lors du chargement</div>';
+    }
+}
+
+function renderAdminTagUsersTable(users) {
+    const container = document.getElementById('adminTagUsersTable');
+    if (!users || !users.length) {
+        container.innerHTML = '<div class="data-empty">Aucun utilisateur</div>';
+        return;
+    }
+    const rows = users.map(u => {
+        const tagCount = Object.keys(u.tags || {}).length;
+        const badges = Object.entries(u.tags || {}).map(([slug, values]) => {
+            const label = _tagCategoryLabels[slug] || slug;
+            return `<span class="badge bg-light text-dark me-1 mb-1">${escapeHtml(label)}: ${escapeHtml(values.join(', '))}</span>`;
+        }).join('') || '<span class="text-muted">Aucune préférence</span>';
+        return `<tr>
+            <td><strong>${escapeHtml(u.username)}</strong></td>
+            <td>${badges}</td>
+            <td>${tagCount}</td>
+            <td><button class="btn btn-sm btn-primary" onclick="showUserTagsModal('${escapeHtml(u.username)}')"><i class="bi bi-pencil me-1"></i>Modifier</button></td>
+        </tr>`;
+    }).join('');
+    container.innerHTML = `<table class="table table-hover align-middle mb-0">
+        <thead><tr><th>Utilisateur</th><th>Préférences</th><th>Nb</th><th>Actions</th></tr></thead>
+        <tbody>${rows}</tbody></table>`;
+}
+
+let _userTagsModalInstance = null;
+let _userTagsModalTarget = null;
+
+async function showUserTagsModal(username) {
+    const modalEl = document.getElementById('userTagsModal');
+    if (!_userTagsModalInstance) _userTagsModalInstance = new bootstrap.Modal(modalEl);
+    _userTagsModalTarget = username;
+    document.getElementById('userTagsModalUsername').textContent = username;
+    document.getElementById('userTagsModalFields').innerHTML = '<p class="text-muted">Chargement...</p>';
+    _userTagsModalInstance.show();
+    try {
+        const [categoriesData, userTagsData] = await Promise.all([
+            api.getActiveTagCategories(), api.getUserTags(username)
+        ]);
+        const categories = categoriesData.categories || [];
+        const userTags = userTagsData.tags || {};
+        if (!categories.length) {
+            document.getElementById('userTagsModalFields').innerHTML =
+                '<p class="text-muted mb-0">Aucune préférence disponible. Créez-en d\'abord dans l\'onglet Catégories.</p>';
+            return;
+        }
+        const sections = categories.map(cat => {
+            const selected = userTags[cat.slug] || [];
+            const inputType = cat.is_multiple ? 'checkbox' : 'radio';
+            const inputName = 'utm_' + cat.slug;
+            const options = (cat.values || []).map(val => {
+                const checked = selected.includes(val) ? 'checked' : '';
+                const id = 'utm_' + cat.slug + '_' + val.replace(/[^a-zA-Z0-9]/g, '_');
+                return `<div class="form-check form-check-inline">
+                    <input class="form-check-input" type="${inputType}" name="${inputName}" id="${id}" value="${escapeHtml(val)}" ${checked} data-category="${cat.slug}">
+                    <label class="form-check-label" for="${id}">${escapeHtml(val)}</label></div>`;
+            }).join('');
+            return `<div class="mb-3"><label class="form-label fw-bold">${escapeHtml(cat.label)}</label><div>${options}</div></div>`;
+        }).join('');
+        document.getElementById('userTagsModalFields').innerHTML = sections;
+    } catch (error) {
+        document.getElementById('userTagsModalFields').innerHTML = '<p class="text-danger mb-0">Erreur lors du chargement.</p>';
+    }
+}
+
+async function handleSaveUserTagsModal() {
+    if (!_userTagsModalTarget) return;
+    const tags = {};
+    document.querySelectorAll('#userTagsModalFields input:checked').forEach(input => {
+        const cat = input.getAttribute('data-category');
+        if (!tags[cat]) tags[cat] = [];
+        tags[cat].push(input.value);
+    });
+    try {
+        await api.setUserTags(_userTagsModalTarget, { tags });
+        showToast('Préférences de ' + _userTagsModalTarget + ' mises à jour', 'success');
+        _userTagsModalInstance.hide();
+        loadAdminTagUsers();
+    } catch (error) {
+        showToast(error.message || 'Erreur lors de l\'enregistrement', 'danger');
+    }
+}
