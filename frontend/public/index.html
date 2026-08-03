@@ -1504,31 +1504,67 @@
     </div>
 
 <!-- Section Admin User Tags -->
-<div id="adminUserTagsSection" class="container py-5 d-none" style="margin-top: 70px;">
-    <div class="d-flex justify-content-between align-items-center mb-4">
-        <h1><i class="bi bi-tags me-2"></i>Tags utilisateurs</h1>
-        <button class="btn btn-primary" onclick="showTagCategoryModal()">
-            <i class="bi bi-plus-lg me-1"></i>Nouvelle catégorie
-        </button>
-    </div>
+<div id="adminUserTagsSection" class="container-fluid py-4 d-none" style="margin-top: 70px;">
+        <div class="container">
+            <!-- En-tête -->
+            <div class="d-flex justify-content-between align-items-center mb-4">
+                <div>
+                    <h1 class="h3 mb-1"><i class="bi bi-tags me-2"></i>Tags utilisateurs</h1>
+                    <p class="text-muted mb-0">Gérer les catégories de tags et leurs valeurs</p>
+                </div>
+                <div class="d-flex gap-2">
+                    <button class="btn btn-primary btn-sm" onclick="showTagCategoryModal()">
+                        <i class="bi bi-plus-lg me-1"></i>Nouvelle catégorie
+                    </button>
+                </div>
+            </div>
 
-    <div class="row mb-4">
-        <div class="col-md-3"><div class="card border-start border-primary"><div class="card-body">
-            <h6 class="text-muted">Total</h6><h3 id="tagStatsTotal">0</h3>
-        </div></div></div>
-        <div class="col-md-3"><div class="card border-start border-success"><div class="card-body">
-            <h6 class="text-muted">Actives</h6><h3 id="tagStatsActive">0</h3>
-        </div></div></div>
-        <div class="col-md-3"><div class="card border-start border-info"><div class="card-body">
-            <h6 class="text-muted">Multiples</h6><h3 id="tagStatsMultiple">0</h3>
-        </div></div></div>
-        <div class="col-md-3"><div class="card border-start border-secondary"><div class="card-body">
-            <h6 class="text-muted">Uniques</h6><h3 id="tagStatsUnique">0</h3>
-        </div></div></div>
-    </div>
+            <!-- Stats -->
+            <div class="row g-3 mb-3">
+                <div class="col-md-3">
+                    <div class="card border">
+                        <div class="card-body text-center py-2">
+                            <h4 id="tagStatsTotal" class="text-primary mb-0">-</h4>
+                            <small class="text-muted">Total</small>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="card border">
+                        <div class="card-body text-center py-2">
+                            <h4 id="tagStatsActive" class="mb-0">-</h4>
+                            <small class="text-muted">Actives</small>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="card border">
+                        <div class="card-body text-center py-2">
+                            <h4 id="tagStatsMultiple" class="mb-0">-</h4>
+                            <small class="text-muted">Multiples</small>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="card border">
+                        <div class="card-body text-center py-2">
+                            <h4 id="tagStatsUnique" class="mb-0">-</h4>
+                            <small class="text-muted">Uniques</small>
+                        </div>
+                    </div>
+                </div>
+            </div>
 
-    <div class="card"><div id="adminUserTagsTable"><div class="data-loading">Chargement...</div></div></div>
-</div>
+            <!-- Table -->
+            <div class="card">
+                <div class="card-body p-0">
+                    <div id="adminUserTagsTable" class="table-responsive">
+                        <div class="data-loading">Chargement...</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
 
 <!-- Modal Tag Category -->
 <div class="modal fade" id="tagCategoryModal" tabindex="-1" aria-hidden="true">

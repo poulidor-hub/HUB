@@ -427,19 +427,21 @@ body {
 }
 
 /* Section Pages */
-#auditSection, #usersSection {
+#auditSection, #usersSection, #adminUserTagsSection {
     background-color: #f8f9fa;
     min-height: calc(100vh - 70px);
 }
 
 #auditSection .card,
-#usersSection .card {
+#usersSection .card,
+#adminUserTagsSection .card {
     border: 1px solid var(--border-color);
     box-shadow: none;
 }
 
 #auditSection .card-header,
-#usersSection .card-header {
+#usersSection .card-header,
+#adminUserTagsSection .card-header {
     background-color: #fff;
     border-bottom: 1px solid var(--border-color);
     font-weight: 600;
@@ -447,18 +449,21 @@ body {
 
 /* Stats cards on dedicated pages */
 #auditPageStatsCards .card,
-#usersSection .row.g-3 .card {
+#usersSection .row.g-3 .card,
+#adminUserTagsSection .row.g-3 .card {
     border-radius: 8px;
     transition: transform 0.2s;
 }
 
 #auditPageStatsCards .card:hover,
-#usersSection .row.g-3 .card:hover {
+#usersSection .row.g-3 .card:hover,
+#adminUserTagsSection .row.g-3 .card:hover {
     transform: translateY(-2px);
 }
 
 #auditPageStatsCards h3,
-#usersSection .row.g-3 h3 {
+#usersSection .row.g-3 h3,
+#adminUserTagsSection .row.g-3 h3 {
     font-size: 1.75rem;
     font-weight: 700;
     margin-bottom: 0;
