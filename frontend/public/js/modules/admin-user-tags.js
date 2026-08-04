@@ -85,8 +85,11 @@ async function showTagCategoryModal(slug) {
     document.getElementById('tagFormSourceM2m').checked = false;
     document.getElementById('tagFormSourceApp').value = '';
     document.getElementById('tagFormSourceAppGroup').classList.add('d-none');
+    document.getElementById('tagFormM2mTable').innerHTML = '<option value="">-- Choisir --</option>';
+    document.getElementById('tagFormM2mColumn').innerHTML = '<option value="">-- Choisir --</option>';
+    document.getElementById('tagFormTableColGroup').classList.add('d-none');
     document.getElementById('tagFormValues').value = '';
-    document.getElementById('tagFormM2mEndpoint').value = '/api/tags/export';
+    document.getElementById('tagFormM2mEndpoint').style.display = 'none';
 
     await loadSourceAppsDropdown();
 
@@ -101,7 +104,6 @@ async function showTagCategoryModal(slug) {
                     document.getElementById('tagFormSourceM2m').checked = true;
                     document.getElementById('tagFormSourceAppGroup').classList.remove('d-none');
                     document.getElementById('tagFormSourceApp').value = cat.source_app_id || '';
-                    document.getElementById('tagFormM2mEndpoint').value = cat.m2m_endpoint || '/api/tags/export';
                 }
                 document.getElementById('tagFormValues').value = (cat.values || []).join('\n');
                 toggleTagSource();
@@ -136,6 +138,49 @@ async function loadSourceAppsDropdown() {
     }
 }
 
+async function discoverSourceTables() {
+    const appId = parseInt(document.getElementById('tagFormSourceApp').value) || null;
+    if (!appId) { showToast('Sélectionnez d\'abord une application', 'danger'); return; }
+
+    const tableSelect = document.getElementById('tagFormM2mTable');
+    const colSelect = document.getElementById('tagFormM2mColumn');
+    const group = document.getElementById('tagFormTableColGroup');
+
+    tableSelect.innerHTML = '<option value="">Chargement...</option>';
+    colSelect.innerHTML = '<option value="">-- Choisir --</option>';
+    group.classList.remove('d-none');
+
+    try {
+        const data = await api.discoverSourceTables(appId);
+        const tables = data.tables || [];
+        tableSelect.innerHTML = '<option value="">-- Choisir --</option>' +
+            tables.map(t => `<option value="${t}">${t}</option>`).join('');
+        if (tables.length === 0) showToast('Aucune table trouvée dans cette application', 'warning');
+    } catch (error) {
+        tableSelect.innerHTML = '<option value="">Erreur</option>';
+        showToast(error.message || 'Impossible de découvrir les tables', 'danger');
+    }
+}
+
+async function discoverSourceColumns() {
+    const appId = parseInt(document.getElementById('tagFormSourceApp').value) || null;
+    const table = document.getElementById('tagFormM2mTable').value;
+    if (!appId || !table) return;
+
+    const colSelect = document.getElementById('tagFormM2mColumn');
+    colSelect.innerHTML = '<option value="">Chargement...</option>';
+
+    try {
+        const data = await api.discoverSourceColumns(appId, table);
+        const columns = data.columns || [];
+        colSelect.innerHTML = '<option value="">-- Choisir --</option>' +
+            columns.map(c => `<option value="${c}">${c}</option>`).join('');
+    } catch (error) {
+        colSelect.innerHTML = '<option value="">Erreur</option>';
+        showToast(error.message || 'Impossible de découvrir les colonnes', 'danger');
+    }
+}
+
 function toggleTagSource() {
     const isM2m = document.getElementById('tagFormSourceM2m').checked;
     document.getElementById('tagFormSourceAppGroup').classList.toggle('d-none', !isM2m);
@@ -147,7 +192,11 @@ async function handleSaveTagCategory() {
     const isMultiple = document.getElementById('tagFormIsMultiple').checked;
     const source = document.getElementById('tagFormSourceM2m').checked ? 'm2m' : 'csv';
     const sourceAppId = source === 'm2m' ? parseInt(document.getElementById('tagFormSourceApp').value) || null : null;
-    const m2mEndpoint = source === 'm2m' ? document.getElementById('tagFormM2mEndpoint').value.trim() || '/api/tags/export' : null;
+    const m2mTable = source === 'm2m' ? document.getElementById('tagFormM2mTable').value : '';
+    const m2mColumn = source === 'm2m' ? document.getElementById('tagFormM2mColumn').value : '';
+    const m2mEndpoint = (m2mTable && m2mColumn)
+        ? `/api/hub/data/values?table=${encodeURIComponent(m2mTable)}&column=${encodeURIComponent(m2mColumn)}`
+        : (source === 'm2m' ? '/api/hub/data/values' : null);
     const valuesRaw = document.getElementById('tagFormValues').value.trim();
     const values = valuesRaw ? valuesRaw.split('\n').map(v => v.trim()).filter(v => v) : [];
 
@@ -244,8 +293,11 @@ async function handleSyncM2mFromModal(slug) {
     try {
         const isMultiple = document.getElementById('tagFormIsMultiple').checked;
         const sourceAppId = parseInt(document.getElementById('tagFormSourceApp').value) || null;
-        const m2mEndpoint = document.getElementById('tagFormM2mEndpoint').value.trim() || '/api/tags/export';
+        const m2mTable = document.getElementById('tagFormM2mTable').value;
+        const m2mColumn = document.getElementById('tagFormM2mColumn').value;
         if (!sourceAppId) { showToast('Sélectionnez d\'abord une application source', 'danger'); return; }
+        if (!m2mTable || !m2mColumn) { showToast('Sélectionnez une table et une colonne (cliquez sur  🔍  pour découvrir)', 'danger'); return; }
+        const m2mEndpoint = `/api/hub/data/values?table=${encodeURIComponent(m2mTable)}&column=${encodeURIComponent(m2mColumn)}`;
         const newSlug = slugify(label);
         await api.createTagCategory({ slug: newSlug, label, is_multiple: isMultiple, source: 'm2m', source_app_id: sourceAppId, m2m_endpoint: m2mEndpoint, values: [] });
         showToast('Préférence créée, synchronisation en cours...', 'success');

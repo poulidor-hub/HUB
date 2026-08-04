@@ -687,6 +687,14 @@ class HubAPI {
         });
     }
 
+    async discoverSourceTables(appId) {
+        return this.request(`/tags/discover/tables?app_id=${appId}`);
+    }
+
+    async discoverSourceColumns(appId, table) {
+        return this.request(`/tags/discover/columns?app_id=${appId}&table=${encodeURIComponent(table)}`);
+    }
+
     // Service Accounts (M2M)
     async getServiceAccounts() {
         return this.request('/service-accounts/');

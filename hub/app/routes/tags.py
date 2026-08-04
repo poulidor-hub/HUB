@@ -50,6 +50,59 @@ async def _get_user_tags(db: AsyncSession, user_id: int) -> dict[str, list[str]]
     return tags
 
 
+# ─── Découverte M2M (proxy vers l'app source) ─────────────────────
+
+
+@router.get("/discover/tables")
+async def discover_tables(
+    app_id: int = Query(...),
+    _: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Proxy : liste les tables de l'app source."""
+    app_result = await db.execute(select(Application).where(Application.id == app_id))
+    app = app_result.scalar_one_or_none()
+    if not app or not app.api_url:
+        raise HTTPException(status_code=400, detail="Application introuvable ou sans api_url")
+    import httpx
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            r = await client.get(f"{app.api_url.rstrip('/')}/api/hub/data/tables")
+            r.raise_for_status()
+            return r.json()
+    except httpx.RequestError as e:
+        raise HTTPException(status_code=502, detail=f"Erreur de connexion: {e}")
+    except httpx.HTTPStatusError as e:
+        raise HTTPException(status_code=502, detail=f"L'application a retourné {e.response.status_code}")
+
+
+@router.get("/discover/columns")
+async def discover_columns(
+    app_id: int = Query(...),
+    table: str = Query(...),
+    _: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Proxy : liste les colonnes d'une table de l'app source."""
+    app_result = await db.execute(select(Application).where(Application.id == app_id))
+    app = app_result.scalar_one_or_none()
+    if not app or not app.api_url:
+        raise HTTPException(status_code=400, detail="Application introuvable ou sans api_url")
+    import httpx
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            r = await client.get(
+                f"{app.api_url.rstrip('/')}/api/hub/data/columns",
+                params={"table": table}
+            )
+            r.raise_for_status()
+            return r.json()
+    except httpx.RequestError as e:
+        raise HTTPException(status_code=502, detail=f"Erreur de connexion: {e}")
+    except httpx.HTTPStatusError as e:
+        raise HTTPException(status_code=502, detail=f"L'application a retourné {e.response.status_code}")
+
+
 # ─── Admin endpoints ───────────────────────────────────────────────
 
 

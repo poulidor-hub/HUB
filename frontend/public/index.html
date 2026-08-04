@@ -1653,13 +1653,30 @@
                     </div>
                     <div id="tagFormSourceAppGroup" class="mt-2 d-none">
                         <label class="form-label">Application source</label>
-                        <select class="form-select" id="tagFormSourceApp">
-                            <option value="">-- Sélectionner --</option>
-                        </select>
-                        <label class="form-label mt-2">Chemin de l'endpoint</label>
-                        <input type="text" class="form-control" id="tagFormM2mEndpoint"
-                               value="/api/tags/export" placeholder="/api/tags/export">
-                        <small class="text-muted">GET sur cet endpoint doit retourner un tableau JSON : ["val1", "val2", ...]</small>
+                        <div class="d-flex gap-2">
+                            <select class="form-select" id="tagFormSourceApp">
+                                <option value="">-- Sélectionner --</option>
+                            </select>
+                            <button type="button" class="btn btn-sm btn-outline-secondary" onclick="discoverSourceTables()" title="Découvrir les tables de l'application">
+                                <i class="bi bi-search"></i>
+                            </button>
+                        </div>
+                        <div id="tagFormTableColGroup" class="mt-2 d-none">
+                            <div class="row g-2">
+                                <div class="col-6">
+                                    <label class="form-label">Table</label>
+                                    <select class="form-select" id="tagFormM2mTable" onchange="discoverSourceColumns()">
+                                        <option value="">-- Choisir --</option>
+                                    </select>
+                                </div>
+                                <div class="col-6">
+                                    <label class="form-label">Colonne</label>
+                                    <select class="form-select" id="tagFormM2mColumn">
+                                        <option value="">-- Choisir --</option>
+                                    </select>
+                                </div>
+                            </div>
+                        </div>
                         <button type="button" class="btn btn-sm btn-outline-primary mt-2" id="btnSyncM2m">
                             <i class="bi bi-arrow-repeat me-1"></i>Synchroniser depuis l'application
                         </button>
