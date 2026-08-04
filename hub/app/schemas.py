@@ -2033,6 +2033,7 @@ class TagCategoryCreate(BaseModel):
     is_multiple: bool = Field(default=False)
     source: str = Field(..., pattern=r'^(csv|m2m)$')
     source_app_id: Optional[int] = None
+    m2m_endpoint: str = Field(default='/api/tags/export', max_length=255)
     values: list[str] = Field(default_factory=list)
 
     @model_validator(mode='after')
@@ -2047,6 +2048,7 @@ class TagCategoryUpdate(BaseModel):
     is_multiple: Optional[bool] = None
     values: Optional[list[str]] = None
     is_active: Optional[bool] = None
+    m2m_endpoint: Optional[str] = Field(None, max_length=255)
 
 
 class TagCategoryResponse(BaseModel):
@@ -2056,6 +2058,7 @@ class TagCategoryResponse(BaseModel):
     is_multiple: bool
     source: str
     source_app_id: Optional[int] = None
+    m2m_endpoint: Optional[str] = '/api/tags/export'
     values: list[str]
     is_active: bool
     created_at: datetime

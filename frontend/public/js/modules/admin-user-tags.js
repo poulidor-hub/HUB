@@ -86,6 +86,7 @@ async function showTagCategoryModal(slug) {
     document.getElementById('tagFormSourceApp').value = '';
     document.getElementById('tagFormSourceAppGroup').classList.add('d-none');
     document.getElementById('tagFormValues').value = '';
+    document.getElementById('tagFormM2mEndpoint').value = '/api/tags/export';
 
     await loadSourceAppsDropdown();
 
@@ -100,6 +101,7 @@ async function showTagCategoryModal(slug) {
                     document.getElementById('tagFormSourceM2m').checked = true;
                     document.getElementById('tagFormSourceAppGroup').classList.remove('d-none');
                     document.getElementById('tagFormSourceApp').value = cat.source_app_id || '';
+                    document.getElementById('tagFormM2mEndpoint').value = cat.m2m_endpoint || '/api/tags/export';
                 }
                 document.getElementById('tagFormValues').value = (cat.values || []).join('\n');
                 toggleTagSource();
@@ -145,6 +147,7 @@ async function handleSaveTagCategory() {
     const isMultiple = document.getElementById('tagFormIsMultiple').checked;
     const source = document.getElementById('tagFormSourceM2m').checked ? 'm2m' : 'csv';
     const sourceAppId = source === 'm2m' ? parseInt(document.getElementById('tagFormSourceApp').value) || null : null;
+    const m2mEndpoint = source === 'm2m' ? document.getElementById('tagFormM2mEndpoint').value.trim() || '/api/tags/export' : null;
     const valuesRaw = document.getElementById('tagFormValues').value.trim();
     const values = valuesRaw ? valuesRaw.split('\n').map(v => v.trim()).filter(v => v) : [];
 
@@ -156,13 +159,13 @@ async function handleSaveTagCategory() {
         const slug = existing ? existing.slug : slugify(label);
 
         if (existing) {
-            await api.updateTagCategory(slug, {
-                label, is_multiple: isMultiple, values, is_active: existing.is_active
-            });
+            const updateData = { label, is_multiple: isMultiple, values, is_active: existing.is_active };
+            if (source === 'm2m') updateData.m2m_endpoint = m2mEndpoint;
+            await api.updateTagCategory(slug, updateData);
             showToast('Préférence mise à jour', 'success');
         } else {
             if (!slug) { showToast('Le nom ne permet pas de générer un identifiant valide', 'danger'); return; }
-            await api.createTagCategory({ slug, label, is_multiple: isMultiple, source, source_app_id: sourceAppId, values });
+            await api.createTagCategory({ slug, label, is_multiple: isMultiple, source, source_app_id: sourceAppId, m2m_endpoint: m2mEndpoint, values });
             showToast('Préférence créée', 'success');
         }
         tagModalInstance.hide();
@@ -241,9 +244,10 @@ async function handleSyncM2mFromModal(slug) {
     try {
         const isMultiple = document.getElementById('tagFormIsMultiple').checked;
         const sourceAppId = parseInt(document.getElementById('tagFormSourceApp').value) || null;
+        const m2mEndpoint = document.getElementById('tagFormM2mEndpoint').value.trim() || '/api/tags/export';
         if (!sourceAppId) { showToast('Sélectionnez d\'abord une application source', 'danger'); return; }
         const newSlug = slugify(label);
-        await api.createTagCategory({ slug: newSlug, label, is_multiple: isMultiple, source: 'm2m', source_app_id: sourceAppId, values: [] });
+        await api.createTagCategory({ slug: newSlug, label, is_multiple: isMultiple, source: 'm2m', source_app_id: sourceAppId, m2m_endpoint: m2mEndpoint, values: [] });
         showToast('Préférence créée, synchronisation en cours...', 'success');
         await handleImportTagM2m(newSlug);
         tagModalInstance.hide();

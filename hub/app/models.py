@@ -104,6 +104,7 @@ class TagCategory(Base):
     is_multiple = Column(Boolean, default=False, nullable=False)
     source = Column(String(20), nullable=False)  # "csv" ou "m2m"
     source_app_id = Column(Integer, ForeignKey('applications.id', ondelete='SET NULL'), nullable=True)
+    m2m_endpoint = Column(String(255), default='/api/tags/export')  # chemin endpoint M2M
     values = Column(JSON, nullable=False, default=list)
     is_active = Column(Boolean, default=True, nullable=False)
     created_at = Column(DateTime, default=utcnow)

@@ -107,6 +107,7 @@ async def create_category(
         is_multiple=data.is_multiple,
         source=data.source,
         source_app_id=data.source_app_id,
+        m2m_endpoint=data.m2m_endpoint,
         values=data.values,
     )
     db.add(category)
@@ -135,6 +136,8 @@ async def update_category(
         category.values = data.values
     if data.is_active is not None:
         category.is_active = data.is_active
+    if data.m2m_endpoint is not None:
+        category.m2m_endpoint = data.m2m_endpoint
 
     await db.commit()
     await db.refresh(category)
@@ -210,7 +213,7 @@ async def import_m2m(
 
     import httpx
     try:
-        target_url = f"{source_app.api_url.rstrip('/')}/api/tags/export"
+        target_url = f"{source_app.api_url.rstrip('/')}{(category.m2m_endpoint or '/api/tags/export')}"
         async with httpx.AsyncClient(timeout=10.0) as client:
             response = await client.get(target_url)
             if response.status_code != 200:

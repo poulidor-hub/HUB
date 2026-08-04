@@ -1656,6 +1656,10 @@
                         <select class="form-select" id="tagFormSourceApp">
                             <option value="">-- Sélectionner --</option>
                         </select>
+                        <label class="form-label mt-2">Chemin de l'endpoint</label>
+                        <input type="text" class="form-control" id="tagFormM2mEndpoint"
+                               value="/api/tags/export" placeholder="/api/tags/export">
+                        <small class="text-muted">GET sur cet endpoint doit retourner un tableau JSON : ["val1", "val2", ...]</small>
                         <button type="button" class="btn btn-sm btn-outline-primary mt-2" id="btnSyncM2m">
                             <i class="bi bi-arrow-repeat me-1"></i>Synchroniser depuis l'application
                         </button>
