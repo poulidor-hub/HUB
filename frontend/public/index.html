@@ -1656,9 +1656,12 @@
                         <select class="form-select" id="tagFormSourceApp">
                             <option value="">-- Sélectionner --</option>
                         </select>
+                        <button type="button" class="btn btn-sm btn-outline-primary mt-2" id="btnSyncM2m">
+                            <i class="bi bi-arrow-repeat me-1"></i>Synchroniser depuis l'application
+                        </button>
                     </div>
                 </div>
-                <div class="mb-3">
+                <div class="mb-3" id="tagFormValuesGroup">
                     <label class="form-label">Choix disponibles (un par ligne)</label>
                     <textarea class="form-control" id="tagFormValues" rows="6"
                               placeholder="Nord&#10;Sud&#10;Est&#10;Ouest"></textarea>

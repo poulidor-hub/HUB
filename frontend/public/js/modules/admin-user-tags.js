@@ -46,18 +46,23 @@ function renderTagCategoriesTable(categories) {
         container.innerHTML = '<div class="data-empty">Aucune préférence définie</div>';
         return;
     }
-    const rows = categories.map(cat => `
+    const rows = categories.map(cat => {
+        const syncBtn = cat.source === 'm2m'
+            ? `<button class="btn btn-sm btn-outline-primary me-1" onclick="handleImportTagM2m('${cat.slug}')" title="Synchroniser depuis l'application"><i class="bi bi-arrow-repeat"></i></button>`
+            : '';
+        return `
         <tr>
             <td><strong>${escapeHtml(cat.label)}</strong></td>
             <td>${cat.is_multiple ? '<span class="badge bg-info">Multiples</span>' : '<span class="badge bg-secondary">Unique</span>'}</td>
             <td>${(cat.values || []).length} choix</td>
             <td>${cat.is_active ? '<span class="badge bg-success">Actif</span>' : '<span class="badge bg-danger">Inactif</span>'}</td>
             <td>
+                ${syncBtn}
                 <button class="btn btn-sm btn-primary me-1" onclick="showTagCategoryModal('${cat.slug}')"><i class="bi bi-pencil"></i></button>
                 <button class="btn btn-sm btn-danger" onclick="deleteTagCategory('${cat.slug}')"><i class="bi bi-trash"></i></button>
             </td>
         </tr>
-    `).join('');
+    `}).join('');
     container.innerHTML = `
         <table class="table table-hover align-middle mb-0">
             <thead><tr><th>Préférence</th><th>Type</th><th>Choix</th><th>Statut</th><th>Actions</th></tr></thead>
@@ -97,15 +102,21 @@ async function showTagCategoryModal(slug) {
                     document.getElementById('tagFormSourceApp').value = cat.source_app_id || '';
                 }
                 document.getElementById('tagFormValues').value = (cat.values || []).join('\n');
+                toggleTagSource();
             }
         } catch (e) {
             showToast('Erreur lors du chargement', 'danger');
             return;
         }
+    } else {
+        toggleTagSource();
     }
 
     const csvBtn = document.getElementById('btnImportCsvTag');
     if (csvBtn) csvBtn.onclick = () => handleImportTagCsv(slug);
+
+    const syncBtn = document.getElementById('btnSyncM2m');
+    if (syncBtn) syncBtn.onclick = () => handleSyncM2mFromModal(slug);
 
     tagModalInstance.show();
 }
@@ -126,6 +137,7 @@ async function loadSourceAppsDropdown() {
 function toggleTagSource() {
     const isM2m = document.getElementById('tagFormSourceM2m').checked;
     document.getElementById('tagFormSourceAppGroup').classList.toggle('d-none', !isM2m);
+    document.getElementById('tagFormValuesGroup').classList.toggle('d-none', isM2m);
 }
 
 async function handleSaveTagCategory() {
@@ -198,6 +210,45 @@ async function handleImportTagM2m(slug) {
         loadUserTagsAdmin();
     } catch (error) {
         showToast(error.message || 'Erreur lors de la synchronisation', 'danger');
+    }
+}
+
+async function handleSyncM2mFromModal(slug) {
+    // Si on édite une catégorie existante, sauvegarder d'abord puis sync
+    if (slug) {
+        const label = document.getElementById('tagFormLabel').value.trim();
+        const isMultiple = document.getElementById('tagFormIsMultiple').checked;
+        if (label) {
+            try {
+                const sourceAppId = parseInt(document.getElementById('tagFormSourceApp').value) || null;
+                await api.updateTagCategory(slug, { label, is_multiple: isMultiple, is_active: true });
+                if (sourceAppId) {
+                    // Mettre à jour source_app_id si changé (via une deuxième sauvegarde n'est pas possible via le PATCH actuel - on garde l'existant)
+                }
+            } catch (e) { /* sauvegarde échouée, on tente quand même la sync */ }
+        }
+        await handleImportTagM2m(slug);
+        try {
+            const data = await api.getTagCategories();
+            const cat = (data.categories || []).find(c => c.slug === slug);
+            if (cat) document.getElementById('tagFormValues').value = (cat.values || []).join('\n');
+        } catch (e) { /* ignore */ }
+        return;
+    }
+    // Si c'est une création, sauvegarder d'abord puis sync
+    const label = document.getElementById('tagFormLabel').value.trim();
+    if (!label) { showToast('Saisissez d\'abord un nom de préférence', 'danger'); return; }
+    try {
+        const isMultiple = document.getElementById('tagFormIsMultiple').checked;
+        const sourceAppId = parseInt(document.getElementById('tagFormSourceApp').value) || null;
+        if (!sourceAppId) { showToast('Sélectionnez d\'abord une application source', 'danger'); return; }
+        const newSlug = slugify(label);
+        await api.createTagCategory({ slug: newSlug, label, is_multiple: isMultiple, source: 'm2m', source_app_id: sourceAppId, values: [] });
+        showToast('Préférence créée, synchronisation en cours...', 'success');
+        await handleImportTagM2m(newSlug);
+        tagModalInstance.hide();
+    } catch (error) {
+        showToast(error.message || 'Erreur', 'danger');
     }
 }
 
