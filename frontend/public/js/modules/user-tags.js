@@ -172,13 +172,13 @@ async function handleSavePrefOnboarding() {
         }
 
         _prefOnboardingInstance.hide();
-        showToast('Préférences enregistrées', 'success');
+        showToast('Préférences enregistrées', '', 'success');
 
         // Invalider le cache pour les prochains calculs
         _prefDataCache = null;
         sessionStorage.removeItem('prefOnboardingDismissed');
     } catch (e) {
-        showToast(e.message || 'Erreur lors de l\'enregistrement', 'danger');
+        showToast('Erreur', e.message || 'Erreur lors de l\'enregistrement', 'danger');
     }
 }
 
