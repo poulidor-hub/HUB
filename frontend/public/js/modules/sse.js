@@ -518,21 +518,15 @@ function handleSSEEvent(data) {
             var affectedUserId = data.data?.user_id;
             if (action === 'user_tags_changed' && currentUser && affectedUserId === currentUser.id) {
                 if (typeof refreshTokenAfterAppChange === 'function') refreshTokenAfterAppChange();
-                if (typeof loadUserTagsWidget === 'function') loadUserTagsWidget();
-                if (typeof currentPage !== 'undefined' && currentPage === 'admin-user-tags' &&
-                    typeof loadAdminMyTags === 'function') {
-                    loadAdminMyTags();
-                }
-            } else if (['category_created', 'category_updated', 'category_deleted',
-                         'category_csv_import', 'category_m2m_import'].indexOf(action) !== -1) {
-                if (typeof loadUserTagsWidget === 'function' &&
-                    !document.getElementById('userTagsWidget')?.classList.contains('d-none')) {
-                    loadUserTagsWidget();
-                }
-                if (typeof currentPage !== 'undefined' && currentPage === 'admin-user-tags' &&
-                    typeof loadUserTagsAdmin === 'function') {
+            }
+            if (typeof currentPage !== 'undefined' && currentPage === 'admin-user-tags') {
+                if (['category_created', 'category_updated', 'category_deleted',
+                     'category_csv_import', 'category_m2m_import'].indexOf(action) !== -1
+                    && typeof loadUserTagsAdmin === 'function') {
                     loadUserTagsAdmin();
-                    if (typeof loadAdminMyTags === 'function') loadAdminMyTags();
+                }
+                if (typeof loadAdminMyTags === 'function') {
+                    loadAdminMyTags();
                 }
             }
             break;

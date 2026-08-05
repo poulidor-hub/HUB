@@ -673,6 +673,12 @@ class HubAPI {
         });
     }
 
+    async acknowledgeMyTags(categories) {
+        return this.request('/tags/my/acknowledge', {
+            method: 'POST', body: JSON.stringify({ categories })
+        });
+    }
+
     async getUsersWithTags() {
         return this.request('/tags/users');
     }

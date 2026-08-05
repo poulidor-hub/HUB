@@ -187,7 +187,6 @@ function showPage(page) {
     switch(page) {
         case 'dashboard':
             document.getElementById('dashboardSection').classList.remove('d-none');
-            if (typeof loadUserTagsWidget === 'function') loadUserTagsWidget();
             break;
         case 'audit':
             if (!currentUser?.is_admin) {
