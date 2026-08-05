@@ -33,6 +33,15 @@
             </button>
 
             <div class="collapse navbar-collapse" id="navbarContent">
+                <!-- Navigation utilisateur (visible par tous les connectés) -->
+                <ul class="navbar-nav me-auto" id="userNavigation">
+                    <li class="nav-item">
+                        <a class="nav-link" href="#" data-action="showPage" data-args="admin-user-tags" id="navUserTags">
+                            <i class="bi bi-sliders2 me-1"></i>Préférences
+                        </a>
+                    </li>
+                </ul>
+
                 <!-- Navigation Admin (masquée pour non-admins) -->
                 <div id="adminNavigation" class="d-none">
                     <ul class="navbar-nav me-auto">
@@ -58,11 +67,6 @@
                                 <span class="badge bg-info ms-1" id="navMessagesBadge" style="display: none; font-size: 0.65em;">0</span>
                             </a>
                         </li>
-<li class="nav-item">
-    <a class="nav-link" href="#" data-action="showPage" data-args="admin-user-tags" id="navUserTags">
-        <i class="bi bi-sliders2 me-1"></i>Préférences
-    </a>
-</li>
                     </ul>
                 </div>
                 

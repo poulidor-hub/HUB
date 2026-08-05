@@ -240,20 +240,49 @@ function showPage(page) {
             loadMessagesPage();
             break;
         case 'admin-user-tags':
-            if (!currentUser?.is_admin) {
-                showToast('Accès refusé', 'Vous devez être administrateur', 'danger');
-                return;
-            }
             document.getElementById('adminUserTagsSection').classList.remove('d-none');
             document.getElementById('navUserTags')?.classList.add('active');
-            loadUserTagsAdmin();
+            applyUserTagsTabsVisibility();
             loadAdminMyTags();
-            loadAdminTagUsers();
+            if (currentUser?.is_admin) {
+                loadUserTagsAdmin();
+                loadAdminTagUsers();
+            }
             break;
         case 'inbox':
             document.getElementById('userInboxSection').classList.remove('d-none');
             loadInboxPage();
             break;
+    }
+}
+
+/**
+ * Affiche/masque les onglets de la page Préférences selon le rôle.
+ * Non-admin : uniquement l'onglet "Mes préférences" (actif).
+ * Admin : les 3 onglets (comportement inchangé).
+ */
+function applyUserTagsTabsVisibility() {
+    const isAdmin = !!currentUser?.is_admin;
+    document.querySelectorAll('#adminUserTagsSection .nav-tabs .nav-link').forEach(link => {
+        const target = link.getAttribute('data-bs-target');
+        const adminOnly = (target === '#tabTagCategories' || target === '#tabTagUsers');
+        if (adminOnly && !isAdmin) {
+            link.classList.add('d-none');
+        } else {
+            link.classList.remove('d-none');
+        }
+    });
+    if (!isAdmin) {
+        const mineLink = document.querySelector('#adminUserTagsSection .nav-tabs .nav-link[data-bs-target="#tabTagMine"]');
+        const minePane = document.getElementById('tabTagMine');
+        document.querySelectorAll('#adminUserTagsSection .tab-pane').forEach(p => {
+            p.classList.remove('show', 'active');
+        });
+        document.querySelectorAll('#adminUserTagsSection .nav-tabs .nav-link').forEach(l => {
+            l.classList.remove('active');
+        });
+        if (mineLink) mineLink.classList.add('active');
+        if (minePane) minePane.classList.add('show', 'active');
     }
 }
 
