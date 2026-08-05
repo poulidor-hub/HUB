@@ -109,7 +109,7 @@ class TestUserTags:
         headers = _make_user_headers(test_user)
         response = await client.get("/api/tags/my", headers=headers)
         assert response.status_code == 200
-        assert response.json() == {"tags": {}}
+        assert response.json() == {"tags": {}, "seen_categories": []}
 
     @pytest.mark.asyncio
     async def test_update_my_tags(
@@ -125,7 +125,7 @@ class TestUserTags:
             "tags": {"sec": ["Nord"]}
         }, headers=user_headers)
         assert response.status_code == 200
-        assert response.json() == {"tags": {"sec": ["Nord"]}}
+        assert response.json() == {"tags": {"sec": ["Nord"]}, "seen_categories": []}
 
     @pytest.mark.asyncio
     async def test_update_my_tags_invalid_value(
@@ -212,6 +212,16 @@ class TestUserTags:
         payload = pyjwt.decode(token, settings.jwt_public_key, algorithms=[settings.jwt_algorithm])
         assert "tags" in payload, f"tags claim missing from JWT. Payload keys: {list(payload.keys())}"
         assert payload["tags"] == {"zone": ["Nord"]}
+
+    @pytest.mark.asyncio
+    async def test_get_my_tags_includes_seen_categories(
+        self, client: AsyncClient, test_user: User
+    ):
+        headers = _make_user_headers(test_user)
+        response = await client.get("/api/tags/my", headers=headers)
+        assert response.status_code == 200
+        data = response.json()
+        assert data["seen_categories"] == []
 
 
 class TestJWTTagsClaim:

@@ -130,6 +130,22 @@ class UserTag(Base):
     category = relationship("TagCategory", back_populates="user_tags", lazy="raise")
 
 
+class UserTagSeen(Base):
+    """Catégories de tags déjà présentées (popup ack) à un utilisateur."""
+    __tablename__ = "user_tag_seen"
+    __table_args__ = (
+        UniqueConstraint('user_id', 'category_id', name='uq_user_tag_seen_user_category'),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
+    category_id = Column(Integer, ForeignKey('tag_categories.id', ondelete='CASCADE'), nullable=False)
+    seen_at = Column(DateTime, default=utcnow)
+
+    user = relationship("User", back_populates="seen_tag_categories", lazy="raise")
+    category = relationship("TagCategory", lazy="raise")
+
+
 class UserAppRole(Base):
     """Table d'association User <-> Application avec rôle"""
     __tablename__ = "user_app_roles"
@@ -192,6 +208,9 @@ class User(Base):
     refresh_tokens = relationship("RefreshToken", back_populates="user", cascade="all, delete-orphan")
     sessions = relationship("UserSession", back_populates="user", cascade="all, delete-orphan")
     tags = relationship("UserTag", back_populates="user", cascade="all, delete-orphan", lazy="raise")
+    seen_tag_categories = relationship(
+        "UserTagSeen", back_populates="user", cascade="all, delete-orphan", lazy="raise"
+    )
     
     @property
     def applications(self):

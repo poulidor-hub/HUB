@@ -2074,6 +2074,7 @@ class TagCategoryListResponse(BaseModel):
 
 class UserTagsResponse(BaseModel):
     tags: dict[str, list[str]]
+    seen_categories: list[str] = Field(default_factory=list)
 
 
 class UserTagsUpdate(BaseModel):

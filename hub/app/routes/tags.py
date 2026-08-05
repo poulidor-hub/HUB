@@ -10,7 +10,7 @@ import httpx
 
 from app.database import get_db
 from app.auth import get_current_admin, get_current_user, get_current_entity
-from app.models import User, Application, TagCategory, UserTag
+from app.models import User, Application, TagCategory, UserTag, UserTagSeen
 from app.schemas import (
     TagCategoryCreate,
     TagCategoryUpdate,
@@ -48,6 +48,23 @@ async def _get_user_tags(db: AsyncSession, user_id: int) -> dict[str, list[str]]
         if ut.category.is_active:
             tags.setdefault(ut.category.slug, []).append(ut.value)
     return tags
+
+
+async def _get_user_seen(db: AsyncSession, user_id: int) -> list[str]:
+    """Slugs des catégories actives déjà présentées (ack) à l'utilisateur."""
+    result = await db.execute(
+        select(UserTagSeen.category_id)
+        .where(UserTagSeen.user_id == user_id)
+    )
+    seen_ids = [row[0] for row in result.all()]
+    if not seen_ids:
+        return []
+    cats = await db.execute(
+        select(TagCategory.slug).where(
+            TagCategory.id.in_(seen_ids), TagCategory.is_active is True
+        )
+    )
+    return [r[0] for r in cats.all()]
 
 
 # ─── Découverte M2M (proxy vers l'app source) ─────────────────────
@@ -298,7 +315,8 @@ async def get_my_tags(
     current_user: User = Depends(get_current_user),
 ):
     tags = await _get_user_tags(db, current_user.id)
-    return UserTagsResponse(tags=tags)
+    seen = await _get_user_seen(db, current_user.id)
+    return UserTagsResponse(tags=tags, seen_categories=seen)
 
 
 @router.put("/my", response_model=UserTagsResponse)
@@ -344,6 +362,7 @@ async def update_my_tags(
     await db.commit()
 
     tags = await _get_user_tags(db, current_user.id)
+    seen = await _get_user_seen(db, current_user.id)
 
     notify_event("tags_updated", {
         "action": "user_tags_changed",
@@ -351,7 +370,7 @@ async def update_my_tags(
         "username": current_user.username,
     })
 
-    return UserTagsResponse(tags=tags)
+    return UserTagsResponse(tags=tags, seen_categories=seen)
 
 
 # ─── M2M endpoint (pour les apps) ──────────────────────────────────
