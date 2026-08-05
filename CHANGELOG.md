@@ -5,6 +5,36 @@
 
 ---
 
+## [3.25.0] - 5 août 2026
+
+### ⚡ Popup onboarding préférences + navbar unifiée
+
+- **Popup d'onboarding** : le widget « Mes préférences » est retiré du dashboard et
+  remplacé par un popup modal affiché à la connexion si l'utilisateur n'a pas encore
+  sélectionné de préférences. Le popup réapparaît à chaque connexion tant qu'aucune
+  préférence n'est choisie (décision B) et resurgit lorsqu'un admin ajoute une
+  nouvelle catégorie (décision Oui). Idempotent, sans double-ack.
+- **Table `user_tag_seen`** : nouvelle table normalisée (FK → `tag_categories`, `ON
+  DELETE CASCADE`) pour tracer les catégories déjà présentées à un utilisateur.
+  Migration 049.
+- **API `POST /api/tags/my/acknowledge`** : marque des catégories comme « vues » (popup
+  ack). Idempotent, slugs inconnus ignorés silencieusement. Émet un événement SSE
+  `user_tag_ack`.
+- **`GET /api/tags/my` étendu** : la réponse inclut désormais `seen_categories` (liste
+  des slugs déjà présentés). Champ rétrocompatible (`default_factory=list`).
+- **Navbar « Préférences » pour tous les utilisateurs** : l'entrée est désormais
+  visible pour les non-admins (plus limitée au bloc `#adminNavigation`). Les onglets
+  s'adaptent au rôle : non-admin → uniquement « Mes préférences », admin → 3 onglets.
+- **Refactor form-builder** : extraction des helpers `buildTagsFormHTML()` /
+  `collectTagsFromForm()` mutualisés entre le popup, l'onglet admin et la modale
+  d'édition. -56 lignes de code dupliqué.
+- **Nettoyage SSE** : la branche `tags_updated` ne référence plus le widget dashboard
+  supprimé ; rechargement préservé pour la page admin dédiée.
+- **Tests** : 20 tests d'intégration (5 nouveaux : `seen_categories` vide/non-vide,
+  ack insert/idempotent, exclusion catégories inactives).
+
+---
+
 ## [3.24.0] - 3 août 2026
 
 ### ⚡ Préférences utilisateur globales + JWT tags + UI admin
