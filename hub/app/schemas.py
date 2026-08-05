@@ -2079,3 +2079,11 @@ class UserTagsResponse(BaseModel):
 
 class UserTagsUpdate(BaseModel):
     tags: dict[str, list[str]]
+
+
+class UserTagsAcknowledge(BaseModel):
+    categories: list[str]
+
+
+class UserTagsAcknowledgeResponse(BaseModel):
+    acknowledged: list[str]

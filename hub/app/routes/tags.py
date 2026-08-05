@@ -18,6 +18,8 @@ from app.schemas import (
     TagCategoryListResponse,
     UserTagsResponse,
     UserTagsUpdate,
+    UserTagsAcknowledge,
+    UserTagsAcknowledgeResponse,
 )
 from app.routes.events import notify_event
 
@@ -364,6 +366,49 @@ async def update_my_tags(
     })
 
     return UserTagsResponse(tags=tags, seen_categories=seen)
+
+
+@router.post("/my/acknowledge", response_model=UserTagsAcknowledgeResponse)
+async def acknowledge_my_tags(
+    data: UserTagsAcknowledge,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Marque des catégories comme déjà présentées au user (popup ack). Idempotent."""
+    if not data.categories:
+        return UserTagsAcknowledgeResponse(acknowledged=[])
+
+    result = await db.execute(
+        select(TagCategory).where(
+            TagCategory.slug.in_(data.categories), TagCategory.is_active == True
+        )
+    )
+    cats = result.scalars().all()
+    if not cats:
+        return UserTagsAcknowledgeResponse(acknowledged=[])
+
+    existing = await db.execute(
+        select(UserTagSeen.category_id).where(UserTagSeen.user_id == current_user.id)
+    )
+    already_seen = {row[0] for row in existing.all()}
+
+    inserted_slugs: list[str] = []
+    for cat in cats:
+        if cat.id in already_seen:
+            inserted_slugs.append(cat.slug)
+            continue
+        db.add(UserTagSeen(user_id=current_user.id, category_id=cat.id))
+        inserted_slugs.append(cat.slug)
+
+    await db.commit()
+
+    notify_event("tags_updated", {
+        "action": "user_tag_ack",
+        "user_id": current_user.id,
+        "username": current_user.username,
+    })
+
+    return UserTagsAcknowledgeResponse(acknowledged=inserted_slugs)
 
 
 # ─── M2M endpoint (pour les apps) ──────────────────────────────────

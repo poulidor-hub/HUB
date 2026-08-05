@@ -297,3 +297,65 @@ class TestJWTTagsClaim:
         token, _, _ = create_access_token(username="testuser", apps={})
         payload = pyjwt.decode(token, settings.jwt_public_key, algorithms=[settings.jwt_algorithm])
         assert "tags" not in payload
+
+
+class TestUserTagsAcknowledge:
+
+    @pytest.mark.asyncio
+    async def test_acknowledge_inserts_seen(
+        self, client: AsyncClient, async_session: AsyncSession,
+        admin_user: User, test_user: User
+    ):
+        from app.models import UserTagSeen
+        admin_headers = _make_admin_headers(admin_user)
+        user_headers = _make_user_headers(test_user)
+        r = await client.post("/api/tags/categories", json={
+            "slug": "zone", "label": "Zone", "source": "csv", "values": ["Nord", "Sud"]
+        }, headers=admin_headers)
+        zone_id = r.json()["id"]
+
+        response = await client.post("/api/tags/my/acknowledge", json={
+            "categories": ["zone"]
+        }, headers=user_headers)
+        assert response.status_code == 200
+        assert response.json() == {"acknowledged": ["zone"]}
+
+        result = await async_session.execute(
+            select(UserTagSeen).where(UserTagSeen.user_id == test_user.id)
+        )
+        rows = result.scalars().all()
+        assert len(rows) == 1
+        assert rows[0].category_id == zone_id
+
+    @pytest.mark.asyncio
+    async def test_acknowledge_is_idempotent(
+        self, client: AsyncClient, async_session: AsyncSession,
+        admin_user: User, test_user: User
+    ):
+        from app.models import UserTagSeen
+        admin_headers = _make_admin_headers(admin_user)
+        user_headers = _make_user_headers(test_user)
+        await client.post("/api/tags/categories", json={
+            "slug": "lang", "label": "Langue", "source": "csv", "values": ["fr", "en"]
+        }, headers=admin_headers)
+
+        await client.post("/api/tags/my/acknowledge", json={"categories": ["lang"]}, headers=user_headers)
+        response = await client.post("/api/tags/my/acknowledge", json={"categories": ["lang"]}, headers=user_headers)
+        assert response.status_code == 200
+        assert response.json() == {"acknowledged": ["lang"]}
+
+        result = await async_session.execute(
+            select(UserTagSeen).where(UserTagSeen.user_id == test_user.id)
+        )
+        assert len(result.scalars().all()) == 1  # pas de doublon
+
+    @pytest.mark.asyncio
+    async def test_acknowledge_ignores_unknown_slugs(
+        self, client: AsyncClient, test_user: User
+    ):
+        headers = _make_user_headers(test_user)
+        response = await client.post("/api/tags/my/acknowledge", json={
+            "categories": ["introuvable"]
+        }, headers=headers)
+        assert response.status_code == 200
+        assert response.json() == {"acknowledged": []}
