@@ -1,37 +1,30 @@
 /**
  * user-tags.js
- * Widget dashboard : tags utilisateur
+ * Helpers mutualisés pour les formulaires de préférences (tags utilisateur).
+ * Consommé par : le popup d'onboarding (Task 6), l'onglet admin "Mes préférences",
+ * et la modale d'édition admin d'un utilisateur.
  */
 
-async function loadUserTagsWidget() {
-    const container = document.getElementById('userTagsWidget');
-    if (!container) return;
+/**
+ * Construit le HTML des champs d'un formulaire de préférences.
+ * - cat.is_multiple = true  -> checkboxes
+ * - cat.is_multiple = false -> radios
+ * @param {Array} categories - catégories actives ({slug,label,is_multiple,values})
+ * @param {Object} selectedMap - { slug: [values] } sélectionnées
+ * @param {string} idPrefix - préfixe d'id pour éviter les collisions DOM
+ * @returns {string} HTML
+ */
+function buildTagsFormHTML(categories, selectedMap, idPrefix) {
+    if (!Array.isArray(categories) || categories.length === 0) return '';
 
-    try {
-        const [categoriesData, myTagsData] = await Promise.all([
-            api.getActiveTagCategories(), api.getMyTags()
-        ]);
-        const categories = categoriesData.categories || [];
-        const myTags = myTagsData.tags || {};
-
-        if (!categories.length) { container.classList.add('d-none'); return; }
-        container.classList.remove('d-none');
-        renderUserTagsWidget(container, categories, myTags);
-    } catch (error) {
-        console.error('Erreur chargement tags utilisateur:', error);
-        container.classList.add('d-none');
-    }
-}
-
-function renderUserTagsWidget(container, categories, myTags) {
-    const sections = categories.map(cat => {
-        const selected = myTags[cat.slug] || [];
+    return categories.map(cat => {
+        const selected = selectedMap[cat.slug] || [];
         const inputType = cat.is_multiple ? 'checkbox' : 'radio';
-        const inputName = 'tag_' + cat.slug;
+        const inputName = idPrefix + '_' + cat.slug;
 
         const options = (cat.values || []).map(val => {
             const checked = selected.includes(val) ? 'checked' : '';
-            const id = 'tag_' + cat.slug + '_' + val.replace(/[^a-zA-Z0-9]/g, '_');
+            const id = idPrefix + '_' + cat.slug + '_' + val.replace(/[^a-zA-Z0-9]/g, '_');
             return `<div class="form-check form-check-inline">
                 <input class="form-check-input" type="${inputType}" name="${inputName}"
                     id="${id}" value="${escapeHtml(val)}" ${checked} data-category="${cat.slug}">
@@ -44,36 +37,20 @@ function renderUserTagsWidget(container, categories, myTags) {
             <div>${options}</div>
         </div>`;
     }).join('');
-
-    container.innerHTML = `<div class="card">
-        <h2>Mes préférences</h2>
-        <div id="userTagsFormFields">${sections}</div>
-        <div class="mt-3">
-            <button class="btn btn-primary" onclick="handleSaveUserTags()">
-                <i class="bi bi-check-lg me-1"></i>Enregistrer mes choix
-            </button>
-            <span id="userTagsFeedback" class="ms-2 small"></span>
-        </div>
-    </div>`;
 }
 
-async function handleSaveUserTags() {
-    const feedback = document.getElementById('userTagsFeedback');
-    if (feedback) { feedback.textContent = ''; }
-
+/**
+ * Lit un conteneur de formulaire et retourne les sélections { slug: [values] }.
+ * @param {string} containerSelector - sélecteur CSS du conteneur (ex: '#prefOnboardingFields')
+ * @returns {Object} { category_slug: [values] }
+ */
+function collectTagsFromForm(containerSelector) {
     const tags = {};
-    document.querySelectorAll('#userTagsFormFields input:checked').forEach(input => {
+    document.querySelectorAll(`${containerSelector} input:checked`).forEach(input => {
         const cat = input.getAttribute('data-category');
+        if (!cat) return;
         if (!tags[cat]) tags[cat] = [];
         tags[cat].push(input.value);
     });
-
-    try {
-        await api.updateMyTags({ tags });
-        if (feedback) { feedback.textContent = 'Préférences enregistrées'; feedback.className = 'ms-2 small text-success'; }
-        showToast('Préférences enregistrées', 'success');
-    } catch (error) {
-        if (feedback) { feedback.textContent = error.message || 'Erreur'; feedback.className = 'ms-2 small text-danger'; }
-        showToast(error.message || 'Erreur lors de l\'enregistrement', 'danger');
-    }
+    return tags;
 }

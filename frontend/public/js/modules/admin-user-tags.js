@@ -326,28 +326,7 @@ async function loadAdminMyTags() {
             return;
         }
 
-        const sections = categories.map(cat => {
-            const selected = myTags[cat.slug] || [];
-            const inputType = cat.is_multiple ? 'checkbox' : 'radio';
-            const inputName = 'admin_tag_' + cat.slug;
-
-            const options = (cat.values || []).map(val => {
-                const checked = selected.includes(val) ? 'checked' : '';
-                const id = 'admin_tag_' + cat.slug + '_' + val.replace(/[^a-zA-Z0-9]/g, '_');
-                return `<div class="form-check form-check-inline">
-                    <input class="form-check-input" type="${inputType}" name="${inputName}"
-                        id="${id}" value="${escapeHtml(val)}" ${checked} data-category="${cat.slug}">
-                    <label class="form-check-label" for="${id}">${escapeHtml(val)}</label>
-                </div>`;
-            }).join('');
-
-            return `<div class="mb-3">
-                <label class="form-label fw-bold">${escapeHtml(cat.label)}</label>
-                <div>${options}</div>
-            </div>`;
-        }).join('');
-
-        fieldsContainer.innerHTML = sections;
+        fieldsContainer.innerHTML = buildTagsFormHTML(categories, myTags, 'admin_tag');
     } catch (error) {
         console.error('Erreur chargement préférences admin:', error);
         fieldsContainer.innerHTML = '<p class="text-danger mb-0">Erreur lors du chargement de vos préférences.</p>';
@@ -446,19 +425,7 @@ async function showUserTagsModal(username) {
                 '<p class="text-muted mb-0">Aucune préférence disponible. Créez-en d\'abord dans l\'onglet Catégories.</p>';
             return;
         }
-        const sections = categories.map(cat => {
-            const selected = userTags[cat.slug] || [];
-            const inputType = cat.is_multiple ? 'checkbox' : 'radio';
-            const inputName = 'utm_' + cat.slug;
-            const options = (cat.values || []).map(val => {
-                const checked = selected.includes(val) ? 'checked' : '';
-                const id = 'utm_' + cat.slug + '_' + val.replace(/[^a-zA-Z0-9]/g, '_');
-                return `<div class="form-check form-check-inline">
-                    <input class="form-check-input" type="${inputType}" name="${inputName}" id="${id}" value="${escapeHtml(val)}" ${checked} data-category="${cat.slug}">
-                    <label class="form-check-label" for="${id}">${escapeHtml(val)}</label></div>`;
-            }).join('');
-            return `<div class="mb-3"><label class="form-label fw-bold">${escapeHtml(cat.label)}</label><div>${options}</div></div>`;
-        }).join('');
+        const sections = buildTagsFormHTML(categories, userTags, 'utm');
         document.getElementById('userTagsModalFields').innerHTML = sections;
     } catch (error) {
         document.getElementById('userTagsModalFields').innerHTML = '<p class="text-danger mb-0">Erreur lors du chargement.</p>';
