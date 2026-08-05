@@ -171,6 +171,8 @@ async function handleSavePrefOnboarding() {
             await api.acknowledgeMyTags(_prefOnboardingShownSlugs);
         }
 
+        _prefOnboardingRaison = null;
+        _prefOnboardingShownSlugs = [];
         _prefOnboardingInstance.hide();
         showToast('Préférences enregistrées', '', 'success');
 
