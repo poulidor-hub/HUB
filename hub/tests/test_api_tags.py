@@ -223,6 +223,57 @@ class TestUserTags:
         data = response.json()
         assert data["seen_categories"] == []
 
+    @pytest.mark.asyncio
+    async def test_seen_categories_includes_acknowledged(
+        self, client: AsyncClient, async_session: AsyncSession,
+        admin_user: User, test_user: User
+    ):
+        from app.models import TagCategory, UserTagSeen
+        admin_headers = _make_admin_headers(admin_user)
+        user_headers = _make_user_headers(test_user)
+
+        r1 = await client.post("/api/tags/categories", json={
+            "slug": "vu", "label": "Déjà vu", "source": "csv", "values": ["A"]
+        }, headers=admin_headers)
+        cat1_id = r1.json()["id"]
+        r2 = await client.post("/api/tags/categories", json={
+            "slug": "pasvu", "label": "Pas vu", "source": "csv", "values": ["B"]
+        }, headers=admin_headers)
+
+        async_session.add(UserTagSeen(user_id=test_user.id, category_id=cat1_id))
+        await async_session.commit()
+
+        response = await client.get("/api/tags/my", headers=user_headers)
+        assert response.status_code == 200
+        data = response.json()
+        assert "vu" in data["seen_categories"]
+        assert "pasvu" not in data["seen_categories"]
+
+    @pytest.mark.asyncio
+    async def test_seen_categories_excludes_inactive(
+        self, client: AsyncClient, async_session: AsyncSession,
+        admin_user: User, test_user: User
+    ):
+        from app.models import TagCategory, UserTagSeen
+        admin_headers = _make_admin_headers(admin_user)
+        user_headers = _make_user_headers(test_user)
+
+        r = await client.post("/api/tags/categories", json={
+            "slug": "oldcat", "label": "Old", "source": "csv", "values": ["X"]
+        }, headers=admin_headers)
+        cat_id = r.json()["id"]
+
+        async_session.add(UserTagSeen(user_id=test_user.id, category_id=cat_id))
+        await async_session.commit()
+
+        resp = await client.get("/api/tags/my", headers=user_headers)
+        assert "oldcat" in resp.json()["seen_categories"]
+
+        await client.patch("/api/tags/categories/oldcat", json={"is_active": False}, headers=admin_headers)
+
+        resp2 = await client.get("/api/tags/my", headers=user_headers)
+        assert "oldcat" not in resp2.json()["seen_categories"]
+
 
 class TestJWTTagsClaim:
 

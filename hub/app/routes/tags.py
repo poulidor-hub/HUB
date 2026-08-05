@@ -53,18 +53,11 @@ async def _get_user_tags(db: AsyncSession, user_id: int) -> dict[str, list[str]]
 async def _get_user_seen(db: AsyncSession, user_id: int) -> list[str]:
     """Slugs des catégories actives déjà présentées (ack) à l'utilisateur."""
     result = await db.execute(
-        select(UserTagSeen.category_id)
-        .where(UserTagSeen.user_id == user_id)
+        select(TagCategory.slug)
+        .join(UserTagSeen, UserTagSeen.category_id == TagCategory.id)
+        .where(UserTagSeen.user_id == user_id, TagCategory.is_active == True)
     )
-    seen_ids = [row[0] for row in result.all()]
-    if not seen_ids:
-        return []
-    cats = await db.execute(
-        select(TagCategory.slug).where(
-            TagCategory.id.in_(seen_ids), TagCategory.is_active is True
-        )
-    )
-    return [r[0] for r in cats.all()]
+    return [row[0] for row in result.all()]
 
 
 # ─── Découverte M2M (proxy vers l'app source) ─────────────────────
