@@ -154,6 +154,9 @@ function showDashboard() {
     refreshAllBadges();
 
     loadApps();
+
+    // Initialiser le flux des préférences (visibilité navbar + popup d'onboarding)
+    if (typeof initPreferencesFlow === 'function') initPreferencesFlow();
 }
 
 // ===== Page Navigation =====
