@@ -125,6 +125,9 @@ function showDashboard() {
     showNavbar();
     hideLoadingScreen();
     
+    var userNav = document.getElementById('userNavigation');
+    if (userNav) userNav.classList.remove('d-none');
+    
     document.getElementById('loginSection').classList.add('d-none');
     document.getElementById('accountRequestWaiting').classList.add('d-none');
     document.getElementById('dashboardSection').classList.remove('d-none');
@@ -179,6 +182,9 @@ function showPage(page) {
     
     // Réinitialiser les styles de navigation
     document.querySelectorAll('#adminNavigation .nav-link').forEach(link => {
+        link.classList.remove('active');
+    });
+    document.querySelectorAll('#userNavigation .nav-link').forEach(function(link) {
         link.classList.remove('active');
     });
     
@@ -342,6 +348,9 @@ function showLoginScreen() {
     // S'assurer que le loading screen est caché et la navbar visible
     showNavbar();
     hideLoadingScreen();
+    
+    var userNav = document.getElementById('userNavigation');
+    if (userNav) userNav.classList.add('d-none');
     
     currentUser = null;
     currentPage = 'dashboard';
