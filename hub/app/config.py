@@ -219,6 +219,9 @@ class Settings(BaseSettings):
     oidc_backchannel_logout_enabled: bool = True
     oidc_slo_enabled: bool = False  # SLO poste partagé — défaut False, activer via .env après e2e atelier
     oidc_slo_iframe_timeout_ms: int = 1500
+    # SA interne pour appels M2M HUB→apps (SLO v2, révoke sessions distantes)
+    hub_internal_sa_client_id: str = ""
+    hub_internal_sa_client_secret: str = ""
 
     # Auto-remplacement des applications existantes lors de l'enregistrement
     # Si True : l'ancienne app et son M2M sont supprimés automatiquement

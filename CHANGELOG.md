@@ -5,6 +5,74 @@
 
 ---
 
+## [3.26.1] - 6 août 2026
+
+### ⚡ SLO v2 — Câblage M2M HUB→exemple-app + Known Bug
+
+#### Ajouté
+- **`slo_orchestrator.py`** : module qui appelle chaque traducteur (app M2M) pour
+  révoquer les sessions distantes de l'ancien user via le SA interne `hub-internal`.
+- **SA `hub-internal`** : Service Account dédié (client_id=`hub-internal`), secret
+  stocké dans `.env` (`HUB_INTERNAL_SA_CLIENT_ID`/`HUB_INTERNAL_SA_CLIENT_SECRET`),
+  associé à l'app `exemple-app`. Permet au HUB de s'appeler lui-même en
+  `grant_type=client_credentials` puis d'appeler les traducteurs en M2M.
+- **Variables `hub_internal_sa_*`** dans `config.py` + `docker-compose.yml`.
+- **Intégration login** : `auth.py` appelle `propagate_remote_revoke()` au login
+  quand un switch est détecté (best-effort, ne bloque pas le login).
+
+#### Ops — fix déploiement
+- **`docker-compose.yml`** : les variables `OIDC_SLO_ENABLED` et
+  `OIDC_SLO_IFRAME_TIMEOUT_MS` manquaient → impossible d'activer le kill-switch
+  SLO via `.env` sans rebuilder l'image. Ajoutées.
+
+### ⚠️ Known Bug — SLO différé (pas immédiat)
+
+**Scénario** : A se connecte au HUB, lance Vikunja → B se connecte par-dessus au HUB
+→ B clique sur Vikunja → A est **toujours connecté** pendant jusqu'à `jwtttl` (72h).
+
+**Cause racine** : le JWT d'accès Vikunja est **stateless** (signé RS256, pas en DB),
+donc non révocable avant expiration (`jwtttl=259200`). Le M2M `DELETE FROM sessions`
+casse le **refresh token** (empêche le renouvellement) mais pas le JWT déjà émis.
+Aucun mécanisme de `jti` blocklist dans Vikunja v2.4.0.
+
+**Ce qui a été tenté (et pourquoi ça n'a pas suffi)** :
+
+| Approche | Statut | Raison de l'échec |
+|---|---|---|
+| **Iframe cachée** vers `vikunja/logout` | ❌ abandonné | La SPA Vikunja ne purge pas automatiquement son `localStorage` sur `/logout` (le logout est un clic bouton → `D(u).logout()`, pas une route). L'iframe charge la SPA mais ne déclenche rien. |
+| **M2M DELETE sessions** (v2, actuel) | ⚠️ partiel | Casse le refresh mais pas le JWT d'accès stateless. L'ancien user est déconnecté dans max `jwtttl` secondes (72h), pas immédiatement. |
+| **`jwtttl=300`** (5 min) | ❌ abandonné | Réduit le délai à 5 min mais l'utilisateur voit encore A pendant ce laps de temps. Dégradation UX inacceptable pour les sessions longues légitimes. |
+
+**Workaround utilisateur** : fermer manuellement l'onglet Vikunja puis le rouvrir
+depuis le dashboard HUB — le `launch` redirige vers `/logout?provider=hub` (qui ne
+purge pas plus, mais si le JWT est expiré entre-temps, le flow OIDC redémarre).
+
+**Pistes futures** (non implémentées, à évaluer) :
+- **Remplacer l'iframe par une navigation réelle** (`window.location = vikunja/logout`
+  puis retour au dashboard) — plus intrusif UX mais garantit l'exécution du JS SPA.
+- **Fork Vikunja** pour ajouter un endpoint de révocation de JWT (jti blacklist) —
+  lourd mais seule solution vraiment immédiate.
+- **Désactiver l'ancien user** (`users.status`) côté Vikunja via le traducteur —
+  l'API exemple-app le permet mais c'est sémantiquement un **offboarding**
+  (inadapté pour un simple switch de poste).
+- **`prompt=login`** dans le flow OIDC — standard, mais Vikunja ne le supporte pas
+  côté RP (il ne le passe pas à l'IdP).
+
+#### Code toujours actif (non retiré)
+- **`slo-purge.js`** (iframe frontend) : conservé — ne fait rien en pratique
+  (la SPA Vikunja ignore `/logout`) mais ne gêne pas. À retirer si définitivement
+  inutile.
+- **`remote_logout`** dans `POST /api/auth/token` : conservé pour le frontend
+  (la réponse contient toujours la liste des apps à purger, même si le frontend
+  ne peut pas les purger efficacement aujourd'hui).
+
+### 🔧 Correctifs hérités de 3.26.0
+- **`UserAppRole.application_id` → `UserAppRole.app_id`** dans `/oidc/authorize`
+  (regression cassait le SSO pour les users non-admin sur clients OIDC liés à
+  une app — déjà déployé en hotfix puis mergé dans 3.26.0).
+
+---
+
 ## [3.26.0] - 6 août 2026
 
 ### ⚡ SLO poste partagé (déconnexion propagée au login HUB)
