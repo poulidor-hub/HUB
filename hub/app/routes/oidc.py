@@ -156,10 +156,12 @@ async def authorize_oidc(
         linked_app = app_result.scalar_one_or_none()
         if not user.is_admin:
             # Vérifier UserAppRole directement (évite lazy='raise' sur User.app_roles)
+            # NB: UserAppRole expose la colonne FK `app_id` (pas `application_id`,
+            # qui n'existe pas — la relation SQLAlchemy s'appelle `application`).
             role_result = await db.execute(
                 select(UserAppRole).where(
                     UserAppRole.user_id == user.id,
-                    UserAppRole.application_id == linked_app.id
+                    UserAppRole.app_id == linked_app.id
                 )
             )
             if not role_result.scalar_one_or_none():
