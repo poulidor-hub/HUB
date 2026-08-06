@@ -5,6 +5,46 @@
 
 ---
 
+## [3.26.0] - 6 août 2026
+
+### ⚡ SLO poste partagé (déconnexion propagée au login HUB)
+
+- **Détection de changement d'utilisateur** au `POST /api/auth/token` via le cookie
+  `hub_oidc_session` précédent : si un user B se connecte par-dessus un user A, le
+  backend collecte les apps OIDC où A avait un refresh token valide.
+- **Nouveau champ de réponse** `remote_logout: list[{slug, frontend_url, logout_url, translator_slug}]`
+  dans la réponse de login (grant password). Le frontend HUB ouvre ensuite des iframes
+  cachées vers `{app}/logout` pour purger les sessions distantes de A (localStorage +
+  cookie HttpOnly cross-origin).
+- **Kill-switch** : nouvelle var `OIDC_SLO_ENABLED` (défaut **False** en 3.26.0 — activer
+  via `.env` après validation e2e atelier) et `OIDC_SLO_IFRAME_TIMEOUT_MS` (défaut 1500).
+- **Helpers internes** : `slo_helpers.py` (`detect_user_switch_and_collect_logouts`,
+  `lookup_translator_slug`, mapping statique `APP_TRANSLATORS = {"vikunja": "exemple-app"}`).
+- **Frontend** : nouveau module `slo-purge.js` + intégration post-login dans
+  `auth-navigation.js`. Best-effort (try/catch) — n'affiche jamais d'erreur visible.
+- **Spec** : `docs/superpowers/specs/2026-08-06-slo-shared-workstation-design.md`.
+
+### 🔧 Correctifs
+
+- **`UserAppRole.application_id` → `UserAppRole.app_id`** dans `/oidc/authorize`
+  (regression cassait le SSO pour les users non-admin sur clients OIDC liés à une app —
+  les admins ne déclenchaient pas le bug grâce au court-circuit `if not user.is_admin`).
+
+### 🔒 Sécurité
+
+- Nouvel endpoint M2M côté `exemple-app` uniquement (cf. release exemple-app
+  séparée) — non câblé côté HUB en 3.26.0 (câblage reporté v2).
+
+### ⚠️ Notes de déploiement
+
+- **Activation progressive recommandée** : laisser `OIDC_SLO_ENABLED=false` au déploiement,
+  valider e2e atelier (scénario A→B sur Vikunja), puis flipper à `true` dans `.env`
+  et redémarrer `hub-api`.
+- Aucune migration DB requise.
+- Rétrocompatible : si `remote_logout` est absent ou vide, frontend ne fait rien.
+
+---
+
 ## [3.25.0] - 5 août 2026
 
 ### ⚡ Popup onboarding préférences + navbar unifiée
