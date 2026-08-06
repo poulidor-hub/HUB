@@ -217,7 +217,7 @@ class Settings(BaseSettings):
     oidc_access_token_ttl_minutes: int = 15
     oidc_refresh_token_days: int = 30
     oidc_backchannel_logout_enabled: bool = True
-    oidc_slo_enabled: bool = True
+    oidc_slo_enabled: bool = False  # SLO poste partagé — défaut False, activer via .env après e2e atelier
     oidc_slo_iframe_timeout_ms: int = 1500
 
     # Auto-remplacement des applications existantes lors de l'enregistrement

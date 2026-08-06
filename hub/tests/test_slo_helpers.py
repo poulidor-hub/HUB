@@ -103,6 +103,7 @@ async def test_switch_returns_logout_for_active_refresh_token(
     vikunja_client, settings: Settings
 ):
     """Cookie A, login B, A a un refresh token valide sur vikunja → renvoie l'app."""
+    settings.oidc_slo_enabled = True  # activer explicitement (défaut False depuis 3.26.0)
     settings.oidc_issuer = "http://test"
     cookie = create_oidc_session_cookie(test_user.username, settings)
 
@@ -138,6 +139,7 @@ async def test_switch_skips_revoked_refresh_token(
     """Un refresh token révoqué ne doit pas être remonté."""
     from datetime import timedelta
     from app.auth import utcnow
+    settings.oidc_slo_enabled = True  # activer explicitement (défaut False depuis 3.26.0)
     settings.oidc_issuer = "http://test"
     cookie = create_oidc_session_cookie(test_user.username, settings)
 
