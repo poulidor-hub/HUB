@@ -324,18 +324,30 @@ async def login_for_token(
     # Notifier SSE des stats mises à jour (nouvelle session)
     notify_stats_update()
     notify_event("audit_updated", {"action": "login", "username": user.username})
-    
+
+    # SLO poste partagé : lire l'ancien cookie AVANT de l'écraser.
+    # Si un autre user était connecté sur ce poste, on collecte ses apps OIDC
+    # pour que le frontend purge leurs sessions via iframe.
+    from app.slo_helpers import detect_user_switch_and_collect_logouts
+    remote_logout = await detect_user_switch_and_collect_logouts(
+        request=request,
+        db=db,
+        new_username=user.username,
+        settings=settings,
+    )
+
     # Poser le cookie de session OIDC (permet à /oidc/authorize d'identifier
     # l'user sans re-login, pour le SSO OIDC standard type Vikunja).
     from app.oidc_helpers import attach_oidc_session_cookie
     attach_oidc_session_cookie(response, user.username, request, settings)
-    
+
     return Token(
         access_token=token,
         expires_at=expire,
         refresh_token=new_refresh_token,
         must_change_password=user.must_change_password or False,
-        beacon_token=generate_beacon_token(user.id)
+        beacon_token=generate_beacon_token(user.id),
+        remote_logout=remote_logout,
     )
 
 

@@ -548,6 +548,7 @@ class Token(BaseModel):
     refresh_token: Optional[str] = None  # Inclus seulement pour les logins utilisateur
     must_change_password: bool = False  # Si True, l'utilisateur doit changer son mot de passe
     beacon_token: Optional[str] = None  # Token HMAC éphémère pour sécuriser beacon-logout
+    remote_logout: Optional[list[dict]] = None  # SLO poste partagé (cf. slo_helpers)
 
 
 class AppLaunchResponse(BaseModel):
