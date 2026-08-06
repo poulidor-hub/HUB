@@ -71,3 +71,6 @@ Thumbs.db
 storage/backups/*
 !storage/backups/README.md
 storage/snapshots/
+
+# Worktrees d'isolation agents (agent-isolation-git)
+.worktrees/

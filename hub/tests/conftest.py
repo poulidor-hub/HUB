@@ -40,6 +40,8 @@ _OIDC_FIELDS_TO_SNAPSHOT = (
     "oidc_id_token_ttl_minutes",
     "oidc_access_token_ttl_minutes",
     "oidc_backchannel_logout_enabled",
+    "oidc_slo_enabled",
+    "oidc_slo_iframe_timeout_ms",
 )
 
 

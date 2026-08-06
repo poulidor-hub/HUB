@@ -52,7 +52,21 @@ async function handleLogin(event) {
             window.location.href = redirectUrl;
             return;
         }
-        
+
+        // SLO poste partagé : purger les sessions distantes si le backend l'a demandé
+        // (cas : un user B se connecte par-dessus un user A qui avait laissé des
+        // sessions OIDC ouvertes sur des apps externes). Best-effort : ne pas bloquer
+        // l'affichage du dashboard si la purge échoue. On attend la fin de la purge
+        // avant d'afficher le dashboard pour éviter que l'utilisateur n'ouvre une app
+        // dont la session distante n'est pas encore purgée.
+        if (Array.isArray(loginResult.remote_logout) && loginResult.remote_logout.length > 0) {
+            try {
+                await purgeRemoteSessions(loginResult.remote_logout);
+            } catch (e) {
+                console.warn('[SLO] purgeRemoteSessions failed:', e);
+            }
+        }
+
         await loadCurrentUser();
         showToast('Connexion réussie', `Bienvenue ${username} !`, 'success');
         
