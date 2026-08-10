@@ -5,6 +5,16 @@
 
 ---
 
+## [3.27.0] - 10 août 2026
+
+### ⚡ SNI routing PhiliaNG transparent proxy
+
+- **Ajouté** : bloc serveur SNI `service.example.org` sur le port 443, route le trafic vers le conteneur Philia proxy-frontend (port 4443)
+- **Ajouté** : redirection HTTP→HTTPS pour `service.example.org` sur le port 80
+- **Ajouté** : certificat dédié CN=service.example.org (auto-signé) pour la validation navigateur des cookies Keycloak exemple Connect
+- **Ajouté** : support SSE et long-polling (proxy_buffering off, proxy_read_timeout 86400s)
+- **Modifié** : le serveur Hub sur les ports 80 et 443 passe en `default_server` (catch-all)
+
 ## [3.26.1] - 6 août 2026
 
 ### ⚡ SLO v2 — Câblage M2M HUB→exemple-app + Known Bug
