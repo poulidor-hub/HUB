@@ -5,8 +5,9 @@ set -euo pipefail
 # POULIDOR Hub — Installation
 # =============================================================================
 # Usage :
-#   ./install.sh                          # Mode interactif
-#   ./install.sh --profile client.json    # Mode non-interactif
+#   ./install.sh                          # Mode auto (défaut, zéro question)
+#   ./install.sh --interactive            # Mode interactif pas à pas
+#   ./install.sh --profile client.json    # Mode non-interactif via profil JSON
 # =============================================================================
 
 RED='\033[0;31m'
@@ -22,8 +23,9 @@ warn() { say "  ${YELLOW}⚠${NC} $1"; }
 err()  { say "  ${RED}✗${NC} $1"; exit 1; }
 
 PROFILE=""
-INTERACTIVE=true
+INTERACTIVE=false
 FORCE=false
+AUTO=true
 
 # ── Parse arguments ──────────────────────────────────────────────────────────
 
@@ -35,17 +37,29 @@ while [[ $# -gt 0 ]]; do
             if [ -z "$PROFILE" ] || [ ! -f "$PROFILE" ]; then
                 err "Profil introuvable : ${PROFILE:-'(chemin vide)'}"
             fi
+            AUTO=false
             INTERACTIVE=false
             ;;
         --force)
             FORCE=true
             ;;
+        --auto)
+            AUTO=true
+            INTERACTIVE=false
+            FORCE=true
+            ;;
+        --interactive)
+            AUTO=false
+            INTERACTIVE=true
+            ;;
         -h|--help)
-            say "Usage : $0 [--profile client.json] [--force]"
+            say "Usage : $0 [--interactive] [--profile client.json] [--auto] [--force]"
             say ""
-            say "  Mode interactif (défaut) : guide l'utilisateur pas à pas."
+            say "  Mode auto (défaut)      : full automatique, auto-détecte tout, zéro question."
+            say "  Mode --interactive      : guide l'utilisateur pas à pas."
             say "  Mode --profile          : lit un fichier JSON et configure sans interaction."
-            say "  --force                 : autorise l'écrasement d'un .env existant (ATTENTION)."
+            say "  --force                 : autorise l'écrasement d'un .env existant (mode --profile)."
+            say "  --auto                  : force le mode auto (déjà le défaut) + --force implicite."
             say ""
             say "  Exemple de profil : docs/hub-profile.example.json"
             exit 0
@@ -61,7 +75,11 @@ say ""
 say "${BOLD}${CYAN}══════════════════════════════════════════════════════════${NC}"
 say "${BOLD}${CYAN}   POULIDOR Hub — Installation${NC}"
 if ! $INTERACTIVE; then
-    say "   Profil : ${YELLOW}${PROFILE}${NC}"
+    if $AUTO; then
+        say "   Mode : ${GREEN}auto${NC} (full automatique)"
+    else
+        say "   Profil : ${YELLOW}${PROFILE}${NC}"
+    fi
 fi
 say "${BOLD}${CYAN}══════════════════════════════════════════════════════════${NC}"
 say ""
@@ -139,6 +157,41 @@ if $INTERACTIVE; then
     CLIENT_NAME=""
     CLIENT_CONTACT=""
     CLIENT_EMAIL=""
+
+elif $AUTO; then
+    # --- Mode full-auto (zéro interaction) ---
+
+    DETECTED_IP=$(hostname -I 2>/dev/null | awk '{print $1}' || echo "")
+    if [ -z "$DETECTED_IP" ]; then
+        err "Impossible de détecter l'IP du serveur. Utilisez --profile ou le mode interactif."
+    fi
+    SERVER_IP="$DETECTED_IP"
+
+    HUB_HTTP_PORT=80
+    HUB_HTTPS_PORT=443
+    HUB_API_PORT=8000
+
+    ADMIN_USER="admin"
+    ADMIN_PASS=$(openssl rand -base64 18 2>/dev/null || $PYTHON_CMD -c "import secrets; print(secrets.token_urlsafe(18))" 2>/dev/null || echo "CHANGEZ_MOI_$(date +%s)")
+    ADMIN_EMAIL="admin@local.lan"
+
+    DOCKER_SUBNET="10.42.0.0/16"
+    LAN_CIDR="${SERVER_IP%.*}.0/24"
+    WHITELIST="${DOCKER_SUBNET},${LAN_CIDR}"
+
+    CORS_ORIGINS="https://${SERVER_IP},http://${SERVER_IP}"
+
+    HTTPS_ENABLED=true
+    DOCKER_SCAN_ENABLED=false
+
+    DB_PASS=$(openssl rand -base64 18 2>/dev/null || $PYTHON_CMD -c "import secrets; print(secrets.token_urlsafe(18))" 2>/dev/null || echo "CHANGEZ_MOI_$(date +%s)")
+
+    CLIENT_NAME=""
+    CLIENT_CONTACT=""
+    CLIENT_EMAIL=""
+
+    say "  IP détectée  : ${GREEN}${SERVER_IP}${NC}"
+    say "  Admin        : ${GREEN}${ADMIN_USER}${NC} (mot de passe auto-généré)"
 
 else
     # --- Mode profil (non-interactif) ---
@@ -265,6 +318,8 @@ if [ -f .env ]; then
             warn ".env conservé. Pour appliquer : nano .env && docker compose up -d"
             exit 0
         fi
+    elif $AUTO; then
+        warn ".env existant écrasé (mode auto)"
     elif ! $FORCE; then
         err ".env existe déjà. Le mode --profile refuse de l'écraser par sécurité.
   Utilisez --force pour autoriser l'écrasement, ou supprimez .env manuellement
@@ -352,6 +407,28 @@ APP_PORT_API_END=9499
 APP_PORT_FRONTEND_START=4200
 APP_PORT_FRONTEND_END=4699
 PORT_SCAN_DOCKER_ENABLED=true
+
+# CORS regex (optionnel)
+ALLOWED_ORIGIN_REGEX=
+
+# Compatibilité legacy (désactivée par défaut)
+LEGACY_COMPAT_ENABLED=false
+
+# OIDC Provider (bridge OIDC pour apps externes)
+OIDC_ENABLED=true
+OIDC_ISSUER=http://${SERVER_IP}:${HUB_API_PORT}
+OIDC_EMAIL_TEMPLATE={username}@hub.internal
+OIDC_CODE_TTL_SECONDS=30
+OIDC_ID_TOKEN_TTL_MINUTES=10
+OIDC_ACCESS_TOKEN_TTL_MINUTES=15
+OIDC_REFRESH_TOKEN_DAYS=30
+OIDC_BACKCHANNEL_LOGOUT_ENABLED=true
+OIDC_SLO_ENABLED=false
+OIDC_SLO_IFRAME_TIMEOUT_MS=1500
+
+# Service Account interne du HUB (M2M)
+HUB_INTERNAL_SA_CLIENT_ID=hub-internal
+HUB_INTERNAL_SA_CLIENT_SECRET=$(openssl rand -base64 32 2>/dev/null | tr -d '\n' || $PYTHON_CMD -c "import secrets; print(secrets.token_urlsafe(32))" 2>/dev/null || echo "CHANGEZ_MOI_INTERNAL_SA")
 EOF
 
 ok ".env écrit"
@@ -397,6 +474,9 @@ say ""
 if [ "$HTTPS_ENABLED" = "true" ]; then _SCHEME="https"; else _SCHEME="http"; fi
 say "  Accès   : ${BOLD}${_SCHEME}://${SERVER_IP}:${HUB_HTTP_PORT}${NC}"
 say "  Login   : ${BOLD}${ADMIN_USER}${NC}"
+if $AUTO; then
+    say "  Mot de passe : ${BOLD}${RED}${ADMIN_PASS}${NC}  ${YELLOW}(notez-le, il ne sera plus affiché)${NC}"
+fi
 if [ -n "$CLIENT_NAME" ]; then
     say "  Client  : ${BOLD}${CLIENT_NAME}${NC}"
 fi

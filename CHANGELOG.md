@@ -5,6 +5,20 @@
 
 ---
 
+## [3.28.0] - 10 août 2026
+
+### ⚡ Installation full-auto par défaut + .env enrichi
+
+- **Ajouté** : mode `--auto` dans `install.sh` — full automatique, zéro question. Auto-détecte l'IP, génère tous les secrets (DB, Fernet, JWT, SA interne), écrit le `.env`, lance Docker et vérifie la santé.
+- **Modifié** : le mode auto est désormais le **défaut** (`./install.sh` sans argument = auto). L'ancien mode interactif s'active avec `--interactive`.
+- **Ajouté** : le `.env` généré par `install.sh` inclut désormais toutes les variables OIDC (`OIDC_ENABLED`, `OIDC_ISSUER`, `OIDC_EMAIL_TEMPLATE`, `OIDC_CODE_TTL_SECONDS`, `OIDC_ID_TOKEN_TTL_MINUTES`, `OIDC_ACCESS_TOKEN_TTL_MINUTES`, `OIDC_REFRESH_TOKEN_DAYS`, `OIDC_BACKCHANNEL_LOGOUT_ENABLED`), les variables SLO (`OIDC_SLO_ENABLED`, `OIDC_SLO_IFRAME_TIMEOUT_MS`), et le Service Account interne (`HUB_INTERNAL_SA_CLIENT_ID`, `HUB_INTERNAL_SA_CLIENT_SECRET` auto-généré).
+- **Ajouté** : `LEGACY_COMPAT_ENABLED` et `ALLOWED_ORIGIN_REGEX` dans le `.env` généré.
+- **Ajouté** : affichage du mot de passe admin en fin d'installation (mode auto).
+- **Mis à jour** : `.env.example` synchronisé avec les 5 variables manquantes (`LEGACY_COMPAT_ENABLED`, `OIDC_SLO_ENABLED`, `OIDC_SLO_IFRAME_TIMEOUT_MS`, `HUB_INTERNAL_SA_CLIENT_ID`, `HUB_INTERNAL_SA_CLIENT_SECRET`).
+- **Corrigé** : logique d'écrasement du `.env` — le mode auto overwrite toujours, le mode `--profile` exige `--force` pour écraser.
+
+---
+
 ## [3.27.0] - 10 août 2026
 
 ### ⚡ SNI routing PhiliaNG transparent proxy
