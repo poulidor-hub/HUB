@@ -5,6 +5,22 @@
 
 ---
 
+## [3.28.1] - 11 août 2026
+
+### ⚡ PhiliaNG — inclusion conditionnelle (plus de crash au boot sans certs)
+
+- **Corrigé** : le bloc serveur PhiliaNG (`service.example.org`) dans `nginx-ssl.conf`
+  plantait nginx au démarrage si les certificats `/etc/nginx/ssl/server/philia-ng/`
+  étaient absents (machine sans PhiliaNG déployé). Les certificats sont dans
+  `certs/` (gitignoré) — ils ne voyagent pas avec le repo.
+- **Refactor** : les blocs PhiliaNG (HTTP redirect :80 + HTTPS proxy :443) sont
+  extraits dans `nginx-philia-ng.conf`, inclus conditionnellement par
+  `docker-entrypoint.sh` uniquement si les fichiers `server.crt` et `server.key`
+  existent.
+- **Dockerfile** : copie de `nginx-philia-ng.conf` dans `/etc/nginx/templates/`.
+
+---
+
 ## [3.28.0] - 10 août 2026
 
 ### ⚡ Installation full-auto par défaut + .env enrichi

@@ -1,7 +1,7 @@
 FROM nginx:alpine
 
-# Copier les templates de configuration nginx (HTTP-only et dual-stack)
-COPY nginx.conf nginx-ssl.conf /etc/nginx/templates/
+# Copier les templates de configuration nginx (HTTP-only, dual-stack, PhiliaNG)
+COPY nginx.conf nginx-ssl.conf nginx-philia-ng.conf /etc/nginx/templates/
 
 # Copier le script d'entrypoint
 COPY docker-entrypoint.sh /docker-entrypoint.sh
