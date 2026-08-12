@@ -129,7 +129,9 @@ services:
     memswap_limit: 2g
     # Accès au socket Docker (requis par docker_scanner pour restart/logs/start/stop)
     group_add:
-      - "128"  # groupe docker sur l'hôte
+      # GID du groupe docker sur l'hôte — détecté par hubctl init (getent group docker).
+      # Fallback 128 (Linux Mint default) pour les installs manuelles sans .env.
+      - "${HOST_DOCKER_GID:-128}"
     security_opt:
       - no-new-privileges:true
     cap_drop:

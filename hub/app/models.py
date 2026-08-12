@@ -279,7 +279,7 @@ class Application(Base):
     is_shared_service = Column(Boolean, default=False)  # Si True, accessible par tous les service accounts
     is_system_app = Column(Boolean, default=False, nullable=False)  # Application interne du Hub
     is_workshop = Column(Boolean, default=False, nullable=False,
-                         comment="True si l'app est un atelier (APP_Workshop/)")
+                         comment="True si l'app est un atelier (slug -ws, projet compose X-ws)")
     is_unmanaged = Column(Boolean, default=False, nullable=False,
                           comment="True si app non gérée (launcher-only) : présente/lancable mais exclue du health-check, backup et sync Docker")
     
