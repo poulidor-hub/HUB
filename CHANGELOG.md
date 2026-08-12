@@ -5,6 +5,18 @@
 
 ---
 
+## [3.28.2] - 12 août 2026
+
+### ⚡ Docker GID configurable + fix comment workshop
+
+- `.env.example` : ajout de la variable `HOST_DOCKER_GID` pour le mount du socket Docker.
+- `docker-compose.yml` : le `group_add` du hub-api utilise `${HOST_DOCKER_GID:-128}` au lieu d'un GID fixe.
+- `models.py` : correction du commentaire `is_workshop` (slug `-ws`, projet compose `X-ws`).
+|----------------|-------------|
+| **À compléter** | Décrivez les changements de cette version |
+
+---
+
 ## [3.28.1] - 11 août 2026
 
 ### ⚡ PhiliaNG — inclusion conditionnelle (plus de crash au boot sans certs)
