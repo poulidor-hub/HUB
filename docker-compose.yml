@@ -164,6 +164,11 @@ services:
       - HUB_HTTPS_ENABLED=${HUB_HTTPS_ENABLED:-true}
     volumes:
       - ./certs:/etc/nginx/ssl:ro
+    # Permet au conteneur nginx de joindre l'hôte Docker (pour le SNI PhiliaNG
+    # qui proxy_pass vers host.docker.internal:4443 — port HTTPS de Philia Proxy).
+    # Indépendant de l'IP du serveur : fonctionne sur n'importe quel déploiement.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     group_add:
       - "${HOST_GID:-1000}"
     depends_on:

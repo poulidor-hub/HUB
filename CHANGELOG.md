@@ -5,6 +5,15 @@
 
 ---
 
+## [3.28.3] - 12 août 2026
+
+### 🔧 SNI PhiliaNG automatique (plus d'IP hardcodée)
+
+- `frontend/nginx-philia-ng.conf` : `proxy_pass` passe de `https://192.0.2.10:4443` (IP hardcodée) à `https://host.docker.internal:4443`. Le déploiement du HUB sur n'importe quel serveur fonctionne automatiquement, sans modifier la config nginx.
+- `docker-compose.yml` : ajout de `extra_hosts: host.docker.internal:host-gateway` au service `hub-frontend` (nécessaire pour la résolution DNS dans le conteneur nginx).
+
+**Bénéfice** : un `git pull && docker compose build hub-frontend && docker compose up -d hub-frontend` suffit pour que le SNI routing PhiliaNG fonctionne sur n'importe quel serveur, sans intervention manuelle.
+
 ## [3.28.2] - 12 août 2026
 
 ### ⚡ Docker GID configurable + fix comment workshop
