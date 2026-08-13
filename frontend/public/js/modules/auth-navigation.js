@@ -153,7 +153,6 @@ function showDashboard() {
     if (currentUser.is_admin) {
         document.getElementById('adminBtn').classList.remove('d-none');
         document.getElementById('adminNavigation').classList.remove('d-none');
-        document.getElementById('guideBtn').classList.remove('d-none');
     }
 
     // Afficher la cloche de messages
@@ -309,26 +308,6 @@ function applyUserTagsTabsVisibility() {
     }
 }
 
-/**
- * Affiche la modale du guide de maintenance.
- * Réservé aux administrateurs.
- */
-function showGuideModal() {
-    if (!currentUser?.is_admin) {
-        showToast('Accès refusé', 'Vous devez être administrateur', 'danger');
-        return;
-    }
-    // Charger la version du hub
-    fetch('/health').then(r => r.json()).then(d => {
-        const v = d?.version || '';
-        const el = document.getElementById('guideHubVersion');
-        if (el && v) el.textContent = v;
-    }).catch(() => {});
-    // Afficher la modale
-    const modal = new bootstrap.Modal(document.getElementById('guideModal'));
-    modal.show();
-}
-
 async function logout() {
     try {
         // Fermer la connexion SSE
@@ -382,7 +361,6 @@ function showLoginScreen() {
     document.getElementById('changePasswordBtn').classList.add('d-none');
     document.getElementById('adminBtn').classList.add('d-none');
     document.getElementById('adminNavigation').classList.add('d-none');
-    document.getElementById('guideBtn').classList.add('d-none');
     document.getElementById('messagesSection').classList.add('d-none');
     document.getElementById('userInboxSection')?.classList.add('d-none');
     document.getElementById('messageBellContainer')?.classList.add('d-none');
