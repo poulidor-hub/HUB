@@ -5,6 +5,18 @@
 
 ---
 
+## [3.28.4] - 13 août 2026
+
+### ⚡ Retrait du « Guide de maintenance » (vue d'aide)
+
+- `frontend/public/index.html` : suppression du bouton d'aide `?` (`#guideBtn`) de la navbar et de la modale `#guideModal` complète (gestion des utilisateurs, applications, sauvegardes, audit, messagerie, VPN, commandes, sécurité).
+- `frontend/public/js/modules/auth-navigation.js` : suppression de la fonction `showGuideModal()` et de l'affichage/masquage du bouton au login/logout admin.
+- Vue jugée inutile : retirée sans équivalent.
+
+**Bénéfice** : interface du hub-frontend allégée, moins de code mort à maintenir.
+
+---
+
 ## [3.28.3] - 12 août 2026
 
 ### 🔧 SNI PhiliaNG automatique (plus d'IP hardcodée)
