@@ -268,6 +268,7 @@ class Application(Base):
     icon = Column(String(50), default="bi-app")  # Bootstrap Icons
     color = Column(String(7), default="#0d6efd")  # Couleur hex
     category = Column(String(100), nullable=True)  # Catégorie (RH, SI, Communication, etc.)
+    group_id = Column(Integer, ForeignKey('app_groups.id', ondelete='SET NULL'), nullable=True)  # Groupe visuel (dashboard)
     api_url = Column(String(255), nullable=False)  # URL de l'API backend
     git_repo_url = Column(String(512), nullable=True)  # URL du dépôt Git (GitHub) pour update-check et changelog
     frontend_url = Column(String(255))  # URL du frontend
@@ -325,6 +326,21 @@ class Application(Base):
     
     def __repr__(self):
         return f"<Application {self.name}>"
+
+
+class AppGroup(Base):
+    """Groupe d'applications (regroupement purement visuel du dashboard)"""
+    __tablename__ = "app_groups"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(100), nullable=False, unique=True)
+    description = Column(String(500), nullable=True)
+    icon = Column(String(50), default="bi-collection")  # Bootstrap Icons
+    color = Column(String(7), default="#0d6efd")  # Couleur hex
+    created_at = Column(DateTime, default=utcnow)
+
+    def __repr__(self):
+        return f"<AppGroup {self.name}>"
 
 
 class UserFavorite(Base):
