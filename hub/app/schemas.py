@@ -259,6 +259,8 @@ class AppCreateSimplified(BaseModel):
     """Schéma simplifié pour créer une application (ports au lieu d'URLs)"""
     name: str = Field(..., min_length=2, max_length=100)
     slug: str = Field(..., min_length=2, max_length=50, pattern=r'^[a-z0-9-]+$')
+    category: Optional[str] = Field(None, max_length=100)
+    group_id: Optional[int] = None  # Groupe visuel (null = hors groupe)
     description: Optional[str] = None
     icon: str = "bi-app"
     color: str = "#0d6efd"

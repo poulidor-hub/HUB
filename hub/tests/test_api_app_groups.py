@@ -86,3 +86,65 @@ class TestAppGroupsAPI:
         assert r.status_code == 403
         r = await client.get("/api/app-groups/", headers=get_auth_header(user_token))
         assert r.status_code == 403
+
+
+class TestAppGroupsIntegration:
+    """Intégration avec /api/apps/ (hydratation group + PATCH group_id)"""
+
+    async def test_apps_list_hydrates_group(self, client, admin_token, async_session, test_app):
+        r = await client.post(
+            "/api/app-groups/", json={"name": "Bureautique", "icon": "bi-boxes", "color": "#6f42c1"},
+            headers=get_auth_header(admin_token),
+        )
+        group_id = r.json()["id"]
+        await async_session.execute(
+            Application.__table__.update().where(Application.id == test_app.id).values(group_id=group_id)
+        )
+        await async_session.commit()
+        async_session.expire_all()  # vider l'identity map (expire_on_commit=False)
+
+        r = await client.get("/api/apps/", headers=get_auth_header(admin_token))
+        assert r.status_code == 200
+        apps = {a["slug"]: a for a in r.json()}
+        assert apps["test-app"]["group"] == {
+            "id": group_id, "name": "Bureautique", "icon": "bi-boxes", "color": "#6f42c1"
+        }
+
+    async def test_patch_app_group_id(self, client, admin_token, async_session, test_app):
+        r = await client.post(
+            "/api/app-groups/", json={"name": "Bureautique"}, headers=get_auth_header(admin_token)
+        )
+        group_id = r.json()["id"]
+
+        r = await client.patch(
+            f"/api/apps/{test_app.id}", json={"group_id": group_id}, headers=get_auth_header(admin_token)
+        )
+        assert r.status_code == 200, r.text
+
+        result = await async_session.execute(
+            select(Application.group_id).where(Application.id == test_app.id)
+        )
+        assert result.scalar_one() == group_id
+
+    async def test_patch_app_unknown_group_404(self, client, admin_token, test_app):
+        r = await client.patch(
+            f"/api/apps/{test_app.id}", json={"group_id": 99999}, headers=get_auth_header(admin_token)
+        )
+        assert r.status_code == 404
+
+    async def test_patch_app_ungroup(self, client, admin_token, async_session, test_app):
+        r = await client.post(
+            "/api/app-groups/", json={"name": "Bureautique"}, headers=get_auth_header(admin_token)
+        )
+        group_id = r.json()["id"]
+        await client.patch(
+            f"/api/apps/{test_app.id}", json={"group_id": group_id}, headers=get_auth_header(admin_token)
+        )
+        r = await client.patch(
+            f"/api/apps/{test_app.id}", json={"group_id": None}, headers=get_auth_header(admin_token)
+        )
+        assert r.status_code == 200
+        result = await async_session.execute(
+            select(Application.group_id).where(Application.id == test_app.id)
+        )
+        assert result.scalar_one() is None

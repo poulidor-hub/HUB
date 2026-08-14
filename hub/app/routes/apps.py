@@ -18,7 +18,8 @@ from app.routes.events import notify_event, notify_stats_update
 from app.routes.app_backups import reassociate_orphan_backups
 
 from app.database import get_db
-from app.models import Application, User, ServiceAccount, UserAppRole, ApprovalStatus, service_account_app_access, DEFAULT_ROLES, UserFavorite, utcnow, AppDependency
+from app.models import Application, User, ServiceAccount, UserAppRole, ApprovalStatus, service_account_app_access, DEFAULT_ROLES, UserFavorite, utcnow, AppDependency, AppGroup
+from app.routes.app_groups import group_to_brief
 from app.schemas import (
     AppCreate, AppCreateSimplified, AppUpdate, AppResponse, AppWithUsers, AppWithUsersAndDocker,
     AppResponseWithMyRole,
@@ -589,6 +590,15 @@ async def list_apps(
         select(UserFavorite.app_id).where(UserFavorite.user_id == current_user.id)
     )
     favorite_app_ids = {row[0] for row in fav_result}
+
+    # Map des groupes pour hydratation (une seule requête, pas de N+1)
+    groups_result = await db.execute(select(AppGroup))
+    groups_map = {g.id: g for g in groups_result.scalars().all()}
+
+    def _group_brief(app_obj):
+        if app_obj.group_id and app_obj.group_id in groups_map:
+            return group_to_brief(groups_map[app_obj.group_id])
+        return None
     
     # Appliquer le filtre atelier (admin uniquement ; pour les users, toujours prod)
     _apply_workshop_query = lambda query: (
@@ -606,10 +616,11 @@ async def list_apps(
         logger.debug(f"Admin {current_user.username}: {len(apps)} applications trouvées (filter={workshop_filter})")
         return [
             AppResponseWithMyRole.from_app_with_role(
-                app, 
+                app,
                 user_roles_map.get(app.slug),
                 app_version=app.version,
-                is_favorite=app.id in favorite_app_ids
+                is_favorite=app.id in favorite_app_ids,
+                group=_group_brief(app)
             )
             for app in apps
         ]
@@ -625,10 +636,11 @@ async def list_apps(
         sorted_roles = sorted(visible_roles, key=lambda ar: ar.application.name.lower())
         return [
             AppResponseWithMyRole.from_app_with_role(
-                ar.application, 
+                ar.application,
                 ar.role,
                 app_version=ar.application.version,
-                is_favorite=ar.application.id in favorite_app_ids
+                is_favorite=ar.application.id in favorite_app_ids,
+                group=_group_brief(ar.application)
             )
             for ar in sorted_roles
         ]
@@ -883,6 +895,7 @@ async def create_app(
         description=app_data.description,
         icon=app_data.icon,
         color=app_data.color,
+        category=app_data.category,
         api_url=api_url,
         frontend_url=frontend_url,
         callback_url=callback_url,
@@ -892,6 +905,16 @@ async def create_app(
         is_unmanaged=getattr(app_data, "is_unmanaged", False),
         git_repo_url=app_data.git_repo_url,
     )
+    # Groupe visuel (facultatif, validé)
+    if getattr(app_data, "group_id", None) is not None:
+        grp = await db.execute(select(AppGroup).where(AppGroup.id == app_data.group_id))
+        group = grp.scalar_one_or_none()
+        if not group:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Groupe introuvable"
+            )
+        app.group_id = group.id
     db.add(app)
     await db.flush()  # Pour obtenir l'ID de l'app
     
@@ -3061,7 +3084,16 @@ async def update_app(
         return app
     
     update_data = app_data.model_dump(exclude_unset=True)
-    
+
+    # Valider le groupe visuel si fourni (404 s'il n'existe pas)
+    if update_data.get("group_id") is not None:
+        grp = await db.execute(select(AppGroup).where(AppGroup.id == update_data["group_id"]))
+        if not grp.scalar_one_or_none():
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Groupe introuvable"
+            )
+
     # Normaliser les URLs frontend en HTTP
     # (les apps gèrent elles-mêmes la redirection HTTPS)
     if "frontend_url" in update_data and update_data["frontend_url"]:
