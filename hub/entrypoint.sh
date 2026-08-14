@@ -54,12 +54,13 @@ fi
 
 # Bootstrap HTTPS : générer CA + cert serveur si absents (mode hybride)
 if [ "${HUB_HTTPS_ENABLED:-true}" = "true" ]; then
-    mkdir -p /code/certs/ca /code/certs/server/hub
+    mkdir -p /code/certs/ca /code/certs/server/hub /code/certs/server/philia-ng
     chown -R appuser:"$(id -gn appuser)" /code/certs 2>/dev/null || true
-    chmod 0710 /code/certs /code/certs/server /code/certs/server/hub 2>/dev/null || true
+    chmod 0710 /code/certs /code/certs/server /code/certs/server/hub /code/certs/server/philia-ng 2>/dev/null || true
     chmod 0700 /code/certs/ca 2>/dev/null || true
     [ ! -f /code/certs/ca/ca.key ] || chmod 0600 /code/certs/ca/ca.key
     [ ! -f /code/certs/server/hub/server.key ] || chmod 0640 /code/certs/server/hub/server.key
+    [ ! -f /code/certs/server/philia-ng/server.key ] || chmod 0640 /code/certs/server/philia-ng/server.key
     if [ ! -f /code/certs/server/hub/server.crt ]; then
         echo "🔐 HTTPS activé, certificats absents → génération via pki.py..."
         [ -f /code/certs/ca/ca.crt ] || gosu appuser python pki.py init
@@ -67,6 +68,23 @@ if [ "${HUB_HTTPS_ENABLED:-true}" = "true" ]; then
         echo "🔐 Certificats générés dans /code/certs/."
     else
         echo "🔐 HTTPS activé, certificats existants → conservés."
+    fi
+
+    # Cert PhiliaNG (proxy transparent SNI service.example.org).
+    # Auto-généré s'il manque pour que le vhost service.example.org du hub-frontend
+    # soit actif PAR DÉFAUT sur tout déploiement — l'utilisation depuis un autre
+    # serveur est la norme, pas une exception demandant une manip manuelle.
+    # Le domaine doit matcher le server_name de frontend/nginx-philia-ng.conf.
+    PHILIA_DOMAIN="${PHILIA_NG_DOMAIN:-service.example.org}"
+    if [ ! -f /code/certs/server/philia-ng/server.crt ]; then
+        echo "🔐 Certificat PhiliaNG absent → génération ($PHILIA_DOMAIN)..."
+        [ -f /code/certs/ca/ca.crt ] || gosu appuser python pki.py init
+        gosu appuser python pki.py cert create philia-ng \
+            --cn "$PHILIA_DOMAIN" --san "$PHILIA_DOMAIN"
+        chmod 0640 /code/certs/server/philia-ng/server.key 2>/dev/null || true
+        echo "🔐 Certificat PhiliaNG généré → vhost $PHILIA_DOMAIN actif au prochain démarrage du hub-frontend."
+    else
+        echo "🔐 Certificat PhiliaNG existant → conservé."
     fi
 fi
 

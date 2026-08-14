@@ -85,22 +85,14 @@ def _server_common_name() -> str:
     return "hub"
 
 
-def _san_entries() -> list:
-    raw: list = []
-    for d in [x.strip() for x in settings.pki_cert_domains.split(",") if x.strip()]:
-        raw.append(d)
-    for ip in [x.strip() for x in settings.pki_cert_ips.split(",") if x.strip()]:
-        raw.append(ip)
-    host = settings.get_hub_host()
-    if host:
-        raw.append(host)
-
+def _values_to_san(raw: list[str]) -> list:
+    """Convertit une liste de chaînes (DNS ou IP) en entrées SAN x509, dédoublonnées."""
     entries: list = []
     seen: set = set()
     for value in raw:
         try:
             obj = x509.IPAddress(ipaddress.ip_address(value))
-            key = ("ip", value)
+            key = ("ip", str(value))
         except ValueError:
             obj = x509.DNSName(value)
             key = ("dns", value)
@@ -110,7 +102,34 @@ def _san_entries() -> list:
     return entries
 
 
-def create_server_cert(name: str = "hub", force: bool = False) -> None:
+def _san_entries() -> list:
+    raw: list = []
+    for d in [x.strip() for x in settings.pki_cert_domains.split(",") if x.strip()]:
+        raw.append(d)
+    for ip in [x.strip() for x in settings.pki_cert_ips.split(",") if x.strip()]:
+        raw.append(ip)
+    host = settings.get_hub_host()
+    if host:
+        raw.append(host)
+    return _values_to_san(raw)
+
+
+def create_server_cert(
+    name: str = "hub",
+    force: bool = False,
+    cn: str | None = None,
+    san: list[str] | None = None,
+) -> None:
+    """Crée un certificat serveur signé par la CA.
+
+    Args:
+        name: nom logique du cert (sous-dossier de certs/server/).
+        force: régénère même si le cert existe déjà.
+        cn: Common Name explicite. Par défaut le 1er domaine de PKI_CERT_DOMAINS.
+        san: SAN explicite (liste de DNS/IP). Par défaut PKI_CERT_DOMAINS + hub_host.
+            Permet de générer un cert pour un domaine précis (ex: PhiliaNG) sans
+            fuiter les domaines hub.
+    """
     ca_crt_path, ca_key_path = _ca_paths()
     if not ca_crt_path.exists() or not ca_key_path.exists():
         raise FileNotFoundError("CA absente — lancez d'abord `pki.py init`")
@@ -122,15 +141,17 @@ def create_server_cert(name: str = "hub", force: bool = False) -> None:
     ca_key = serialization.load_pem_private_key(ca_key_path.read_bytes(), password=None)
     key = _gen_rsa(settings.pki_key_size)
     now = datetime.datetime.now(datetime.timezone.utc)
+    common_name = cn if cn is not None else _server_common_name()
+    san_entries = _values_to_san(san) if san is not None else _san_entries()
     cert = (
         x509.CertificateBuilder()
-        .subject_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, _server_common_name())]))
+        .subject_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, common_name)]))
         .issuer_name(ca_cert.subject)
         .public_key(key.public_key())
         .serial_number(x509.random_serial_number())
         .not_valid_before(now)
         .not_valid_after(now + datetime.timedelta(days=settings.pki_cert_validity_days))
-        .add_extension(x509.SubjectAlternativeName(_san_entries()), critical=False)
+        .add_extension(x509.SubjectAlternativeName(san_entries), critical=False)
         .add_extension(x509.BasicConstraints(ca=False, path_length=None), critical=True)
         .add_extension(x509.ExtendedKeyUsage([ExtendedKeyUsageOID.SERVER_AUTH]), critical=False)
         .sign(ca_key, hashes.SHA256())
@@ -165,6 +186,11 @@ def main(argv: list[str] | None = None) -> None:
     p_create = cert_sub.add_parser("create", help="Créer un certificat serveur")
     p_create.add_argument("name")
     p_create.add_argument("--force", action="store_true")
+    p_create.add_argument("--cn", help="Common Name (défaut: 1er domaine de PKI_CERT_DOMAINS)")
+    p_create.add_argument(
+        "--san", action="append", default=None, metavar="DNS_OR_IP",
+        help="SAN explicite (DNS ou IP). Répétable. Défaut: PKI_CERT_DOMAINS + hub_host.",
+    )
 
     sub.add_parser("info", help="Afficher l'empreinte de la CA")
 
@@ -173,7 +199,7 @@ def main(argv: list[str] | None = None) -> None:
         init_ca(force=args.force)
         print("✅ CA générée")
     elif args.cmd == "cert" and args.cert_cmd == "create":
-        create_server_cert(args.name, force=args.force)
+        create_server_cert(args.name, force=args.force, cn=args.cn, san=args.san)
         print(f"✅ Certificat serveur '{args.name}' généré")
     elif args.cmd == "info":
         info()
