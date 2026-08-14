@@ -1,0 +1,935 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cahier des charges fonctionnel — Le HUB</title>
+<style>
+:root {
+  --bg: #ffffff; --surface: #f6f7f9; --text: #1c2430; --muted: #5b6572;
+  --accent: #1257a8; --accent-soft: #e8f0fa; --border: #d8dde4;
+  --code-bg: #f0f2f5; --dark: #1f2733;
+}
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body {
+  margin: 0; color: var(--text); background: var(--bg);
+  font: 11pt/1.65 -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+.page { max-width: 52rem; margin: 0 auto; padding: 2.5rem 3rem 4rem; }
+header.doc {
+  border-bottom: 3px solid var(--accent); margin-bottom: 2.5rem; padding-bottom: 1.5rem;
+}
+header.doc h1 { margin: 0 0 .25rem; font-size: 1.9rem; letter-spacing: -.01em; }
+header.doc .subtitle { color: var(--muted); font-size: 1.05rem; margin: 0; }
+h1, h2, h3, h4 { line-height: 1.25; color: var(--dark); }
+h1 { font-size: 1.5rem; margin-top: 2.8rem; padding-top: .6rem; border-top: 1px solid var(--border); }
+header.doc h1 { border: none; padding: 0; }
+h2 { font-size: 1.25rem; margin-top: 2.2rem; padding-left: .55rem; border-left: 4px solid var(--accent); }
+h3 { font-size: 1.05rem; margin-top: 1.8rem; }
+h3 + p strong:first-child { color: var(--accent); }
+p { margin: .7rem 0; }
+table { border-collapse: collapse; width: 100%; margin: 1rem 0; font-size: .92rem; }
+th, td { border: 1px solid var(--border); padding: .45rem .65rem; text-align: left; vertical-align: top; }
+th { background: var(--surface); color: var(--dark); }
+tr:nth-child(even) td { background: var(--surface); }
+code { font: .88em/1.5 ui-monospace, "Cascadia Mono", Consolas, monospace; background: var(--code-bg); padding: .1em .35em; border-radius: 3px; }
+pre { background: var(--dark); color: #e6e9ee; padding: 1rem 1.1rem; border-radius: 6px; overflow-x: auto; page-break-inside: avoid; }
+pre code { background: none; color: inherit; padding: 0; font-size: .8rem; line-height: 1.45; }
+blockquote { margin: 1rem 0; padding: .6rem 1rem; border-left: 4px solid var(--border); color: var(--muted); background: var(--surface); }
+hr { border: none; border-top: 1px solid var(--border); margin: 2.5rem 0; }
+strong { color: var(--dark); }
+@media print {
+  body { font-size: 10pt; }
+  .page { padding: 0; max-width: none; }
+  h1, h2, h3 { break-after: avoid; }
+  table, pre { break-inside: avoid; }
+}
+</style>
+</head>
+<body>
+<div class="page">
+<header class="doc">
+  <h1>Cahier des charges fonctionnel — Le HUB</h1>
+  <p class="subtitle">Portail d'authentification unique et de supervision d'un parc applicatif auto-hébergé</p>
+</header>
+<p><strong>Portail d'authentification unique et de supervision d'un parc applicatif auto-hébergé</strong></p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Version documentée</strong></td>
+<td>3.29.0 (état de l'art à la date de rédaction)</td>
+</tr>
+<tr>
+<td><strong>Nature du document</strong></td>
+<td>Cahier des charges descriptif — fonctionnalités livrées et démontrables</td>
+</tr>
+<tr>
+<td><strong>Diffusion</strong></td>
+<td>Interne / externe (document anonymisé)</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2>1. Contexte et problématique</h2>
+<h3>1.1 Le constat</h3>
+<p>Une organisation qui héberge ses propres applications — gestion, productivité, outils
+métiers — se heurte rapidement à un problème commun : chaque application réinvente sa
+propre gestion des utilisateurs, ses propres mots de passe, ses propres règles de droits.
+La multiplication des comptes fragilise la sécurité (mots de passe faibles, réutilisés,
+jamais révoqués) et dégrade l'expérience (multiples connexions, aucun point d'entrée
+unique).</p>
+<h3>1.2 Les solutions du marché et leurs limites</h3>
+<p>Les plateformes IAM (Identity &amp; Access Management) open source de référence — Keycloak,
+Authentik — répondent à ce besoin, mais au prix d'une complexité notable :</p>
+<ul>
+<li><strong>courbe d'apprentissage élevée</strong> : concepts nombreux (realms, clients, flows,
+  mappers), configuration délicate, documentation volumineuse ;</li>
+<li><strong>maintenance lourde</strong> : mises à jour fréquentes et parfois intrusives, migrations de
+  configuration à surveiller, comportements implicites difficiles à auditer ;</li>
+<li><strong>empreinte disproportionnée</strong> pour un parc applicatif interne géré par une petite
+  équipe, sur un réseau privé (LAN / VPN).</li>
+</ul>
+<h3>1.3 Le besoin</h3>
+<p>Un point d'entrée unique <strong>léger, autonome et lisible</strong> qui :</p>
+<ol>
+<li>centralise l'authentification et la gestion des utilisateurs pour l'ensemble du parc ;</li>
+<li>délègue aux applications la <strong>vérification locale</strong> des accès, sans base utilisateurs
+   dupliquée dans chaque application ;</li>
+<li>garantit que <strong>le parc reste fonctionnel même si le point d'entrée est indisponible</strong> ;</li>
+<li>offre à l'administrateur une vision et des leviers d'exploitation (santé, journaux,
+   sauvegardes, réseau) regroupés en un seul endroit.</li>
+</ol>
+<p>Le HUB répond à ce besoin.</p>
+<hr>
+<h2>2. Présentation générale du HUB</h2>
+<h3>2.1 Définition</h3>
+<p>Le HUB est un <strong>portail d'authentification unique (SSO) et de supervision</strong> d'un parc
+d'applications auto-hébergées. Il centralise les identités, émet des jetons d'accès
+vérifiables par chaque application, héberge le portail de lancement des applications et
+fournit à l'administrateur et à l'exploitant les outils d'administration du parc.</p>
+<h3>2.2 Les quatre publics cibles</h3>
+<table>
+<thead>
+<tr>
+<th>Public</th>
+<th>Ce que le HUB lui apporte</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Utilisateur final</strong></td>
+<td>Un portail unique, une seule connexion, l'accès à ses applications, sa messagerie interne et ses préférences</td>
+</tr>
+<tr>
+<td><strong>Administrateur</strong></td>
+<td>La gestion des comptes, des applications, des droits, des sauvegardes, du VPN et des paramètres</td>
+</tr>
+<tr>
+<td><strong>Exploitant / supervision</strong></td>
+<td>L'audit, la traçabilité, la santé des applications, le suivi des erreurs et des indicateurs</td>
+</tr>
+<tr>
+<td><strong>Développeur d'applications</strong></td>
+<td>Un gabarit d'application standardisé, l'intégration SSO et machine-à-machine, la poussée de sauvegardes, les notifications, l'automatisation</td>
+</tr>
+</tbody>
+</table>
+<p>Cette grille de lecture structure la partie 2 du présent document.</p>
+<h3>2.3 Chiffres clés (version 3.29.0)</h3>
+<table>
+<thead>
+<tr>
+<th>Indicateur</th>
+<th>Valeur</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Endpoints d'API REST</td>
+<td>≈ 250</td>
+</tr>
+<tr>
+<td>Tables de base de données</td>
+<td>32</td>
+</tr>
+<tr>
+<td>Outils d'automatisation exposés (serveur MCP compagnon)</td>
+<td>65</td>
+</tr>
+<tr>
+<td>Tests automatisés</td>
+<td>≈ 630 (59 fichiers de tests)</td>
+</tr>
+<tr>
+<td>Domaines fonctionnels</td>
+<td>19 modules décrits dans ce document</td>
+</tr>
+</tbody>
+</table>
+<h3>2.4 Empilement technique</h3>
+<table>
+<thead>
+<tr>
+<th>Composant</th>
+<th>Technologie</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>API du HUB</td>
+<td>Python — FastAPI, SQLAlchemy (asynchrone)</td>
+</tr>
+<tr>
+<td>Base de données</td>
+<td>PostgreSQL</td>
+</tr>
+<tr>
+<td>Frontal / interface web</td>
+<td>Application monopage (JavaScript natif), servie par Nginx</td>
+</tr>
+<tr>
+<td>Empaquetage</td>
+<td>Docker Compose (conteneurs isolés, un seul projet)</td>
+</tr>
+<tr>
+<td>Chiffrement / signatures</td>
+<td>RSA (RS256), AES-256-GCM, Fernet</td>
+</tr>
+</tbody>
+</table>
+<p>L'interface est volontairement dépourvue de framework lourd : elle charge rapidement,
+tient dans un navigateur modeste et ne dépend d'aucune chaîne de construction complexe.</p>
+<hr>
+<h2>3. Positionnement face aux solutions du marché</h2>
+<h3>3.1 Tableau comparatif</h3>
+<table>
+<thead>
+<tr>
+<th>Critère</th>
+<th>Le HUB</th>
+<th>Keycloak / Authentik</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Courbe d'apprentissage</td>
+<td>Faible — concepts courts, tout est visible dans l'interface</td>
+<td>Élevée — realms, clients, flows, mappers</td>
+</tr>
+<tr>
+<td>Empreinte &amp; prérequis</td>
+<td>1 projet Docker Compose, PostgreSQL inclus</td>
+<td>Serveur Java / Python + base + configuration fine</td>
+</tr>
+<tr>
+<td>Administration au quotidien</td>
+<td>Interface unique, actions simples, journal d'audit intégré</td>
+<td>Consoles spécialisées, configuration souvent déclarative</td>
+</tr>
+<tr>
+<td>Autonomie des applications si le HUB est indisponible</td>
+<td><strong>Oui</strong> — vérification locale des jetons par clé publique</td>
+<td>Variable — dépend de la configuration des clients</td>
+</tr>
+<tr>
+<td>Supervision du parc (santé, redémarrage, versions)</td>
+<td>Intégrée</td>
+<td>Hors périmètre (outils tiers nécessaires)</td>
+</tr>
+<tr>
+<td>Sauvegardes centralisées des applications</td>
+<td>Intégrées (planification, chiffrement, restauration)</td>
+<td>Hors périmètre</td>
+</tr>
+<tr>
+<td>VPN d'accès distant intégré</td>
+<td>Oui — serveur WireGuard administré depuis l'interface</td>
+<td>Non</td>
+</tr>
+<tr>
+<td>Fournisseur OIDC pour applications tierces</td>
+<td>Oui (bridge OIDC intégré)</td>
+<td>Oui (cœur du produit)</td>
+</tr>
+<tr>
+<td>Fédération d'identités externes (social, AD…)</td>
+<td>Non visé</td>
+<td>Oui</td>
+</tr>
+</tbody>
+</table>
+<h3>3.2 L'argument différenciant : l'indépendance des applications</h3>
+<p>Le HUB signe les jetons d'accès avec une <strong>clé privée RSA</strong> qu'il est seul à détenir.
+Chaque application ne possède que la <strong>clé publique</strong> correspondante : elle vérifie
+localement l'authenticité des jetons, mais ne peut pas en forger. Il en résulte :</p>
+<ul>
+<li><strong>aucune application n'héberge de base utilisateurs</strong> — la clé publique suffit ;</li>
+<li><strong>si le HUB est arrêté, les applications déjà authentifiées continuent de fonctionner</strong>
+  pendant la durée de validité de leurs jetons ;</li>
+<li>la compromission d'une application ne permet pas d'usurper les identités sur les autres.</li>
+</ul>
+<p>Ce compromis — simplicité maximale côté applications, autorité centrale unique côté HUB —
+est le cœur du positionnement produit.</p>
+<h3>3.3 Périmètre assumé</h3>
+<p>Le HUB ne vise pas la fédération d'identités externes, la gestion d'annuaires d'entreprise
+ni le multi-tenant à très grande échelle. Il cible les parcs applicatifs privés (quelques
+dizaines d'applications et d'utilisateurs à quelques centaines) hébergés sur un réseau
+contrôlé, où la lisibilité et la reprise en main priment sur l'exhaustivité des fonctions.</p>
+<hr>
+<h2>4. Architecture simplifiée</h2>
+<h3>4.1 Vue d'ensemble</h3>
+<pre><code>        Utilisateurs (postes du réseau local — ou distants via VPN)
+                                  │
+                                  ▼
+                ┌───────────────────────────────────┐
+                │        Frontal web (Nginx)        │
+                │   Interface du HUB + terminaison  │
+                │            TLS (PKI interne)      │
+                └──────────────────┬────────────────┘
+                                   │
+                ┌──────────────────▼────────────────┐
+                │            API du HUB             │
+                │  (FastAPI — auth, apps, audit,    │
+                │   messages, backups, VPN, OIDC…)  │
+                └───────┬──────────────┬────────────┘
+                        │              │
+              ┌─────────▼─────┐  ┌─────▼──────────────┐
+              │  PostgreSQL   │  │ Accès Docker (lect. │
+              │ (identités,   │  │ + pilotage ciblé)   │
+              │  registre…)   │  └─────┬──────────────┘
+              └───────────────┘        │
+                                   ┌───▼────────────────────────────┐
+                                   │   Applications du parc         │
+                                   │  App A :42xx  (front)          │
+                                   │        :9xxx  (API)            │
+                                   │  App B, App C… (même gabarit)  │
+                                   └────────────────────────────────┘
+</code></pre>
+<h3>4.2 Les trois flux principaux</h3>
+<p><strong>Connexion</strong> — l'utilisateur s'authentifie une fois sur le portail du HUB. L'API vérifie
+ses identifiants (et son second facteur le cas échéant) et délivre un jeton d'accès signé
+RS256 ainsi qu'un jeton de renouvellement.</p>
+<p><strong>Lancement d'une application</strong> — au clic sur une tuile du portail, le HUB génère un jeton
+spécifique à l'application et redirige le navigateur vers elle ; l'application vérifie le
+jeton avec la clé publique du HUB et ouvre la session. L'utilisateur ne retape aucun mot
+de passe.</p>
+<p><strong>Sauvegarde</strong> — chaque application pousse ses archives de sauvegarde vers le HUB avec ses
+propres identifiants machine-à-machine ; le HUB les stocke, les planifie, les chiffre et
+peut les restaurer.</p>
+<h3>4.3 Principes de déploiement</h3>
+<ul>
+<li>Tout est conteneurisé dans un unique projet Docker Compose ; le HUB peut piloter les
+  conteneurs des applications (redémarrage, arrêt, lecture des journaux) via un accès
+  Docker volontairement restreint.</li>
+<li>Chaque application du parc est un projet Docker Compose <strong>indépendant</strong>, créé depuis un
+  gabarit commun (voir § 9.1), avec ses propres plages de ports allouées par le HUB.</li>
+<li>L'accès distant des utilisateurs passe par un serveur <strong>WireGuard</strong> intégré : seul le
+  port VPN est exposé hors du réseau local ; tout le reste reste sur le LAN ou dans le
+  tunnel.</li>
+<li>Le HTTPS est assuré par une <strong>PKI interne</strong> : autorité de certification générée par le
+  HUB, certificats serveur émis pour le HUB et, au besoin, pour des applications
+  (notamment les applications relais/proxy hébergées dans le parc, qui bénéficient ainsi
+  de certificats signés sans configuration manuelle).</li>
+</ul>
+<hr>
+<h2>5. Principes de sécurité</h2>
+<table>
+<thead>
+<tr>
+<th>Couche</th>
+<th>Mécanisme mis en œuvre</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Authentification</td>
+<td>Jetons JWT signés <strong>RS256</strong> (clé privée unique au HUB), identifiant de jeton (<code>jti</code>) révocable, <strong>rotation des jetons de renouvellement</strong> stockés hashés</td>
+</tr>
+<tr>
+<td>Second facteur</td>
+<td><strong>TOTP</strong> (application d'authentification) avec code QR de provisioning, codes de récupération, révocation par l'administrateur</td>
+</tr>
+<tr>
+<td>Machine-à-machine</td>
+<td>Octroi <code>client_credentials</code>, secrets chiffrés au repos (<strong>Fernet</strong>), clé dédiée et obligatoire en production</td>
+</tr>
+<tr>
+<td>Limitation de débit</td>
+<td>5 tentatives de connexion / minute / IP, 10 requêtes / minute sur le pont OIDC, réponses 429 avec délai indicatif</td>
+</tr>
+<tr>
+<td>En-têtes HTTP</td>
+<td><code>X-Frame-Options</code>, <code>X-Content-Type-Options</code>, <code>Referrer-Policy</code>, <code>Permissions-Policy</code>, <strong>CSP</strong> stricte</td>
+</tr>
+<tr>
+<td>Secrets</td>
+<td>Clés RSA hors du dépôt de code, validation de la configuration de sécurité <strong>au démarrage</strong> (refus de boot en production si invalide)</td>
+</tr>
+<tr>
+<td>Sauvegardes</td>
+<td>Export chiffré hybride <strong>RSA-OAEP + AES-256-GCM</strong> avec clés dédiées distinctes des clés de signature</td>
+</tr>
+<tr>
+<td>Traçabilité</td>
+<td>Identifiant de requête sur chaque appel (<code>X-Request-ID</code>), journalisation des actions sensibles, exceptions capturées en base avec pile d'appels</td>
+</tr>
+<tr>
+<td>Réseau</td>
+<td>Seul le port VPN est exposé ; enregistrement des applications restreint par liste blanche réseau</td>
+</tr>
+<tr>
+<td>Vérification continue</td>
+<td>≈ 630 tests automatisés (authentification, OIDC, sauvegardes, snapshots, VPN, PKI, migrations…)</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h1>Partie 2 — Inventaire fonctionnel</h1>
+<p>Chaque module est décrit selon la même grille : <strong>objectif → fonctionnalités → bénéfice</strong>.</p>
+<h2>6. Parcours « Utilisateur final »</h2>
+<h3>6.1 Portail d'applications</h3>
+<p><strong>Objectif</strong> — offrir un point d'entrée unique et lisible vers les applications du parc.</p>
+<p><strong>Fonctionnalités</strong>
+- Tableau de bord en grille des applications accessibles à l'utilisateur connecté ;
+- <strong>recherche instantanée</strong> par nom ;
+- <strong>favoris</strong> : épinglage des applications utilisées quotidiennement ;
+- <strong>filtres par catégorie</strong> (construits dynamiquement depuis le catalogue) et filtre
+  atelier / production (voir § 9.8) ;
+- lancement en un clic : redirection transparente avec jeton d'accès (SSO).</p>
+<p><strong>Bénéfice</strong> — l'utilisateur ne connaît et ne mémorise qu'une seule adresse : celle du
+portail.</p>
+<h3>6.2 Authentification unique</h3>
+<p><strong>Objectif</strong> — une seule identité, une seule connexion pour tout le parc.</p>
+<p><strong>Fonctionnalités</strong>
+- connexion par identifiant / mot de passe, session avec expiration et déconnexion
+  (y compris à la fermeture de l'onglet) ;
+- <strong>second facteur TOTP</strong> : activation volontaire, code QR, codes de récupération ;
+- <strong>mot de passe oublié</strong> : réinitialisation via codes de récupération ;
+- <strong>demande de compte</strong> : formulaire public (activable/désactivable par
+  l'administrateur), suivi du statut de la demande, connexion automatique après
+  approbation ; l'administrateur notifie des administrateurs désignés et approuve ou
+  rejette avec motif ;
+- changement de mot de passe forcé à la première connexion pour les comptes créés par
+  l'administrateur avec un mot de passe par défaut.</p>
+<p><strong>Bénéfice</strong> — la sécurité du parc repose sur un seul point de contrôle, durci
+(second facteur, limitation de débit, révocation).</p>
+<h3>6.3 Profil et préférences</h3>
+<p><strong>Objectif</strong> — laisser à chaque utilisateur la maîtrise de son environnement.</p>
+<p><strong>Fonctionnalités</strong>
+- consultation du profil et changement de mot de passe ;
+- <strong>préférences utilisateur</strong> (étiquettes de personnalisation) : catégories d'étiquettes
+  définies par l'administrateur, affectées à l'utilisateur, avec <strong>accusé de
+  consultation</strong> (fenêtre d'accueil jusqu'à validation — utile pour l'acceptation de
+  chartes ou l'onboarding) ;
+- vue par l'administrateur des étiquettes de chaque utilisateur.</p>
+<p><strong>Bénéfice</strong> — l'administrateur communique des informations durables (chartes, rôles
+métier) directement dans l'environnement de chaque utilisateur.</p>
+<h3>6.4 Messagerie interne</h3>
+<p><strong>Objectif</strong> — diffuser des informations ciblées aux utilisateurs, depuis le HUB ou
+depuis les applications.</p>
+<p><strong>Fonctionnalités</strong>
+- <strong>boîte de réception</strong> par utilisateur : messages lus/non lus, compteur dynamique,
+  archivage, suppression ;
+- <strong>priorités</strong> : information / avertissement / urgent, avec bannière d'alerte ;
+- <strong>accusés</strong> : lecture, réception, clic (suivi d'engagement) ;
+- <strong>notifications temps réel</strong> par flux d'événements (SSE) — le message s'affiche sans
+  rechargement ;
+- côté administration : envoi <strong>ciblé</strong> (un ou plusieurs destinataires) ou <strong>général</strong>
+  (diffusion à tous), <strong>programmation différée</strong> de l'envoi, <strong>modèles de messages</strong>
+  réutilisables, lien d'action optionnel, statistiques, export CSV, gestion complète
+  (archivage, restauration, suppression) ;
+- côté applications : envoi machine-à-machine (une application notifie un utilisateur),
+  avec synchronisation et reçus.</p>
+<p><strong>Bénéfice</strong> — un canal de communication officiel, traçable, qui ne dépend d'aucune
+messagerie externe.</p>
+<hr>
+<h2>7. Parcours « Administrateur »</h2>
+<h3>7.1 Gestion des utilisateurs</h3>
+<p><strong>Objectif</strong> — administrer les identités et les droits de tout le parc en un seul endroit.</p>
+<p><strong>Fonctionnalités</strong>
+- création, modification, désactivation, suppression d'utilisateurs ;
+- <strong>opérations en masse</strong> : création, attribution de rôles, suppression, attribution de
+  droits applicatifs, retrait d'accès à une application ;
+- <strong>import CSV</strong> avec modèle téléchargeable et <strong>prévisualisation</strong> avant application ;
+- <strong>rôles</strong> : rôle global (administrateur / utilisateur) et <strong>rôles par application</strong> ;
+- <strong>profils</strong> : gabarits d'ensembles « applications + rôles » applicables en une action à
+  des utilisateurs (avec synchronisation et détachement) ;
+- gestion des <strong>sessions</strong> : révocation immédiate des sessions d'un utilisateur
+  (déconnexion forcée propagée en temps réel) ;
+- désactivation du second facteur d'un utilisateur (support) ;
+- recherche et pagination.</p>
+<p><strong>Bénéfice</strong> — l'arrivée, le changement de poste ou le départ d'un collaborateur se
+traitent en quelques actions, droits applicatifs compris.</p>
+<h3>7.2 Gestion des applications</h3>
+<p><strong>Objectif</strong> — tenir le registre du parc et contrôler ce qui y entre.</p>
+<p><strong>Fonctionnalités</strong>
+- <strong>registre des applications</strong> : fiche complète (slug, nom, description, version,
+  catégorie, icône, URLs, dépôt Git), activation/désactivation, partage en service
+  commun ;
+- <strong>workflow d'approbation</strong> : toute application qui s'enregistre d'elle-même arrive en
+  statut « en attente » ; l'administrateur approuve ou rejette avec motif ;
+- <strong>comptes de service</strong> (machine-à-machine) : création avec secret affiché une seule
+  fois, régénération, périmètre d'applications attaché, secrets chiffrés au repos ;
+- <strong>allocation de ports</strong> : le HUB gère un pool de plages (front / API) et alloue les
+  ports des nouvelles applications sans collision, avec vue d'état et libération ;
+- <strong>catalogue GitHub</strong> : mise en cache des dépôts de l'organisation, marquage des dépôts
+  déjà intégrés, pré-remplissage de la création d'application depuis un dépôt (avec
+  allocation automatique des ports) ;
+- <strong>scanner Docker</strong> : découverte des conteneurs présents sur l'hôte, rattachement des
+  conteneurs orphelins, resynchronisation ;
+- <strong>graphe de dépendances</strong> : déclaration et consultation des dépendances entre
+  applications ;
+- gestion des <strong>favoris</strong> et des rôles applicatifs par utilisateur.</p>
+<p><strong>Bénéfice</strong> — le parc est inventorié, versionné et contrôlé ; rien n'y entre sans
+validation explicite.</p>
+<h3>7.3 Sauvegardes centralisées des applications</h3>
+<p><strong>Objectif</strong> — centraliser, planifier et protéger les sauvegardes de tout le parc.</p>
+<p><strong>Fonctionnalités</strong>
+- <strong>réception</strong> des archives poussées par les applications (ZIP, somme de contrôle
+  SHA-256) ou <strong>déclenchement par le HUB</strong> (y compris avec mise au repos du conteneur
+  pendant la sauvegarde — mode « quiesce ») ;
+- <strong>planification cron</strong> par application (mode désactivé / manuel / planifié),
+  exécution surveillée, statuts en cours / succès / échec, annulation d'une sauvegarde
+  en cours ;
+- <strong>rétention</strong> paramétrable par application (nombre d'archives conservées) ;
+- <strong>export chiffré</strong> hybride RSA-OAEP + AES-256-GCM, avec clés dédiées distinctes des
+  clés de signature des jetons ;
+- <strong>restauration</strong> : depuis une archive stockée ou depuis un fichier importé ;
+- <strong>administration globale</strong> : vue consolidée, statistiques de stockage, sauvegardes en
+  cours, <strong>détection et purge des archives orphelines</strong> (réassociées automatiquement si
+  l'application se réenregistre).</p>
+<p><strong>Bénéfice</strong> — la politique de sauvegarde du parc est définie, appliquée et vérifiée
+depuis une seule console.</p>
+<h3>7.4 Réseau : VPN d'accès distant intégré</h3>
+<p><strong>Objectif</strong> — donner un accès distant sûr au parc sans exposer les services.</p>
+<p><strong>Fonctionnalités</strong>
+- serveur <strong>WireGuard</strong> intégré au projet Docker du HUB, activable/désactivable en un
+  clic ;
+- configuration serveur (point de terminaison, port, sous-réseau) depuis l'interface ;
+- gestion des <strong>pairs</strong> : un pair = un appareil d'un utilisateur ; allocation
+  automatique de l'adresse dans le sous-réseau VPN, activation/désactivation,
+  suppression ;
+- <strong>statistiques temps réel</strong> par pair (poignée de main, présence) et du serveur ;
+- génération de la <strong>configuration client</strong> téléchargeable et du <strong>code QR</strong>
+  d'enrôlement sur mobile.</p>
+<p><strong>Bénéfice</strong> — l'accès distant est un objet administré comme le reste du parc, sans
+compétence WireGuard particulière.</p>
+<h3>7.5 Certificats et HTTPS (PKI interne)</h3>
+<p><strong>Objectif</strong> — garantir des échanges chiffrés sans dépendre d'un autorité externe.</p>
+<p><strong>Fonctionnalités</strong>
+- génération de l'<strong>autorité de certification interne</strong> au premier démarrage (clé
+  protégée) ;
+- émission de <strong>certificats serveur</strong> pour le HUB (domaines et adresses déclarés, avec
+  extensions SAN) ;
+- émission de certificats pour des besoins applicatifs dédiés — notamment les
+  <strong>applications relais/proxy</strong> du parc, qui reçoivent automatiquement un certificat
+  signé par la CA interne (routage par SNI côté frontal), sans manipulation manuelle ;
+- empreinte de la CA consultable pour déploiement sur les postes de travail.</p>
+<p><strong>Bénéfice</strong> — HTTPS partout, y compris pour les applications qui n'ont aucune
+compétence certificat ; suppression des avertissements navigateur sur les postes ayant
+importé la CA.</p>
+<h3>7.6 Paramétrage et restauration du HUB</h3>
+<p><strong>Objectif</strong> — garder la maîtrise de la configuration et de l'état du HUB lui-même.</p>
+<p><strong>Fonctionnalités</strong>
+- <strong>paramètres à chaud</strong> (clé/valeur) : activation des demandes de compte, intégration
+  GitHub, configuration VPN…, avec propagation temps réel aux interfaces connectées ;
+- <strong>snapshots système</strong> : image complète du HUB (export de la base de données, fichiers,
+  sauvegardes d'applications, configuration des conteneurs), compressée puis
+  <strong>chiffrée</strong> (RSA-OAEP + AES-256-GCM), avec :
+  - planification cron, rétention paramétrable, statistiques,
+  - téléchargement de l'archive, <strong>archivage optionnel vers stockage S3</strong>,
+  - <strong>restauration avec prévisualisation</strong> avant application ;
+- <strong>export / import d'environnement</strong> : export logique de la configuration (utilisateurs,
+  applications, rôles, comptes de service) et réimport sur une autre instance, en modes
+  création/mise à jour.</p>
+<p><strong>Bénéfice</strong> — le HUB est lui-même un objet sauvegardé, restaurable et relocalisable.</p>
+<hr>
+<h2>8. Parcours « Exploitant / Supervision »</h2>
+<h3>8.1 Audit et traçabilité</h3>
+<p><strong>Objectif</strong> — savoir qui a fait quoi, quand et d'où.</p>
+<p><strong>Fonctionnalités</strong>
+- <strong>journal d'audit</strong> : toutes les actions sensibles (connexions, gestions de comptes,
+  approbations, sauvegardes…), filtrable par utilisateur, action, statut, adresse IP et
+  période ;
+- <strong>sessions</strong> : sessions actives (avec activité temps réel), historique, <strong>révocation</strong>
+  individuelle ;
+- <strong>exports CSV</strong> : journal, sessions, erreurs ;
+- <strong>purge automatique</strong> par durée de rétention configurable.</p>
+<p><strong>Bénéfice</strong> — la reconstitution d'incidents et le contrôle périodique se font en
+quelques clics.</p>
+<h3>8.2 Supervision des applications</h3>
+<p><strong>Objectif</strong> — connaître en continu l'état de santé du parc.</p>
+<p><strong>Fonctionnalités</strong>
+- <strong>vérificateur de santé périodique</strong> : état de chaque application, changement d'état
+  diffusé en temps réel aux interfaces connectées ;
+- <strong>cycle de vie des conteneurs</strong> : démarrage, arrêt, redémarrage d'une application
+  depuis l'interface ;
+- <strong>journaux</strong> d'une application consultables directement ;
+- <strong>gestion des versions</strong> : comparaison version installée / version publiée sur le
+  dépôt Git, consultation du journal des versions, des publications et de <strong>l'écart
+  entre deux versions</strong> (aide à la décision de mise à jour).</p>
+<p><strong>Bénéfice</strong> — les dégradations sont vues avant d'être subies ; les mises à jour sont
+décidées sur information, pas au hasard.</p>
+<h3>8.3 Erreurs et alertes</h3>
+<p><strong>Objectif</strong> — ne pas laisser une erreur silencieuse pourrir.</p>
+<p><strong>Fonctionnalités</strong>
+- <strong>journal des erreurs</strong> de l'API : capture automatique des exceptions avec <strong>pile
+  d'appels</strong> complète ;
+- statistiques d'erreurs, compteur de nouvelles erreurs (badge), détail par erreur ;
+- <strong>acquittement</strong> global des erreurs traitées, purge ;
+- <strong>indicateurs (KPIs) et alertes</strong> : vue de synthèse de l'activité (connexions,
+  utilisateurs, applications, sauvegardes) et points d'attention.</p>
+<p><strong>Bénéfice</strong> — un seul endroit pour juger de la santé générale du système.</p>
+<hr>
+<h2>9. Parcours « Développeur d'applications »</h2>
+<h3>9.1 Gabarit d'application (template)</h3>
+<p><strong>Objectif</strong> — créer une application du parc standardisée en quelques minutes.</p>
+<p><strong>Fonctionnalités</strong>
+- script de création d'application depuis le <strong>gabarit commun</strong> : structure projet,
+  fichiers de configuration, ports, amorce d'enregistrement au HUB ;
+- conventions immédiatement opérationnelles : interface (design system partagé, thème
+  clair/sombre automatique), API backend avec authentification déjà branchée sur le
+  HUB, tests, sauvegarde, notifications ;
+- <strong>allocation automatique des ports</strong> par le HUB (plages front / API sans collision) ;
+- premier démarrage avec vérification de santé, puis enregistrement et approbation.</p>
+<p><strong>Bénéfice</strong> — le développeur démarre sur des rails : sécurité, apparence, exploitation
+et intégration sont déjà câblées.</p>
+<h3>9.2 Intégration machine-à-machine (M2M)</h3>
+<p><strong>Objectif</strong> — permettre aux applications d'appeler le HUB (et d'autres applications)
+sans intervention humaine.</p>
+<p><strong>Fonctionnalités</strong>
+- <strong>auto-enregistrement</strong> : l'application naissante s'annonce au HUB et passe en attente
+  d'approbation ; import en masse possible côté administration ;
+- octroi <strong>client_credentials</strong> : l'application obtient des jetons avec ses identifiants
+  de compte de service (secret régénérable, chiffré au repos) ;
+- <strong>découverte de services</strong> : les applications déclarées « services partagés »
+  publient leurs points d'entrée ; les autres applications les découvrent et les
+  appellent avec leur jeton M2M ;
+- <strong>publication de spécification OpenAPI</strong> par chaque application (catalogue consultable,
+  export) ;
+- <strong>boîte d'envoi transactionnelle</strong> (outbox) : les appels sortants différés sont
+  persistés puis rejoués — pas de perte d'événement en cas d'indisponibilité passagère
+  (statistiques, rejeu, nettoyage administrables) ;
+- <strong>rapports de dépendance</strong> : une application déclare les services qu'elle consomme et
+  synchronise son état de conformité.</p>
+<p><strong>Bénéfice</strong> — les applications composent entre elles de manière sécurisée et tracée,
+avec résilience aux incidents réseau.</p>
+<h3>9.3 Authentification applicative (SSO)</h3>
+<p><strong>Objectif</strong> — l'utilisateur entre dans une application sans nouveau mot de passe.</p>
+<p><strong>Fonctionnalités</strong>
+- <strong>lancement par le portail</strong> : le HUB génère un jeton propre à l'application et
+  redirige le navigateur ;
+- <strong>vérification locale</strong> : l'application valide le jeton JWT avec la <strong>clé publique</strong>
+  du HUB (point d'entrée JWKS standard) — aucune base d'utilisateurs, aucun appel au
+  HUB à chaque requête ;
+- <strong>introspection</strong> des jetons (RFC 7662) pour les applications qui préfèrent déléguer
+  la vérification ;
+- rôles transmis dans le jeton, enrichis des rôles applicatifs.</p>
+<p><strong>Bénéfice</strong> — une intégration SSO qui tient en quelques lignes côté application.</p>
+<h3>9.4 Fournisseur d'identité OIDC (applications tierces)</h3>
+<p><strong>Objectif</strong> — faire du HUB le fournisseur d'identité d'applications tierces incapables
+de vérifier nativement les jetons du HUB.</p>
+<p><strong>Fonctionnalités</strong>
+- <strong>point de découverte</strong> OIDC standard (<code>/.well-known/openid-configuration</code>) ;
+- flux <strong>Authorization Code</strong> (+ <strong>PKCE S256</strong>) et renouvellement — le flux le plus
+  répandu dans les applications tierces ;
+- <strong>point d'information utilisateur</strong> (userinfo) ;
+- <strong>déconnexion par canal arrière</strong> (Back-Channel Logout) : la déconnexion au HUB
+  révoque les jetons et notifie les applications tierces ;
+- administration des <strong>clients OIDC</strong> : URI de redirection en liste stricte, scopes,
+  secrets régénérables, activation ;
+- lancement du flux depuis le tableau de bord du HUB ;
+- limitation de débit dédiée sur le point d'émission des jetons.</p>
+<p><strong>Bénéfice</strong> — une application tierce du marché s'intègre au parc sans compte
+dédupliqué et sans toucher à son code.</p>
+<h3>9.5 Déconnexion partout (SLO)</h3>
+<p><strong>Objectif</strong> — quitter proprement toutes les applications, y compris sur un poste
+partagé.</p>
+<p><strong>Fonctionnalités</strong>
+- déconnexion du HUB <strong>propagée</strong> : les applications connectées sont purgées (fenêtres
+  masquées de déconnexion) ;
+- <strong>détection de changement d'utilisateur</strong> sur un poste partagé : au changement de
+  session, les sessions résiduelles de l'utilisateur précédent sont collectées et
+  révoquées, y compris auprès des applications tierces OIDC via des relais de
+  révocation.</p>
+<p><strong>Bénéfice</strong> — pas de session fantôme sur un poste utilisé par plusieurs personnes.</p>
+<h3>9.6 Poussée de sauvegardes vers le HUB</h3>
+<p><strong>Objectif</strong> — l'application participe à la politique de sauvegarde centrale.</p>
+<p><strong>Fonctionnalités</strong> (côté application)
+- pousser une archive (ZIP + somme de contrôle) avec son jeton M2M ;
+- consulter ses archives, télécharger, restaurer ;
+- lire et appliquer sa configuration de sauvegarde (mode, cron, rétention) définie par
+  l'administrateur — la planification est pilotée par le HUB.</p>
+<p><strong>Bénéfice</strong> — la sauvegarde applicative n'est pas un script oublié dans un coin : elle
+est configurée, exécutée et surveillée centralement.</p>
+<h3>9.7 Notifications temps réel</h3>
+<p><strong>Objectif</strong> — informer l'utilisateur depuis une application.</p>
+<p><strong>Fonctionnalités</strong>
+- <strong>flux d'événements SSE</strong> : une connexion authentifiée par utilisateur (multi-onglets),
+  battement de cœur 30 s (sert aussi au suivi d'activité des sessions), reconnexion
+  automatique côté client ;
+- diffusion d'événements de rafraîchissement (applications, utilisateurs, droits,
+  santé, sauvegardes, messages…) — les interfaces se mettent à jour sans rechargement ;
+- <strong>messagerie applicative</strong> : une application envoie un message à un utilisateur via
+  le module de messagerie du HUB (§ 6.4).</p>
+<p><strong>Bénéfice</strong> — les applications héritent d'un canal temps réel sans infrastructure
+additionnelle.</p>
+<h3>9.8 Mode atelier (workshop)</h3>
+<p><strong>Objectif</strong> — permettre le développement et l'essai sans toucher à la production.</p>
+<p><strong>Fonctionnalités</strong>
+- toute application dont le slug porte le suffixe d'atelier est identifiée comme
+  <strong>atelier</strong> : elle tourne dans un projet de conteneurs séparé, aux côtés de la
+  production (qui peut être à l'arrêt pendant l'atelier) ;
+- <strong>isolation stricte des clés M2M</strong> : un compte de service d'un côté ne peut pas
+  appeler l'autre côté ; la découverte de services filtre selon le monde
+  production/atelier ;
+- filtre tableau de bord « production / ateliers / tout » ; les ateliers sont exclus
+  des rôles proposés aux utilisateurs.</p>
+<p><strong>Bénéfice</strong> — tester une nouvelle version d'application sur une copie, sans risque de
+croisement avec le parc en service.</p>
+<h3>9.9 Automatisation (serveur MCP compagnon)</h3>
+<p><strong>Objectif</strong> — piloter le HUB depuis des outils d'automatisation et assistants IA.</p>
+<p><strong>Fonctionnalités</strong>
+- un composant compagnon expose <strong>65 outils</strong> couvrant l'ensemble de l'API : santé,
+  gestion des applications, des utilisateurs, jetons, sauvegardes/restaurations,
+  messages, audit, documentation, découverte de services — plus un outil d'<strong>appel
+  arbitraire</strong> vers tout point d'API ;
+- authentification par compte de service M2M (aucun partage de compte humain) ;
+- utilisable en intégré (depuis une application du parc) ou en autonome (outils
+  d'automatisation externes).</p>
+<p><strong>Bénéfice</strong> — les opérations courantes (créer un compte, déclencher une sauvegarde,
+acquitter des erreurs…) s'exécutent par script ou en langage naturel.</p>
+<h3>9.10 Documentation d'intégration intégrée</h3>
+<p><strong>Objectif</strong> — que le développeur n'ait jamais à chercher la doc.</p>
+<p><strong>Fonctionnalités</strong>
+- <strong>documentation d'intégration rendue par l'API</strong> (consultable par les applications et
+  les agents) : sections ciblées, raccourcis, version ;
+- <strong>journal des versions</strong> de l'API consultable programmatiquement, filtrable par
+  version, avec <strong>écart entre deux versions</strong> — base de la vérification de
+  compatibilité.</p>
+<p><strong>Bénéfice</strong> — les outils (et les agents IA) découvrent et respectent les conventions du
+HUB sans documentation externe à maintenir.</p>
+<hr>
+<h2>Annexe A — Synthèse des domaines d'API</h2>
+<table>
+<thead>
+<tr>
+<th>Domaine</th>
+<th>Périmètre (synthèse)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Authentification</td>
+<td>Jetons, renouvellement, introspection, JWKS, TOTP, récupération, SSO/lancement</td>
+</tr>
+<tr>
+<td>Utilisateurs</td>
+<td>CRUD, rôles, opérations en masse, import CSV, sessions</td>
+</tr>
+<tr>
+<td>Demandes de compte</td>
+<td>Formulaire public, suivi, approbation/rejet, notification des administrateurs</td>
+</tr>
+<tr>
+<td>Applications</td>
+<td>Registre, approbation, ports, scanner Docker, dépendances, découverte M2M</td>
+</tr>
+<tr>
+<td>Comptes de service</td>
+<td>CRUD M2M, secrets, périmètre d'applications</td>
+</tr>
+<tr>
+<td>Santé des applications</td>
+<td>État, cycle de vie conteneurs, journaux, versions/dépôt Git</td>
+</tr>
+<tr>
+<td>Sauvegardes d'applications</td>
+<td>Réception, planification, rétention, export chiffré, restauration, orphelins</td>
+</tr>
+<tr>
+<td>Snapshots système</td>
+<td>Déclenchement, configuration, restauration avec aperçu, S3</td>
+</tr>
+<tr>
+<td>Audit</td>
+<td>Journal, sessions, erreurs, statistiques, exports CSV</td>
+</tr>
+<tr>
+<td>Messages</td>
+<td>Envoi ciblé/général/programmé, modèles, reçus, messagerie M2M</td>
+</tr>
+<tr>
+<td>Événements</td>
+<td>Flux SSE, état</td>
+</tr>
+<tr>
+<td>OIDC</td>
+<td>Découverte, autorisation, jetons, userinfo, déconnexion arrière, clients</td>
+</tr>
+<tr>
+<td>VPN</td>
+<td>Serveur, pairs, configurations client, QR codes</td>
+</tr>
+<tr>
+<td>PKI / certificats</td>
+<td>Génération CA et certificats serveur (outils intégrés)</td>
+</tr>
+<tr>
+<td>Paramètres</td>
+<td>Clé/valeur à chaud</td>
+</tr>
+<tr>
+<td>Catalogue GitHub</td>
+<td>Dépôts en cache, rafraîchissement, préparation de création d'app</td>
+</tr>
+<tr>
+<td>Étiquettes utilisateur</td>
+<td>Catégories, affectation, accusés de consultation</td>
+</tr>
+<tr>
+<td>Profils</td>
+<td>Gabarits de rôles applicables</td>
+</tr>
+<tr>
+<td>Documentation</td>
+<td>Intégration, sections, journal des versions, écarts</td>
+</tr>
+</tbody>
+</table>
+<h2>Annexe B — Glossaire</h2>
+<table>
+<thead>
+<tr>
+<th>Terme</th>
+<th>Définition</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>SSO</strong></td>
+<td>Single Sign-On — authentification unique donnant accès à plusieurs applications</td>
+</tr>
+<tr>
+<td><strong>JWT</strong></td>
+<td>Jeton d'accès signé (JSON Web Token) transportant l'identité et les rôles</td>
+</tr>
+<tr>
+<td><strong>RS256 / JWKS</strong></td>
+<td>Signature RSA asymétrique / point de publication standard des clés publiques</td>
+</tr>
+<tr>
+<td><strong>M2M</strong></td>
+<td>Machine-to-Machine — échanges entre applications sans utilisateur humain</td>
+</tr>
+<tr>
+<td><strong>OIDC</strong></td>
+<td>OpenID Connect — protocole standard de fournisseur d'identité (au-dessus d'OAuth 2.0)</td>
+</tr>
+<tr>
+<td><strong>PKCE</strong></td>
+<td>Protection du flux d'autorisation sur clients publics</td>
+</tr>
+<tr>
+<td><strong>TOTP</strong></td>
+<td>Second facteur par code à usage unique généré par application d'authentification</td>
+</tr>
+<tr>
+<td><strong>SSE</strong></td>
+<td>Server-Sent Events — flux d'événements temps réel du serveur vers le navigateur</td>
+</tr>
+<tr>
+<td><strong>PKI</strong></td>
+<td>Infrastructure de clés et certificats (autorité de certification interne)</td>
+</tr>
+<tr>
+<td><strong>SNI</strong></td>
+<td>Server Name Indication — routage TLS par nom de domaine demandé</td>
+</tr>
+<tr>
+<td><strong>WireGuard / VPN</strong></td>
+<td>Réseau privé chiffré donnant un accès distant au parc</td>
+</tr>
+<tr>
+<td><strong>Quiesce</strong></td>
+<td>Mise au repos temporaire d'un service pendant une sauvegarde</td>
+</tr>
+<tr>
+<td><strong>Outbox transactionnelle</strong></td>
+<td>File persistante garantissant la livraison différée des appels sortants</td>
+</tr>
+<tr>
+<td><strong>Snapshot</strong></td>
+<td>Image complète et chiffrée du HUB (à distinguer des sauvegardes d'applications)</td>
+</tr>
+<tr>
+<td><strong>Atelier (workshop)</strong></td>
+<td>Copie sandbox d'une application pour développement/essais, isolée de la production</td>
+</tr>
+<tr>
+<td><strong>MCP</strong></td>
+<td>Protocole d'outillage pour assistants IA — expose l'API du HUB comme outils</td>
+</tr>
+<tr>
+<td><strong>Cron</strong></td>
+<td>Expression de planification horaire d'une tâche récurrente</td>
+</tr>
+</tbody>
+</table>
+<h2>Annexe C — Fiche technique récapitulative</h2>
+<table>
+<thead>
+<tr>
+<th>Élément</th>
+<th>Valeur</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Version documentée</td>
+<td>3.29.0</td>
+</tr>
+<tr>
+<td>Composants livrés</td>
+<td>API (FastAPI), interface web (SPA native), PostgreSQL, frontal Nginx, serveur VPN WireGuard, serveur MCP compagnon (65 outils)</td>
+</tr>
+<tr>
+<td>Empaquetage</td>
+<td>Docker Compose (projet unique pour le HUB ; un projet par application du parc)</td>
+</tr>
+<tr>
+<td>Plages réservées aux applications</td>
+<td>Front : 4200-4699 · API : 9000-9499 (allocation gérée par le HUB)</td>
+</tr>
+<tr>
+<td>Ports exposés</td>
+<td>Frontal web (HTTP/HTTPS) et UDP VPN — tous les autres services restent internes</td>
+</tr>
+<tr>
+<td>Prérequis d'exécution</td>
+<td>Hôte Docker, accès socket Docker (lecture + pilotage ciblé) ; clés RSA et clé de chiffrement des secrets générées au premier démarrage</td>
+</tr>
+<tr>
+<td>Comptes</td>
+<td>1 administrateur minimum (mot de passe forcément changé à la première connexion)</td>
+</tr>
+<tr>
+<td>Sauvegardes</td>
+<td>Applications : planification cron + rétention par nombre · HUB : snapshots chiffrés (rétention 7 / 24 h par défaut), archivage S3 optionnel</td>
+</tr>
+<tr>
+<td>Vérification</td>
+<td>≈ 630 tests automatisés — authentification, OIDC, SLO, M2M, sauvegardes, snapshots, VPN, PKI, migrations</td>
+</tr>
+</tbody>
+</table>
+</div>
+</body>
+</html>
