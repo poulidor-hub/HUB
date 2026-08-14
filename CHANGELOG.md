@@ -5,6 +5,20 @@
 
 ---
 
+## [3.29.0] - 14 août 2026
+
+### ⚡ Certificat PhiliaNG auto-généré au démarrage (proxy transparent actif par défaut)
+
+- `hub/pki.py` : `create_server_cert()` accepte désormais `--cn` et `--san` (CLI + API Python) pour générer un certificat serveur avec un CN/SAN explicite, sans fuiter les domaines hub (`PKI_CERT_DOMAINS`). Refactor : la conversion DNS/IP → entrées SAN est extraite en `_values_to_san()`, réutilisable.
+- `hub/entrypoint.sh` : après la génération du cert hub, le hub-api génère automatiquement le cert PhiliaNG (`certs/server/philia-ng/`, CN=`service.example.org`, SAN=`DNS:service.example.org`) signé par la CA interne du Hub s'il est absent.
+- `docker-compose.yml` : la variable `PHILIA_NG_DOMAIN` (défaut `service.example.org`) est passée au hub-api pour piloter le domaine du certificat généré.
+- `.env.example` : documentation de `PHILIA_NG_DOMAIN`.
+- `hub/tests/test_pki.py` : 2 nouveaux tests (CN/SAN surchargés sans fuite des domaines hub + CLI `--cn`/`--san`).
+
+**Bénéfice** : suite logique du SNI automatique (v3.28.3). Le proxy transparent PhiliaNG (`service.example.org → :4443`) est désormais actif **par défaut sur tout déploiement** — `git pull && docker compose up -d` suffit, plus de génération/copie manuelle du certificat. De plus, le cert est signé par la CA interne du Hub (au lieu d'auto-signé) : les postes ayant importé la CA n'auront plus d'avertissement SSL.
+
+---
+
 ## [3.28.4] - 13 août 2026
 
 ### ⚡ Retrait du « Guide de maintenance » (vue d'aide)
