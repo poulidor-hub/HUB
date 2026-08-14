@@ -283,6 +283,7 @@ class AppUpdate(BaseModel):
     icon: Optional[str] = None
     color: Optional[str] = None
     category: Optional[str] = Field(None, max_length=100)
+    group_id: Optional[int] = None  # Groupe visuel (null = hors groupe)
     api_url: Optional[str] = None
     frontend_url: Optional[str] = None
     callback_url: Optional[str] = None
@@ -292,6 +293,40 @@ class AppUpdate(BaseModel):
     m2m_enforcement_mode: Optional[str] = None  # 'compat' ou 'enforced'
     is_unmanaged: Optional[bool] = None  # True = launcher-only (non gérée)
     git_repo_url: Optional[str] = Field(None, max_length=512, description="URL du dépôt Git (GitHub) pour le changelog et la détection de mises à jour")
+
+
+class AppGroupBrief(BaseModel):
+    """Info minimale d'un groupe embarquée avec chaque app du dashboard"""
+    id: int
+    name: str
+    icon: str = "bi-collection"
+    color: str = "#0d6efd"
+
+
+class AppGroupCreate(BaseModel):
+    name: str = Field(..., min_length=2, max_length=100)
+    description: Optional[str] = Field(None, max_length=500)
+    icon: str = "bi-collection"
+    color: str = "#0d6efd"
+
+
+class AppGroupUpdate(BaseModel):
+    name: Optional[str] = Field(None, min_length=2, max_length=100)
+    description: Optional[str] = Field(None, max_length=500)
+    icon: Optional[str] = None
+    color: Optional[str] = None
+
+
+class AppGroupResponse(BaseModel):
+    id: int
+    name: str
+    description: Optional[str] = None
+    icon: str = "bi-collection"
+    color: str = "#0d6efd"
+    created_at: datetime
+    app_count: int = 0
+
+    model_config = ConfigDict(from_attributes=True)
 
 
 
@@ -326,16 +361,18 @@ class AppResponseWithMyRole(AppResponse):
     app_version: Optional[str] = None  # Version de l'app (capturée à l'enregistrement)
     is_favorite: bool = False  # Si l'utilisateur a mis cette app en favori
     category: Optional[str] = None  # Catégorie de l'application
-    
+    group: Optional[AppGroupBrief] = None  # Groupe visuel (null si non groupée)
+
     model_config = ConfigDict(from_attributes=True)
-    
+
     @classmethod
     def from_app_with_role(
-        cls, 
-        app, 
+        cls,
+        app,
         my_role: Optional[str] = None,
         app_version: Optional[str] = None,
-        is_favorite: bool = False
+        is_favorite: bool = False,
+        group: Optional[AppGroupBrief] = None
     ) -> "AppResponseWithMyRole":
         """Crée une réponse avec le rôle de l'utilisateur courant"""
         # Gérer l'enum ApprovalStatus
@@ -367,6 +404,7 @@ class AppResponseWithMyRole(AppResponse):
             is_favorite=is_favorite,
             category=getattr(app, 'category', None),
             git_repo_url=getattr(app, 'git_repo_url', None),
+            group=group,
         )
 
 
