@@ -5,6 +5,20 @@
 
 ---
 
+## [3.30.0] - 15 août 2026
+
+### ⚡ Groupes d'applications (regroupement visuel du dashboard)
+
+- **DB** : migration `050_app_groups.sql` — table `app_groups` (name unique, description, icône Bootstrap Icons, couleur hex) + colonne `applications.group_id` (FK `ON DELETE SET NULL`, index). Supprimer un groupe dégage simplement ses apps.
+- **Modèles** : `AppGroup` + `Application.group_id` (`models.py`).
+- **API** : nouveau routeur `hub/app/routes/app_groups.py` — CRUD admin `GET/POST/PATCH/DELETE /api/app-groups` (409 nom dupliqué, 404 inconnu, dégrouppage explicite à la suppression). Enregistré dans `routes/__init__.py` + `main.py`.
+- **API apps** : `GET /api/apps/` hydrate `group` (`{id, name, icon, color}`) sur chaque app (une requête de préchargement, pas de N+1) ; `POST/PATCH /api/apps/` acceptent `group_id` (validé, 404 si inconnu) et `category` à la création. `AppWithUsersAndDocker` expose désormais `category` + `group_id`.
+- **Dashboard** : sans filtre actif, la grille affiche des tuiles de groupes (tri alphabétique, badge nombre d'apps, style `.app-card` réutilisé) puis les apps hors groupe ; le clic ouvre une modale `#appGroupModal` listant les apps accessibles du groupe (lancement via `openApp()` existant). Un groupe vide pour l'utilisateur est masqué (filtrage dynamique côté payload). Dès qu'une recherche ou un filtre (favoris/catégorie/atelier) est actif : grille plate avec badge du groupe sur les tuiles. La recherche matche aussi le nom du groupe.
+- **Admin** : onglet « Groupes » (table + CRUD via modale `#appGroupFormModal`, suppression confirmée par modale dédiée). Formulaire app : nouveau select « Groupe » et champ « Catégorie » (texte libre + datalist des catégories existantes). `api.js` : 4 méthodes CRUD app-groups.
+- **Tests** : `hub/tests/test_api_app_groups.py` — 11 tests (CRUD, 409/404/403, dégrouppage à la suppression, hydratation `group` dans `/api/apps/`, PATCH `group_id`/`ungroup`).
+
+---
+
 ## [3.29.0] - 14 août 2026
 
 ### ⚡ Certificat PhiliaNG auto-généré au démarrage (proxy transparent actif par défaut)
