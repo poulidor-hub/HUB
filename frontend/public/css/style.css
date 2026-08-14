@@ -829,6 +829,36 @@ body {
     white-space: nowrap;
 }
 
+/* ── Groupes d'applications (conteneurs visuels du dashboard) ── */
+.app-group-badge {
+    background-color: #e9ecef;
+    color: #495057;
+    font-size: 0.68rem;
+    font-weight: 500;
+    max-width: 60%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* Tuile de groupe : légère distinction visuelle (pas d'anim, focus perf) */
+.app-group-card {
+    border-style: dashed;
+}
+
+/* Icône du titre de la modale de groupe (même style que .app-icon) */
+.app-group-modal-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
+    color: #fff;
+    font-size: 1rem;
+    flex-shrink: 0;
+}
+
 /* =============================================================================
    MESSAGES — Panel utilisateur + badges priorité
    ============================================================================= */

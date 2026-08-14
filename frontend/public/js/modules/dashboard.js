@@ -91,7 +91,8 @@ function filterDashboardApps() {
             app.name.toLowerCase().includes(query) ||
             (app.description || '').toLowerCase().includes(query) ||
             app.slug.toLowerCase().includes(query) ||
-            (app.category || '').toLowerCase().includes(query)
+            (app.category || '').toLowerCase().includes(query) ||
+            (app.group?.name || '').toLowerCase().includes(query)
         );
     }
 
@@ -124,49 +125,32 @@ async function toggleFavorite(event, appId) {
     }
 }
 
-function renderAppsGrid(apps) {
-    const grid = document.getElementById('appsGrid');
-    
-    // Protection contre grid null (page pas encore chargée)
-    if (!grid) {
-        console.warn('renderAppsGrid: élément appsGrid non trouvé');
-        return;
-    }
-    
-    // Protection contre apps invalide
-    if (!Array.isArray(apps)) {
-        console.warn('renderAppsGrid: apps n\'est pas un tableau:', apps);
-        apps = [];
-    }
-    
-    if (apps.length === 0) {
-        const msg = dashboardFilter === 'favorites'
-            ? `<i class="bi bi-star"></i><h4>Aucun favori</h4><p>Cliquez sur l'étoile d'une application pour l'ajouter à vos favoris.</p>`
-            : dashboardFilter.startsWith('cat:')
-            ? `<i class="bi bi-funnel"></i><h4>Aucune application dans cette catégorie</h4>`
-            : `<i class="bi bi-inbox"></i><h4>Aucune application</h4><p>Contactez un administrateur pour obtenir l'accès aux applications.</p>`;
-        grid.innerHTML = `<div class="col-12 empty-state">${msg}</div>`;
-        return;
-    }
-
+/**
+ * Rend le markup d'une tuile d'application.
+ * @param {object} app - L'application (payload GET /api/apps/)
+ * @param {object} opts - { inModal: tuile rendue dans la modale de groupe,
+ *                          showGroupBadge: afficher le badge du groupe (grille plate filtrée) }
+ */
+function renderAppTile(app, opts = {}) {
     const isAdmin = currentUser?.is_admin;
+    // Déterminer si l'app est inactive (désactivée par l'admin) ou sans URL de lancement
+    // Les statuts Docker/health arrivent en temps réel via SSE
+    const hasLaunchUrl = Boolean(app.callback_url || app.frontend_url);
+    const isUnavailable = !app.is_active || !hasLaunchUrl;
+    const unavailableMessage = !app.is_active
+        ? 'Cette application est désactivée.'
+        : 'Cette application n’a pas d’URL de lancement configurée.';
+    const appVersionLabel = formatAppVersionLabel(app.app_version);
+    const favIcon = app.is_favorite ? 'bi-star-fill text-warning' : 'bi-star';
+    const clickAction = !isUnavailable
+        ? `${opts.inModal ? `closeAppGroupModal();` : ''}openApp('${app.slug}')`
+        : `showToast('Application indisponible', '${unavailableMessage}', 'warning')`;
 
-    grid.innerHTML = apps.map(app => {
-        // Déterminer si l'app est inactive (désactivée par l'admin) ou sans URL de lancement
-        // Les statuts Docker/health arrivent en temps réel via SSE
-        const hasLaunchUrl = Boolean(app.callback_url || app.frontend_url);
-        const isUnavailable = !app.is_active || !hasLaunchUrl;
-        const unavailableMessage = !app.is_active
-            ? 'Cette application est désactivée.'
-            : 'Cette application n’a pas d’URL de lancement configurée.';
-        const appVersionLabel = formatAppVersionLabel(app.app_version);
-        const favIcon = app.is_favorite ? 'bi-star-fill text-warning' : 'bi-star';
-        
-        return `
+    return `
         <div class="col-sm-6 col-md-4 col-lg-3">
-            <div class="card app-card shadow-sm h-100 ${isUnavailable ? 'app-inactive' : ''}" 
+            <div class="card app-card shadow-sm h-100 ${isUnavailable ? 'app-inactive' : ''}"
                  data-app-slug="${app.slug}"
-                 onclick="${!isUnavailable ? `openApp('${app.slug}')` : `showToast('Application indisponible', '${unavailableMessage}', 'warning')`}">
+                 onclick="${clickAction}">
                 <div class="card-body position-relative">
                     <button class="btn btn-sm btn-link favorite-btn" onclick="toggleFavorite(event, ${app.id})" title="${app.is_favorite ? 'Retirer des favoris' : 'Ajouter aux favoris'}">
                         <i class="bi ${favIcon}"></i>
@@ -181,15 +165,15 @@ function renderAppsGrid(apps) {
                         </div>
                     </div>
                     <div class="app-card-footer">
-                        ${app.category ? `<span class="badge app-category-badge">${escapeHtml(app.category)}</span>` : '<span></span>'}
+                        ${app.category ? `<span class="badge app-category-badge">${escapeHtml(app.category)}</span>` : (opts.showGroupBadge && app.group ? `<span class="badge app-group-badge"><i class="bi bi-folder2 me-1"></i>${escapeHtml(app.group.name)}</span>` : '<span></span>')}
                         ${appVersionLabel
                             ? `<span class="app-version-badge">${escapeHtml(appVersionLabel)}</span>`
                             : `<span class="app-version-badge app-version-unknown" title="Affichage de version non supporté par cette application">n/d</span>`}
                     </div>
                     ${isAdmin ? `
                         <div class="app-role-selector" onclick="event.stopPropagation()">
-                            <select class="form-select form-select-sm" 
-                                    id="appRole_${app.slug}" 
+                            <select class="form-select form-select-sm"
+                                    id="appRole_${app.slug}"
                                     onchange="updateMyAppRole('${app.slug}', this.value)"
                                     title="Mon rôle sur cette application">
                                 <option value="" ${!app.my_role ? 'selected' : ''}>-- Mon rôle --</option>
@@ -203,7 +187,126 @@ function renderAppsGrid(apps) {
                 </div>
             </div>
         </div>
-    `}).join('');
+    `;
+}
+
+/**
+ * Rend le markup d'une tuile de groupe d'applications (conteneur purement visuel).
+ * Le clic ouvre la modale listant les apps du groupe.
+ */
+function renderGroupTile(group, groupApps) {
+    return `
+        <div class="col-sm-6 col-md-4 col-lg-3">
+            <div class="card app-card app-group-card shadow-sm h-100"
+                 data-group-id="${group.id}"
+                 onclick="openAppGroupModal(${group.id})">
+                <div class="card-body position-relative">
+                    <div class="app-card-header">
+                        <div class="app-icon" style="background-color: ${group.color}">
+                            <i class="${group.icon || 'bi-collection'}"></i>
+                        </div>
+                        <div class="app-card-info">
+                            <h6>${escapeHtml(group.name)}</h6>
+                            <p>${escapeHtml(group.description || 'Groupe d\'applications')}</p>
+                        </div>
+                    </div>
+                    <div class="app-card-footer">
+                        <span class="badge app-group-badge"><i class="bi bi-grid me-1"></i>${groupApps.length} application${groupApps.length > 1 ? 's' : ''}</span>
+                        <span></span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+/**
+ * Ouvre la modale listant les applications d'un groupe.
+ * Filtrage dynamique : seules les apps accessibles à l'utilisateur sont listées
+ * (elles viennent de dashboardApps, déjà filtrées par le backend).
+ */
+function openAppGroupModal(groupId) {
+    const groupApps = dashboardApps.filter(a => a.group && a.group.id === groupId);
+    if (groupApps.length === 0) return;
+    const group = groupApps[0].group;
+
+    const modalEl = document.getElementById('appGroupModal');
+    if (!modalEl) { console.warn('openAppGroupModal: modale #appGroupModal introuvable'); return; }
+
+    document.getElementById('appGroupModalTitle').innerHTML = `
+        <span class="app-group-modal-icon" style="background-color: ${group.color}"><i class="${group.icon || 'bi-collection'}"></i></span>
+        ${escapeHtml(group.name)}
+    `;
+    document.getElementById('appGroupModalGrid').innerHTML =
+        groupApps.map(app => renderAppTile(app, { inModal: true })).join('');
+    bootstrap.Modal.getOrCreateInstance(modalEl).show();
+}
+
+/** Ferme la modale de groupe (avant lancement d'une app) */
+function closeAppGroupModal() {
+    const modalEl = document.getElementById('appGroupModal');
+    if (modalEl) {
+        const inst = bootstrap.Modal.getInstance(modalEl);
+        if (inst) inst.hide();
+    }
+}
+
+function renderAppsGrid(apps) {
+    const grid = document.getElementById('appsGrid');
+
+    // Protection contre grid null (page pas encore chargée)
+    if (!grid) {
+        console.warn('renderAppsGrid: élément appsGrid non trouvé');
+        return;
+    }
+
+    // Protection contre apps invalide
+    if (!Array.isArray(apps)) {
+        console.warn('renderAppsGrid: apps n\'est pas un tableau:', apps);
+        apps = [];
+    }
+
+    if (apps.length === 0) {
+        const msg = dashboardFilter === 'favorites'
+            ? `<i class="bi bi-star"></i><h4>Aucun favori</h4><p>Cliquez sur l'étoile d'une application pour l'ajouter à vos favoris.</p>`
+            : dashboardFilter.startsWith('cat:')
+            ? `<i class="bi bi-funnel"></i><h4>Aucune application dans cette catégorie</h4>`
+            : `<i class="bi bi-inbox"></i><h4>Aucune application</h4><p>Contactez un administrateur pour obtenir l'accès aux applications.</p>`;
+        grid.innerHTML = `<div class="col-12 empty-state">${msg}</div>`;
+        return;
+    }
+
+    const searchInput = document.getElementById('appSearchInput');
+    const query = (searchInput ? searchInput.value : '').toLowerCase().trim();
+    // Un filtre actif (recherche / favoris / catégorie) "débloque" la grille :
+    // on affiche toutes les apps à plat, y compris celles qui sont groupées.
+    const filterActive = query !== '' || (dashboardFilter && dashboardFilter !== 'all');
+
+    if (!filterActive) {
+        // Vue par défaut : tuiles de groupes (alphabétique) puis apps hors groupe
+        const groupsMap = new Map();
+        const ungroupedApps = [];
+        for (const app of apps) {
+            if (app.group) {
+                if (!groupsMap.has(app.group.id)) groupsMap.set(app.group.id, { group: app.group, apps: [] });
+                groupsMap.get(app.group.id).apps.push(app);
+            } else {
+                ungroupedApps.push(app);
+            }
+        }
+        const sortedGroups = [...groupsMap.values()]
+            .sort((a, b) => a.group.name.localeCompare(b.group.name, 'fr', { sensitivity: 'base' }));
+        const sortedUngrouped = [...ungroupedApps]
+            .sort((a, b) => a.name.localeCompare(b.name, 'fr', { sensitivity: 'base' }));
+
+        grid.innerHTML =
+            sortedGroups.map(({ group, apps: ga }) => renderGroupTile(group, ga)).join('') +
+            sortedUngrouped.map(app => renderAppTile(app)).join('');
+        return;
+    }
+
+    // Grille plate (filtre actif) : badge du groupe sur les tuiles groupées
+    grid.innerHTML = apps.map(app => renderAppTile(app, { showGroupBadge: true })).join('');
 }
 
 /**
