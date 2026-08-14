@@ -46,10 +46,14 @@ async function showAddAppForm() {
     document.getElementById('appApiUrl').required = false;
     
     document.getElementById('appSubmitBtn').innerHTML = '<i class="bi bi-check-lg me-1"></i>Enregistrer';
-    
+
+    // Groupe + catégorie : reset et suggestions (catégories déjà utilisées)
+    refreshAppGroupOptions();
+    fillAppCategoryDatalist();
+
     hideIconPicker();
     document.getElementById('iconSearchInput').value = '';
-    
+
     updateIconPreview();
     updateAppFormPreview();
     updateUrlPreview();
@@ -397,6 +401,12 @@ async function editApp(id) {
     document.getElementById('appDescription').value = app.description || '';
     document.getElementById('appIcon').value = app.icon;
     document.getElementById('appColor').value = app.color;
+
+    // Groupe + catégorie
+    refreshAppGroupOptions(app.group_id ?? null);
+    fillAppCategoryDatalist();
+    document.getElementById('appCategory').value = app.category || '';
+
     document.getElementById('appApiUrl').value = app.api_url;
     document.getElementById('appFrontendUrl').value = app.frontend_url || '';
     document.getElementById('appCallbackUrl').value = app.callback_url || '';
@@ -462,6 +472,16 @@ function updateAppFormPreview() {
     preview.querySelector('i').className = `bi ${icon}`;
 }
 
+/** Remplit la datalist des catégories à partir des apps existantes (suggestions, champ libre) */
+function fillAppCategoryDatalist() {
+    const datalist = document.getElementById('appCategoryList');
+    if (!datalist) return;
+    const categories = [...new Set(
+        allApps.map(a => (a.category || '').trim()).filter(Boolean)
+    )].sort((a, b) => a.localeCompare(b, 'fr', { sensitivity: 'base' }));
+    datalist.innerHTML = categories.map(c => `<option value="${escapeHtml(c)}"></option>`).join('');
+}
+
 async function handleSaveApp(event) {
     event.preventDefault();
     
@@ -477,6 +497,8 @@ async function handleSaveApp(event) {
                 description: document.getElementById('appDescription').value || null,
                 icon: document.getElementById('appIcon').value,
                 color: document.getElementById('appColor').value,
+                category: document.getElementById('appCategory').value.trim() || null,
+                group_id: document.getElementById('appGroup').value ? parseInt(document.getElementById('appGroup').value) : null,
                 is_active: document.getElementById('appActive').checked,
                 requires_auth: document.getElementById('appRequiresAuth').checked,
                 is_shared_service: document.getElementById('appIsSharedService').checked,
@@ -516,6 +538,8 @@ async function handleSaveApp(event) {
                 description: document.getElementById('appDescription').value || null,
                 icon: document.getElementById('appIcon').value,
                 color: document.getElementById('appColor').value,
+                category: document.getElementById('appCategory').value.trim() || null,
+                group_id: document.getElementById('appGroup').value ? parseInt(document.getElementById('appGroup').value) : null,
                 api_port: parseInt(document.getElementById('appApiPort').value),
                 frontend_port: document.getElementById('appFrontendPort').value ? 
                     parseInt(document.getElementById('appFrontendPort').value) : null,

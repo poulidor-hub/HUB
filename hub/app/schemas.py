@@ -464,7 +464,9 @@ class AppWithUsersAndDocker(AppWithUsers):
     """Application avec utilisateurs pour l'admin"""
     docker_status: Optional[str] = None  # Conservé pour compatibilité, toujours None
     health_status: Optional[str] = None  # Conservé pour compatibilité, toujours None
-    
+    category: Optional[str] = None  # Catégorie (badge/filtre dashboard)
+    group_id: Optional[int] = None  # Groupe visuel (null = hors groupe)
+
     @classmethod
     def from_orm_model_with_docker(cls, app) -> "AppWithUsersAndDocker":
         """Convertit une Application ORM avec user_roles en AppWithUsersAndDocker"""
@@ -486,6 +488,8 @@ class AppWithUsersAndDocker(AppWithUsers):
             description=app.description,
             icon=app.icon,
             color=app.color,
+            category=getattr(app, 'category', None),
+            group_id=getattr(app, 'group_id', None),
             api_url=app.api_url,
             frontend_url=app.frontend_url,
             callback_url=app.callback_url,

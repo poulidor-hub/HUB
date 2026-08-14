@@ -560,6 +560,31 @@ class HubAPI {
         });
     }
 
+    // App Groups (groupes visuels du dashboard)
+    async getAppGroups() {
+        return this.request('/app-groups/');
+    }
+
+    async createAppGroup(groupData) {
+        return this.request('/app-groups/', {
+            method: 'POST',
+            body: JSON.stringify(groupData)
+        });
+    }
+
+    async updateAppGroup(groupId, groupData) {
+        return this.request(`/app-groups/${groupId}`, {
+            method: 'PATCH',
+            body: JSON.stringify(groupData)
+        });
+    }
+
+    async deleteAppGroup(groupId) {
+        return this.request(`/app-groups/${groupId}`, {
+            method: 'DELETE'
+        });
+    }
+
     async getAppDockerInfo(slug) {
         return this.request(`/apps/${encodeURIComponent(slug)}/docker-info`);
     }

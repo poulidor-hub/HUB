@@ -953,6 +953,11 @@
                     </button>
                 </li>
                 <li class="nav-item">
+                    <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tabAppGroups">
+                        <i class="bi bi-folder2 me-1"></i>Groupes
+                    </button>
+                </li>
+                <li class="nav-item">
                     <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tabServiceAccounts">
                         <i class="bi bi-robot me-1"></i>Service Accounts
                     </button>
@@ -1050,6 +1055,21 @@
                         </div>
                     </div>
                     <div id="appsTable" class="table-responsive">
+                        <!-- Table loaded dynamically -->
+                    </div>
+                </div>
+                <!-- App Groups Tab -->
+                <div class="tab-pane fade" id="tabAppGroups">
+                    <div class="d-flex justify-content-between align-items-center mb-3">
+                        <div>
+                            <h5 class="mb-0">Groupes d'applications</h5>
+                            <small class="text-muted">Regroupement purement visuel sur le dashboard — un groupe masqué n'affecte pas les applications</small>
+                        </div>
+                        <button class="btn btn-primary btn-sm" data-action="showAddGroupForm">
+                            <i class="bi bi-plus-lg me-1"></i>Nouveau groupe
+                        </button>
+                    </div>
+                    <div id="appGroupsTable" class="table-responsive">
                         <!-- Table loaded dynamically -->
                     </div>
                 </div>
@@ -2248,6 +2268,22 @@
                             <input type="text" class="form-control" id="appDescription" placeholder="Courte description de l'application">
                         </div>
 
+                        <div class="row g-3 mb-3">
+                            <div class="col-md-6">
+                                <label class="form-label mb-1"><i class="bi bi-folder2 me-1"></i>Groupe</label>
+                                <select class="form-select" id="appGroup">
+                                    <option value="">— Aucun —</option>
+                                </select>
+                                <small class="text-muted">Regroupement visuel sur le dashboard</small>
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label mb-1"><i class="bi bi-tag me-1"></i>Catégorie</label>
+                                <input type="text" class="form-control" id="appCategory" list="appCategoryList" placeholder="Ex : RH, SI, Outils…" maxlength="100">
+                                <datalist id="appCategoryList"></datalist>
+                                <small class="text-muted">Badge et filtre sur le dashboard</small>
+                            </div>
+                        </div>
+
                         <div class="mb-3">
                             <label class="form-label">URL du dépôt Git <small class="text-muted">(optionnel, pour update-check + changelog)</small></label>
                             <input type="text" class="form-control" id="appGitRepoUrl" placeholder="https://github.com/org/repo.git">
@@ -2369,6 +2405,74 @@
                 </div>
                 <div class="modal-body">
                     <div id="appGroupModalGrid" class="row g-3"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- App Group Form Modal (admin) : création/édition d'un groupe -->
+    <div class="modal fade" id="appGroupFormModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header pb-0">
+                    <h5 class="modal-title" id="appGroupFormTitle">Nouveau groupe</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Fermer"></button>
+                </div>
+                <form id="appGroupForm" data-action="handleSaveAppGroup" data-args="event">
+                    <div class="modal-body pt-3">
+                        <input type="hidden" id="appGroupId">
+                        <div class="d-flex align-items-center gap-3 mb-3">
+                            <div>
+                                <div class="app-form-preview" id="appGroupFormPreview" style="cursor:default">
+                                    <i id="appGroupIconPreview" class="bi bi-collection"></i>
+                                </div>
+                                <input type="color" class="form-control form-control-color mt-1" id="appGroupColor" value="#0d6efd" style="width:48px;height:28px" title="Couleur" data-action="updateGroupFormPreview">
+                            </div>
+                            <div class="flex-grow-1">
+                                <label class="form-label mb-1">Nom *</label>
+                                <input type="text" class="form-control" id="appGroupName" required minlength="2" maxlength="100" placeholder="Ex : Bureautique">
+                            </div>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label mb-1">Description</label>
+                            <input type="text" class="form-control" id="appGroupDescription" maxlength="500" placeholder="Courte description (optionnel)">
+                        </div>
+                        <div class="mb-1">
+                            <label class="form-label mb-1">Icône <small class="text-muted">(classe Bootstrap Icons, ex : bi-collection)</small></label>
+                            <input type="text" class="form-control" id="appGroupIcon" value="bi-collection" maxlength="50" data-action="updateGroupFormPreview">
+                        </div>
+                        <small class="text-muted">Les applications sont affectées au groupe depuis le formulaire de chaque application (champ « Groupe »).</small>
+                    </div>
+                    <div class="modal-footer pt-0">
+                        <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Annuler</button>
+                        <button type="submit" class="btn btn-primary btn-sm">
+                            <i class="bi bi-check-lg me-1"></i>Enregistrer
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- App Group Delete Confirmation Modal (admin) -->
+    <div class="modal fade" id="appGroupDeleteModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-sm modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="bi bi-exclamation-triangle text-warning me-2"></i>Supprimer le groupe</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Fermer"></button>
+                </div>
+                <div class="modal-body">
+                    Supprimer le groupe <strong id="appGroupDeleteName"></strong> ?
+                    <div class="alert alert-info py-2 mt-2 mb-0 small">
+                        <i class="bi bi-info-circle me-1"></i>Les applications du groupe seront simplement <strong>dégrouppées</strong> — aucune application ne sera supprimée.
+                    </div>
+                </div>
+                <div class="modal-footer py-2">
+                    <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Annuler</button>
+                    <button type="button" class="btn btn-danger btn-sm" data-action="handleDeleteAppGroup">
+                        <i class="bi bi-trash me-1"></i>Supprimer
+                    </button>
                 </div>
             </div>
         </div>
@@ -3795,6 +3899,7 @@
     <script src="js/modules/auth-navigation.js?v=3.29.0"></script>
     <script src="js/modules/dashboard.js?v=3.29.0"></script>
     <script src="js/modules/admin-apps.js?v=3.29.0"></script>
+    <script src="js/modules/admin-app-groups.js?v=3.29.0"></script>
     <script src="js/modules/admin-app-form.js?v=3.29.0"></script>
     <script src="js/modules/admin-users.js?v=3.29.0"></script>
     <script src="js/modules/toasts-modals.js?v=3.29.0"></script>

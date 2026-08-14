@@ -14,16 +14,19 @@ async function loadAdminData() {
             api.getAllApps(adminAppsWorkshopFilter),
             api.getServiceAccounts()
         ]);
-        
+
         console.log('loadAdminData: Apps chargées:', apps?.length || 0);
         console.log('loadAdminData: Service accounts chargés:', serviceAccounts?.length || 0);
-        
+
         allApps = Array.isArray(apps) ? apps : [];
         allServiceAccounts = Array.isArray(serviceAccounts) ? serviceAccounts : [];
 
         syncAdminAppsFilterControls();
         renderAppsTable(getFilteredAdminApps());
         renderServiceAccountsTable(allServiceAccounts);
+
+        // Groupes d'applications (module admin-app-groups.js)
+        loadAppGroups().catch(e => console.error('loadAdminData: groupes non chargés:', e));
     } catch (error) {
         console.error('loadAdminData: Erreur:', error);
         throw error;
