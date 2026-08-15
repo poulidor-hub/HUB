@@ -230,6 +230,7 @@ async def start_session(
         last_activity = getattr(session, 'last_activity_at', None) or session.login_at
         session.logout_at = last_activity + timedelta(minutes=settings.session_timeout_minutes)
         session.logout_reason = "timeout"
+        await close_segments_for_session(db, session, "timeout", ended_at=session.logout_at)
     
     # Créer la nouvelle session
     new_session = UserSession(

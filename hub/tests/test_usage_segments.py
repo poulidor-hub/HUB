@@ -117,3 +117,18 @@ async def test_end_session_closes_open_segment(async_session, test_user):
     seg = (await async_session.execute(select(AppUsageSegment))).scalar_one()
     assert seg.ended_at is not None
     assert seg.end_reason == "logout"   # "explicit" mappé vers "logout"
+
+
+@pytest.mark.asyncio
+async def test_start_session_closes_orphan_open_segments(async_session, test_user):
+    from app.routes.audit import start_session
+    from app.usage_tracking import record_app_switch
+
+    s = await _make_session(async_session, test_user)
+    await record_app_switch(async_session, s, "test-app")
+
+    await start_session(async_session, test_user.id)
+
+    seg = (await async_session.execute(select(AppUsageSegment))).scalar_one()
+    assert seg.ended_at is not None
+    assert seg.end_reason == "timeout"
