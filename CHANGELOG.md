@@ -5,6 +5,25 @@
 
 ---
 
+## [3.28.5] - 15 août 2026
+
+### ⚡ Journal d'erreurs : les 401 SSE non authentifiés ne sont plus enregistrés en base
+
+- **Corrigé** : depuis l'audit #12 (SSE authentifié obligatoire), les applications legacy
+  dont l'`AuthContext` connecte `/api/events/stream` sans token bouclent en 401 toutes les
+  10 s → **~14 000 entrées/jour** dans `error_logs` qui masquent les vraies erreurs
+  (incident 2026-08-15 : 14 012 erreurs en 13 h, IP gateway Docker).
+- **Modifié** (`hub/app/main.py`, `http_exception_handler`) : les 401 sur
+  `/api/events/stream` ne sont plus écrits dans `error_logs` — même logique que le
+  filtrage existant des 404 non-API. Le rejet reste identique côté client (HTTP 401) et
+  les accès restent visibles dans les access logs (déjà filtrés par
+  `_SuppressLegacySSE401Filter`).
+- Les 4 apps legacy concernées (exemple-app, exemple-app-16_API_v3, exemple-app_v3,
+  exemple-app) sont corrigées par ailleurs (token SSE en query param) ; le point est
+  documenté dans le skill de migration (`migrate-app-template` § D.3.2).
+
+---
+
 ## [3.28.4] - 13 août 2026
 
 ### ⚡ Retrait du « Guide de maintenance » (vue d'aide)
