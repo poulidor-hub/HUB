@@ -1763,7 +1763,9 @@ async def get_user_usage_day(
 ):
     """
     Segments d'usage d'un utilisateur sur une journée (UTC).
-    Les segments ouverts sont virtuellement clôturés à last_activity_at.
+    Les segments ouverts sont virtuellement clôturés à
+    min(maintenant, last_activity_at + timeout session) — cohérent avec
+    cleanup_stale_sessions.
     """
     if not current_user.is_admin:
         raise HTTPException(status_code=403, detail="Accès admin requis")
