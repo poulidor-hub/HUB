@@ -47,6 +47,18 @@ def test_simultaneous_series_overlap():
     assert by_t[t_1030]["count"] == 0
 
 
+def test_simultaneous_series_dedupes_users():
+    # Même user, deux segments couvrant t=10:10 -> compté 1 fois
+    entries = [_seg(1, "app", 0, 20), _seg(1, "other", 10, 15)]
+    series = compute_simultaneous_series(
+        entries, T0, T0 + timedelta(minutes=15), 5, NAMES
+    )
+    t_1010 = (T0 + timedelta(minutes=10)).isoformat()
+    by_t = {s["t"]: s for s in series}
+    assert by_t[t_1010]["count"] == 1
+    assert by_t[t_1010]["users"] == ["alice"]
+
+
 def test_simultaneous_series_open_ended_clamped_to_end():
     # segment ouvert (ended_at None) -> actif jusqu'à la fin de fenêtre
     entries = [{"app_slug": "app", "user_id": 1,

@@ -53,8 +53,9 @@ def compute_simultaneous_series(
     series = []
     t = start
     while t < end:
-        count = 0
-        users = []
+        # user_id -> username : un user avec plusieurs segments couvrant t
+        # ne compte qu'une fois
+        active: dict[int, str] = {}
         for e in entries:
             s = max(e["started_at"], start)
             # segment ouvert -> clamp défensif à la fin de fenêtre
@@ -62,9 +63,9 @@ def compute_simultaneous_series(
             if en > end:
                 en = end
             if s <= t < en:
-                count += 1
-                users.append(user_names.get(e["user_id"], str(e["user_id"])))
-        series.append({"t": t.isoformat(), "count": count, "users": users})
+                active[e["user_id"]] = user_names.get(e["user_id"], str(e["user_id"]))
+        series.append({"t": t.isoformat(), "count": len(active),
+                       "users": list(active.values())})
         t += step
     return series
 
