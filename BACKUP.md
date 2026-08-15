@@ -68,7 +68,7 @@ curl -X PUT "http://localhost:8000/api/admin/snapshots/config" \
 
 ## 🔄 Restauration bare-metal (nouvelle machine)
 
-> ⚠️ **Préreçu vital** : le snapshot est chiffré par enveloppe hybride
+> ⚠️ **Prérequis vital** : le snapshot est chiffré par enveloppe hybride
 > (AES-256-GCM + RSA). La clé privée RSA `secrets/jwt_private_key.pem` est
 > DANS le snapshot chiffré, mais il faut cette clé pour déchiffrer le
 > snapshot. **Sans copie hors-ligne de cette clé, aucun snapshot n'est
@@ -133,6 +133,7 @@ du HUB à l'étape 5 → l'UI fonctionne directement. Les apps doivent être
 | 1 | `docker-compose.yml` du HUB absent du snapshot (le collector cherche `/code/docker-compose.yml`, inexistant dans le conteneur) | `git clone` du repo |
 | 2 | Images Docker des apps non capturées (par design) | `make build` depuis le code restauré |
 | 3 | Déploiement sans montage `../APPS` : capture ignorée (warning), restauration sautée | Extraction manuelle : voir `apps/apps_code.tar` dans l'archive |
+| 4 | Restaurer via l'API (`POST /api/admin/snapshots/{id}/restore`) sur un Hub **en production** réécrit aussi le code APPS/ en place (montage rw) | Réservé au PRA / à assumer explicitement |
 
 ## 📋 Rétention
 
@@ -160,8 +161,8 @@ snapshot_{uuid}.tar.zst.enc
   │   ├── storage_backups.tar
   │   └── secrets.tar
   ├── docker/
-  │   ├── docker-compose.yml
-  │   └── env.template
+  │   ├── env.template              ← template .env pour déploy bare-metal
+  │   └── VERSION
   └── apps/
       ├── apps_code.tar              ← code + config + .git de APPS/
       └── {slug}/

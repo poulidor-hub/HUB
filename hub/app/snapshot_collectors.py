@@ -149,7 +149,12 @@ async def run_apps_code_tar(temp_dir: Path) -> dict:
     )
     stdout, stderr = await proc.communicate()
 
-    if proc.returncode != 0 or not out_path.exists():
+    if proc.returncode == 1 and out_path.exists() and out_path.stat().st_size > 0:
+        logger.warning(
+            "apps_code: fichiers modifies pendant la lecture (tar exit 1 tolere) "
+            "- archive potentiellement incomplete, le snapshot continue"
+        )
+    elif proc.returncode != 0 or not out_path.exists():
         error_msg = stderr.decode()[:500] if stderr else f"tar exit code {proc.returncode}"
         raise RuntimeError(f"tar apps_code a echoue: {error_msg}")
 

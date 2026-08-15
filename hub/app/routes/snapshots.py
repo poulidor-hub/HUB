@@ -433,7 +433,7 @@ async def _snapshot_cron_scheduler():
                     running = await db.execute(
                         select(HubSnapshot).where(HubSnapshot.status == "running")
                     )
-                    if running.scalar_one_or_none() is not None:
+                    if running.first() is not None:
                         logger.warning(
                             "Snapshot planifie ignore: un snapshot est deja en cours"
                         )

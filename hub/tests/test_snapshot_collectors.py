@@ -48,3 +48,33 @@ async def test_apps_code_tar_missing_mount_degrades_gracefully(tmp_path, monkeyp
     assert stats["size_bytes"] == 0
     assert stats["apps_count"] == 0
     assert stats["duration_ms"] >= 0
+
+
+@pytest.mark.asyncio
+async def test_apps_code_tar_tolerates_exit_1_file_changed(tmp_path, monkeypatch):
+    """tar exit 1 (fichier modifié pendant lecture) ne doit pas faire échouer
+    le snapshot si l'archive existe et est non vide (arbre APPS/ vivant)."""
+    src = tmp_path / "apps_source"
+    (src / "monapp").mkdir(parents=True)
+    (src / "monapp" / "main.py").write_text("x")
+    out_dir = tmp_path / "out"
+    (out_dir / "apps").mkdir(parents=True)
+    # Archive réelle non vide (comme si tar avait écrit puis rencontré un fichier changé)
+    (out_dir / "apps" / "apps_code.tar").write_bytes(b"TAR" * 100)
+
+    class _FakeProc:
+        returncode = 1
+        async def communicate(self):
+            return b"", b"tar: monapp/main.py: file changed as we read it"
+
+    async def _fake_exec(*cmd, **kwargs):
+        return _FakeProc()
+
+    import asyncio as _asyncio
+    monkeypatch.setattr(_asyncio, "create_subprocess_exec", _fake_exec)
+    monkeypatch.setattr(snapshot_collectors, "APPS_SOURCE_DIR", src)
+
+    stats = await run_apps_code_tar(out_dir)  # ne doit pas lever
+
+    assert stats["size_bytes"] == 300
+    assert stats["apps_count"] == 1
