@@ -114,6 +114,8 @@ services:
       - ./storage/backups:/code/storage/backups:rw
       # Stockage local des snapshots
       - ./storage/snapshots:/code/storage/snapshots:rw
+      # Code source des apps (PRA : capture + restauration automatique apps_code.tar)
+      - ../APPS:/code/apps_source:rw
       # Certificats PKI (CA + cert serveur), partagés avec le frontend
       - ./certs:/code/certs:rw
       # Configuration VPN WireGuard (volume partagé avec wireguard-server)
