@@ -446,3 +446,49 @@ class TestRetention:
         async for chunk in response.aiter_bytes():
             data += chunk
         assert data == b"FAKE_ENCRYPTED_SNAPSHOT_DATA"
+
+
+class TestAppsCodeEngine:
+    @pytest.mark.asyncio
+    async def test_create_snapshot_apps_code_only(
+        self, async_session: AsyncSession, tmp_path, monkeypatch,
+    ):
+        from pathlib import Path as _P
+        from app import snapshot_collectors
+        from app.snapshot_engine import create_snapshot
+
+        src = tmp_path / "apps_source"
+        (src / "monapp").mkdir(parents=True)
+        (src / "monapp" / "main.py").write_text("print('x')")
+        (src / "monapp" / ".git").mkdir()
+        (src / "monapp" / ".git" / "HEAD").write_text("ref: refs/heads/main\n")
+        monkeypatch.setattr(snapshot_collectors, "APPS_SOURCE_DIR", src)
+
+        snap = HubSnapshot(
+            snapshot_id="test-appscode-001", status="pending", created_by="test",
+            include_pg_dump=False, include_files=False, include_app_backups=False,
+            include_docker_config=False, include_apps_code=True,
+        )
+        async_session.add(snap)
+        await async_session.commit()
+
+        sid = await create_snapshot(
+            async_session, created_by="test", snapshot_id="test-appscode-001",
+        )
+
+        await async_session.refresh(snap)
+        assert sid == "test-appscode-001"
+        assert snap.status == "success"
+        assert snap.progress_step == "done"
+        assert snap.progress_percent == 100
+        assert snap.total_size_bytes > 0
+        assert snap.checksum_sha256
+        assert snap.manifest["collectors"]["apps_code"]["apps_count"] == 1
+        assert snap.manifest["collectors"]["apps_code"]["size_bytes"] > 0
+
+        # Nettoyage : fichier local écrit sur le volume monté + ligne DB
+        local = _P(snap.local_path)
+        if local.exists():
+            local.unlink()
+        await async_session.delete(snap)
+        await async_session.commit()
