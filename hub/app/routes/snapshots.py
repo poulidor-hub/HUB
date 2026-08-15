@@ -20,7 +20,9 @@ import os
 import shutil
 import tempfile
 import uuid
+from datetime import datetime
 from pathlib import Path
+from typing import Optional
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
@@ -357,9 +359,48 @@ async def download_snapshot(
     )
 
 
+def snapshot_cron_due(
+    cron_expr: str,
+    now: datetime,
+    last_handled: Optional[datetime],
+) -> tuple[bool, Optional[datetime]]:
+    """Determine si une echeance du cron a ete franchie depuis le dernier traitement.
+
+    Retourne (due, new_last_handled):
+    - due=True : une nouvelle occurrence du cron est survenue apres last_handled.
+    - new_last_handled : derniere occurrence passee prise en compte (a conserver
+      pour le prochain check). None si cron vide ou invalide.
+    - last_handled=None : initialisation -> pas de declenchement (pas de
+      rattrapage d'une echeance anterieure au demarrage).
+
+    Note : on compare la derniere occurrence PASSEE (get_prev) a la derniere
+    occurrence traitee. Calculer get_next(now) (strictement futur) et le
+    comparer a now ne declenche jamais — bug historique du scheduler.
+    """
+    from croniter import croniter
+
+    if not cron_expr:
+        return False, None
+
+    try:
+        cron = croniter(cron_expr, now)
+    except Exception as exc:
+        logger.error(f"Snapshot cron invalide ('{cron_expr}'): {exc}")
+        return False, None
+
+    prev_occurrence = cron.get_prev(datetime)
+    if prev_occurrence.tzinfo is not None:
+        prev_occurrence = prev_occurrence.replace(tzinfo=None)
+
+    if last_handled is None:
+        return False, prev_occurrence
+    if prev_occurrence > last_handled:
+        return True, prev_occurrence
+    return False, last_handled
+
+
 async def _snapshot_cron_scheduler():
     """Tache periodique pour declencher les snapshots planifies."""
-    from croniter import croniter
     from datetime import datetime, timezone
     from app.database import async_session_maker
     from app.snapshot_config import get_snapshot_config as get_cfg
@@ -368,16 +409,35 @@ async def _snapshot_cron_scheduler():
     logger.info("Snapshot scheduler demarre")
     await asyncio.sleep(60)
 
+    last_cron_expr: Optional[str] = None
+    last_handled: Optional[datetime] = None
+
     while True:
         try:
             async with async_session_maker() as db:
                 config = await get_cfg(db)
                 cron_expr = config.get("snapshot_cron", "")
-                if cron_expr:
-                    now = datetime.now(timezone.utc).replace(tzinfo=None)
-                    cron = croniter(cron_expr, now)
-                    next_run = cron.get_next(datetime)
-                    if next_run.replace(tzinfo=None) <= now:
+
+                # Changement de cron (y compris premier check): reinitialiser
+                # sans declencher, pour ne pas rattraper une echeance obsolete.
+                if cron_expr != last_cron_expr:
+                    last_cron_expr = cron_expr
+                    last_handled = None
+
+                now = datetime.now(timezone.utc).replace(tzinfo=None)
+                due, new_last = snapshot_cron_due(cron_expr, now, last_handled)
+                if new_last is not None:
+                    last_handled = new_last
+
+                if due:
+                    running = await db.execute(
+                        select(HubSnapshot).where(HubSnapshot.status == "running")
+                    )
+                    if running.scalar_one_or_none() is not None:
+                        logger.warning(
+                            "Snapshot planifie ignore: un snapshot est deja en cours"
+                        )
+                    else:
                         logger.info("Declenchement snapshot planifie")
                         try:
                             await do_snapshot(db, created_by="scheduler")
