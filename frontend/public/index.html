@@ -318,6 +318,11 @@
                     </button>
                 </li>
                 <li class="nav-item">
+                    <button class="nav-link" data-bs-toggle="tab" data-bs-target="#auditPageUptime"data-action="loadAuditPageUptime">
+                        <i class="bi bi-activity me-1"></i>Uptime utilisateurs
+                    </button>
+                </li>
+                <li class="nav-item">
                     <button class="nav-link" data-bs-toggle="tab" data-bs-target="#auditPageApps"data-action="loadAuditPageApps">
                         <i class="bi bi-grid me-1"></i>Par Application
                     </button>
@@ -380,6 +385,37 @@
                                     <a href="#" class="small text-primary text-decoration-none" data-action="openAuditTab" data-args="'sessions'">Gérer toutes les sessions</a>
                                 </div>
                             </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Uptime utilisateurs -->
+                <div class="tab-pane fade" id="auditPageUptime">
+                    <div class="d-flex flex-wrap align-items-center gap-2 mb-4">
+                        <select id="uptimeUserSelect" class="form-select form-select-sm" style="width:auto;min-width:220px;"
+                                data-action="changeUptimeUser"></select>
+                        <div class="btn-group btn-group-sm">
+                            <button class="btn btn-outline-secondary"data-action="shiftUptimeDay" data-args="-1"><i class="bi bi-chevron-left"></i></button>
+                            <button class="btn btn-outline-secondary" id="uptimeCurrentDate" disabled style="min-width:130px;"></button>
+                            <button class="btn btn-outline-secondary"data-action="shiftUptimeDay" data-args="1"><i class="bi bi-chevron-right"></i></button>
+                        </div>
+                        <button class="btn btn-outline-secondary btn-sm"data-action="resetUptimeToday">Aujourd'hui</button>
+                        <span class="badge text-bg-light border ms-1">UTC</span>
+                    </div>
+                    <div class="row g-3 mb-4" id="uptimeKpiRow"></div>
+                    <div class="card mb-4">
+                        <div class="card-body">
+                            <h2 class="h6 mb-3"><i class="bi bi-bar-chart-steps me-2 text-muted"></i>Activité de la journée par application</h2>
+                            <div id="uptimeTimelineChart" class="usage-chart" style="height:180px;"></div>
+                            <div id="uptimeTimelineEmpty" class="usage-empty d-none">
+                                <i class="bi bi-activity"></i>Aucune activité ce jour-là.
+                            </div>
+                        </div>
+                    </div>
+                    <div class="card">
+                        <div class="card-body">
+                            <h2 class="h6 mb-3"><i class="bi bi-clock me-2 text-muted"></i>Répartition du temps par application</h2>
+                            <div id="uptimeBreakdownChart" class="usage-chart" style="height:120px;"></div>
                         </div>
                     </div>
                 </div>

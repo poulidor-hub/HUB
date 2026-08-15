@@ -12,6 +12,15 @@ let pageAuditCurrentAppSlug = null;
 let pageAuditAppLogsPage = 1;
 let allUsersPage = [];
 
+let uptimeSelectedUserId = null;
+let uptimeSelectedDate = new Date().toISOString().split('T')[0]; // UTC
+let uptimeUsersLoaded = false;
+
+function uptimeFmtDuration(seconds) {
+    const h = Math.floor(seconds / 3600), m = Math.round((seconds % 3600) / 60);
+    return h > 0 ? `${h} h ${String(m).padStart(2, '0')}` : `${m} min`;
+}
+
 function setAuditPeriod(days) {
     days = parseInt(days);
     const hidden = document.getElementById('auditPeriodPage');
@@ -39,6 +48,7 @@ async function loadAuditPageData() {
     const target = activeTab.getAttribute('data-bs-target');
     const loaders = {
         '#auditPageOverview': loadAuditPageOverview,
+        '#auditPageUptime': loadAuditPageUptime,
         '#auditPageApps': loadAuditPageApps,
         '#auditPageLogs': loadAuditPageLogsTab,
         '#auditPageSessions': loadAuditPageSessions,
@@ -996,3 +1006,93 @@ function renderPageSessionHistory(data) {
         ` : ''}
     `;
 }
+
+// ===== Onglet Uptime utilisateurs =====
+
+async function loadUptimeUserOptions() {
+    const select = document.getElementById('uptimeUserSelect');
+    if (!select) return;
+    if (!uptimeUsersLoaded) {
+        try {
+            const res = await api.getUsers({ page: 1, per_page: 500 });
+            const users = res.users || res || [];
+            select.innerHTML = users.map(u =>
+                `<option value="${u.id}">${escapeHtml(u.username)}</option>`).join('');
+            uptimeUsersLoaded = true;
+        } catch (e) {
+            console.error('Erreur chargement utilisateurs:', e);
+            return;
+        }
+    }
+    if (uptimeSelectedUserId) select.value = String(uptimeSelectedUserId);
+    else uptimeSelectedUserId = parseInt(select.value);
+}
+
+// Convention handlers change (cf. changeUsersPerPage) : sans argument, lit le DOM
+function changeUptimeUser() {
+    const select = document.getElementById('uptimeUserSelect');
+    if (!select || !select.value) return;
+    uptimeSelectedUserId = parseInt(select.value);
+    loadAuditPageUptime();
+}
+
+function shiftUptimeDay(delta) {
+    const d = new Date(uptimeSelectedDate + 'T00:00:00Z');
+    d.setUTCDate(d.getUTCDate() + parseInt(delta));
+    // Pas de navigation vers le futur
+    const today = new Date().toISOString().split('T')[0];
+    const target = d.toISOString().split('T')[0];
+    if (target <= today) {
+        uptimeSelectedDate = target;
+        loadAuditPageUptime();
+    }
+}
+
+function resetUptimeToday() {
+    uptimeSelectedDate = new Date().toISOString().split('T')[0];
+    loadAuditPageUptime();
+}
+
+async function loadAuditPageUptime() {
+    await loadUptimeUserOptions();
+    const dateEl = document.getElementById('uptimeCurrentDate');
+    if (dateEl) dateEl.textContent = uptimeSelectedDate;
+    if (!uptimeSelectedUserId) return;
+
+    try {
+        const data = await api.getUserUsage(uptimeSelectedUserId, uptimeSelectedDate);
+
+        const kpiRow = document.getElementById('uptimeKpiRow');
+        const totalMin = Math.round((data.day_total_seconds || 0) / 60);
+        kpiRow.innerHTML =
+            auditKpiCard('#e7f1ff', '#0d6efd', 'bi-person', escapeHtml(data.username), 'Utilisateur', '<span class="audit-trend flat">UTC</span>') +
+            auditKpiCard('#e6f4ea', '#28a745', 'bi-stopwatch', uptimeFmtDuration(data.day_total_seconds || 0), 'Temps total du jour', '') +
+            auditKpiCard('#f1f3f5', '#6c757d', 'bi-grid', data.totals.length, 'Applications utilisées', '') +
+            auditKpiCard('#fff1e6', '#fd7e14', 'bi-arrow-repeat', data.segments.length, 'Bascules', '');
+
+        const hasData = data.segments.length > 0;
+        document.getElementById('uptimeTimelineChart').classList.toggle('d-none', !hasData);
+        document.getElementById('uptimeTimelineEmpty').classList.toggle('d-none', hasData);
+        if (hasData) {
+            renderUserDayTimeline('uptimeTimelineChart', data);
+            renderUserDayBreakdown('uptimeBreakdownChart', data);
+        } else {
+            usageChartsDispose(['uptimeTimelineChart', 'uptimeBreakdownChart']);
+        }
+    } catch (error) {
+        console.error('Erreur uptime utilisateur:', error);
+        showToast('Erreur', 'Impossible de charger les données d\'usage', 'danger');
+    }
+}
+
+// Dispose des graphiques quand leur onglet est quitté (anti-fuite)
+document.addEventListener('DOMContentLoaded', () => {
+    document.querySelectorAll('#auditPageTabs [data-bs-toggle="tab"]').forEach(btn => {
+        btn.addEventListener('hidden.bs.tab', (e) => {
+            const target = e.target.getAttribute('data-bs-target');
+            if (target === '#auditPageUptime') usageChartsDispose(['uptimeTimelineChart', 'uptimeBreakdownChart']);
+            if (target === '#auditPageApps') usageChartsDispose(['pageAppUsageChart']);
+            if (target === '#auditPageOverview') usageChartsDispose(['auditHeatmapChart']);
+        });
+    });
+});
