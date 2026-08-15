@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, BigInteger, String, Boolean, DateTime, ForeignKey, Text, Table, Enum as SQLEnum, JSON, UniqueConstraint, func
+from sqlalchemy import Column, Integer, BigInteger, String, Boolean, DateTime, ForeignKey, Text, Table, Enum as SQLEnum, JSON, UniqueConstraint, Index, func
 from sqlalchemy.orm import relationship
 from datetime import datetime, timezone
 from typing import Optional
@@ -533,6 +533,32 @@ class UserSession(Base):
     def __repr__(self):
         status = "active" if self.is_active else f"closed ({self.duration_seconds}s)"
         return f"<UserSession user={self.user_id} {status}>"
+
+
+class AppUsageSegment(Base):
+    """
+    Segment d'usage d'une application au sein d'une session utilisateur.
+    Ouvert à chaque accès app, clôt à la bascule (switch), au logout,
+    au timeout ou à la révocation forced.
+    NULL sur ended_at = segment en cours.
+    """
+    __tablename__ = "app_usage_segments"
+
+    id = Column(Integer, primary_key=True, index=True)
+    session_id = Column(Integer, ForeignKey('user_sessions.id', ondelete='CASCADE'), nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), nullable=False, index=True)
+    app_slug = Column(String(50), nullable=False, index=True)
+    started_at = Column(DateTime, nullable=False, default=utcnow)
+    ended_at = Column(DateTime, nullable=True)   # NULL = segment en cours
+    end_reason = Column(String(20))              # switch, logout, timeout, forced
+
+    __table_args__ = (
+        Index('ix_app_usage_user_started', 'user_id', 'started_at'),
+        Index('ix_app_usage_app_started', 'app_slug', 'started_at'),
+    )
+
+    def __repr__(self):
+        return f"<AppUsageSegment user={self.user_id} app={self.app_slug}>"
 
 
 class BackupMode(enum.Enum):
