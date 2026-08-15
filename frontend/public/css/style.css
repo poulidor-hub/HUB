@@ -2362,3 +2362,21 @@ body {
     display:flex; align-items:center; justify-content:center; gap:14px; margin-top:16px;
 }
 #vpnPanel .vpn-pagination .page-info { font-size:.82rem; color:var(--vpn-gray); }
+
+/* ===== Audit - graphiques d'usage (ECharts) ===== */
+.usage-chart {
+    width: 100%;
+    min-height: 220px;
+}
+
+.usage-empty {
+    text-align: center;
+    padding: 3rem 1rem;
+    color: var(--text-secondary, #6c757d);
+}
+
+.usage-empty i {
+    font-size: 2.5rem;
+    display: block;
+    margin-bottom: .5rem;
+}

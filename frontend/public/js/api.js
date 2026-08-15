@@ -796,6 +796,19 @@ class HubAPI {
         return this.request(`/audit/overview/alerts?days=${days}`);
     }
 
+    // Audit - visualisations d'usage (segments par application)
+    async getUserUsage(userId, date) {
+        return this.request(`/audit/usage/user/${userId}?date=${encodeURIComponent(date)}`);
+    }
+
+    async getAppsUsageStats(days = 7) {
+        return this.request(`/audit/usage/apps?days=${days}`);
+    }
+
+    async getUsageHeatmap(days = 7) {
+        return this.request(`/audit/usage/heatmap?days=${days}`);
+    }
+
     async revokeSession(sessionId) {
         return this.request(`/audit/sessions/${sessionId}/revoke`, { method: 'POST' });
     }
