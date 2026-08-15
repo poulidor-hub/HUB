@@ -5,6 +5,20 @@
 
 ---
 
+## [3.31.0] - 15 août 2026
+
+### ⚡ Visualisations de la page Audit (uptime & stats par application)
+
+- **DB** : migration `052_create_app_usage_segments.sql` — table `app_usage_segments` (segments d'usage par app : `session_id`, `user_id`, `app_slug`, `started_at`, `ended_at`, `end_reason` ; index composites `(user_id, started_at)` et `(app_slug, started_at)`). Pas de backfill : les données démarrent au déploiement.
+- **Tracking** : nouveau module `hub/app/usage_tracking.py` branché sur le cycle de vie des sessions — bascule d'app (`update_session_activity`) → clôture `switch` + ouverture ; logout (`end_session`) → `logout` ; timeout (`cleanup_stale_sessions`) → `timeout` ; révocation admin → `forced`. Invariant : un seul segment ouvert par session, clamp défensif des bornes.
+- **Agrégats** : `hub/app/usage_stats.py` — fonctions pures Python (simultanés par bucket 5 min, records max/avg/min/p95/σ, uniques/jour, heatmap jour×heure). Calcul applicatif (et non SQL PostgreSQL) pour rester testable sur SQLite.
+- **API** (admin, `routes/audit.py`) : `GET /api/audit/usage/user/{id}?date=YYYY-MM-DD` (segments du jour clôturés virtuellement à `last_activity_at`), `GET /api/audit/usage/apps?days=N` (série simultanés downsampleée 5/30/120/360 min selon période + records sur la base 5 min + uniques/jour), `GET /api/audit/usage/heatmap?days=N` (sessions actives par jour×heure UTC).
+- **Frontend** : ECharts 5.5.1 (CDN) + module `audit-charts.js` (registre d'instances avec `dispose` anti-fuite, resize auto). Nouvel onglet **« Uptime utilisateurs »** (sélecteur utilisateur, navigation jour ‹ ›, timeline 00h→24h colorée par app + répartition empilée). **Vue d'ensemble** : heatmap d'activité du parc. **Par Application** : graphique mixte simultanés (courbe) + uniques/jour (barres) et cartes records (pic+date+users, moyenne, P95, min/σ). Rafraîchissement SSE existant conservé.
+- Le sélecteur d'utilisateurs de l'onglet Uptime charge tous les utilisateurs (page=0).
+- **Tests** : `test_usage_segments.py` (persistance + hooks cycle de vie, 7), `test_usage_stats.py` (agrégats purs, 9), `test_api_usage_endpoints.py` (contrats API, 403/404/400, segment ouvert visible, 6) — 22 nouveaux tests.
+
+---
+
 ## [3.30.0] - 15 août 2026
 
 ### ⚡ Groupes d'applications (regroupement visuel du dashboard)
