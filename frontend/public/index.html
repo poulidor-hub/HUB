@@ -258,7 +258,7 @@
             <div class="col-md-6 col-lg-4">
                 <div class="input-group">
                     <span class="input-group-text bg-white"><i class="bi bi-search"></i></span>
-                    <input type="text" class="form-control" id="appSearchInput" placeholder="Rechercher une application…"data-action="filterDashboardApps">
+                    <input type="text" class="form-control" id="appSearchInput" placeholder="Rechercher une application ou une catégorie…"data-action="filterDashboardApps">
                     <button class="btn btn-outline-secondary d-none" id="appSearchClear"data-action="clearAppSearch"><i class="bi bi-x-lg"></i></button>
                 </div>
             </div>
@@ -271,7 +271,6 @@
                 <button class="btn btn-sm dash-filter-btn workshop-filter-btn active" data-wfilter="false" onclick="setWorkshopFilter('false')" title="Apps production uniquement">Prod</button>
                 <button class="btn btn-sm dash-filter-btn workshop-filter-btn" data-wfilter="true" onclick="setWorkshopFilter('true')" title="Apps atelier uniquement">Atelier</button>
                 <button class="btn btn-sm dash-filter-btn workshop-filter-btn" data-wfilter="all" onclick="setWorkshopFilter('all')" title="Toutes les apps">Prod + Atelier</button>
-                <div id="categoryFilters" class="d-flex gap-1 flex-wrap"></div>
             </div>
         </div>
         <div id="appsGrid" class="row g-4">

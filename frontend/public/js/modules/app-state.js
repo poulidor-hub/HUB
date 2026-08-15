@@ -26,7 +26,7 @@ let adminAppsWorkshopFilter = 'false';  // 'false' (prod), 'true' (ateliers), 'a
 let adminAppsUnmanagedFilter = 'all';  // 'all' (défaut, rien de caché), 'managed', 'unmanaged'
 
 // ===== Dashboard utilisateur =====
-let dashboardFilter = 'all';   // 'all' | 'favorites' | catégorie
+let dashboardFilter = 'all';   // 'all' | 'favorites' (les catégories se cherchent via la recherche)
 let dashboardApps = [];        // apps affichées sur le dashboard (après loadApps)
 
 // Tracking des fenêtres d'applications ouvertes (pour fermeture auto au logout)

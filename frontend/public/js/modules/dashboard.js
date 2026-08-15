@@ -18,7 +18,6 @@ async function loadApps() {
         // S'assurer que apps est un tableau
         if (Array.isArray(apps)) {
             dashboardApps = apps;
-            buildCategoryFilters(apps);
             filterDashboardApps();
             updateModeIndicator();
         } else {
@@ -49,17 +48,6 @@ function setWorkshopFilter(filter) {
         btn.classList.toggle('active', btn.getAttribute('data-wfilter') === filter);
     });
     loadApps();
-}
-
-function buildCategoryFilters(apps) {
-    const container = document.getElementById('categoryFilters');
-    if (!container) return;
-    const categories = [...new Set(apps.map(a => a.category).filter(Boolean))].sort();
-    container.innerHTML = categories.map(cat => `
-        <button class="btn btn-sm dash-filter-btn" data-filter="cat:${escapeHtml(cat)}" onclick="setDashboardFilter('cat:${escapeHtml(cat)}')">
-            ${escapeHtml(cat)}
-        </button>
-    `).join('');
 }
 
 function setDashboardFilter(filter) {
@@ -96,12 +84,9 @@ function filterDashboardApps() {
         );
     }
 
-    // Filtre actif
+    // Filtre actif ('all' | 'favorites' — les catégories se cherchent via la recherche)
     if (dashboardFilter === 'favorites') {
         filtered = filtered.filter(app => app.is_favorite);
-    } else if (dashboardFilter.startsWith('cat:')) {
-        const cat = dashboardFilter.slice(4);
-        filtered = filtered.filter(app => app.category === cat);
     }
 
     renderAppsGrid(filtered);
@@ -266,19 +251,18 @@ function renderAppsGrid(apps) {
         apps = [];
     }
 
+    const searchInput = document.getElementById('appSearchInput');
+    const query = (searchInput ? searchInput.value : '').toLowerCase().trim();
+
     if (apps.length === 0) {
         const msg = dashboardFilter === 'favorites'
             ? `<i class="bi bi-star"></i><h4>Aucun favori</h4><p>Cliquez sur l'étoile d'une application pour l'ajouter à vos favoris.</p>`
-            : dashboardFilter.startsWith('cat:')
-            ? `<i class="bi bi-funnel"></i><h4>Aucune application dans cette catégorie</h4>`
-            : `<i class="bi bi-inbox"></i><h4>Aucune application</h4><p>Contactez un administrateur pour obtenir l'accès aux applications.</p>`;
+            : `<i class="bi bi-inbox"></i><h4>Aucune application</h4><p>${query ? 'Aucun résultat pour cette recherche.' : 'Contactez un administrateur pour obtenir l\'accès aux applications.'}</p>`;
         grid.innerHTML = `<div class="col-12 empty-state">${msg}</div>`;
         return;
     }
 
-    const searchInput = document.getElementById('appSearchInput');
-    const query = (searchInput ? searchInput.value : '').toLowerCase().trim();
-    // Un filtre actif (recherche / favoris / catégorie) "débloque" la grille :
+    // Un filtre actif (recherche / favoris) "débloque" la grille :
     // on affiche toutes les apps à plat, y compris celles qui sont groupées.
     const filterActive = query !== '' || (dashboardFilter && dashboardFilter !== 'all');
 
