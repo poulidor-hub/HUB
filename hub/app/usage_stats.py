@@ -50,24 +50,35 @@ def compute_simultaneous_series(
     entries: [{"app_slug", "user_id", "started_at", "ended_at"}]
     """
     step = timedelta(minutes=step_minutes)
-    series = []
-    t = start
-    while t < end:
-        # user_id -> username : un user avec plusieurs segments couvrant t
-        # ne compte qu'une fois
-        active: dict[int, str] = {}
-        for e in entries:
-            s = max(e["started_at"], start)
-            # segment ouvert -> clamp défensif à la fin de fenêtre
-            en = e["ended_at"] or end
-            if en > end:
-                en = end
-            if s <= t < en:
-                active[e["user_id"]] = user_names.get(e["user_id"], str(e["user_id"]))
-        series.append({"t": t.isoformat(), "count": len(active),
-                       "users": list(active.values())})
-        t += step
-    return series
+    n_buckets = -(-(end - start) // step)  # ceil : dernier bucket partiel inclus
+    if n_buckets <= 0:
+        return []
+    # Marquage par segment (O(n_buckets + segments)) : chaque segment
+    # marque les buckets qu'il couvre, au lieu de re-scanner toutes les
+    # entries pour chaque bucket. Le bucket i couvre [start + i*step,
+    # start + (i+1)*step) ; un segment couvre le bucket si
+    # s <= start + i*step < en.
+    buckets: list[dict[int, str]] = [dict() for _ in range(n_buckets)]
+    for e in entries:
+        s = max(e["started_at"], start)
+        # segment ouvert -> clamp défensif à la fin de fenêtre
+        en = e["ended_at"] or end
+        if en > end:
+            en = end
+        if s >= en:
+            continue  # segment hors fenêtre
+        q, r = divmod(s - start, step)
+        i0 = q + (1 if r else 0)  # 1er bucket avec t >= s
+        i1 = -(-(en - start) // step)  # 1er bucket avec t >= en (exclu)
+        username = user_names.get(e["user_id"], str(e["user_id"]))
+        # un user avec plusieurs segments couvrant t ne compte qu'une fois
+        for i in range(max(i0, 0), min(i1, n_buckets)):
+            buckets[i][e["user_id"]] = username
+    return [
+        {"t": (start + i * step).isoformat(), "count": len(users_map),
+         "users": list(users_map.values())}
+        for i, users_map in enumerate(buckets)
+    ]
 
 
 def downsample_max(series: list[dict], factor: int) -> list[dict]:
@@ -90,14 +101,15 @@ def compute_records(series: list[dict]) -> dict:
         return {"max": 0, "max_at": None, "max_users": [],
                 "avg": 0, "min": 0, "p95": 0, "stddev": 0}
     peak = max(series, key=lambda s: s["count"])
+    mean = sum(counts) / len(counts)
     return {
         "max": peak["count"],
         "max_at": peak["t"],
         "max_users": peak["users"],
-        "avg": round(sum(counts) / len(counts), 2),
+        "avg": round(mean, 2),
         "min": min(counts),
         "p95": round(_percentile(sorted(counts), 0.95), 2),
-        "stddev": round(math.sqrt(sum((c - sum(counts) / len(counts)) ** 2
+        "stddev": round(math.sqrt(sum((c - mean) ** 2
                                       for c in counts) / len(counts)), 2),
     }
 

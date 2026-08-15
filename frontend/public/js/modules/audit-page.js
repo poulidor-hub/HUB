@@ -556,7 +556,7 @@ async function showPageAppAuditDetail(appSlug) {
     try {
         const [data, usageStats] = await Promise.all([
             api.getAppAuditDetail(appSlug, { days, page: 1, pageSize: 50 }),
-            api.getAppsUsageStats(days).catch(() => null) // non bloquant
+            api.getAppsUsageStats(days, appSlug).catch(() => null) // non bloquant
         ]);
         
         // Masquer la grille, afficher le détail

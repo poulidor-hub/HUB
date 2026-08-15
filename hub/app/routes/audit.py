@@ -18,6 +18,7 @@ from sqlalchemy import select, func, and_, or_, desc, delete
 from sqlalchemy.orm import selectinload
 from datetime import datetime, timedelta, timezone
 from typing import Optional, List
+import anyio
 import csv
 import io
 import math
@@ -1865,6 +1866,7 @@ async def get_user_usage_day(
 @router.get("/usage/apps")
 async def get_apps_usage_stats(
     days: int = Query(7, ge=1, le=90),
+    app: Optional[str] = Query(None, description="Slug d'app (défaut: toutes)"),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -1880,15 +1882,14 @@ async def get_apps_usage_stats(
     # (requis par compute_daily_uniques / compute_activity_heatmap — fenêtres par offset depuis start)
     start = end.replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=days - 1)
 
-    result = await db.execute(
-        select(AppUsageSegment).where(
-            and_(
-                AppUsageSegment.started_at < end,
-                or_(AppUsageSegment.ended_at == None,
-                    AppUsageSegment.ended_at > start),  # noqa: E711
-            )
-        )
-    )
+    conditions = [
+        AppUsageSegment.started_at < end,
+        or_(AppUsageSegment.ended_at == None,
+            AppUsageSegment.ended_at > start),  # noqa: E711
+    ]
+    if app:
+        conditions.append(AppUsageSegment.app_slug == app)
+    result = await db.execute(select(AppUsageSegment).where(and_(*conditions)))
     segments = result.scalars().all()
 
     if not segments:
@@ -1913,29 +1914,34 @@ async def get_apps_usage_stats(
     # réelle des données pour que les derniers buckets les voient.
     series_end = max([s.ended_at for s in segments if s.ended_at] + [end])
 
-    apps_out = []
-    for slug in sorted(app_slugs):
-        entries = [
-            {"app_slug": slug, "user_id": s.user_id,
-             "started_at": s.started_at, "ended_at": s.ended_at}
-            for s in segments if s.app_slug == slug
-        ]
-        base_series = compute_simultaneous_series(
-            entries, start, series_end, BASE_BUCKET_MINUTES, user_names
-        )
-        app = apps_by_slug.get(slug)
-        apps_out.append({
-            "slug": slug,
-            "name": app.name if app else slug,
-            "icon": app.icon if app else "bi-grid",
-            "color": app.color if app else "#6c757d",
-            "simultaneous": [
-                {"t": p["t"], "count": p["count"]}
-                for p in downsample_max(base_series, factor)
-            ],
-            "daily_uniques": compute_daily_uniques(entries, start, days),
-            "records": compute_records(base_series),
-        })
+    def _aggregate() -> list[dict]:
+        """Agrégation CPU-bound (fonctions pures) — exécutée hors event loop."""
+        apps_out = []
+        for slug in sorted(app_slugs):
+            entries = [
+                {"app_slug": slug, "user_id": s.user_id,
+                 "started_at": s.started_at, "ended_at": s.ended_at}
+                for s in segments if s.app_slug == slug
+            ]
+            base_series = compute_simultaneous_series(
+                entries, start, series_end, BASE_BUCKET_MINUTES, user_names
+            )
+            app_obj = apps_by_slug.get(slug)
+            apps_out.append({
+                "slug": slug,
+                "name": app_obj.name if app_obj else slug,
+                "icon": app_obj.icon if app_obj else "bi-grid",
+                "color": app_obj.color if app_obj else "#6c757d",
+                "simultaneous": [
+                    {"t": p["t"], "count": p["count"]}
+                    for p in downsample_max(base_series, factor)
+                ],
+                "daily_uniques": compute_daily_uniques(entries, start, days),
+                "records": compute_records(base_series),
+            })
+        return apps_out
+
+    apps_out = await anyio.to_thread.run_sync(_aggregate)
 
     return {"period_days": days, "apps": apps_out}
 

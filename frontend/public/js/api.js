@@ -801,8 +801,10 @@ class HubAPI {
         return this.request(`/audit/usage/user/${userId}?date=${encodeURIComponent(date)}`);
     }
 
-    async getAppsUsageStats(days = 7) {
-        return this.request(`/audit/usage/apps?days=${days}`);
+    async getAppsUsageStats(days = 7, appSlug = null) {
+        let url = `/audit/usage/apps?days=${days}`;
+        if (appSlug) url += `&app=${encodeURIComponent(appSlug)}`;
+        return this.request(url);
     }
 
     async getUsageHeatmap(days = 7) {

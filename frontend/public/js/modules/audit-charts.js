@@ -13,6 +13,8 @@ function usageChart(containerId) {
     const el = document.getElementById(containerId);
     if (!el) return null;
     if (!chart) {
+        // Purger un éventuel état vide (.usage-empty) superposé au re-rendu
+        el.innerHTML = '';
         chart = echarts.init(el);
         _usageCharts.set(containerId, chart);
     }

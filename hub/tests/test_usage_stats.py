@@ -1,4 +1,5 @@
 """Tests des agrégats d'usage (fonctions pures)."""
+import time
 from datetime import datetime, timedelta
 
 from app.usage_stats import (
@@ -106,6 +107,25 @@ def test_daily_uniques():
     out = compute_daily_uniques(entries, d1, 2)
     assert out[0]["date"] == "2026-08-15" and out[0]["count"] == 1
     assert out[1]["date"] == "2026-08-16" and out[1]["count"] == 1
+
+
+def test_perf_90j_window():
+    """Garde-fou : agrégats sur une fenêtre 90 j (25 920 buckets) < 5 s."""
+    from datetime import timedelta
+    entries = [
+        {"app_slug": "app", "user_id": u, "started_at": T0 + timedelta(hours=h),
+         "ended_at": T0 + timedelta(hours=h + 2)}
+        for u in (1, 2, 3) for h in range(0, 24 * 90, 48)
+    ]
+    t0 = time.monotonic()
+    series = compute_simultaneous_series(
+        entries, T0, T0 + timedelta(days=90), 5, NAMES
+    )
+    compute_records(series)
+    compute_daily_uniques(entries, T0, 90)
+    elapsed = time.monotonic() - t0
+    assert len(series) == 24 * 90 * 12  # 25 920 buckets de 5 min
+    assert elapsed < 5.0, f"agrégats 90j trop lents: {elapsed:.1f}s"
 
 
 def test_activity_heatmap():
