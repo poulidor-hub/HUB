@@ -104,3 +104,23 @@ async def test_usage_heatmap_structure(client, async_session, admin_token, test_
         assert len(day["hours"]) == 24
     total = sum(sum(d["hours"]) for d in body["days"])
     assert total >= 1
+
+
+@pytest.mark.asyncio
+async def test_usage_user_open_segment_visible(client, async_session, admin_token, test_user, settings):
+    """Un segment ouvert (app courante) doit apparaître, borné par le timeout de session."""
+    s = await _make_session(async_session, test_user)
+    await record_app_switch(async_session, s, "test-app")
+    await async_session.commit()
+
+    today = utcnow().strftime("%Y-%m-%d")
+    resp = await client.get(
+        f"/api/audit/usage/user/{test_user.id}?date={today}",
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    segs = [x for x in body["segments"] if x["app_slug"] == "test-app"]
+    assert len(segs) == 1
+    assert segs[0]["duration_seconds"] > 0
+    assert segs[0]["duration_seconds"] <= settings.session_timeout_minutes * 60 + 5

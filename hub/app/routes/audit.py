@@ -20,6 +20,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional, List
 import csv
 import io
+import math
 import time
 
 from app.database import get_db
@@ -1811,13 +1812,25 @@ async def get_user_usage_day(
     totals = {}
     for seg, session in rows:
         started = max(seg.started_at, day_start)
-        # segment ouvert -> clamp à last_activity_at de la session
-        raw_end = seg.ended_at or session.last_activity_at or utcnow()
+        if seg.ended_at is not None:
+            raw_end = seg.ended_at
+        else:
+            # Segment ouvert : fin virtuelle cohérente avec cleanup_stale_sessions
+            # (ended_at = last_activity + timeout), plafonnée à maintenant.
+            raw_end = min(
+                utcnow(),
+                session.last_activity_at + timedelta(minutes=settings.session_timeout_minutes),
+            )
         ended = min(raw_end, day_end)
         if ended <= started:
             continue
         app = apps_by_slug.get(seg.app_slug)
-        duration = int((ended - started).total_seconds())
+        if seg.ended_at is None:
+            # Segment ouvert en cours d'utilisation : au moins 1 s de durée
+            # (une utilisation active ne doit jamais apparaître à durée 0).
+            duration = math.ceil((ended - started).total_seconds())
+        else:
+            duration = int((ended - started).total_seconds())
         segments.append({
             "app_slug": seg.app_slug,
             "app_name": app.name if app else seg.app_slug,
