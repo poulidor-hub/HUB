@@ -350,6 +350,12 @@
                 <div class="tab-pane fade show active" id="auditPageOverview">
                     <!-- KPI -->
                     <div class="row g-3 mb-4" id="auditKpiRow"></div>
+                    <div class="card mb-4">
+                        <div class="card-body">
+                            <h2 class="h6 mb-3"><i class="bi bi-grid-3x3-gap me-2 text-muted"></i>Activité du parc — sessions actives (UTC)</h2>
+                            <div id="auditHeatmapChart" class="usage-chart" style="height:260px;"></div>
+                        </div>
+                    </div>
                     <div class="row g-4">
                         <div class="col-lg-8">
                             <div class="card mb-4">
@@ -440,6 +446,13 @@
                                 </div>
                             </div>
                         </div>
+                        <div class="card mb-4">
+                            <div class="card-body">
+                                <h2 class="h6 mb-3"><i class="bi bi-people me-2 text-muted"></i>Utilisateurs — simultanés &amp; uniques/jour (UTC)</h2>
+                                <div id="pageAppUsageChart" class="usage-chart" style="height:280px;"></div>
+                            </div>
+                        </div>
+                        <div class="row g-3 mb-4" id="pageAppRecordsRow"></div>
                         <!-- Stats de l'app -->
                         <div class="row g-3 mb-4 row-cols-2 row-cols-md-5">
                             <div class="col">

@@ -64,14 +64,18 @@ async function loadAuditPageData() {
 async function loadAuditPageOverview() {
     const days = parseInt(document.getElementById('auditPeriodPage')?.value || 7);
     try {
-        const [kpis, alerts, active] = await Promise.all([
+        const [kpis, alerts, active, heatmap] = await Promise.all([
             api.getAuditKpis(days),
             api.getAuditAlerts(days),
-            api.getActiveSessions()
+            api.getActiveSessions(),
+            api.getUsageHeatmap(days).catch(() => null) // non bloquant
         ]);
         renderAuditKpis(kpis);
         renderAuditAlerts(alerts.alerts || []);
         renderAuditLiveSessions(active);
+        if (heatmap && (heatmap.days || []).length) {
+            renderUsageHeatmap('auditHeatmapChart', heatmap);
+        }
         updateErrorTabBadge();
     } catch (error) {
         console.error('Erreur chargement audit:', error);
@@ -550,7 +554,10 @@ async function showPageAppAuditDetail(appSlug) {
     }
     
     try {
-        const data = await api.getAppAuditDetail(appSlug, { days, page: 1, pageSize: 50 });
+        const [data, usageStats] = await Promise.all([
+            api.getAppAuditDetail(appSlug, { days, page: 1, pageSize: 50 }),
+            api.getAppsUsageStats(days).catch(() => null) // non bloquant
+        ]);
         
         // Masquer la grille, afficher le détail
         document.getElementById('auditPageAppsGrid').classList.add('d-none');
@@ -570,7 +577,27 @@ async function showPageAppAuditDetail(appSlug) {
         document.getElementById('pageAppDetailConnected').textContent = connected;
         document.getElementById('pageAppDetailBackup').textContent = backup?.size || '-';
         document.getElementById('pageAppDetailPeriod').textContent = `${days} jours`;
-        
+
+        // Graphiques d'usage + records
+        const usageApp = usageStats && (usageStats.apps || []).find(a => a.slug === appSlug);
+        if (usageApp) {
+            renderAppUsageChart('pageAppUsageChart', usageApp);
+            const r = usageApp.records || {};
+            const recFmtDate = (iso) => iso ? formatDateTime(iso) : '-';
+            document.getElementById('pageAppRecordsRow').innerHTML =
+                auditKpiCard('#e7f1ff', '#0d6efd', 'bi-trophy', r.max ?? 0,
+                    `Pic simultanés — ${recFmtDate(r.max_at)}`,
+                    `<span class="audit-trend flat">${escapeHtml((r.max_users || []).join(', ') || '-')}</span>`) +
+                auditKpiCard('#e6f4ea', '#28a745', 'bi-graph-up', r.avg ?? 0, 'Moyenne simultanés', '') +
+                auditKpiCard('#fff1e6', '#fd7e14', 'bi-percent', r.p95 ?? 0, 'P95 simultanés', '') +
+                auditKpiCard('#f1f3f5', '#6c757d', 'bi-arrows-collapse', `${r.min ?? 0} / σ ${r.stddev ?? 0}`, 'Min / Écart-type', '');
+        } else {
+            document.getElementById('pageAppRecordsRow').innerHTML = '';
+            usageChartDispose('pageAppUsageChart');
+            document.getElementById('pageAppUsageChart').innerHTML =
+                `<div class="usage-empty"><i class="bi bi-activity"></i>${USAGE_EMPTY_MSG}</div>`;
+        }
+
         // Top users
         renderPageAppDetailTopUsers(data.top_users);
         

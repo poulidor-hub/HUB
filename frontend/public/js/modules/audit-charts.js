@@ -127,3 +127,80 @@ function renderUserDayBreakdown(containerId, data) {
         }))
     }, true);
 }
+
+// Heatmap parc : lignes = jours, colonnes = heures 0-23
+function renderUsageHeatmap(containerId, data) {
+    const chart = usageChart(containerId);
+    if (!chart) return;
+    const axis = usageChartAxisStyle();
+    const days = data.days || [];
+    const flat = [];
+    let maxV = 0;
+    days.forEach((d, yi) => d.hours.forEach((v, xi) => {
+        flat.push([xi, yi, v]);
+        if (v > maxV) maxV = v;
+    }));
+    chart.setOption({
+        tooltip: {
+            position: 'top',
+            formatter: (p) => {
+                const d = days[days.length - 1 - p.value[1]];
+                return `${d ? d.date : ''} ${String(p.value[0]).padStart(2, '0')}:00 — ${p.value[2]} session(s)`;
+            }
+        },
+        grid: { left: 90, right: 20, top: 10, bottom: 60 },
+        xAxis: {
+            type: 'category', data: Array.from({ length: 24 }, (_, i) => String(i).padStart(2, '0')),
+            axisLabel: { color: axis.labelColor }, axisLine: { lineStyle: { color: axis.lineColor } },
+            splitLine: { show: false }
+        },
+        yAxis: {
+            type: 'category', data: days.map(d => d.date).reverse(),
+            axisLabel: { color: axis.labelColor }, axisLine: { lineStyle: { color: axis.lineColor } }
+        },
+        visualMap: {
+            min: 0, max: Math.max(maxV, 1), calculable: false,
+            orient: 'horizontal', left: 'center', bottom: 0,
+            inRange: { color: ['#e9ecef', '#0d6efd'] }
+        },
+        series: [{
+            type: 'heatmap',
+            data: flat.map(([x, y, v]) => [x, days.length - 1 - y, v])
+        }]
+    }, true);
+}
+
+// Courbe simultanés + barres uniques/jour (mixte, double axe Y)
+function renderAppUsageChart(containerId, app) {
+    const chart = usageChart(containerId);
+    if (!chart) return;
+    const axis = usageChartAxisStyle();
+    chart.setOption({
+        tooltip: { trigger: 'axis' },
+        legend: { top: 0, textStyle: { color: axis.labelColor } },
+        grid: { left: 40, right: 40, top: 30, bottom: 40 },
+        xAxis: [
+            {
+                type: 'time',
+                axisLabel: { color: axis.labelColor },
+                axisLine: { lineStyle: { color: axis.lineColor } }
+            }
+        ],
+        yAxis: [
+            { type: 'value', name: 'Simultanés', minInterval: 1, axisLabel: { color: axis.labelColor }, splitLine: { lineStyle: { color: axis.lineColor } } },
+            { type: 'value', name: 'Uniques/jour', minInterval: 1, axisLabel: { color: axis.labelColor }, splitLine: { show: false } }
+        ],
+        series: [
+            {
+                name: 'Utilisateurs simultanés', type: 'line', showSymbol: false,
+                data: (app.simultaneous || []).map(p => [p.t, p.count]),
+                itemStyle: { color: app.color }, lineStyle: { width: 2 }
+            },
+            {
+                name: 'Uniques par jour', type: 'bar', yAxisIndex: 1,
+                data: (app.daily_uniques || []).map(d => [d.date + 'T12:00:00Z', d.count]),
+                itemStyle: { color: app.color, opacity: 0.35 }, barWidth: '60%'
+            }
+        ]
+    }, true);
+}
