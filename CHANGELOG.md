@@ -5,6 +5,19 @@
 
 ---
 
+## [3.31.1] - 15 août 2026
+
+### ⚡ Perf des agrégats usage 90j + filtre app sur /usage/apps
+
+- **Perf** (`usage_stats.py`) : agrégats sur longue période (90 j) passés en O(n) par segment (plus de re-scan par jour), moyenne hoistée hors de la boucle des buckets — les graphiques 90 j de la vue « Par Application » ne bloquent plus l'event loop.
+- **Perf** (`routes/audit.py`) : l'agrégation CPU-bound de `/usage/apps` est exécutée dans un thread (`anyio.to_thread`), les segments ouverts (clôture virtuelle) sont filtrés en une seule passe.
+- **Filtre** : `/api/audit/usage/apps?days=N` accepte `&app=<slug>` pour restreindre les stats à une application (défaut : toutes) ; `api.js` → `getAppsUsageStats(days, appSlug)`.
+- **Frontend** : purge de l'état vide superposé (`.usage-empty`) avant re-rendu du conteneur de chart.
+- **Tests** : +2 (`test_usage_stats.py` perf/O(n), `test_api_usage_endpoints.py` filtre app).
+- **Docs** : spec `2026-08-15-snapshot-apps-code-design.md` (design snapshot du code des APPS + runbook PRA bare-metal).
+
+---
+
 ## [3.31.0] - 15 août 2026
 
 ### ⚡ Visualisations de la page Audit (uptime & stats par application)
