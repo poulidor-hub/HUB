@@ -23,8 +23,17 @@ import io
 import time
 
 from app.database import get_db
-from app.models import User, UserSession, AuditLog, Application, utcnow
+from app.models import User, UserSession, AuditLog, Application, AppUsageSegment, utcnow
 from app.auth import get_current_user, get_settings
+from app.usage_stats import (
+    BASE_BUCKET_MINUTES,
+    bucket_size_for_days,
+    compute_activity_heatmap,
+    compute_daily_uniques,
+    compute_records,
+    compute_simultaneous_series,
+    downsample_max,
+)
 from app.usage_tracking import (
     SEGMENT_REASON_MAP,
     close_segments_for_session,
@@ -1737,4 +1746,212 @@ async def acknowledge_errors(
     return {
         "acknowledged_at": now.isoformat(),
         "message": "Erreurs marquées comme consultées"
+    }
+
+
+# =============================================================================
+# VISUALISATIONS D'USAGE (segments par application)
+# =============================================================================
+
+@router.get("/usage/user/{user_id}")
+async def get_user_usage_day(
+    user_id: int,
+    date: str = Query(None, description="Jour YYYY-MM-DD (défaut: aujourd'hui UTC)"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Segments d'usage d'un utilisateur sur une journée (UTC).
+    Les segments ouverts sont virtuellement clôturés à last_activity_at.
+    """
+    if not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="Accès admin requis")
+
+    result = await db.execute(select(User).where(User.id == user_id))
+    user = result.scalar_one_or_none()
+    if user is None:
+        raise HTTPException(status_code=404, detail="Utilisateur introuvable")
+
+    try:
+        day = datetime.strptime(date, "%Y-%m-%d") if date else utcnow().replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Date invalide (YYYY-MM-DD attendu)")
+
+    day_start = day
+    day_end = day + timedelta(days=1)
+
+    # Segments chevauchant le jour, avec la session pour clamp des segments ouverts
+    result = await db.execute(
+        select(AppUsageSegment, UserSession)
+        .join(UserSession, AppUsageSegment.session_id == UserSession.id)
+        .where(
+            and_(
+                AppUsageSegment.user_id == user_id,
+                AppUsageSegment.started_at < day_end,
+                or_(AppUsageSegment.ended_at == None,
+                    AppUsageSegment.ended_at > day_start),  # noqa: E711
+            )
+        )
+    )
+    rows = result.all()
+
+    # Noms/couleurs des apps
+    app_slugs = {seg.app_slug for seg, _ in rows}
+    apps_by_slug = {}
+    if app_slugs:
+        apps_result = await db.execute(
+            select(Application).where(Application.slug.in_(app_slugs))
+        )
+        for a in apps_result.scalars():
+            apps_by_slug[a.slug] = a
+
+    segments = []
+    totals = {}
+    for seg, session in rows:
+        started = max(seg.started_at, day_start)
+        # segment ouvert -> clamp à last_activity_at de la session
+        raw_end = seg.ended_at or session.last_activity_at or utcnow()
+        ended = min(raw_end, day_end)
+        if ended <= started:
+            continue
+        app = apps_by_slug.get(seg.app_slug)
+        duration = int((ended - started).total_seconds())
+        segments.append({
+            "app_slug": seg.app_slug,
+            "app_name": app.name if app else seg.app_slug,
+            "color": app.color if app else "#6c757d",
+            "started_at": started.isoformat(),
+            "ended_at": ended.isoformat(),
+            "duration_seconds": duration,
+            "end_reason": seg.end_reason,
+        })
+        tot = totals.setdefault(seg.app_slug, {
+            "app_slug": seg.app_slug,
+            "app_name": app.name if app else seg.app_slug,
+            "color": app.color if app else "#6c757d",
+            "total_seconds": 0,
+        })
+        tot["total_seconds"] += duration
+
+    segments.sort(key=lambda s: s["started_at"])
+    totals = sorted(totals.values(), key=lambda t: -t["total_seconds"])
+    return {
+        "user_id": user_id,
+        "username": user.username,
+        "date": day_start.strftime("%Y-%m-%d"),
+        "segments": segments,
+        "totals": totals,
+        "day_total_seconds": sum(t["total_seconds"] for t in totals),
+    }
+
+
+@router.get("/usage/apps")
+async def get_apps_usage_stats(
+    days: int = Query(7, ge=1, le=90),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Stats d'usage par application : simultanés (base 5 min, downsample affichage),
+    uniques/jour, records (max+date+users, avg, min, p95, σ) sur les simultanés.
+    """
+    if not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="Accès admin requis")
+
+    end = utcnow()
+    # Fenêtre alignée minuit UTC : `days` buckets quotidiens, le dernier = aujourd'hui
+    # (requis par compute_daily_uniques / compute_activity_heatmap — fenêtres par offset depuis start)
+    start = end.replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=days - 1)
+
+    result = await db.execute(
+        select(AppUsageSegment).where(
+            and_(
+                AppUsageSegment.started_at < end,
+                or_(AppUsageSegment.ended_at == None,
+                    AppUsageSegment.ended_at > start),  # noqa: E711
+            )
+        )
+    )
+    segments = result.scalars().all()
+
+    if not segments:
+        return {"period_days": days, "apps": []}
+
+    # user_id -> username
+    user_ids = {s.user_id for s in segments}
+    users_result = await db.execute(select(User).where(User.id.in_(user_ids)))
+    user_names = {u.id: u.username for u in users_result.scalars()}
+
+    app_slugs = {s.app_slug for s in segments}
+    apps_result = await db.execute(
+        select(Application).where(Application.slug.in_(app_slugs))
+    )
+    apps_by_slug = {a.slug: a for a in apps_result.scalars()}
+
+    display_step = bucket_size_for_days(days)
+    factor = max(1, display_step // BASE_BUCKET_MINUTES)
+
+    # Des segments peuvent se terminer après "maintenant" (commit concurrent,
+    # horloge, artefact de données) : étendre la fenêtre de la série à la fin
+    # réelle des données pour que les derniers buckets les voient.
+    series_end = max([s.ended_at for s in segments if s.ended_at] + [end])
+
+    apps_out = []
+    for slug in sorted(app_slugs):
+        entries = [
+            {"app_slug": slug, "user_id": s.user_id,
+             "started_at": s.started_at, "ended_at": s.ended_at}
+            for s in segments if s.app_slug == slug
+        ]
+        base_series = compute_simultaneous_series(
+            entries, start, series_end, BASE_BUCKET_MINUTES, user_names
+        )
+        app = apps_by_slug.get(slug)
+        apps_out.append({
+            "slug": slug,
+            "name": app.name if app else slug,
+            "icon": app.icon if app else "bi-grid",
+            "color": app.color if app else "#6c757d",
+            "simultaneous": [
+                {"t": p["t"], "count": p["count"]}
+                for p in downsample_max(base_series, factor)
+            ],
+            "daily_uniques": compute_daily_uniques(entries, start, days),
+            "records": compute_records(base_series),
+        })
+
+    return {"period_days": days, "apps": apps_out}
+
+
+@router.get("/usage/heatmap")
+async def get_usage_heatmap(
+    days: int = Query(7, ge=1, le=90),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Heatmap d'activité du parc : sessions actives par jour × heure (UTC)."""
+    if not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="Accès admin requis")
+
+    end = utcnow()
+    # Fenêtre alignée minuit UTC : `days` buckets quotidiens, le dernier = aujourd'hui
+    # (requis par compute_daily_uniques / compute_activity_heatmap — fenêtres par offset depuis start)
+    start = end.replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=days - 1)
+
+    result = await db.execute(
+        select(UserSession.login_at, UserSession.logout_at).where(
+            and_(
+                UserSession.login_at < end,
+                or_(UserSession.logout_at == None,
+                    UserSession.logout_at > start),  # noqa: E711
+            )
+        )
+    )
+    sessions = [(row[0], row[1]) for row in result.all()]
+
+    return {
+        "period_days": days,
+        "days": compute_activity_heatmap(sessions, start, days),
     }
