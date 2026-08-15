@@ -303,6 +303,36 @@ class TestSnapshotLifecycle:
         )
         assert response.status_code == 400
 
+    @pytest.mark.asyncio
+    async def test_include_apps_code_default_on_flush(
+        self, async_session: AsyncSession,
+    ):
+        snap = HubSnapshot(
+            snapshot_id="test-flag-001", status="pending", created_by="test",
+        )
+        async_session.add(snap)
+        await async_session.commit()
+        await async_session.refresh(snap)
+        assert snap.include_apps_code is True
+
+    @pytest.mark.asyncio
+    async def test_snapshot_detail_exposes_apps_code_flag(
+        self, client: AsyncClient, async_session: AsyncSession,
+        admin_token, snapshot_settings,
+    ):
+        snap = HubSnapshot(
+            snapshot_id="test-flag-002", status="success", created_by="test",
+        )
+        async_session.add(snap)
+        await async_session.commit()
+
+        response = await client.get(
+            "/api/admin/snapshots/test-flag-002",
+            headers=get_auth_header(admin_token),
+        )
+        assert response.status_code == 200
+        assert response.json()["include_apps_code"] is True
+
 
 class TestRetention:
     @pytest.mark.asyncio

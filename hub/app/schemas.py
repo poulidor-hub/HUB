@@ -1871,6 +1871,7 @@ class HubSnapshotResponse(BaseModel):
     include_files: bool = True
     include_app_backups: bool = True
     include_docker_config: bool = True
+    include_apps_code: bool = True
     pg_dump_size_bytes: int = 0
     apps_count: int = 0
     apps_succeeded: int = 0
@@ -1922,6 +1923,7 @@ class HubSnapshotResponse(BaseModel):
             include_files=bool(getattr(snapshot, "include_files", True)),
             include_app_backups=bool(getattr(snapshot, "include_app_backups", True)),
             include_docker_config=bool(getattr(snapshot, "include_docker_config", True)),
+            include_apps_code=bool(getattr(snapshot, "include_apps_code", True)),
             pg_dump_size_bytes=snapshot.pg_dump_size_bytes or 0,
             apps_count=getattr(snapshot, "apps_count", 0),
             apps_succeeded=getattr(snapshot, "apps_succeeded", 0),
