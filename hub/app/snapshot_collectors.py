@@ -24,6 +24,16 @@ STORAGE_BASE_DIR = Path("/code/storage/backups")
 SECRETS_DIR = Path("/code/secrets")
 VERSION_FILE = Path("/code/VERSION")
 
+APPS_SOURCE_DIR = Path("/code/apps_source")
+
+# Artefacts régénérables exclus de la capture (build/CI/outils).
+# ".git" est volontairement INCLUS (option B : historique hors-ligne au PRA).
+APPS_CODE_TAR_EXCLUDES = [
+    "node_modules", "__pycache__", ".opencode", ".worktrees",
+    ".pytest_cache", ".mypy_cache", "dist", ".next", "target",
+    "htmlcov", "*.pyc", ".coverage",
+]
+
 
 async def run_pg_dump(temp_dir: Path, db_url: str) -> dict:
     start = time.monotonic()
@@ -103,6 +113,51 @@ async def run_files_tar(temp_dir: Path) -> dict:
 
     duration_ms = int((time.monotonic() - start) * 1000)
     return {"size_bytes": total_size, "duration_ms": duration_ms, "files_count": file_count}
+
+
+async def run_apps_code_tar(temp_dir: Path) -> dict:
+    """Capture le code + config + .git de tout APPS/ vers apps/apps_code.tar.
+
+    Dégradation gracieuse : si le montage /code/apps_source est absent
+    (déploiement sans bind mount), log un warning et retourne des stats vides
+    sans faire échouer le snapshot.
+    """
+    start = time.monotonic()
+    apps_dir = temp_dir / "apps"
+    apps_dir.mkdir(parents=True, exist_ok=True)
+    out_path = apps_dir / "apps_code.tar"
+
+    if not APPS_SOURCE_DIR.is_dir():
+        logger.warning(
+            f"apps_code: {APPS_SOURCE_DIR} indisponible (montage absent?) — collector ignore"
+        )
+        return {
+            "size_bytes": 0,
+            "apps_count": 0,
+            "duration_ms": int((time.monotonic() - start) * 1000),
+        }
+
+    cmd = ["tar", "-cf", str(out_path)]
+    for pattern in APPS_CODE_TAR_EXCLUDES:
+        cmd += ["--exclude", pattern]
+    cmd += ["-C", str(APPS_SOURCE_DIR), "."]
+
+    proc = await asyncio.create_subprocess_exec(
+        *cmd,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    stdout, stderr = await proc.communicate()
+
+    if proc.returncode != 0 or not out_path.exists():
+        error_msg = stderr.decode()[:500] if stderr else f"tar exit code {proc.returncode}"
+        raise RuntimeError(f"tar apps_code a echoue: {error_msg}")
+
+    apps_count = sum(1 for d in APPS_SOURCE_DIR.iterdir() if d.is_dir())
+    size = out_path.stat().st_size
+    duration_ms = int((time.monotonic() - start) * 1000)
+    logger.info(f"apps_code_tar termine: {size} bytes, {apps_count} apps en {duration_ms}ms")
+    return {"size_bytes": size, "apps_count": apps_count, "duration_ms": duration_ms}
 
 
 async def run_app_backups(db: AsyncSession, temp_dir: Path, snapshot: HubSnapshot) -> dict:
