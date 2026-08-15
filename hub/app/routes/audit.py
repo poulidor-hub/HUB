@@ -25,6 +25,11 @@ import time
 from app.database import get_db
 from app.models import User, UserSession, AuditLog, Application, utcnow
 from app.auth import get_current_user, get_settings
+from app.usage_tracking import (
+    SEGMENT_REASON_MAP,
+    close_segments_for_session,
+    record_app_switch,
+)
 
 router = APIRouter(prefix="/api/audit", tags=["Audit"])
 settings = get_settings()
@@ -295,9 +300,12 @@ async def end_session(
         session.logout_at = utcnow()
         session.logout_reason = reason
         session.current_app_slug = None  # Plus d'app active
+        await close_segments_for_session(
+            db, session, SEGMENT_REASON_MAP.get(reason, "logout")
+        )
         # Notifier les clients SSE
         _notify_audit()
-    
+
     return session
 
 
@@ -330,7 +338,8 @@ async def update_session_activity(
         session.last_activity_at = utcnow()
         if app_slug is not None:
             session.current_app_slug = app_slug
-    
+            await record_app_switch(db, session, app_slug)
+
     return session
 
 
@@ -358,7 +367,10 @@ async def cleanup_stale_sessions(db: AsyncSession) -> int:
         session.logout_at = session.last_activity_at + timedelta(minutes=settings.session_timeout_minutes)
         session.logout_reason = "timeout"
         session.current_app_slug = None
-    
+        await close_segments_for_session(
+            db, session, "timeout", ended_at=session.logout_at
+        )
+
     if stale_sessions:
         await db.commit()
         _notify_audit()
@@ -457,6 +469,7 @@ async def revoke_session(
     session.logout_at = utcnow()
     session.logout_reason = "forced"
     session.current_app_slug = None
+    await close_segments_for_session(db, session, "forced")
     await db.commit()
 
     _notify_audit()
