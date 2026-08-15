@@ -1014,7 +1014,7 @@ async function loadUptimeUserOptions() {
     if (!select) return;
     if (!uptimeUsersLoaded) {
         try {
-            const res = await api.getUsers({ page: 1, per_page: 500 });
+            const res = await api.getUsers({ page: 0 });  // page=0 = tous
             const users = res.users || res || [];
             select.innerHTML = users.map(u =>
                 `<option value="${u.id}">${escapeHtml(u.username)}</option>`).join('');
