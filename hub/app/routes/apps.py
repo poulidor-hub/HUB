@@ -40,7 +40,7 @@ from app.auth import get_current_admin, get_current_user, get_password_hash, get
 from app.routes.service_accounts import save_service_account_credentials, delete_service_account_credentials
 from app.routes.audit import log_action
 from app.docker_scanner import docker_scanner
-from app.port_allocator import allocate_ports_for_app, docker_occupied_ports, release_ports_for_app, PortPoolExhausted
+from app.port_allocator import allocate_ports_for_app, docker_occupied_ports, release_ports_for_app, PortPoolExhausted, SubnetPoolExhausted
 from app.m2m_catalog_export import build_m2m_catalog_export
 
 router = APIRouter(prefix="/api/apps", tags=["Applications"])
@@ -1052,11 +1052,15 @@ async def allocate_ports(
     except PortPoolExhausted as e:
         logger.error(f"❌ Pool de ports saturé pour '{payload.slug}': {e}")
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
+    except SubnetPoolExhausted as e:
+        logger.error(f"❌ Pool de sous-réseaux saturé pour '{payload.slug}': {e}")
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
 
     return AllocatePortsResponse(
         api_port=alloc.api_port,
         frontend_port=alloc.frontend_port,
         frontend_https_port=alloc.frontend_https_port,
+        subnet=alloc.subnet,
         host=host,
         reused=reused,
     )
@@ -1108,6 +1112,7 @@ async def ports_status(
                 api_port=a.api_port,
                 frontend_port=a.frontend_port,
                 frontend_https_port=a.frontend_https_port,
+                subnet=a.subnet,
             )
             for a in allocs
         ],

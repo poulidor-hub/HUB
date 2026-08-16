@@ -5,6 +5,28 @@
 
 ---
 
+## [3.32.0] - 16 août 2026
+
+### ⚡ Snapshots complets du HUB : code des APPS inclus + runbook PRA bare-metal
+
+- **Fix** (`routes/snapshots.py`) : le scheduler de snapshots planifiés ne se déclenchait jamais — `croniter(...).get_next()` renvoie une date strictement future, donc `next_run <= now` était toujours faux. Remplacement par `snapshot_cron_due()` (fonction pure basée sur `get_prev` vs dernière occurrence traitée) + garde anti-doublon si un snapshot tourne déjà. 8 tests de régression dans `test_snapshot_scheduler.py`.
+- **DB** : migration `053_add_snapshot_apps_code.sql` — colonne `hub_snapshots.include_apps_code BOOLEAN NOT NULL DEFAULT TRUE`.
+- **Snapshot** (`snapshot_collectors.py`, `snapshot_engine.py`) : nouveau collector `run_apps_code_tar` qui capture le code + config + `.git` de tout `APPS/` dans `apps/apps_code.tar`, avec exclusions des artefacts régénérables (`node_modules`, `__pycache__`, `.opencode`, `.worktrees`, `dist`, …) ; nouvelle étape de progression `apps_code` à 30 % ; entrée `collectors.apps_code` dans le manifest. Tolérance de `tar` exit 1 (fichier modifié pendant la lecture) pour ne pas faire échouer un snapshot nocturne sur un arbre de travail vivant.
+- **Restore** (`restore_snapshot.py`) : extraction automatique de `apps/apps_code.tar` vers `/code/apps_source` (bind mount `../APPS`) au redémarrage PRA ; dégradation gracieuse si le montage est absent.
+- **Compose** : montage lecture-écriture `../APPS:/code/apps_source:rw` dans le service `hub-api`.
+- **Docs** : refonte de la section « Restauration bare-metal » de `BACKUP.md` avec la procédure semi-automatique complète (prérequis clé RSA, INSERT ligne `hub_snapshots`, `pending_restore.txt`, réinjection des données d'app via `POST /api/apps/{slug}/backup/{backup_id}/restore`) et les limites connues.
+- **Tests** : `test_snapshot_collectors.py` (3), `test_restore_snapshot.py` (3), +1 test d'intégration moteur dans `test_snapshots.py`, +8 tests scheduler.
+
+### ⚡ Allocation de sous-réseaux Docker par application
+
+- **DB** : migration `054_add_port_allocations_subnet.sql` — colonne `port_allocations.subnet VARCHAR(30) NULL` ; remplissage paresseux des allocations existantes au prochain appel.
+- **Config** (`.env.example`, `app/config.py`) : variables `APP_SUBNET_POOL` (défaut `10.50.0.0/16`) et `APP_SUBNET_SIZE` (défaut `24`).
+- **API** (`port_allocator.py`) : `pick_free_subnet()` itère les sous-réseaux du pool et retourne le premier /24 non chevauchant, `SubnetPoolExhausted` ; `allocate_ports_for_app` attribue un subnet par app et remplit paresseusement les allocations antérieures.
+- **Routes** (`routes/apps.py`, `routes/github_catalog.py`) : retour du champ `subnet` dans `AllocatePortsResponse` et `GithubRepoPrepareResponse`, gestion de `SubnetPoolExhausted` en `409 CONFLICT`.
+- **Modèles / schémas** : champ `subnet` sur `PortAllocation` et dans les schémas `AllocatePortsResponse`, `PortAllocationItem`, `PortsStatusResponse`, `GithubRepoPrepareResponse`.
+
+---
+
 ## [3.31.1] - 15 août 2026
 
 ### ⚡ Perf des agrégats usage 90j + filtre app sur /usage/apps
