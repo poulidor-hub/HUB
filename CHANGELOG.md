@@ -5,6 +5,16 @@
 
 ---
 
+## [3.32.1] - 16 août 2026
+
+### ⚡ Health monitor : fin du bruit 404 auto-infligé dans le journal d'audit
+
+- **Fix** (`routes/apps_health.py`) : le moniteur de supervision (`GET /api/apps/health`) sondait `/api/health/detailed` sur **toutes** les apps online, y compris l'app système `hub` elle-même (`api_url = http://hub-api:8000`) — or le HUB n'expose pas cet endpoint. Résultat : un faux 404 (`IP 10.42.0.3` = hub-api) journalisé dans l'audit à **chaque affichage** de la page de supervision (reproduit : 1 entrée 404 par appel monitor).
+- La sonde Phase 2 est désormais sautée pour le HUB (`if status == "online" and not is_hub:`) ; l'enrichissement local du bloc `is_hub` existant (version + uptime via `/proc/self/stat`, sans HTTP) reste inchangé — aucune perte de données dans la UI de supervision.
+- Même famille que le fix 3.29.1 (bruit SSE 401) : les sondes internes attendues ne doivent pas polluer le journal d'erreurs.
+
+---
+
 ## [3.32.0] - 16 août 2026
 
 ### ⚡ Snapshots complets du HUB : code des APPS inclus + runbook PRA bare-metal
