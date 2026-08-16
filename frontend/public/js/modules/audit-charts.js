@@ -113,7 +113,13 @@ function renderUserDayBreakdown(containerId, data) {
     chart.setOption({
         tooltip: {
             trigger: 'item',
-            formatter: (p) => `${escapeHtml(p.name)} — ${fmtH(p.value)} (${p.percent}%)`
+            // p.name est vide (catégorie d'axe masquée) et p.percent n'existe
+            // que pour les séries pie : nom via seriesName, % calculé.
+            formatter: (p) => {
+                const total = data.day_total_seconds || 0;
+                const pct = total > 0 ? Math.round(p.value / total * 100) : 0;
+                return `${escapeHtml(p.seriesName)} — ${fmtH(p.value)} (${pct}%)`;
+            }
         },
         legend: { top: 0, textStyle: { color: axis.labelColor } },
         grid: { left: 10, right: 10, top: 30, bottom: 8 },
