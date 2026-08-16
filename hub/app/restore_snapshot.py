@@ -27,7 +27,31 @@ logger = logging.getLogger("snapshot_restore")
 PENDING_FILE = Path("/code/storage/pending_restore.txt")
 SECRETS_DIR = Path("/code/secrets")
 SNAPSHOTS_DIR = Path("/code/storage/snapshots")
+APPS_SOURCE_DIR = Path("/code/apps_source")
 DATABASE_URL = os.environ.get("DATABASE_URL", "")
+
+
+def _extract_apps_code(extract_dir: Path) -> bool:
+    """Extrait apps/apps_code.tar vers APPS_SOURCE_DIR (bind mount rw).
+
+    Retourne True si l'extraction a eu lieu. Si le montage n'existe pas
+    (déploiement sans ../APPS monte), log un warning et retourne False —
+    l'archive reste disponible dans le snapshot pour extraction manuelle
+    (voir BACKUP.md).
+    """
+    apps_code_tar = extract_dir / "apps" / "apps_code.tar"
+    if not apps_code_tar.exists():
+        return False
+    if not APPS_SOURCE_DIR.is_dir():
+        logger.warning(
+            f"apps_code present mais {APPS_SOURCE_DIR} indisponible (montage absent?) "
+            "- extraction manuelle requise depuis le snapshot"
+        )
+        return False
+    logger.info("Extraction apps_code.tar...")
+    shutil.unpack_archive(str(apps_code_tar), str(APPS_SOURCE_DIR), filter="data")
+    logger.info(f"Code apps restaure vers {APPS_SOURCE_DIR}")
+    return True
 
 
 async def run_restore(snapshot_id: str):
@@ -154,6 +178,8 @@ async def run_restore(snapshot_id: str):
             logger.info("Extraction storage_backups.tar...")
             storage_target = Path("/code/storage")
             shutil.unpack_archive(str(files_dir / "storage_backups.tar"), str(storage_target))
+
+        _extract_apps_code(extract_dir)
 
         admin_user = os.environ.get("ADMIN_USERNAME", "admin")
         admin_pass = os.environ.get("ADMIN_PASSWORD", "")

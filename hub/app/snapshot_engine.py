@@ -25,6 +25,7 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from app.models import HubSnapshot, utcnow
 from app.snapshot_collectors import (
     run_pg_dump, run_files_tar, run_app_backups, run_docker_config,
+    run_apps_code_tar,
 )
 from app.snapshot_config import get_snapshot_config
 from app.snapshot_s3 import upload_to_s3
@@ -87,6 +88,7 @@ async def create_snapshot(
         files_stats = {}
         apps_stats = {}
         docker_stats = {}
+        apps_code_stats = {}
 
         if snapshot.include_pg_dump:
             _update_progress(snapshot, "pg_dump", 10)
@@ -95,13 +97,19 @@ async def create_snapshot(
             logger.info(f"[SNAPSHOT] {snapshot_id}: pg_dump OK ({pg_stats.get('size_bytes', 0)} bytes)")
 
         if snapshot.include_files:
-            _update_progress(snapshot, "files_tar", 25)
+            _update_progress(snapshot, "files_tar", 20)
             await db.commit()
             files_stats = await run_files_tar(temp_dir)
             logger.info(f"[SNAPSHOT] {snapshot_id}: files_tar OK ({files_stats.get('files_count', 0)} fichiers, {files_stats.get('size_bytes', 0)} bytes)")
 
+        if snapshot.include_apps_code:
+            _update_progress(snapshot, "apps_code", 30)
+            await db.commit()
+            apps_code_stats = await run_apps_code_tar(temp_dir)
+            logger.info(f"[SNAPSHOT] {snapshot_id}: apps_code OK ({apps_code_stats.get('size_bytes', 0)} bytes, {apps_code_stats.get('apps_count', 0)} apps)")
+
         if snapshot.include_app_backups:
-            _update_progress(snapshot, "app_backups", 35)
+            _update_progress(snapshot, "app_backups", 40)
             await db.commit()
             apps_stats = await run_app_backups(db, temp_dir, snapshot)
             if apps_stats:
@@ -129,6 +137,10 @@ async def create_snapshot(
             "collectors": {
                 "pg_dump": {"size_bytes": pg_stats.get("size_bytes", 0), "duration_ms": pg_stats.get("duration_ms", 0)},
                 "files": {"size_bytes": files_stats.get("size_bytes", 0), "files_count": files_stats.get("files_count", 0)},
+                "apps_code": {
+                    "size_bytes": apps_code_stats.get("size_bytes", 0),
+                    "apps_count": apps_code_stats.get("apps_count", 0),
+                },
                 "docker_config": {"size_bytes": docker_stats.get("size_bytes", 0)},
                 "app_backups": {
                     "total": apps_stats.get("total", 0),

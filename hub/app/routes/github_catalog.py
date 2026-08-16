@@ -18,7 +18,7 @@ from app.config import get_settings
 from app.database import get_db
 from app.github_client import parse_github_url, load_db_token, slugify_repo
 from app.models import Application, GithubRepoCache, User, utcnow
-from app.port_allocator import allocate_ports_for_app, PortPoolExhausted
+from app.port_allocator import allocate_ports_for_app, PortPoolExhausted, SubnetPoolExhausted
 from app.schemas import (
     GithubRepo,
     GithubRepoListResponse,
@@ -291,6 +291,8 @@ async def prepare_app_from_repo(
         alloc, reused = await allocate_ports_for_app(db, slug, host, get_settings())
     except PortPoolExhausted as e:
         raise HTTPException(status_code=409, detail=f"Pool de ports saturé : {e}")
+    except SubnetPoolExhausted as e:
+        raise HTTPException(status_code=409, detail=f"Pool de sous-réseaux saturé : {e}")
 
     return GithubRepoPrepareResponse(
         slug=slug,
@@ -299,6 +301,7 @@ async def prepare_app_from_repo(
         api_port=alloc.api_port,
         frontend_port=alloc.frontend_port,
         frontend_https_port=alloc.frontend_https_port,
+        subnet=alloc.subnet,
         host=host,
         ports_reused=reused,
     )

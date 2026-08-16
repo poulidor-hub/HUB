@@ -4,6 +4,7 @@
 `allocate_ports_for_app` est la couche DB idempotente par (slug, host).
 """
 import asyncio
+import ipaddress
 import logging
 from urllib.parse import urlparse
 
@@ -18,6 +19,10 @@ logger = logging.getLogger(__name__)
 
 class PortPoolExhausted(Exception):
     """Levée quand plus aucun port libre n'est disponible dans une plage."""
+
+
+class SubnetPoolExhausted(Exception):
+    """Levée quand plus aucun sous-réseau libre n'est disponible dans le pool."""
 
 
 async def docker_occupied_ports(settings, host: str) -> set[int]:
@@ -123,6 +128,50 @@ async def _used_ports_for_host(
     return all_used, all_used
 
 
+async def _used_subnets_for_host(db: AsyncSession, host: str) -> set[str]:
+    """Sous-réseaux déjà alloués (pool Hub) pour un host donné.
+
+    Scopé par host comme les ports : deux apps sur des machines différentes
+    peuvent réutiliser le même sous-réseau. Retourne les CIDR en chaîne
+    (ex: "10.50.0.0/24").
+    """
+    allocs = (
+        await db.execute(select(PortAllocation).where(PortAllocation.host == host))
+    ).scalars().all()
+    return {a.subnet for a in allocs if a.subnet}
+
+
+def pick_free_subnet(
+    used: set[str],
+    *,
+    pool: str,
+    size: int,
+) -> str:
+    """Retourne le premier sous-réseau libre de taille `size` dans `pool`.
+
+    `used` contient les CIDR déjà attribués (le pool est disjoint du reste du
+    parc par convention, voir APP_SUBNET_POOL dans la config).
+    Lève SubnetPoolExhausted si le pool est saturé.
+    """
+    try:
+        network = ipaddress.ip_network(pool, strict=False)
+        subnets = network.subnets(new_prefix=size)
+    except (ValueError, TypeError):
+        raise SubnetPoolExhausted(f"Pool de sous-réseaux invalide : {pool}/{size}")
+
+    used_networks = set()
+    for cidr in used:
+        try:
+            used_networks.add(ipaddress.ip_network(cidr, strict=False))
+        except ValueError:
+            logger.warning("CIDR invalide ignoré : %s", cidr)
+
+    for subnet in subnets:
+        if not any(subnet.overlaps(u) for u in used_networks):
+            return str(subnet)
+    raise SubnetPoolExhausted(f"Pool de sous-réseaux saturé : {pool}/{size}")
+
+
 async def allocate_ports_for_app(
     db: AsyncSession,
     slug: str,
@@ -143,6 +192,21 @@ async def allocate_ports_for_app(
         )
     ).scalar_one_or_none()
     if existing:
+        if not existing.subnet:
+            # Allocation antérieure à l'introduction du pool : remplir
+            # paresseusement le sous-réseau (idempotent à partir d'ici).
+            used_subnets = await _used_subnets_for_host(db, host)
+            existing.subnet = pick_free_subnet(
+                used_subnets,
+                pool=settings.app_subnet_pool,
+                size=settings.app_subnet_size,
+            )
+            await db.commit()
+            await db.refresh(existing)
+            logger.info(
+                "🌐 Sous-réseau attribué rétroactivement pour '%s' (host=%s): %s",
+                slug, host, existing.subnet,
+            )
         return existing, True
 
     extra_used = await docker_occupied_ports(settings, host)
@@ -153,6 +217,12 @@ async def allocate_ports_for_app(
         api_range=(settings.app_port_api_start, settings.app_port_api_end),
         frontend_range=(settings.app_port_frontend_start, settings.app_port_frontend_end),
     )
+    used_subnets = await _used_subnets_for_host(db, host)
+    subnet = pick_free_subnet(
+        used_subnets,
+        pool=settings.app_subnet_pool,
+        size=settings.app_subnet_size,
+    )
 
     alloc = PortAllocation(
         app_slug=slug,
@@ -160,13 +230,14 @@ async def allocate_ports_for_app(
         api_port=api_port,
         frontend_port=frontend_port,
         frontend_https_port=https_port,
+        subnet=subnet,
     )
     db.add(alloc)
     await db.commit()
     await db.refresh(alloc)
     logger.info(
-        "🎰 Ports alloués pour '%s' (host=%s): api=%d frontend=%d https=%d",
-        slug, host, api_port, frontend_port, https_port,
+        "🎰 Ports alloués pour '%s' (host=%s): api=%d frontend=%d https=%d subnet=%s",
+        slug, host, api_port, frontend_port, https_port, subnet,
     )
     return alloc, False
 

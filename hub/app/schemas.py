@@ -954,6 +954,7 @@ class AllocatePortsResponse(BaseModel):
     api_port: int
     frontend_port: int
     frontend_https_port: int
+    subnet: str | None = Field(None, description="Sous-réseau Docker de l'app (CIDR, ex: 10.50.0.0/24)")
     host: str
     reused: bool = Field(False, description="True si une allocation existante a été renvoyée (idempotence)")
 
@@ -965,6 +966,7 @@ class PortAllocationItem(BaseModel):
     api_port: int
     frontend_port: int
     frontend_https_port: int
+    subnet: str | None = None
 
 
 class PortsStatusResponse(BaseModel):
@@ -1871,6 +1873,7 @@ class HubSnapshotResponse(BaseModel):
     include_files: bool = True
     include_app_backups: bool = True
     include_docker_config: bool = True
+    include_apps_code: bool = True
     pg_dump_size_bytes: int = 0
     apps_count: int = 0
     apps_succeeded: int = 0
@@ -1922,6 +1925,7 @@ class HubSnapshotResponse(BaseModel):
             include_files=bool(getattr(snapshot, "include_files", True)),
             include_app_backups=bool(getattr(snapshot, "include_app_backups", True)),
             include_docker_config=bool(getattr(snapshot, "include_docker_config", True)),
+            include_apps_code=bool(getattr(snapshot, "include_apps_code", True)),
             pg_dump_size_bytes=snapshot.pg_dump_size_bytes or 0,
             apps_count=getattr(snapshot, "apps_count", 0),
             apps_succeeded=getattr(snapshot, "apps_succeeded", 0),
@@ -2057,6 +2061,7 @@ class GithubRepoPrepareResponse(BaseModel):
     api_port: int
     frontend_port: int
     frontend_https_port: int
+    subnet: str | None = None
     host: str
     ports_reused: bool
 

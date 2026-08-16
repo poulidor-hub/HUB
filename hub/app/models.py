@@ -657,6 +657,7 @@ class HubSnapshot(Base):
     include_files = Column(Boolean, default=True)
     include_app_backups = Column(Boolean, default=True)
     include_docker_config = Column(Boolean, default=True)
+    include_apps_code = Column(Boolean, default=True)
     pg_dump_size_bytes = Column(BigInteger, default=0)
     apps_count = Column(Integer, default=0)
     apps_succeeded = Column(Integer, default=0)
@@ -828,6 +829,10 @@ class PortAllocation(Base):
     api_port = Column(Integer, nullable=False)
     frontend_port = Column(Integer, nullable=False)
     frontend_https_port = Column(Integer, nullable=False)
+    # Sous-réseau Docker de l'app (ex: 10.50.0.0/24). NULL pour les allocations
+    # antérieures à l'introduction du pool — rempli paresseusement au prochain
+    # appel d'allocation de l'app.
+    subnet = Column(String(30), nullable=True)
     allocated_at = Column(DateTime, default=utcnow)
 
 

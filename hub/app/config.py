@@ -289,6 +289,14 @@ class Settings(BaseSettings):
     # conteneurs Docker (scan best-effort via le socket Docker, à l'allocation).
     port_scan_docker_enabled: bool = True
 
+    # === Pool d'allocation des sous-réseaux Docker des apps ===
+    # Attribué par POST /api/apps/allocate-ports (champ `subnet`) : un /N par app.
+    # Doit rester DISJOINT des réseaux existants (172.16/12 Docker, 10.42 Hub,
+    # 10.44 hub-tools, 10.8 VPN) et du LAN (192.168.1.0/24) + VPN routeur
+    # (198.51.100.60/24). 10.50.0.0/16 ÷ /24 = 256 apps.
+    app_subnet_pool: str = "10.50.0.0/16"
+    app_subnet_size: int = 24
+
     # Host du Hub (IP ou hostname accessible par les clients)
     # Si non défini, sera détecté automatiquement
     hub_host: str = ""
