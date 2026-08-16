@@ -234,7 +234,10 @@ async def get_apps_health(
             # Phase 2 : si l'app est joignable, sonder /api/health/detailed
             # pour recuperer les donnees riches (uptime, hub, services, version).
             # Endpoint optionnel : echec silencieux.
-            if status == "online":
+            # Sauf pour le HUB lui-meme : il n'expose pas /api/health/detailed
+            # (enrichissement local dans le bloc is_hub ci-dessous) — le sonder
+            # genere un 404 auto-inflige journalise dans l'audit a chaque check.
+            if status == "online" and not is_hub:
                 try:
                     resp = await client.get(base_url + DETAILED_PATH)
                     if 200 <= resp.status_code < 300:
