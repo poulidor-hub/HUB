@@ -563,8 +563,12 @@ async def http_exception_handler(request: Request, exc: StarletteHTTPException):
     error_message = str(exc.detail) if exc.detail else "Erreur HTTP"
     error_type = _get_error_type(error_code)
     
-    # Logger toutes les erreurs HTTP (4xx et 5xx) sauf les 404 sur des paths non-API
-    # Les 404 sont très fréquents (scans, robots, favicon) et polluent la DB
+    # Logger toutes les erreurs HTTP (4xx et 5xx) sauf :
+    # - les 404 sur des paths non-API (scans, robots, favicon → polluent la DB)
+    # - les 401 sur le flux SSE : bruit attendu (clients legacy sans token, tokens
+    #   expirés côté navigateur avec reconnexion automatique toutes les 10 s —
+    #   ~14k entrées/jour observées qui masquent les vraies erreurs).
+    #   Ils restent visibles dans les logs stdout/uvicorn.
     if error_code >= 400:
         should_log = True
         if error_code == 404:
@@ -572,6 +576,8 @@ async def http_exception_handler(request: Request, exc: StarletteHTTPException):
             # Ne loguer les 404 que pour les routes API (pas favicon, .env, wp-admin, etc.)
             if not path.startswith("/api/"):
                 should_log = False
+        elif error_code == 401 and str(request.url.path) == "/api/events/stream":
+            should_log = False
         if should_log:
             await _log_error_to_db(request, error_code, error_type, error_message)
     

@@ -5,6 +5,19 @@
 
 ---
 
+## [3.31.1] - 15 août 2026
+
+### ⚡ Perf des agrégats usage 90j + filtre app sur /usage/apps
+
+- **Perf** (`usage_stats.py`) : agrégats sur longue période (90 j) passés en O(n) par segment (plus de re-scan par jour), moyenne hoistée hors de la boucle des buckets — les graphiques 90 j de la vue « Par Application » ne bloquent plus l'event loop.
+- **Perf** (`routes/audit.py`) : l'agrégation CPU-bound de `/usage/apps` est exécutée dans un thread (`anyio.to_thread`), les segments ouverts (clôture virtuelle) sont filtrés en une seule passe.
+- **Filtre** : `/api/audit/usage/apps?days=N` accepte `&app=<slug>` pour restreindre les stats à une application (défaut : toutes) ; `api.js` → `getAppsUsageStats(days, appSlug)`.
+- **Frontend** : purge de l'état vide superposé (`.usage-empty`) avant re-rendu du conteneur de chart.
+- **Tests** : +2 (`test_usage_stats.py` perf/O(n), `test_api_usage_endpoints.py` filtre app).
+- **Docs** : spec `2026-08-15-snapshot-apps-code-design.md` (design snapshot du code des APPS + runbook PRA bare-metal).
+
+---
+
 ## [3.31.0] - 15 août 2026
 
 ### ⚡ Visualisations de la page Audit (uptime & stats par application)
@@ -45,6 +58,25 @@
 - `hub/tests/test_pki.py` : 2 nouveaux tests (CN/SAN surchargés sans fuite des domaines hub + CLI `--cn`/`--san`).
 
 **Bénéfice** : suite logique du SNI automatique (v3.28.3). Le proxy transparent PhiliaNG (`service.example.org → :4443`) est désormais actif **par défaut sur tout déploiement** — `git pull && docker compose up -d` suffit, plus de génération/copie manuelle du certificat. De plus, le cert est signé par la CA interne du Hub (au lieu d'auto-signé) : les postes ayant importé la CA n'auront plus d'avertissement SSL.
+
+---
+
+## [3.28.5] - 15 août 2026
+
+### ⚡ Journal d'erreurs : les 401 SSE non authentifiés ne sont plus enregistrés en base
+
+- **Corrigé** : depuis l'audit #12 (SSE authentifié obligatoire), les applications legacy
+  dont l'`AuthContext` connecte `/api/events/stream` sans token bouclent en 401 toutes les
+  10 s → **~14 000 entrées/jour** dans `error_logs` qui masquent les vraies erreurs
+  (incident 2026-08-15 : 14 012 erreurs en 13 h, IP gateway Docker).
+- **Modifié** (`hub/app/main.py`, `http_exception_handler`) : les 401 sur
+  `/api/events/stream` ne sont plus écrits dans `error_logs` — même logique que le
+  filtrage existant des 404 non-API. Le rejet reste identique côté client (HTTP 401) et
+  les accès restent visibles dans les access logs (déjà filtrés par
+  `_SuppressLegacySSE401Filter`).
+- Les 4 apps legacy concernées (exemple-app, exemple-app-16_API_v3, exemple-app_v3,
+  exemple-app) sont corrigées par ailleurs (token SSE en query param) ; le point est
+  documenté dans le skill de migration (`migrate-app-template` § D.3.2).
 
 ---
 
