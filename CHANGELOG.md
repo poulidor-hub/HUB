@@ -5,6 +5,14 @@
 
 ---
 
+## [3.32.2] - 16 août 2026
+
+### ⚡ Fix tooltip « Répartition du temps par application » (onglet Uptime)
+
+- **Fix** (`audit-charts.js`, `renderUserDayBreakdown`) : au survol/clic d'un segment de la barre empilée, le tooltip affichait ` — 20min (undefined%)` sans nom d'application. Cause racine (vérifiée en reproduction headless sur la page réelle) : le formatter utilisait `params.name` — toujours vide pour des données scalaires sur un axe de catégorie masqué — et `params.percent` — propriété réservée aux séries pie, inexistante pour les barres. Correctif : nom via `params.seriesName` (déjà alimenté par le nom de l'app), pourcentage calculé sur `day_total_seconds`. Vérifié : « Test Template — 1h20 (100%) » au survol et au clic ; pas de régression sur la timeline (tooltip inchangé).
+
+---
+
 ## [3.32.1] - 16 août 2026
 
 ### ⚡ Health monitor : fin du bruit 404 auto-infligé dans le journal d'audit
