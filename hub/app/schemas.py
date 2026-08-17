@@ -1312,6 +1312,7 @@ class BulkUserAppRoleAssignment(BaseModel):
     """Attribution d'un rôle sur une application"""
     app_id: int
     role: str = "user"
+    reset: bool = False  # True : réinitialiser au rôle attendu par le profil
 
 
 class BulkUserCreate(BaseModel):

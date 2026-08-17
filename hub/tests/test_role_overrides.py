@@ -258,3 +258,33 @@ async def test_set_user_apps_rejects_duplicate_app_id(
 
     uar = await _get_uar(async_session, test_user.id, test_app.id)
     assert uar is None  # rien n'a été écrit
+
+
+@pytest.mark.asyncio
+async def test_bulk_update_roles_creates_override(
+    client: AsyncClient, admin_token: str, test_user: User, test_app, async_session
+):
+    """POST /users/bulk/roles : même sémantique override que set_user_apps."""
+    profile = await _create_profile(async_session, "P1", [(test_app.id, "viewer")])
+    await _assign_profile(async_session, test_user.id, profile.id)
+    async_session.add(UserAppRole(
+        user_id=test_user.id, app_id=test_app.id,
+        role="viewer", source=f"profile:{profile.id}",
+    ))
+    await async_session.commit()
+
+    resp = await client.post(
+        "/api/users/bulk/roles",
+        headers=await _auth(admin_token),
+        json={"updates": [{
+            "user_id": test_user.id,
+            "app_roles": [{"app_id": test_app.id, "role": "admin"}],
+        }]},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["results"][0]["success"] is True
+
+    uar = await _get_uar(async_session, test_user.id, test_app.id)
+    assert uar.role == "admin"
+    assert uar.source == f"override:{profile.id}"

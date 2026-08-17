@@ -1168,9 +1168,10 @@ async def bulk_create_users(
 
 @router.post("/bulk/roles", response_model=BulkUsersRolesUpdateResponse)
 async def bulk_update_user_roles(
-    request: BulkUsersRolesUpdateRequest,
+    request: Request,
+    request_body: BulkUsersRolesUpdateRequest,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_admin)
+    current_admin: User = Depends(get_current_admin)
 ):
     """
     Met à jour les rôles de plusieurs utilisateurs en une seule opération.
@@ -1201,14 +1202,16 @@ async def bulk_update_user_roles(
     results = []
     updated_count = 0
     
-    for update in request.updates:
+    for update in request_body.updates:
         try:
-            # Vérifier que l'utilisateur existe
+            # Vérifier que l'utilisateur existe (avec ses profils pour les overrides)
             result = await db.execute(
-                select(User).where(User.id == update.user_id)
+                select(User)
+                .options(selectinload(User.profiles).selectinload(Profile.app_roles))
+                .where(User.id == update.user_id)
             )
             user = result.scalar_one_or_none()
-            
+
             if not user:
                 results.append(BulkUserRoleUpdateResult(
                     user_id=update.user_id,
@@ -1217,16 +1220,17 @@ async def bulk_update_user_roles(
                     error="Utilisateur non trouvé"
                 ))
                 continue
-            
+
             # Vérifier que les applications existent
             app_ids = [ar.app_id for ar in update.app_roles]
+            apps_by_id = {}
             if app_ids:
                 apps_result = await db.execute(
                     select(Application).where(Application.id.in_(app_ids))
                 )
-                existing_apps = {app.id for app in apps_result.scalars().all()}
-                
-                missing_apps = set(app_ids) - existing_apps
+                apps_by_id = {app.id: app for app in apps_result.scalars().all()}
+
+                missing_apps = set(app_ids) - set(apps_by_id.keys())
                 if missing_apps:
                     results.append(BulkUserRoleUpdateResult(
                         user_id=update.user_id,
@@ -1235,53 +1239,26 @@ async def bulk_update_user_roles(
                         error=f"Applications non trouvées: {missing_apps}"
                     ))
                     continue
-            
-            # Supprimer uniquement les rôles manuels (préserver ceux du profil)
-            await db.execute(
-                delete(UserAppRole).where(
-                    UserAppRole.user_id == update.user_id,
-                    UserAppRole.source == "manual"
-                )
+
+            result_assignments = await _apply_user_app_assignments(
+                db, request, current_admin, user, update.app_roles, apps_by_id
             )
-            
-            # Récupérer les app_id déjà couverts par le profil
-            profile_roles_result = await db.execute(
-                select(UserAppRole.app_id).where(
-                    UserAppRole.user_id == update.user_id,
-                    UserAppRole.source == "profile"
-                )
-            )
-            profile_app_ids = {row[0] for row in profile_roles_result.all()}
-            
-            # Créer les nouveaux rôles (ignorer ceux déjà gérés par le profil)
-            roles_created = 0
-            for ar in update.app_roles:
-                if ar.app_id in profile_app_ids:
-                    continue
-                user_app_role = UserAppRole(
-                    user_id=update.user_id,
-                    app_id=ar.app_id,
-                    role=ar.role,
-                    source="manual"
-                )
-                db.add(user_app_role)
-                roles_created += 1
-            
+
             results.append(BulkUserRoleUpdateResult(
                 user_id=update.user_id,
                 username=user.username,
                 success=True,
-                roles_updated=roles_created
+                roles_updated=len(result_assignments)
             ))
             updated_count += 1
-            
+
             # Notifier le changement de permissions pour cet utilisateur
             notify_event("user_permissions_changed", {
                 "user_id": update.user_id,
                 "username": user.username,
-                "apps_count": len(update.app_roles)
+                "apps_count": len(result_assignments)
             })
-            
+
         except Exception as e:
             results.append(BulkUserRoleUpdateResult(
                 user_id=update.user_id,
@@ -1296,9 +1273,9 @@ async def bulk_update_user_roles(
         notify_event("users_updated", {"action": "bulk_roles_updated", "count": updated_count})
     
     return BulkUsersRolesUpdateResponse(
-        total_requested=len(request.updates),
+        total_requested=len(request_body.updates),
         total_updated=updated_count,
-        total_failed=len(request.updates) - updated_count,
+        total_failed=len(request_body.updates) - updated_count,
         results=results
     )
 
