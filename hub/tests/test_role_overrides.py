@@ -291,6 +291,27 @@ async def test_bulk_update_roles_creates_override(
 
 
 @pytest.mark.asyncio
+async def test_get_user_exposes_profile_role(
+    client: AsyncClient, admin_token: str, test_user: User, test_app, async_session
+):
+    """GET /users/{id} doit exposer profile_role (cohérence avec list/get_user_apps)."""
+    profile = await _create_profile(async_session, "P1", [(test_app.id, "user")])
+    await _assign_profile(async_session, test_user.id, profile.id)
+    async_session.add(UserAppRole(
+        user_id=test_user.id, app_id=test_app.id,
+        role="user", source=f"profile:{profile.id}",
+    ))
+    await async_session.commit()
+
+    resp = await client.get(f"/api/users/{test_user.id}", headers=await _auth(admin_token))
+    assert resp.status_code == 200
+    body = resp.json()
+    app = body["app_roles"][0]
+    assert app["profile_role"] == "user"
+    assert app["overridden"] is False
+
+
+@pytest.mark.asyncio
 async def test_get_user_apps_exposes_profile_role_and_overridden(
     client: AsyncClient, admin_token: str, test_user: User, test_app, other_app, async_session
 ):

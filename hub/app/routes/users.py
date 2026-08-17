@@ -343,7 +343,7 @@ async def create_user(
         select(User)
         .options(
             selectinload(User.app_roles).selectinload(UserAppRole.application),
-            selectinload(User.profiles)
+            selectinload(User.profiles).selectinload(Profile.app_roles)
         )
         .where(User.id == user.id)
     )
@@ -573,7 +573,7 @@ async def get_user(
         select(User)
         .options(
             selectinload(User.app_roles).selectinload(UserAppRole.application),
-            selectinload(User.profiles)
+            selectinload(User.profiles).selectinload(Profile.app_roles)
         )
         .where(User.id == user_id)
     )
@@ -600,7 +600,7 @@ async def update_user(
         select(User)
         .options(
             selectinload(User.app_roles).selectinload(UserAppRole.application),
-            selectinload(User.profiles)
+            selectinload(User.profiles).selectinload(Profile.app_roles)
         )
         .where(User.id == user_id)
     )
@@ -655,7 +655,7 @@ async def update_user(
         select(User)
         .options(
             selectinload(User.app_roles).selectinload(UserAppRole.application),
-            selectinload(User.profiles)
+            selectinload(User.profiles).selectinload(Profile.app_roles)
         )
         .where(User.id == user_id)
     )
