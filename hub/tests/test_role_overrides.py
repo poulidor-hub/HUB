@@ -1,9 +1,11 @@
 """Tests de l'override des rôles dérivés des profils (spec 2026-08-17)."""
 import pytest
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Profile, ProfileAppRole, User, UserAppRole, user_profiles
+from app.routes.profiles import _sync_user_profile_roles
 
 
 async def _create_profile(session: AsyncSession, name: str, app_roles: list) -> Profile:
@@ -41,3 +43,92 @@ async def test_user_app_roles_unique_constraint(
     with pytest.raises(IntegrityError):
         await async_session.commit()
     await async_session.rollback()
+
+
+async def _get_uar(session: AsyncSession, user_id: int, app_id: int) -> UserAppRole | None:
+    result = await session.execute(
+        select(UserAppRole).where(
+            UserAppRole.user_id == user_id, UserAppRole.app_id == app_id
+        )
+    )
+    return result.scalar_one_or_none()
+
+
+@pytest.mark.asyncio
+async def test_sync_ignores_active_override(
+    async_session: AsyncSession, test_user: User, test_app, other_app
+):
+    """Un override dont le profil d'origine couvre encore l'app survit à la sync."""
+    profile = await _create_profile(async_session, "P1", [(test_app.id, "user")])
+    await _assign_profile(async_session, test_user.id, profile.id)
+
+    # Rôle attendu par le profil, puis override admin vers manager
+    async_session.add(UserAppRole(
+        user_id=test_user.id, app_id=test_app.id,
+        role="manager", source=f"override:{profile.id}",
+    ))
+    await async_session.commit()
+
+    await _sync_user_profile_roles(async_session, test_user.id)
+    await async_session.commit()
+
+    uar = await _get_uar(async_session, test_user.id, test_app.id)
+    assert uar.role == "manager"
+    assert uar.source == f"override:{profile.id}"
+
+
+@pytest.mark.asyncio
+async def test_sync_deletes_override_when_profile_detached(
+    async_session: AsyncSession, test_user: User, test_app
+):
+    """Override supprimé quand son profil d'origine ne couvre plus l'app (perte d'accès)."""
+    profile = await _create_profile(async_session, "P1", [(test_app.id, "user")])
+    await _assign_profile(async_session, test_user.id, profile.id)
+    async_session.add(UserAppRole(
+        user_id=test_user.id, app_id=test_app.id,
+        role="manager", source=f"override:{profile.id}",
+    ))
+    await async_session.commit()
+
+    # Détacher le profil (suppression de l'association), puis re-sync
+    await async_session.execute(
+        user_profiles.delete().where(user_profiles.c.user_id == test_user.id)
+    )
+    await async_session.commit()
+    await _sync_user_profile_roles(async_session, test_user.id)
+    await async_session.commit()
+
+    uar = await _get_uar(async_session, test_user.id, test_app.id)
+    assert uar is None
+
+
+@pytest.mark.asyncio
+async def test_sync_recreates_profile_line_after_override_stale(
+    async_session: AsyncSession, test_user: User, test_app
+):
+    """Override:A périmé mais profil B couvre encore l'app → ligne profile:B recréée."""
+    profile_a = await _create_profile(async_session, "PA", [(test_app.id, "manager")])
+    profile_b = await _create_profile(async_session, "PB", [(test_app.id, "viewer")])
+    await _assign_profile(async_session, test_user.id, profile_a.id)
+    await _assign_profile(async_session, test_user.id, profile_b.id)
+    async_session.add(UserAppRole(
+        user_id=test_user.id, app_id=test_app.id,
+        role="admin", source=f"override:{profile_a.id}",
+    ))
+    await async_session.commit()
+
+    # Retirer l'app du profil A (l'override:A devient périmé)
+    await async_session.execute(
+        ProfileAppRole.__table__.delete().where(
+            ProfileAppRole.profile_id == profile_a.id,
+            ProfileAppRole.app_id == test_app.id,
+        )
+    )
+    await async_session.commit()
+
+    await _sync_user_profile_roles(async_session, test_user.id)
+    await async_session.commit()
+
+    uar = await _get_uar(async_session, test_user.id, test_app.id)
+    assert uar.role == "viewer"                       # rôle attendu de B
+    assert uar.source == f"profile:{profile_b.id}"    # override:A bien supprimé
