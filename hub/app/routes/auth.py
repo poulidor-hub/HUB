@@ -442,7 +442,8 @@ async def login_with_redirect(
         access_token=token,
         expires_at=expire,
         refresh_token=new_refresh_token,
-        beacon_token=generate_beacon_token(user.id)
+        beacon_token=generate_beacon_token(user.id),
+        must_change_password=user.must_change_password or False
     )
 
 
