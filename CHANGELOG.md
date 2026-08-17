@@ -5,6 +5,23 @@
 
 ---
 
+## [3.32.3] - 17 août 2026
+
+### ⚡ Auth — réponse login fidèle à la base
+
+- **Corrigé** : `POST /api/auth/login` renvoyait `must_change_password: false` (défaut du schéma `Token`) même quand la base exigeait un changement de mot de passe. Le champ est désormais renseigné depuis l'utilisateur réel. Le frontend contournait via `/me`, mais tout consommateur API direct recevait une information erronée. Constaté en test fresh-install Debian 12.
+
+### 📖 Docs — guide installation
+
+- **Corrigé** : `docker compose restart hub-api` ne recharge pas le `.env` (il redémarre le conteneur avec sa config de création) — remplacé par `docker compose up -d hub-api` dans la section CORS.
+- **Ajouté** : troubleshooting `403 allocate-ports / auto-enregistrement` (`APP_WHITELIST_NETWORKS`) et note HTTPS app (port frontend+1 muet sans certificat PKI).
+
+| Fonctionnalité | Description |
+|----------------|-------------|
+| **À compléter** | Décrivez les changements de cette version |
+
+---
+
 ## [3.32.2] - 16 août 2026
 
 ### ⚡ Fix tooltip « Répartition du temps par application » (onglet Uptime)
