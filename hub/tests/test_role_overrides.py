@@ -132,3 +132,110 @@ async def test_sync_recreates_profile_line_after_override_stale(
     uar = await _get_uar(async_session, test_user.id, test_app.id)
     assert uar.role == "viewer"                       # rôle attendu de B
     assert uar.source == f"profile:{profile_b.id}"    # override:A bien supprimé
+
+
+from httpx import AsyncClient
+
+
+async def _auth(token: str) -> dict:
+    return {"Authorization": f"Bearer {token}"}
+
+
+@pytest.mark.asyncio
+async def test_set_user_apps_creates_override(
+    client: AsyncClient, admin_token: str, test_user: User, test_app, async_session
+):
+    """Assignment sur app profilée → ligne override:<pid> au rôle choisi."""
+    profile = await _create_profile(async_session, "P1", [(test_app.id, "user")])
+    await _assign_profile(async_session, test_user.id, profile.id)
+    async_session.add(UserAppRole(
+        user_id=test_user.id, app_id=test_app.id,
+        role="user", source=f"profile:{profile.id}",
+    ))
+    await async_session.commit()
+
+    resp = await client.post(
+        f"/api/users/{test_user.id}/apps",
+        headers=await _auth(admin_token),
+        json={"assignments": [{"app_id": test_app.id, "role": "manager"}]},
+    )
+    assert resp.status_code == 200, resp.text
+
+    uar = await _get_uar(async_session, test_user.id, test_app.id)
+    assert uar.role == "manager"
+    assert uar.source == f"override:{profile.id}"
+
+
+@pytest.mark.asyncio
+async def test_set_user_apps_reset_returns_to_profile_role(
+    client: AsyncClient, admin_token: str, test_user: User, test_app, async_session
+):
+    """reset=True sur un override → retour au rôle attendu, source profile:<pid>."""
+    profile = await _create_profile(async_session, "P1", [(test_app.id, "user")])
+    await _assign_profile(async_session, test_user.id, profile.id)
+    async_session.add(UserAppRole(
+        user_id=test_user.id, app_id=test_app.id,
+        role="manager", source=f"override:{profile.id}",
+    ))
+    await async_session.commit()
+
+    resp = await client.post(
+        f"/api/users/{test_user.id}/apps",
+        headers=await _auth(admin_token),
+        json={"assignments": [{"app_id": test_app.id, "role": "user", "reset": True}]},
+    )
+    assert resp.status_code == 200, resp.text
+
+    uar = await _get_uar(async_session, test_user.id, test_app.id)
+    assert uar.role == "user"
+    assert uar.source == f"profile:{profile.id}"
+
+
+@pytest.mark.asyncio
+async def test_set_user_apps_no_duplicate_on_profile_app(
+    client: AsyncClient, admin_token: str, test_user: User, test_app, async_session
+):
+    """Régression bug filtre source=='profile' : plus de ligne manuelle dupliquée
+    sur une app couverte par un profil."""
+    profile = await _create_profile(async_session, "P1", [(test_app.id, "user")])
+    await _assign_profile(async_session, test_user.id, profile.id)
+    async_session.add(UserAppRole(
+        user_id=test_user.id, app_id=test_app.id,
+        role="user", source=f"profile:{profile.id}",
+    ))
+    await async_session.commit()
+
+    resp = await client.post(
+        f"/api/users/{test_user.id}/apps",
+        headers=await _auth(admin_token),
+        json={"assignments": [{"app_id": test_app.id, "role": "viewer"}]},
+    )
+    assert resp.status_code == 200, resp.text
+
+    result = await async_session.execute(
+        select(UserAppRole).where(
+            UserAppRole.user_id == test_user.id,
+            UserAppRole.app_id == test_app.id,
+        )
+    )
+    rows = result.scalars().all()
+    assert len(rows) == 1                      # un seul doublon impossible (contrainte + upsert)
+    assert rows[0].source == f"override:{profile.id}"
+    assert rows[0].role == "viewer"
+
+
+@pytest.mark.asyncio
+async def test_set_user_apps_manual_unaffected(
+    client: AsyncClient, admin_token: str, test_user: User, test_app, other_app, async_session
+):
+    """Une app non couverte par un profil reste manuelle ; reset y est ignoré."""
+    resp = await client.post(
+        f"/api/users/{test_user.id}/apps",
+        headers=await _auth(admin_token),
+        json={"assignments": [{"app_id": test_app.id, "role": "viewer", "reset": True}]},
+    )
+    assert resp.status_code == 200, resp.text
+
+    uar = await _get_uar(async_session, test_user.id, test_app.id)
+    assert uar.role == "viewer"
+    assert uar.source == "manual"
