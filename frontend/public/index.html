@@ -775,7 +775,7 @@
                     <div class="card mb-3">
                         <div class="card-body py-2">
                             <div class="row g-2 align-items-end">
-                                <div class="col-md-3">
+                                <div class="col-md-2">
                                     <div class="input-group input-group-sm">
                                         <span class="input-group-text"><i class="bi bi-search"></i></span>
                                         <input type="text" class="form-control" id="usersSearchInput" 
@@ -808,6 +808,13 @@
                                         <option value="">Tous statuts</option>
                                         <option value="true">Actifs</option>
                                         <option value="false">Inactifs</option>
+                                    </select>
+                                </div>
+                                <div class="col-md-1">
+                                    <select class="form-select form-select-sm" id="usersFilterOverride" data-action="loadUsersPageData" title="Droits modifiés par rapport au profil">
+                                        <option value="">Tous</option>
+                                        <option value="true">Modifiés</option>
+                                        <option value="false">Standard</option>
                                     </select>
                                 </div>
                                 <div class="col-md-1 text-end">

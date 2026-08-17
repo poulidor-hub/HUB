@@ -59,6 +59,7 @@ async function loadUsersPageData() {
         const role = document.getElementById('usersFilterRole')?.value || '';
         const profileId = document.getElementById('usersFilterProfile')?.value || '';
         const isActive = document.getElementById('usersFilterStatus')?.value || '';
+        const overrideFilter = document.getElementById('usersFilterOverride')?.value || '';
 
         const [paginatedData, activeSessions, apps] = await Promise.all([
             api.getUsers({
@@ -68,7 +69,8 @@ async function loadUsersPageData() {
                 role: role || undefined,
                 appSlug: appSlug || undefined,
                 profileId: profileId !== '' ? parseInt(profileId) : undefined,
-                isActive: isActive !== '' ? isActive === 'true' : undefined
+                isActive: isActive !== '' ? isActive === 'true' : undefined,
+                appRoleOverride: overrideFilter !== '' ? overrideFilter === 'true' : undefined
             }),
             api.getActiveSessions().catch(() => ({ sessions: [] })),
             api.getAllApps()
@@ -81,7 +83,7 @@ async function loadUsersPageData() {
         document.getElementById('usersStatTotal').textContent = paginatedData.total;
         
         // Pour les stats actifs/admins/connectés, on fait un appel séparé si pas de filtre
-        if (!search && !appSlug && !role && profileId === '' && isActive === '') {
+        if (!search && !appSlug && !role && profileId === '' && isActive === '' && overrideFilter === '') {
             document.getElementById('usersStatActive').textContent = paginatedData.users.filter(u => u.is_active).length + (paginatedData.pages > 1 ? '+' : '');
             document.getElementById('usersStatAdmins').textContent = paginatedData.users.filter(u => u.is_admin).length + (paginatedData.pages > 1 ? '+' : '');
         }
@@ -201,6 +203,7 @@ function renderUsersPageTable(users) {
                             <strong>${escapeHtml(user.username)}</strong>
                             ${user.must_change_password ? '<i class="bi bi-key-fill text-warning ms-1" title="Doit changer son mot de passe"></i>' : ''}
                             ${user.totp_enabled ? '<i class="bi bi-shield-lock-fill text-info ms-1" title="Authentificateur activé"></i>' : ''}
+                            ${user.has_role_overrides ? `<span class="badge bg-warning text-dark ms-1" title="Droits modifiés par rapport au profil"><i class="bi bi-person-badge-fill me-1"></i>Modifié</span>` : ''}
                         </td>
                         <td><small class="text-muted">${escapeHtml(user.email || '-')}</small></td>
                         <td>
@@ -214,7 +217,7 @@ function renderUsersPageTable(users) {
                                 : '<span class="text-muted small">-</span>'}
                         </td>
                         <td>
-                            <span class="badge bg-light text-dark border" title="${(user.app_roles || []).map(ar => ar.app_name + ' (' + ar.role + ')' + ((ar.source || '').startsWith('profile') ? ' [profil]' : '')).join(', ')}">
+                            <span class="badge bg-light text-dark border" title="${(user.app_roles || []).map(ar => ar.app_name + ' (' + ar.role + ')' + ((ar.source || '').startsWith('override') ? ' [modifié]' : ((ar.source || '').startsWith('profile') ? ' [profil]' : ''))).join(', ')}">
                                 ${(user.app_roles || []).length} app${(user.app_roles || []).length !== 1 ? 's' : ''}
                             </span>
                         </td>
@@ -247,13 +250,25 @@ function renderUsersPageTable(users) {
                             <div class="py-2">
                                 ${(user.app_roles || []).length > 0 
                                     ? `<div class="d-flex flex-wrap gap-1">
-                                        ${user.app_roles.map(ar => `
-                                            <span class="badge bg-white text-dark border me-1 mb-1" title="Source: ${(ar.source || '').startsWith('profile') ? 'Profil' : 'Manuel'}">
-                                                ${(ar.source || '').startsWith('profile') ? '<i class="bi bi-person-badge me-1 text-info" title="Via profil"></i>' : '<i class="bi bi-hand-index me-1 text-secondary" title="Manuel"></i>'}
+                                        ${user.app_roles.map(ar => {
+                                            const src = ar.source || '';
+                                            const isOverride = src.startsWith('override');
+                                            const isProfile = src.startsWith('profile');
+                                            const viaLabel = isOverride
+                                                ? `Modifié (profil : ${ar.profile_role || '?'})`
+                                                : (isProfile ? 'Via profil' : 'Manuel');
+                                            return `
+                                            <span class="badge bg-white text-dark border me-1 mb-1 ${isOverride ? 'border-warning' : ''}" title="Source: ${viaLabel}">
+                                                ${isOverride
+                                                    ? '<i class="bi bi-pencil-fill me-1 text-warning" title="Modifié"></i>'
+                                                    : (isProfile
+                                                        ? '<i class="bi bi-person-badge me-1 text-info" title="Via profil"></i>'
+                                                        : '<i class="bi bi-hand-index me-1 text-secondary" title="Manuel"></i>')}
                                                 ${escapeHtml(ar.app_name)} 
                                                 <span class="badge ${getRoleBadgeColor(ar.role)} ms-1">${ar.role}</span>
-                                            </span>
-                                        `).join('')}
+                                                ${isOverride ? `<span class="ms-1 small text-warning">modifié (profil : ${ar.profile_role || '?'})</span>` : ''}
+                                            </span>`;
+                                        }).join('')}
                                       </div>`
                                     : '<span class="text-muted small"><i class="bi bi-dash-circle me-1"></i>Aucune application assignée</span>'}
                             </div>

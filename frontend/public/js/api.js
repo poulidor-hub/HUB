@@ -591,13 +591,14 @@ class HubAPI {
 
     // Users
     async getUsers(params = {}) {
-        const { page = 0, perPage = 50, search, role, appSlug, profileId, isActive } = params;
+        const { page = 0, perPage = 50, search, role, appSlug, profileId, isActive, appRoleOverride } = params;
         let url = `/users/?page=${page}&per_page=${perPage}`;
         if (search) url += `&search=${encodeURIComponent(search)}`;
         if (role) url += `&role=${encodeURIComponent(role)}`;
         if (appSlug) url += `&app_slug=${encodeURIComponent(appSlug)}`;
         if (profileId !== undefined && profileId !== null && profileId !== '') url += `&profile_id=${profileId}`;
         if (isActive !== undefined && isActive !== null && isActive !== '') url += `&is_active=${isActive}`;
+        if (appRoleOverride !== undefined && appRoleOverride !== null && appRoleOverride !== '') url += `&app_role_override=${appRoleOverride}`;
         return this.request(url);
     }
 
