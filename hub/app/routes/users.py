@@ -724,6 +724,16 @@ async def _apply_user_app_assignments(
     Nécessite user.profiles chargé avec Profile.app_roles.
     Retourne les assignments effectifs [{app, slug, role}].
     """
+    # Payload invalide : doublons d'app_id → conflit avec la contrainte unique
+    seen_app_ids = set()
+    for assignment in assignments:
+        if assignment.app_id in seen_app_ids:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Application {assignment.app_id} apparaît plusieurs fois dans les assignments"
+            )
+        seen_app_ids.add(assignment.app_id)
+
     # Supprimer uniquement les rôles manuels (préserver profile:% et override:%)
     await db.execute(
         delete(UserAppRole).where(

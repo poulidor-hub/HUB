@@ -239,3 +239,22 @@ async def test_set_user_apps_manual_unaffected(
     uar = await _get_uar(async_session, test_user.id, test_app.id)
     assert uar.role == "viewer"
     assert uar.source == "manual"
+
+
+@pytest.mark.asyncio
+async def test_set_user_apps_rejects_duplicate_app_id(
+    client: AsyncClient, admin_token: str, test_user: User, test_app, async_session
+):
+    """Doublon d'app_id dans le payload → 422, aucune ligne créée."""
+    resp = await client.post(
+        f"/api/users/{test_user.id}/apps",
+        headers=await _auth(admin_token),
+        json={"assignments": [
+            {"app_id": test_app.id, "role": "user"},
+            {"app_id": test_app.id, "role": "admin"},
+        ]},
+    )
+    assert resp.status_code == 422, resp.text
+
+    uar = await _get_uar(async_session, test_user.id, test_app.id)
+    assert uar is None  # rien n'a été écrit
