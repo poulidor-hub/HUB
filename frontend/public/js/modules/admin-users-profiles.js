@@ -694,53 +694,65 @@ async function handleApplyProfile() {
 // Fonctions pour le sélecteur de profil dans le modal user
 async function onUserProfileChange() {
     const selectedIds = Array.from(document.querySelectorAll('.user-profile-cb:checked')).map(cb => parseInt(cb.value));
-    
+
     // Mettre à jour le label du dropdown
     updateUserProfileDropdownLabel(selectedIds);
-    
-    // Récupérer les rôles manuels actuels de l'utilisateur (ceux cochés manuellement)
-    const currentManualRoles = [];
+
+    // Capturer l'état courant du modal avant reconstruction (overrides inclus)
+    const currentRows = {};
     allApps.forEach(app => {
         const checkbox = document.getElementById(`userApp${app.id}`);
         const roleSelect = document.getElementById(`userAppRole${app.id}`);
-        if (checkbox?.dataset?.source !== 'profile' && checkbox?.checked && roleSelect?.value) {
-            currentManualRoles.push({ app_id: app.id, role: roleSelect.value, source: 'manual' });
+        if (!checkbox || !roleSelect) return;
+        if (checkbox.checked && roleSelect.value) {
+            currentRows[app.id] = {
+                role: roleSelect.value,
+                source: checkbox.dataset.source || 'manual'
+            };
         }
     });
-    
-    // Construire la liste combinée : rôles de tous les profils + rôles manuels
-    const combinedRoles = [...currentManualRoles];
-    const profileAppIds = new Set();
 
-    if (selectedIds.length > 0) {
-        // Rôle le plus élevé par app parmi tous les profils sélectionnés
-        const roleHierarchy = { admin: 4, manager: 3, user: 2, viewer: 1 };
-        const bestProfileRoles = {};  // app_id -> { role, level }
-
-        for (const pid of selectedIds) {
-            const profile = allProfiles.find(p => p.id === pid);
-            if (!profile) continue;
-            for (const ar of profile.app_roles) {
-                const level = roleHierarchy[ar.role] || 0;
-                if (!bestProfileRoles[ar.app_id] || level > bestProfileRoles[ar.app_id].level) {
-                    bestProfileRoles[ar.app_id] = { role: ar.role, level };
-                }
-                profileAppIds.add(ar.app_id);
+    // Rôles attendus par les profils sélectionnés (rôle max par app)
+    const roleHierarchy = { admin: 4, manager: 3, user: 2, viewer: 1 };
+    const bestProfileRoles = {};  // app_id -> role
+    for (const pid of selectedIds) {
+        const profile = allProfiles.find(p => p.id === pid);
+        if (!profile) continue;
+        for (const ar of profile.app_roles) {
+            const level = roleHierarchy[ar.role] || 0;
+            if (!bestProfileRoles[ar.app_id] || level > (roleHierarchy[bestProfileRoles[ar.app_id]] || 0)) {
+                bestProfileRoles[ar.app_id] = ar.role;
             }
         }
-
-        for (const [appId, val] of Object.entries(bestProfileRoles)) {
-            combinedRoles.push({ app_id: parseInt(appId), role: val.role, source: 'profile' });
-        }
-
-        // Retirer les manuels déjà couverts par les profils
-        const filteredRoles = combinedRoles.filter(ar => !(ar.source === 'manual' && profileAppIds.has(ar.app_id)));
-        loadUserAppsWithRoles(filteredRoles);
-        return;
     }
-    
-    // Pas de profil sélectionné : tout est manuel
-    loadUserAppsWithRoles(currentManualRoles);
+
+    // Combiner : apps profil (overrides existants préservés) + apps manuelles non couvertes
+    const combinedRoles = [];
+    const seenApps = new Set();
+
+    for (const [appIdStr, expectedRole] of Object.entries(bestProfileRoles)) {
+        const appId = parseInt(appIdStr);
+        seenApps.add(appId);
+        const current = currentRows[appId];
+        const isOverride = (current?.source || '').startsWith('override');
+        combinedRoles.push({
+            app_id: appId,
+            role: isOverride && current ? current.role : expectedRole,
+            source: isOverride ? current.source : 'profile',
+            profile_role: expectedRole
+        });
+    }
+
+    allApps.forEach(app => {
+        if (seenApps.has(app.id)) return;
+        const current = currentRows[app.id];
+        const src = current?.source || '';
+        if (current && !src.startsWith('profile') && !src.startsWith('override')) {
+            combinedRoles.push({ app_id: app.id, role: current.role, source: 'manual' });
+        }
+    });
+
+    loadUserAppsWithRoles(combinedRoles);
 }
 
 function updateUserProfileDropdownLabel(selectedIds) {
