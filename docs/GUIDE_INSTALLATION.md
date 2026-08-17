@@ -191,11 +191,31 @@ Ajouter l'origine de l'application à `ALLOWED_ORIGINS` dans le `.env` du Hub :
 ALLOWED_ORIGINS=https://192.0.2.10,https://192.0.2.10:4243
 ```
 
-Puis redémarrer le Hub :
+Puis recréer le conteneur (⚠️ `docker compose restart` ne recharge **pas**
+le `.env` — il redémarre le conteneur avec sa configuration de création) :
 
 ```bash
-docker compose restart hub-api
+docker compose up -d hub-api
 ```
+
+### `allocate-ports` ou l'auto-enregistrement d'une app renvoie 403
+
+L'API n'accepte ces requêtes que depuis les réseaux listés dans
+`APP_WHITELIST_NETWORKS` (par défaut : le réseau Docker des apps
+`10.42.0.0/16` + le subnet LAN détecté à l'installation). Si le Hub voit
+une IP hors liste (message : *« autorisé uniquement depuis le réseau Docker »*) :
+
+1. Ajouter le subnet source dans `HUB_base/.env` :
+   ```env
+   APP_WHITELIST_NETWORKS=10.42.0.0/16,192.168.1.0/24
+   ```
+2. Recréer le conteneur : `docker compose up -d hub-api` (pas `restart`).
+
+### L'app répond en HTTP mais pas en HTTPS (port frontend +1)
+
+Le port HTTPS d'une app (ex: 4201) ne répond que si un certificat existe
+pour elle dans la PKI du Hub. Sans certificat, seul le port HTTP est servi —
+voir la documentation PKI pour en générer un.
 
 ---
 
