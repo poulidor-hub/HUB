@@ -17,7 +17,7 @@ from app.models import (
     highest_role,
 )
 from app.schemas import (
-    UserCreate, UserUpdate, UserResponse, PaginatedUsersResponse,
+    UserCreate, UserUpdate, UserResponse, UserAppRoleResponse, PaginatedUsersResponse,
     BulkUsersCreateRequest, BulkUsersCreateResponse, BulkUserCreateResult,
     BulkUsersRolesUpdateRequest, BulkUsersRolesUpdateResponse, BulkUserRoleUpdateResult,
     BulkUsersDeleteRequest, BulkUsersDeleteResponse, BulkUserDeleteResult,
@@ -195,6 +195,7 @@ async def list_users(
     app_slug: Optional[str] = Query(default=None, description="Filtrer par slug d'application"),
     profile_id: Optional[int] = Query(default=None, description="Filtrer par profil"),
     is_active: Optional[bool] = Query(default=None, description="Filtrer par statut actif"),
+    app_role_override: Optional[bool] = Query(default=None, description="Filtrer sur les droits modifiés vs profil"),
     db: AsyncSession = Depends(get_db),
     _: User = Depends(get_current_admin)
 ):
@@ -206,7 +207,7 @@ async def list_users(
     # Requête de base avec options de chargement
     load_options = [
         selectinload(User.app_roles).selectinload(UserAppRole.application),
-        selectinload(User.profiles)
+        selectinload(User.profiles).selectinload(Profile.app_roles)
     ]
 
     # --- Mode rétro-compatible (page=0) : tout retourner ---
@@ -242,6 +243,16 @@ async def list_users(
                     )
                 )
             )
+
+    # Filtre droits modifiés (au moins un override actif)
+    if app_role_override is not None:
+        override_user_ids = select(UserAppRole.user_id).where(
+            UserAppRole.source.like("override:%")
+        )
+        if app_role_override:
+            base_query = base_query.where(User.id.in_(override_user_ids))
+        else:
+            base_query = base_query.where(~User.id.in_(override_user_ids))
 
     # Filtre par app_slug et/ou rôle (nécessite un join)
     if app_slug or role:
@@ -895,28 +906,32 @@ async def get_user_apps(
         select(User)
         .options(
             selectinload(User.app_roles).selectinload(UserAppRole.application),
-            selectinload(User.profiles)
+            selectinload(User.profiles).selectinload(Profile.app_roles)
         )
         .where(User.id == user_id)
     )
     user = result.scalar_one_or_none()
-    
+
     if not user:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Utilisateur non trouvé"
         )
-    
+
+    # Rôles attendus par les profils (rôle max par app)
+    profile_roles_by_app = {}
+    for profile in user.profiles:
+        for par in profile.app_roles:
+            existing = profile_roles_by_app.get(par.app_id)
+            if existing is None:
+                profile_roles_by_app[par.app_id] = par.role
+            else:
+                profile_roles_by_app[par.app_id] = highest_role([existing, par.role])
+
     return {
         "user": user.username,
         "apps": [
-            {
-                "app_id": ar.app_id,
-                "app_name": ar.application.name,
-                "app_slug": ar.application.slug,
-                "role": ar.role,
-                "source": ar.source
-            }
+            UserAppRoleResponse.from_orm_model(ar, profile_roles_by_app).model_dump()
             for ar in user.app_roles
         ]
     }

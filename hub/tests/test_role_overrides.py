@@ -288,3 +288,64 @@ async def test_bulk_update_roles_creates_override(
     uar = await _get_uar(async_session, test_user.id, test_app.id)
     assert uar.role == "admin"
     assert uar.source == f"override:{profile.id}"
+
+
+@pytest.mark.asyncio
+async def test_get_user_apps_exposes_profile_role_and_overridden(
+    client: AsyncClient, admin_token: str, test_user: User, test_app, other_app, async_session
+):
+    """get_user_apps : profile_role/overridden corrects (override + manuel + profil)."""
+    profile = await _create_profile(async_session, "P1", [(test_app.id, "user")])
+    await _assign_profile(async_session, test_user.id, profile.id)
+    async_session.add(UserAppRole(
+        user_id=test_user.id, app_id=test_app.id,
+        role="manager", source=f"override:{profile.id}",
+    ))
+    async_session.add(UserAppRole(
+        user_id=test_user.id, app_id=other_app.id,
+        role="viewer", source="manual",
+    ))
+    await async_session.commit()
+
+    resp = await client.get(f"/api/users/{test_user.id}/apps", headers=await _auth(admin_token))
+    assert resp.status_code == 200
+    apps = {a["app_id"]: a for a in resp.json()["apps"]}
+
+    assert apps[test_app.id]["profile_role"] == "user"
+    assert apps[test_app.id]["overridden"] is True
+    assert apps[other_app.id]["profile_role"] is None
+    assert apps[other_app.id]["overridden"] is False
+
+
+@pytest.mark.asyncio
+async def test_list_users_filter_and_badge(
+    client: AsyncClient, admin_token: str, test_user: User, admin_user: User,
+    test_app, async_session
+):
+    """Filtre app_role_override + champ has_role_overrides dans UserResponse."""
+    profile = await _create_profile(async_session, "P1", [(test_app.id, "user")])
+    await _assign_profile(async_session, test_user.id, profile.id)
+    async_session.add(UserAppRole(
+        user_id=test_user.id, app_id=test_app.id,
+        role="admin", source=f"override:{profile.id}",
+    ))
+    await async_session.commit()
+
+    resp = await client.get(
+        "/api/users/?page=1&per_page=50&app_role_override=true",
+        headers=await _auth(admin_token),
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    usernames = [u["username"] for u in body["users"]]
+    assert usernames == ["testuser"]                    # seulement l'utilisateur avec override
+    assert body["users"][0]["has_role_overrides"] is True
+    assert body["users"][0]["app_roles"][0]["profile_role"] == "user"
+
+    resp_false = await client.get(
+        "/api/users/?page=1&per_page=50&app_role_override=false",
+        headers=await _auth(admin_token),
+    )
+    usernames_false = [u["username"] for u in resp_false.json()["users"]]
+    assert "testuser" not in usernames_false
+    assert "admin" in usernames_false

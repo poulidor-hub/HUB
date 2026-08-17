@@ -3,6 +3,8 @@ from typing import Optional, List, Dict, Any
 from datetime import datetime
 from enum import Enum
 
+from app.models import highest_role
+
 
 class GrantType(str, Enum):
     """Types de grant OAuth2 supportés"""
@@ -152,18 +154,22 @@ class UserAppRoleResponse(BaseModel):
     app_slug: str
     role: str
     source: str = "manual"
-    
+    profile_role: Optional[str] = None  # Rôle attendu par les profils (None si non couverte)
+    overridden: bool = False            # True si source = 'override:<pid>'
+
     model_config = ConfigDict(from_attributes=True)
-    
+
     @classmethod
-    def from_orm_model(cls, uar):
+    def from_orm_model(cls, uar, profile_roles_by_app: Optional[Dict[int, str]] = None):
         """Convertit un UserAppRole ORM en réponse"""
         return cls(
             app_id=uar.app_id,
             app_name=uar.application.name,
             app_slug=uar.application.slug,
             role=uar.role,
-            source=uar.source or "manual"
+            source=uar.source or "manual",
+            profile_role=(profile_roles_by_app or {}).get(uar.app_id),
+            overridden=(uar.source or "").startswith("override:"),
         )
 
 
@@ -177,14 +183,28 @@ class UserResponse(UserBase):
     created_at: datetime
     app_roles: List[UserAppRoleResponse] = []
     profiles: List[ProfileBriefResponse] = []
+    has_role_overrides: bool = False
     
     model_config = ConfigDict(from_attributes=True)
     
     @classmethod
     def from_orm_model(cls, user) -> "UserResponse":
         """Crée une réponse utilisateur avec les rôles par application"""
+        # Rôles attendus par les profils (rôle max par app, tous profils confondus)
+        profile_roles_by_app: Dict[int, str] = {}
+        try:
+            for profile in user.profiles:
+                for par in profile.app_roles:
+                    existing = profile_roles_by_app.get(par.app_id)
+                    if existing is None:
+                        profile_roles_by_app[par.app_id] = par.role
+                    else:
+                        profile_roles_by_app[par.app_id] = highest_role([existing, par.role])
+        except Exception:
+            profile_roles_by_app = {}  # profiles/app_roles non chargés
+
         app_roles = [
-            UserAppRoleResponse.from_orm_model(uar) 
+            UserAppRoleResponse.from_orm_model(uar, profile_roles_by_app)
             for uar in user.app_roles
         ]
         # Profils (multi-profils)
@@ -209,7 +229,10 @@ class UserResponse(UserBase):
             totp_enabled=user.totp_enabled or False,
             created_at=user.created_at,
             app_roles=app_roles,
-            profiles=profiles_brief
+            profiles=profiles_brief,
+            has_role_overrides=any(
+                (uar.source or "").startswith("override:") for uar in user.app_roles
+            )
         )
 
 
