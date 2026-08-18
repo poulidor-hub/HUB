@@ -17,12 +17,15 @@ ENV_VARIANTS: dict[str, list[str]] = {
     "APP_HOST": ["APP_HOST", "SERVER_IP", "HOST_IP"],
     "POSTGRES_PASSWORD": ["POSTGRES_PASSWORD"],
     "SECRETS_ENCRYPTION_KEY": ["SECRETS_ENCRYPTION_KEY"],
+    # Le port API du HUB est servi en HTTP dans ce parc (HTTPS termine au
+    # frontend 443) — les apps ne doivent jamais joindre l'API en https.
+    "HUB_HTTPS_ENABLED": ["HUB_HTTPS_ENABLED"],
 }
 
 # Clés décisionnelles toujours présentes dans le .env final (« le HUB décide,
 # l'app suit »). FRONTEND_HTTPS_PORT n'y figure pas : remplacée seulement si
 # présente (le Makefile sync-env la pose sinon).
-ENSURE_KEYS = ["APP_SLUG", "API_PORT", "FRONTEND_PORT", "HUB_HOST", "APP_HOST"]
+ENSURE_KEYS = ["APP_SLUG", "API_PORT", "FRONTEND_PORT", "HUB_HOST", "APP_HOST", "HUB_HTTPS_ENABLED"]
 
 
 def build_env_values(slug: str, api_port: int, frontend_port: int, hub_host: str) -> dict[str, str]:
@@ -34,6 +37,7 @@ def build_env_values(slug: str, api_port: int, frontend_port: int, hub_host: str
         "FRONTEND_HTTPS_PORT": str(frontend_port + 1),
         "HUB_HOST": hub_host,
         "APP_HOST": "",  # app colocalisée avec le HUB
+        "HUB_HTTPS_ENABLED": "false",  # l'API du HUB est HTTP (HTTPS au frontend)
     }
 
 
