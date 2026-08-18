@@ -549,6 +549,7 @@ function renderAppsTable(apps) {
                                     ${app.is_shared_service ? '<span class="badge bg-info ms-1" title="API partagée accessible par tous les SA"><i class="bi bi-share"></i></span>' : ''}
                                     ${app.is_workshop ? '<span class="badge bg-warning text-dark ms-1" title="Application atelier (APP_Workshop/)"><i class="bi bi-tools"></i> ATELIER</span>' : ''}
                                     ${app.is_unmanaged ? '<span class="badge bg-secondary ms-1" title="Application non gérée par le HUB (launcher-only)"><i class="bi bi-exclamation-octagon"></i> Non gérée</span>' : ''}
+                                    ${app.git_repo_url && (!app.last_deployment || app.last_deployment.status !== 'success') ? '<span class="badge bg-warning text-dark ms-1" title="Dépôt Git lié mais app jamais déployée avec succès"><i class="bi bi-rocket-takeoff"></i> Non déployée</span>' : ''}
                                     ${approvalBadge}
                                 </div>
                             </div>
@@ -566,6 +567,11 @@ function renderAppsTable(apps) {
                         <td class="text-end text-nowrap">
                             ${approvalActions}
                             ${!isPending ? `
+                                ${app.git_repo_url && (!app.last_deployment || app.last_deployment.status !== 'success') ? `
+                                    <button class="btn btn-sm btn-outline-success me-1" onclick="triggerDeploy('${app.slug}')" title="Déployer automatiquement (clone, .env, build, démarrage)">
+                                        <i class="bi bi-rocket-takeoff"></i>
+                                    </button>
+                                ` : ''}
                                 <button class="btn btn-sm btn-outline-info me-1" onclick="showDockerDetails('${app.slug}')" title="Détails Docker">
                                     <i class="bi bi-eye"></i>
                                 </button>
