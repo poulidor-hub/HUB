@@ -5,6 +5,14 @@
 
 ---
 
+## [3.33.1] - 18 août 2026
+
+### ⚡ Déploiement auto — table admin corrigée
+
+- **Corrigé** : le badge « Non déployée » et le bouton Déployer n'apparaissaient pas dans la table admin : `GET /api/apps/all` (serializer `AppWithUsersAndDocker`) n'exposait pas `git_repo_url` ni `last_deployment`, contrairement à `GET /api/apps/` (dashboard). Les deux champs sont ajoutés au serializer, et le chargement des derniers déploiements est factorisé (`_load_last_deployments`).
+
+---
+
 ## [3.33.0] - 18 août 2026
 
 ### 🚀 Déploiement automatique des applications (spec 2026-08-18)
