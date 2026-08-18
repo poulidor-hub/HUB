@@ -149,12 +149,15 @@ class UserTagSeen(Base):
 class UserAppRole(Base):
     """Table d'association User <-> Application avec rôle"""
     __tablename__ = "user_app_roles"
+    __table_args__ = (
+        UniqueConstraint("user_id", "app_id", name="uq_user_app_roles_user_app"),
+    )
     
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
     app_id = Column(Integer, ForeignKey('applications.id', ondelete='CASCADE'), nullable=False)
     role = Column(String(50), default="user", nullable=False)  # admin, manager, user, viewer, etc.
-    source = Column(String(50), default="manual", nullable=False)  # "manual" ou "profile:<id>"
+    source = Column(String(50), default="manual", nullable=False)  # "manual", "profile:<id>" ou "override:<id>"
     created_at = Column(DateTime, default=utcnow)
     
     # Relations

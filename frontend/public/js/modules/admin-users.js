@@ -73,51 +73,65 @@ const AVAILABLE_ROLES = ['admin', 'manager', 'user', 'viewer'];
 
 function loadUserAppsWithRoles(userAppRoles) {
     const container = document.getElementById('userAppsCheckboxes');
-    
+
     if (allApps.length === 0) {
         container.innerHTML = '<small class="text-muted">Aucune application disponible</small>';
         return;
     }
 
-    // Créer un map des rôles et sources par app_id
+    // Map des rôles, sources et rôles attendus par app_id
     const rolesByAppId = {};
     const sourceByAppId = {};
+    const profileRoleByAppId = {};
     userAppRoles.forEach(ar => {
         rolesByAppId[ar.app_id] = ar.role;
         sourceByAppId[ar.app_id] = ar.source || 'manual';
+        if (ar.profile_role) profileRoleByAppId[ar.app_id] = ar.profile_role;
     });
 
     container.innerHTML = allApps.map(app => {
         const currentRole = rolesByAppId[app.id] || '';
         const source = sourceByAppId[app.id] || 'manual';
-        const isChecked = currentRole !== '';
-        const isFromProfile = source.startsWith('profile');
-        
+        const profileRole = profileRoleByAppId[app.id] || null;
+        const isOverridden = source.startsWith('override');
+        const isChecked = currentRole !== '' || profileRole !== null;
+        const effectiveRole = currentRole || profileRole || '';
+
         return `
             <div class="d-flex align-items-center mb-2 app-role-row">
                 <div class="form-check me-3" style="min-width: 200px;">
                     <input class="form-check-input app-checkbox" type="checkbox" value="${app.id}" 
                         id="userApp${app.id}" ${isChecked ? 'checked' : ''}
-                        ${isFromProfile ? 'disabled' : ''}
+                        ${profileRole !== null ? 'disabled' : ''}
                         data-source="${source}"
+                        data-profile-role="${profileRole || ''}"
                         onchange="toggleRoleSelect(${app.id})">
                     <label class="form-check-label" for="userApp${app.id}">
                         <i class="${app.icon} me-1" style="color: ${app.color}"></i>
                         ${escapeHtml(app.name)}
-                        ${isFromProfile ? '<i class="bi bi-person-badge text-info ms-1" title="Géré par le profil"></i>' : ''}
+                        ${profileRole !== null ? '<i class="bi bi-person-badge text-info ms-1" title="Géré par le profil"></i>' : ''}
                     </label>
                 </div>
                 <select class="form-select form-select-sm role-select" id="userAppRole${app.id}" 
-                    style="width: 120px;" ${isChecked && !isFromProfile ? '' : 'disabled'}
-                    data-source="${source}">
+                    style="width: 120px;" ${isChecked ? '' : 'disabled'}
+                    data-source="${source}" data-profile-role="${profileRole || ''}">
                     <option value="">-- Rôle --</option>
                     ${AVAILABLE_ROLES.map(role => `
-                        <option value="${role}" ${currentRole === role ? 'selected' : ''}>
+                        <option value="${role}" ${effectiveRole === role ? 'selected' : ''}>
                             ${role.charAt(0).toUpperCase() + role.slice(1)}
                         </option>
                     `).join('')}
                 </select>
-                ${isFromProfile ? '<small class="text-info ms-2"><i class="bi bi-lock"></i> Profil</small>' : ''}
+                ${profileRole !== null ? `<small class="text-info ms-2"><i class="bi bi-person-badge"></i> Profil : ${profileRole}</small>` : ''}
+                ${isOverridden ? `
+                    <span class="badge bg-warning text-dark ms-2" data-override-badge="${app.id}">
+                        <i class="bi bi-pencil-fill"></i> Modifié
+                    </span>
+                    <button type="button" class="btn btn-sm btn-outline-secondary ms-1" 
+                        onclick="resetAppRoleToProfile(${app.id})" title="Réinitialiser selon profil">
+                        <i class="bi bi-arrow-counterclockwise"></i>
+                    </button>
+                ` : ''}
             </div>
         `;
     }).join('');
@@ -136,6 +150,16 @@ function toggleRoleSelect(appId) {
         roleSelect.disabled = true;
         roleSelect.value = '';
     }
+}
+
+function resetAppRoleToProfile(appId) {
+    const roleSelect = document.getElementById(`userAppRole${appId}`);
+    const profileRole = roleSelect?.dataset?.profileRole;
+    if (!roleSelect || !profileRole) return;
+    roleSelect.value = profileRole;
+    roleSelect.dataset.reset = 'true';
+    const badge = document.querySelector(`[data-override-badge="${appId}"]`);
+    if (badge) badge.remove();
 }
 
 // Ancienne fonction pour compatibilité (utilisée dans showAddUserForm)
@@ -248,20 +272,31 @@ async function handleSaveUser(event) {
         data.password = password;
     }
 
-    // Récupérer les apps et leurs rôles (uniquement les manuels, pas ceux du profil)
+    // Récupérer les apps et leurs rôles (manuelles + overrides sur apps profilées)
     const assignments = [];
     allApps.forEach(app => {
         const checkbox = document.getElementById(`userApp${app.id}`);
         const roleSelect = document.getElementById(`userAppRole${app.id}`);
-        
-        // Ignorer les apps gérées par le profil (source='profile')
-        if ((checkbox?.dataset?.source || '').startsWith('profile')) return;
-        
-        if (checkbox?.checked && roleSelect?.value) {
-            assignments.push({
-                app_id: app.id,
-                role: roleSelect.value
-            });
+        if (!checkbox || !roleSelect) return;
+
+        const profileRole = checkbox.dataset.profileRole || null;
+        if (profileRole) {
+            // App couverte par un profil : niveau modifiable (override), accès non retirable
+            const chosenRole = roleSelect.value || profileRole;
+            const currentSource = checkbox.dataset.source || '';
+            if (chosenRole !== profileRole) {
+                // Rôle différent du rôle attendu → override
+                assignments.push({ app_id: app.id, role: chosenRole });
+            } else if (currentSource.startsWith('override') || roleSelect.dataset.reset === 'true') {
+                // Retour au rôle attendu alors qu'un override existe → reset explicite
+                assignments.push({ app_id: app.id, role: chosenRole, reset: true });
+            }
+            // Sinon : conforme au profil, rien à envoyer
+            return;
+        }
+
+        if (checkbox.checked && roleSelect.value) {
+            assignments.push({ app_id: app.id, role: roleSelect.value });
         }
     });
 

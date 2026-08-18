@@ -13,10 +13,11 @@ from app.database import get_db
 from app.routes.events import notify_event, notify_stats_update
 from app.models import (
     User, Application, UserAppRole, ServiceAccount,
-    AppRole, DEFAULT_ROLES, Profile, user_profiles, AuditLog
+    AppRole, DEFAULT_ROLES, Profile, ProfileAppRole, user_profiles, AuditLog,
+    highest_role,
 )
 from app.schemas import (
-    UserCreate, UserUpdate, UserResponse, PaginatedUsersResponse,
+    UserCreate, UserUpdate, UserResponse, UserAppRoleResponse, PaginatedUsersResponse,
     BulkUsersCreateRequest, BulkUsersCreateResponse, BulkUserCreateResult,
     BulkUsersRolesUpdateRequest, BulkUsersRolesUpdateResponse, BulkUserRoleUpdateResult,
     BulkUsersDeleteRequest, BulkUsersDeleteResponse, BulkUserDeleteResult,
@@ -35,6 +36,7 @@ class UserAppRoleAssignment(BaseModel):
     """Attribution d'un rôle à un utilisateur pour une application"""
     app_id: int
     role: str = "user"
+    reset: bool = False  # True : réinitialiser au rôle attendu par le profil
 
 
 class UserAppsUpdate(BaseModel):
@@ -193,6 +195,7 @@ async def list_users(
     app_slug: Optional[str] = Query(default=None, description="Filtrer par slug d'application"),
     profile_id: Optional[int] = Query(default=None, description="Filtrer par profil"),
     is_active: Optional[bool] = Query(default=None, description="Filtrer par statut actif"),
+    app_role_override: Optional[bool] = Query(default=None, description="Filtrer sur les droits modifiés vs profil"),
     db: AsyncSession = Depends(get_db),
     _: User = Depends(get_current_admin)
 ):
@@ -204,7 +207,7 @@ async def list_users(
     # Requête de base avec options de chargement
     load_options = [
         selectinload(User.app_roles).selectinload(UserAppRole.application),
-        selectinload(User.profiles)
+        selectinload(User.profiles).selectinload(Profile.app_roles)
     ]
 
     # --- Mode rétro-compatible (page=0) : tout retourner ---
@@ -240,6 +243,16 @@ async def list_users(
                     )
                 )
             )
+
+    # Filtre droits modifiés (au moins un override actif)
+    if app_role_override is not None:
+        override_user_ids = select(UserAppRole.user_id).where(
+            UserAppRole.source.like("override:%")
+        )
+        if app_role_override:
+            base_query = base_query.where(User.id.in_(override_user_ids))
+        else:
+            base_query = base_query.where(~User.id.in_(override_user_ids))
 
     # Filtre par app_slug et/ou rôle (nécessite un join)
     if app_slug or role:
@@ -330,7 +343,7 @@ async def create_user(
         select(User)
         .options(
             selectinload(User.app_roles).selectinload(UserAppRole.application),
-            selectinload(User.profiles)
+            selectinload(User.profiles).selectinload(Profile.app_roles)
         )
         .where(User.id == user.id)
     )
@@ -560,7 +573,7 @@ async def get_user(
         select(User)
         .options(
             selectinload(User.app_roles).selectinload(UserAppRole.application),
-            selectinload(User.profiles)
+            selectinload(User.profiles).selectinload(Profile.app_roles)
         )
         .where(User.id == user_id)
     )
@@ -587,7 +600,7 @@ async def update_user(
         select(User)
         .options(
             selectinload(User.app_roles).selectinload(UserAppRole.application),
-            selectinload(User.profiles)
+            selectinload(User.profiles).selectinload(Profile.app_roles)
         )
         .where(User.id == user_id)
     )
@@ -642,7 +655,7 @@ async def update_user(
         select(User)
         .options(
             selectinload(User.app_roles).selectinload(UserAppRole.application),
-            selectinload(User.profiles)
+            selectinload(User.profiles).selectinload(Profile.app_roles)
         )
         .where(User.id == user_id)
     )
@@ -685,87 +698,189 @@ async def delete_user(
     notify_stats_update()
 
 
+def _best_profile_roles_by_app(user: User) -> Dict[int, Dict]:
+    """Rôle attendu par app en combinant tous les profils de l'utilisateur.
+
+    Nécessite user.profiles chargé avec Profile.app_roles (selectinload).
+    Retourne {app_id: {"role": <max>, "profile_id": <id du profil porteur>}}.
+    """
+    best: Dict[int, Dict] = {}
+    for profile in user.profiles:
+        for par in profile.app_roles:
+            existing = best.get(par.app_id)
+            if existing is None:
+                best[par.app_id] = {"role": par.role, "profile_id": profile.id}
+            else:
+                top = highest_role([existing["role"], par.role])
+                if top != existing["role"]:
+                    best[par.app_id] = {"role": top, "profile_id": profile.id}
+    return best
+
+
+async def _apply_user_app_assignments(
+    db: AsyncSession,
+    request: Request,
+    admin: User,
+    user: User,
+    assignments: List[UserAppRoleAssignment],
+    apps_by_id: Dict[int, Application],
+) -> List[Dict]:
+    """Applique des assignments d'apps/rôles pour un utilisateur (sémantique override).
+
+    - Lignes source='manual' absentes du payload : supprimées (remplacement).
+    - App couverte par un profil, reset=False → ligne 'override:<pid>' au rôle choisi.
+    - App couverte par un profil, reset=True  → rôle attendu du profil, 'profile:<pid>'.
+    - App non couverte → ligne 'manual' (reset ignoré).
+
+    Nécessite user.profiles chargé avec Profile.app_roles.
+    Retourne les assignments effectifs [{app, slug, role}].
+    """
+    # Payload invalide : doublons d'app_id → conflit avec la contrainte unique
+    seen_app_ids = set()
+    for assignment in assignments:
+        if assignment.app_id in seen_app_ids:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Application {assignment.app_id} apparaît plusieurs fois dans les assignments"
+            )
+        seen_app_ids.add(assignment.app_id)
+
+    # Supprimer uniquement les rôles manuels (préserver profile:% et override:%)
+    await db.execute(
+        delete(UserAppRole).where(
+            UserAppRole.user_id == user.id,
+            UserAppRole.source == "manual"
+        )
+    )
+
+    best_profile = _best_profile_roles_by_app(user)
+
+    # Relire les lignes restantes (profile/override) après suppression des manuelles
+    remaining = await db.execute(
+        select(UserAppRole).where(UserAppRole.user_id == user.id)
+    )
+    current_by_app = {r.app_id: r for r in remaining.scalars().all()}
+
+    result_assignments: List[Dict] = []
+    for assignment in assignments:
+        expected = best_profile.get(assignment.app_id)
+        current = current_by_app.get(assignment.app_id)
+
+        if expected is not None:
+            new_role = expected["role"] if assignment.reset else assignment.role
+            new_source = (
+                f"profile:{expected['profile_id']}" if assignment.reset
+                else f"override:{expected['profile_id']}"
+            )
+        else:
+            new_role = assignment.role
+            new_source = "manual"
+
+        old_role = current.role if current is not None else None
+        old_source = current.source if current is not None else None
+        changed = current is None or current.role != new_role or current.source != new_source
+
+        if changed:
+            if current is not None:
+                current.role = new_role
+                current.source = new_source
+            else:
+                db.add(UserAppRole(
+                    user_id=user.id,
+                    app_id=assignment.app_id,
+                    role=new_role,
+                    source=new_source
+                ))
+
+        # Audit des créations/suppressions d'override
+        if changed and (
+            new_source.startswith("override:") or (old_source or "").startswith("override:")
+        ):
+            db.add(AuditLog(
+                user_id=admin.id,
+                action=(
+                    "app_role_override" if new_source.startswith("override:")
+                    else "app_role_override_reset"
+                ),
+                target=user.username,
+                ip_address=request.client.host if request.client else None,
+                user_agent=request.headers.get("user-agent", "")[:255],
+                details=(
+                    f"app_id={assignment.app_id} "
+                    f"{old_source or 'aucun'}/{old_role or 'aucun'} -> {new_source}/{new_role}"
+                ),
+            ))
+
+        app = apps_by_id[assignment.app_id]
+        result_assignments.append({
+            "app": app.name,
+            "slug": app.slug,
+            "role": new_role
+        })
+
+    return result_assignments
+
+
 @router.post("/{user_id}/apps")
 async def set_user_apps(
     user_id: int,
     updates: UserAppsUpdate,
+    request: Request,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_admin)
+    current_admin: User = Depends(get_current_admin)
 ):
     """
     Définit les applications et rôles pour un utilisateur.
-    
+
     Exemple de body:
     {
         "assignments": [
             {"app_id": 1, "role": "admin"},
-            {"app_id": 2, "role": "user"},
+            {"app_id": 2, "role": "user", "reset": true},
             {"app_id": 3, "role": "viewer"}
         ]
     }
+
+    App couverte par un profil : le rôle choisi devient un override
+    (source='override:<profile_id>'), visible côté admin et préservé par la
+    sync profil. "reset": true réinitialise au rôle attendu par le profil.
     """
     result = await db.execute(
         select(User)
-        .options(selectinload(User.app_roles))
+        .options(
+            selectinload(User.app_roles).selectinload(UserAppRole.application),
+            selectinload(User.profiles).selectinload(Profile.app_roles)
+        )
         .where(User.id == user_id)
     )
     user = result.scalar_one_or_none()
-    
+
     if not user:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Utilisateur non trouvé"
         )
-    
+
     # Vérifier que les apps existent
     app_ids = [a.app_id for a in updates.assignments]
     apps_result = await db.execute(
         select(Application).where(Application.id.in_(app_ids))
     )
-    existing_apps = {app.id: app for app in apps_result.scalars().all()}
-    
+    apps_by_id = {app.id: app for app in apps_result.scalars().all()}
+
     for assignment in updates.assignments:
-        if assignment.app_id not in existing_apps:
+        if assignment.app_id not in apps_by_id:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Application {assignment.app_id} non trouvée"
             )
-    
-    # Supprimer uniquement les rôles manuels (préserver ceux du profil)
-    await db.execute(
-        delete(UserAppRole).where(
-            UserAppRole.user_id == user_id,
-            UserAppRole.source == "manual"
-        )
+
+    result_assignments = await _apply_user_app_assignments(
+        db, request, current_admin, user, updates.assignments, apps_by_id
     )
-    
-    # Collecter les app_id déjà couverts par le profil
-    profile_app_ids = {
-        ar.app_id for ar in user.app_roles if ar.source == "profile"
-    }
-    
-    # Créer les nouveaux rôles manuels (ignorer si déjà couvert par le profil)
-    result_assignments = []
-    for assignment in updates.assignments:
-        app = existing_apps[assignment.app_id]
-        if assignment.app_id in profile_app_ids:
-            # App déjà gérée par le profil, on ne crée pas de doublon
-            continue
-        user_app_role = UserAppRole(
-            user_id=user_id,
-            app_id=assignment.app_id,
-            role=assignment.role,
-            source="manual"
-        )
-        db.add(user_app_role)
-        result_assignments.append({
-            "app": app.name,
-            "slug": app.slug,
-            "role": assignment.role
-        })
-    
+
     await db.commit()
-    
+
     # Notifier SSE que les droits de l'utilisateur ont changé
     # Permet au frontend de rafraîchir automatiquement le token
     notify_event("user_permissions_changed", {
@@ -773,7 +888,7 @@ async def set_user_apps(
         "username": user.username,
         "apps_count": len(result_assignments)
     })
-    
+
     return {
         "message": f"Applications mises à jour pour {user.username}",
         "assignments": result_assignments
@@ -791,28 +906,32 @@ async def get_user_apps(
         select(User)
         .options(
             selectinload(User.app_roles).selectinload(UserAppRole.application),
-            selectinload(User.profiles)
+            selectinload(User.profiles).selectinload(Profile.app_roles)
         )
         .where(User.id == user_id)
     )
     user = result.scalar_one_or_none()
-    
+
     if not user:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Utilisateur non trouvé"
         )
-    
+
+    # Rôles attendus par les profils (rôle max par app)
+    profile_roles_by_app = {}
+    for profile in user.profiles:
+        for par in profile.app_roles:
+            existing = profile_roles_by_app.get(par.app_id)
+            if existing is None:
+                profile_roles_by_app[par.app_id] = par.role
+            else:
+                profile_roles_by_app[par.app_id] = highest_role([existing, par.role])
+
     return {
         "user": user.username,
         "apps": [
-            {
-                "app_id": ar.app_id,
-                "app_name": ar.application.name,
-                "app_slug": ar.application.slug,
-                "role": ar.role,
-                "source": ar.source
-            }
+            UserAppRoleResponse.from_orm_model(ar, profile_roles_by_app).model_dump()
             for ar in user.app_roles
         ]
     }
@@ -1064,9 +1183,10 @@ async def bulk_create_users(
 
 @router.post("/bulk/roles", response_model=BulkUsersRolesUpdateResponse)
 async def bulk_update_user_roles(
-    request: BulkUsersRolesUpdateRequest,
+    request: Request,
+    request_body: BulkUsersRolesUpdateRequest,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_admin)
+    current_admin: User = Depends(get_current_admin)
 ):
     """
     Met à jour les rôles de plusieurs utilisateurs en une seule opération.
@@ -1097,14 +1217,16 @@ async def bulk_update_user_roles(
     results = []
     updated_count = 0
     
-    for update in request.updates:
+    for update in request_body.updates:
         try:
-            # Vérifier que l'utilisateur existe
+            # Vérifier que l'utilisateur existe (avec ses profils pour les overrides)
             result = await db.execute(
-                select(User).where(User.id == update.user_id)
+                select(User)
+                .options(selectinload(User.profiles).selectinload(Profile.app_roles))
+                .where(User.id == update.user_id)
             )
             user = result.scalar_one_or_none()
-            
+
             if not user:
                 results.append(BulkUserRoleUpdateResult(
                     user_id=update.user_id,
@@ -1113,16 +1235,17 @@ async def bulk_update_user_roles(
                     error="Utilisateur non trouvé"
                 ))
                 continue
-            
+
             # Vérifier que les applications existent
             app_ids = [ar.app_id for ar in update.app_roles]
+            apps_by_id = {}
             if app_ids:
                 apps_result = await db.execute(
                     select(Application).where(Application.id.in_(app_ids))
                 )
-                existing_apps = {app.id for app in apps_result.scalars().all()}
-                
-                missing_apps = set(app_ids) - existing_apps
+                apps_by_id = {app.id: app for app in apps_result.scalars().all()}
+
+                missing_apps = set(app_ids) - set(apps_by_id.keys())
                 if missing_apps:
                     results.append(BulkUserRoleUpdateResult(
                         user_id=update.user_id,
@@ -1131,53 +1254,26 @@ async def bulk_update_user_roles(
                         error=f"Applications non trouvées: {missing_apps}"
                     ))
                     continue
-            
-            # Supprimer uniquement les rôles manuels (préserver ceux du profil)
-            await db.execute(
-                delete(UserAppRole).where(
-                    UserAppRole.user_id == update.user_id,
-                    UserAppRole.source == "manual"
-                )
+
+            result_assignments = await _apply_user_app_assignments(
+                db, request, current_admin, user, update.app_roles, apps_by_id
             )
-            
-            # Récupérer les app_id déjà couverts par le profil
-            profile_roles_result = await db.execute(
-                select(UserAppRole.app_id).where(
-                    UserAppRole.user_id == update.user_id,
-                    UserAppRole.source == "profile"
-                )
-            )
-            profile_app_ids = {row[0] for row in profile_roles_result.all()}
-            
-            # Créer les nouveaux rôles (ignorer ceux déjà gérés par le profil)
-            roles_created = 0
-            for ar in update.app_roles:
-                if ar.app_id in profile_app_ids:
-                    continue
-                user_app_role = UserAppRole(
-                    user_id=update.user_id,
-                    app_id=ar.app_id,
-                    role=ar.role,
-                    source="manual"
-                )
-                db.add(user_app_role)
-                roles_created += 1
-            
+
             results.append(BulkUserRoleUpdateResult(
                 user_id=update.user_id,
                 username=user.username,
                 success=True,
-                roles_updated=roles_created
+                roles_updated=len(result_assignments)
             ))
             updated_count += 1
-            
+
             # Notifier le changement de permissions pour cet utilisateur
             notify_event("user_permissions_changed", {
                 "user_id": update.user_id,
                 "username": user.username,
-                "apps_count": len(update.app_roles)
+                "apps_count": len(result_assignments)
             })
-            
+
         except Exception as e:
             results.append(BulkUserRoleUpdateResult(
                 user_id=update.user_id,
@@ -1192,9 +1288,9 @@ async def bulk_update_user_roles(
         notify_event("users_updated", {"action": "bulk_roles_updated", "count": updated_count})
     
     return BulkUsersRolesUpdateResponse(
-        total_requested=len(request.updates),
+        total_requested=len(request_body.updates),
         total_updated=updated_count,
-        total_failed=len(request.updates) - updated_count,
+        total_failed=len(request_body.updates) - updated_count,
         results=results
     )
 

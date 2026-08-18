@@ -28,11 +28,15 @@ async def _sync_user_profile_roles(db: AsyncSession, user_id: int):
     Synchronise les rôles source='profile:*' d'un utilisateur avec TOUS ses profils.
     Mode multi-profils : quand plusieurs profils donnent des droits sur la même app,
     le rôle le plus élevé est retenu (admin > manager > user > viewer).
-    
+
     - Collecte tous les profils de l'utilisateur
     - Pour chaque app, calcule le rôle max entre tous les profils
     - Ajoute/met à jour/supprime les rôles "profile:*"
     - Ne touche JAMAIS aux rôles source='manual'
+    - Overrides (source='override:<pid>') : ignorés si le profil d'origine couvre
+      encore l'app (la modification admin prime jusqu'à réinitialisation) ;
+      supprimés sinon — si un autre profil couvre l'app, la ligne profile:*
+      attendue est (re)créée.
     """
     # 1. Récupérer tous les profils de l'utilisateur avec leurs app_roles
     profiles_result = await db.execute(
@@ -46,8 +50,11 @@ async def _sync_user_profile_roles(db: AsyncSession, user_id: int):
     # 2. Calculer le rôle max par app en combinant tous les profils
     # {app_id: {"role": best_role, "profile_id": source_profile_id}}
     best_roles_by_app = {}
+    # {app_id: set(profile_ids couvrant l'app)} — pour détecter les overrides périmés
+    covering_pids_by_app = {}
     for profile in user_profiles_list:
         for par in profile.app_roles:
+            covering_pids_by_app.setdefault(par.app_id, set()).add(profile.id)
             existing = best_roles_by_app.get(par.app_id)
             if existing is None:
                 best_roles_by_app[par.app_id] = {
@@ -69,16 +76,37 @@ async def _sync_user_profile_roles(db: AsyncSession, user_id: int):
     )
     current_roles = result.scalars().all()
 
-    # Indexer : séparer manuels et profile
+    # Indexer : séparer manuels, profil et overrides
     manual_app_ids = set()
-    profile_roles_by_app = {}  # app_id -> UserAppRole
+    profile_roles_by_app = {}   # app_id -> UserAppRole (source='profile:*')
+    override_roles_by_app = {}  # app_id -> UserAppRole (source='override:*')
     for role in current_roles:
         if role.source == "manual":
             manual_app_ids.add(role.app_id)
         elif role.source.startswith("profile:"):
             profile_roles_by_app[role.app_id] = role
+        elif role.source.startswith("override:"):
+            override_roles_by_app[role.app_id] = role
 
-    # 4. Supprimer les rôles profile pour les apps qui ne sont plus dans aucun profil
+    # 4a. Supprimer les overrides périmés : le profil d'origine ne couvre plus l'app
+    #     (profil détaché/supprimé, ou app retirée de la définition du profil)
+    stale_override_app_ids = set()
+    for app_id, ovr in override_roles_by_app.items():
+        try:
+            origin_pid = int(ovr.source.split(":", 1)[1])
+        except (IndexError, ValueError):
+            origin_pid = None  # source illisible → considérer comme périmé
+        if origin_pid is None or origin_pid not in covering_pids_by_app.get(app_id, set()):
+            stale_override_app_ids.add(app_id)
+            await db.delete(ovr)
+
+    # Émettre les DELETE des overrides périmés AVANT les INSERT de l'étape 5 :
+    # le flush SQLAlchemy ordonne les INSERT avant les DELETE, ce qui violerait
+    # la contrainte unique (user_id, app_id) sur la même app.
+    if stale_override_app_ids:
+        await db.flush()
+
+    # 4b. Supprimer les rôles profile pour les apps qui ne sont plus dans aucun profil
     apps_to_remove = set(profile_roles_by_app.keys()) - set(best_roles_by_app.keys())
     if apps_to_remove:
         await db.execute(
@@ -93,6 +121,10 @@ async def _sync_user_profile_roles(db: AsyncSession, user_id: int):
     for app_id, best in best_roles_by_app.items():
         # Si l'app est déjà assignée manuellement, ne pas créer de doublon
         if app_id in manual_app_ids:
+            continue
+
+        # Override actif : le profil d'origine couvre encore l'app → ne pas toucher
+        if app_id in override_roles_by_app and app_id not in stale_override_app_ids:
             continue
 
         existing = profile_roles_by_app.get(app_id)
