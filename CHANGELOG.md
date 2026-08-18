@@ -5,6 +5,28 @@
 
 ---
 
+## [3.33.0] - 18 août 2026
+
+### 🚀 Déploiement automatique des applications (spec 2026-08-18)
+
+- **Ajouté** : `POST /api/apps/{slug}/deploy` (admin) déclenche le déploiement complet d'une app depuis son `git_repo_url` : clone/pull → création/injection du `.env` (slug, ports, HUB_HOST, secrets générés à la création) → `make build && make up` (fallback `docker compose build/up -d` sans Makefile) → health check. Non-bloquant, 1 déploiement à la fois (lock global), PAT GitHub transmis uniquement en mémoire (`http.extraheader`).
+- **Ajouté** : `GET /api/apps/{slug}/deploy/status` (admin) — statut courant, étape, logs (cappés 100 Ko), historique (max 10). Table `app_deployments` (migration 056), persistance inter-restarts, annulation propre au shutdown du HUB.
+- **Ajouté** : champ `last_deployment` dans `GET /api/apps` (dernier déploiement success/failed par app).
+- **Ajouté** : image hub-api enrichie de `git`, `make`, CLI docker + compose v2 (binaires statiques pinés) ; montage `APPS/` au même chemin absolu hôte/conteneur (`APPS_HOST_PATH`) pour la résolution des bind mounts par le daemon. `cap_drop: ALL` et socket `:ro` inchangés.
+- **Modifié (UI)** : après validation du formulaire d'ajout d'app avec URL Git, le déploiement se lance automatiquement et une modal « Déploiement » suit les 5 étapes en temps réel (polling 2 s, logs, bouton Réessayer). Le banner « 📋 Copier le .env » est supprimé (relique du flux manuel). Badge « Non déployée » + bouton fusée sur les apps avec `git_repo_url` sans déploiement réussi (cas exemple-app).
+- **Corrigé** : `test_api_health_alias_returns_health_payload` attendait un payload sans `version` (test préexistant cassé sur main depuis l'ajout du champ au health).
+
+### 🔧 Technique
+
+| Composant | Détail |
+|-----------|--------|
+| `hub/app/deploy_service.py` | Worker asyncio + helpers `.env` (variantes `API_PORT`/`APP_PORT`/`APP_PORT_API`, `HUB_HOST`/`HUB_URL`, `APP_HOST`/`SERVER_IP`/`HOST_IP`, reconstruction `DATABASE_URL`) |
+| `hub/app/routes/app_deploy.py` | Endpoints admin-only (404 app inconnue, 400 sans repo, 409 conflit) |
+| `hub/migrations/056_create_app_deployments.sql` | Table + index (SQL maison, runner `apply_migrations`) |
+| `frontend/public/js/modules/admin-app-deploy.js` | Modal de suivi temps réel (pattern `dockerInfoModal`, polling 2 s triple-cleanup) |
+
+---
+
 ## [3.32.3] - 17 août 2026
 
 ### ⚡ Auth — réponse login fidèle à la base
