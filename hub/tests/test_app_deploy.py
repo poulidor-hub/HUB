@@ -321,6 +321,17 @@ async def test_deploy_status_payload(client, admin_token, app_with_repo, async_s
 
 
 @pytest.mark.asyncio
+async def test_apps_list_exposes_last_deployment(client, admin_token, app_with_repo, async_session):
+    async_session.add(AppDeployment(app_slug="exemple-app", status="failed"))
+    async_session.add(AppDeployment(app_slug="exemple-app", status="success"))
+    await async_session.commit()
+    r = await client.get("/api/apps/", headers=get_auth_header(admin_token))
+    assert r.status_code == 200
+    mine = [a for a in r.json() if a["slug"] == "exemple-app"][0]
+    assert mine["last_deployment"]["status"] == "success"
+
+
+@pytest.mark.asyncio
 async def test_app_deployment_model_persists(async_session):
     """La table app_deployments existe et persiste (migration via Base.metadata en test)."""
     dep = AppDeployment(

@@ -364,6 +364,7 @@ class AppResponseWithMyRole(AppResponse):
     is_favorite: bool = False  # Si l'utilisateur a mis cette app en favori
     category: Optional[str] = None  # Catégorie de l'application
     group: Optional[AppGroupBrief] = None  # Groupe visuel (null si non groupée)
+    last_deployment: Optional[dict] = None  # Dernier déploiement auto (success/failed) — null si jamais déployée
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -374,7 +375,8 @@ class AppResponseWithMyRole(AppResponse):
         my_role: Optional[str] = None,
         app_version: Optional[str] = None,
         is_favorite: bool = False,
-        group: Optional[AppGroupBrief] = None
+        group: Optional[AppGroupBrief] = None,
+        last_deployment: Optional[dict] = None
     ) -> "AppResponseWithMyRole":
         """Crée une réponse avec le rôle de l'utilisateur courant"""
         # Gérer l'enum ApprovalStatus
@@ -407,6 +409,7 @@ class AppResponseWithMyRole(AppResponse):
             category=getattr(app, 'category', None),
             git_repo_url=getattr(app, 'git_repo_url', None),
             group=group,
+            last_deployment=last_deployment,
         )
 
 

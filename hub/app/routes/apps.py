@@ -18,7 +18,7 @@ from app.routes.events import notify_event, notify_stats_update
 from app.routes.app_backups import reassociate_orphan_backups
 
 from app.database import get_db
-from app.models import Application, User, ServiceAccount, UserAppRole, ApprovalStatus, service_account_app_access, DEFAULT_ROLES, UserFavorite, utcnow, AppDependency, AppGroup
+from app.models import Application, User, ServiceAccount, UserAppRole, ApprovalStatus, service_account_app_access, DEFAULT_ROLES, UserFavorite, utcnow, AppDependency, AppGroup, AppDeployment
 from app.routes.app_groups import group_to_brief
 from app.schemas import (
     AppCreate, AppCreateSimplified, AppUpdate, AppResponse, AppWithUsers, AppWithUsersAndDocker,
@@ -599,6 +599,17 @@ async def list_apps(
         if app_obj.group_id and app_obj.group_id in groups_map:
             return group_to_brief(groups_map[app_obj.group_id])
         return None
+
+    # Dernier déploiement automatique (success/failed) par app — badge « Non déployée »
+    dep_result = await db.execute(
+        select(AppDeployment.app_slug, AppDeployment.status, AppDeployment.finished_at)
+        .where(AppDeployment.status.in_(["success", "failed"]))
+        .order_by(AppDeployment.id.desc())
+    )
+    last_deployments: dict[str, dict] = {}
+    for dep_slug, dep_status, dep_finished in dep_result:
+        if dep_slug not in last_deployments:
+            last_deployments[dep_slug] = {"status": dep_status, "finished_at": dep_finished}
     
     # Appliquer le filtre atelier (admin uniquement ; pour les users, toujours prod)
     _apply_workshop_query = lambda query: (
@@ -620,7 +631,8 @@ async def list_apps(
                 user_roles_map.get(app.slug),
                 app_version=app.version,
                 is_favorite=app.id in favorite_app_ids,
-                group=_group_brief(app)
+                group=_group_brief(app),
+                last_deployment=last_deployments.get(app.slug)
             )
             for app in apps
         ]
@@ -640,7 +652,8 @@ async def list_apps(
                 ar.role,
                 app_version=ar.application.version,
                 is_favorite=ar.application.id in favorite_app_ids,
-                group=_group_brief(ar.application)
+                group=_group_brief(ar.application),
+                last_deployment=last_deployments.get(ar.application.slug)
             )
             for ar in sorted_roles
         ]
