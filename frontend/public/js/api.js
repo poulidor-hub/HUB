@@ -1744,6 +1744,15 @@ class HubAPI {
         });
     }
 
+    // ===== Déploiement automatique =====
+    async deployApp(slug) {
+        return this.request(`/apps/${encodeURIComponent(slug)}/deploy`, { method: 'POST' });
+    }
+
+    async getAppDeployStatus(slug) {
+        return this.request(`/apps/${encodeURIComponent(slug)}/deploy/status`);
+    }
+
     // Settings
     async getSetting(key) {
         const resp = await fetch(`${API_BASE}/settings/${encodeURIComponent(key)}`);

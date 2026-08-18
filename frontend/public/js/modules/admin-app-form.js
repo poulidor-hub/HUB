@@ -553,8 +553,12 @@ async function handleSaveApp(event) {
             
             await api.createApp(data);
             appFormModal.hide();
+            let deployStarted = false;
+            if (data.git_repo_url) {
+                try { deployStarted = await triggerDeploy(data.slug); } catch (_) { /* erreur déjà affichée dans la modal de déploiement */ }
+            }
             const sharedMsg = isSharedService ? ' (API partagée M2M)' : '';
-            showToast('Succès', `Application créée${sharedMsg} - le M2M sera créé au démarrage de l'app`, 'success');
+            showToast('Succès', `Application créée${sharedMsg}${deployStarted ? ' — déploiement lancé' : ''}`, 'success');
             
             // Rafraîchir le token pour avoir accès à la nouvelle app immédiatement
             await refreshTokenAfterAppChange('création');
@@ -791,25 +795,10 @@ function openAppFormPrefilled(prepared) {
 
         const modalBody = document.querySelector('#appFormModal .modal-body');
         if (modalBody && !document.getElementById('prefilledEnvBanner')) {
-            const envBlock = [
-                'APP_SLUG=' + prepared.slug,
-                'API_PORT=' + prepared.api_port
-            ];
-            if (prepared.frontend_port) envBlock.push('FRONTEND_PORT=' + prepared.frontend_port);
-            if (prepared.frontend_https_port) envBlock.push('FRONTEND_HTTPS_PORT=' + prepared.frontend_https_port);
-            const envStr = envBlock.join('\n');
-
             const banner = document.createElement('div');
             banner.id = 'prefilledEnvBanner';
-            banner.className = 'alert alert-success';
-            banner.style.cssText = 'border-left:4px solid #16a34a;';
-            banner.innerHTML = ''
-                + '<div class="d-flex justify-content-between align-items-center mb-2">'
-                + '<strong>📋 Valeurs à reporter dans l\'app (le HUB décide, l\'app suit)</strong>'
-                + '<button class="btn btn-sm btn-success" onclick="navigator.clipboard.writeText(atob(\'' + btoa(envStr) + '\')).then(function(){showToast(\'Copié\',\'Bloc .env copié\',\'success\')})">📋 Copier le .env</button>'
-                + '</div>'
-                + '<pre class="mb-0" style="background:#1e293b;color:#e2e8f0;padding:10px;border-radius:6px;font-size:11px;">' + escapeHtml(envStr) + '</pre>'
-                + '<small class="text-muted">↑ Copiez ce bloc dans le .env de l\'app déployée avant de la (re)démarrer.</small>';
+            banner.className = 'alert alert-info';
+            banner.innerHTML = '<i class="bi bi-rocket-takeoff me-1"></i>Déploiement automatique : après validation, le HUB clone le dépôt, configure le <code>.env</code> et démarre l\'app — aucune action manuelle requise.';
             modalBody.insertBefore(banner, modalBody.firstChild);
         }
 
