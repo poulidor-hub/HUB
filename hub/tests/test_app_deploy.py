@@ -246,6 +246,80 @@ async def test_has_active_deployment(async_session):
     assert await has_active_deployment(async_session)
 
 
+# ---- Endpoints ----
+
+from app.auth import create_access_token
+from tests.conftest import get_auth_header
+
+
+@pytest.fixture
+async def app_with_repo(async_session):
+    from app.models import Application as A
+    row = A(name="exemple-app", slug="exemple-app", api_url="http://h:9002",
+            git_repo_url="https://github.com/Poutchouli/exemple-app.git")
+    async_session.add(row)
+    await async_session.commit()
+    return row
+
+
+@pytest.mark.asyncio
+async def test_deploy_requires_admin(client, test_user, app_with_repo):
+    token, _, _ = create_access_token(username=test_user.username, apps={})
+    r = await client.post("/api/apps/exemple-app/deploy", headers=get_auth_header(token))
+    assert r.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_deploy_404_unknown(client, admin_token):
+    r = await client.post("/api/apps/inconnue/deploy", headers=get_auth_header(admin_token))
+    assert r.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_deploy_400_without_repo(client, admin_token, async_session):
+    from app.models import Application as A
+    async_session.add(A(name="X", slug="x", api_url="http://h:1", git_repo_url=None))
+    await async_session.commit()
+    r = await client.post("/api/apps/x/deploy", headers=get_auth_header(admin_token))
+    assert r.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_deploy_conflict_when_active(client, admin_token, app_with_repo, async_session, monkeypatch):
+    async_session.add(AppDeployment(app_slug="other", status="running"))
+    await async_session.commit()
+    r = await client.post("/api/apps/exemple-app/deploy", headers=get_auth_header(admin_token))
+    assert r.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_deploy_starts_and_returns_pending(client, admin_token, app_with_repo, monkeypatch):
+    import app.routes.app_deploy as route_mod
+
+    async def _fake_start(slug, triggered_by):
+        return 42
+
+    monkeypatch.setattr(route_mod, "start_deployment", _fake_start)
+    r = await client.post("/api/apps/exemple-app/deploy", headers=get_auth_header(admin_token))
+    assert r.status_code == 201
+    body = r.json()
+    assert body["deployment_id"] == 42
+    assert body["status"] == "pending"
+
+
+@pytest.mark.asyncio
+async def test_deploy_status_payload(client, admin_token, app_with_repo, async_session):
+    async_session.add(AppDeployment(app_slug="exemple-app", status="success",
+                                    current_step="done", logs="ok"))
+    await async_session.commit()
+    r = await client.get("/api/apps/exemple-app/deploy/status", headers=get_auth_header(admin_token))
+    assert r.status_code == 200
+    body = r.json()
+    assert body["current"]["status"] == "success"
+    assert body["current"]["current_step"] == "done"
+    assert body["history"][0]["status"] == "success"
+
+
 @pytest.mark.asyncio
 async def test_app_deployment_model_persists(async_session):
     """La table app_deployments existe et persiste (migration via Base.metadata en test)."""

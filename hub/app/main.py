@@ -15,7 +15,7 @@ from app.outbox import outbox_service
 from app.models import User, ErrorLog, utcnow
 from app.auth import get_password_hash, cleanup_expired_tokens, get_current_admin
 from app.config import get_settings, build_cors_config
-from app.routes import auth, users, apps, service_accounts, audit, docs, events, app_backups, profiles, apps_health, messages, account_requests, snapshots, vpn, oidc, github_catalog, hub_restore, tags, app_groups
+from app.routes import auth, users, apps, service_accounts, audit, docs, events, app_backups, profiles, apps_health, messages, account_requests, snapshots, vpn, oidc, github_catalog, hub_restore, tags, app_groups, app_deploy
 from app.routes import settings as settings_routes
 
 import logging
@@ -440,7 +440,11 @@ async def lifespan(app: FastAPI):
             await _msg_dispatch_task
         except asyncio.CancelledError:
             pass
-    
+
+    # Annuler les déploiements automatiques en cours
+    from app.deploy_service import cancel_all_deployments
+    cancel_all_deployments()
+
     await outbox_service.stop_worker()
     await outbox_service.cleanup_old_messages()
     
@@ -700,6 +704,7 @@ app.include_router(settings_routes.router)
 app.include_router(vpn.router)
 app.include_router(oidc.router)
 app.include_router(github_catalog.router)
+app.include_router(app_deploy.router)
 app.include_router(hub_restore.router)
 app.include_router(tags.router)
 app.include_router(app_groups.router)
