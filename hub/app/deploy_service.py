@@ -78,3 +78,239 @@ def apply_env_values(env_path: Path, values: dict[str, str], ensure: list[str] |
         text = re.sub(r"(://[^:/@\s]+:)[^@\s]*(@)", rf"\g<1>{pwd}\g<2>", text)
 
     env_path.write_text(text)
+
+
+# ==== Worker de déploiement ====
+
+import asyncio
+import base64
+import logging
+import os
+import time
+
+import httpx
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.config import get_settings
+from app.database import async_session_maker
+from app.models import AppDeployment, Application
+from app.port_allocator import allocate_ports_for_app
+
+logger = logging.getLogger(__name__)
+
+# Timeouts par étape (secondes)
+TIMEOUT_CLONE = 300
+TIMEOUT_BUILD = 900
+TIMEOUT_UP = 180
+TIMEOUT_HEALTH = 120
+LOGS_CAP = 100_000
+
+_deploy_lock = asyncio.Lock()          # 1 déploiement à la fois, globalement
+_deploy_tasks: set[asyncio.Task] = set()
+
+
+class DeployTimeout(Exception):
+    pass
+
+
+def get_apps_dir() -> Path:
+    return Path(get_settings().apps_host_path)
+
+
+async def has_active_deployment(db: AsyncSession) -> bool:
+    result = await db.execute(
+        select(AppDeployment.id)
+        .where(AppDeployment.status.in_(["pending", "running"]))
+        .limit(1)
+    )
+    return result.scalar_one_or_none() is not None
+
+
+def cancel_all_deployments() -> None:
+    """Shutdown : annule les déploiements en cours (pattern lifespan du HUB)."""
+    for task in list(_deploy_tasks):
+        task.cancel()
+    _deploy_tasks.clear()
+
+
+async def start_deployment(slug: str, triggered_by: str | None) -> int:
+    """Crée la ligne de déploiement et lance la tâche de fond (non-bloquant)."""
+    async with async_session_maker() as db:
+        dep = AppDeployment(app_slug=slug, status="pending", triggered_by=triggered_by)
+        db.add(dep)
+        await db.commit()
+        await db.refresh(dep)
+        deployment_id = dep.id
+    task = asyncio.create_task(_run_deployment(deployment_id, slug))
+    _deploy_tasks.add(task)
+    task.add_done_callback(_deploy_tasks.discard)
+    return deployment_id
+
+
+async def _update_deployment(deployment_id: int, session_factory=None, **fields) -> None:
+    factory = session_factory or async_session_maker
+    async with factory() as db:
+        dep = await db.get(AppDeployment, deployment_id)
+        if dep is None:
+            return
+        for k, v in fields.items():
+            if k == "logs":
+                merged = ((dep.logs or "") + (v or ""))
+                setattr(dep, k, merged[-LOGS_CAP:])
+            else:
+                setattr(dep, k, v)
+        await db.commit()
+
+
+def _git_auth_args(token: str | None) -> list[str]:
+    """Args git d'auth PAT — le token ne transite qu'en mémoire processus
+    (extraheader), jamais en ligne de commande, jamais écrit sur disque."""
+    if not token:
+        return []
+    basic = base64.b64encode(f"x-access-token:{token}".encode()).decode()
+    return ["-c", f"http.extraheader=Authorization: Basic {basic}"]
+
+
+async def _get_github_token(db: AsyncSession) -> str | None:
+    from app.models import AppSetting
+    settings = get_settings()
+    if settings.github_token:
+        return settings.github_token
+    result = await db.execute(
+        select(AppSetting.value).where(AppSetting.key == "github_token")
+    )
+    return result.scalar_one_or_none()
+
+
+async def _run_cmd(cmd: list[str], cwd: Path, timeout: int,
+                   env_extra: dict[str, str] | None = None) -> str:
+    env = {**os.environ, **(env_extra or {})}
+    proc = await asyncio.create_subprocess_exec(
+        *cmd, cwd=str(cwd), env=env,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.STDOUT,
+    )
+    try:
+        out, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+    except asyncio.TimeoutError:
+        proc.kill()
+        await proc.communicate()
+        raise DeployTimeout(f"Timeout ({timeout}s) sur : {cmd[0]}")
+    output = out.decode(errors="replace")
+    if proc.returncode != 0:
+        raise RuntimeError(
+            f"Échec ({proc.returncode}) de '{cmd[0]}':\n{output[-4000:]}"
+        )
+    return output
+
+
+async def _wait_healthy(api_port: int, timeout: int = TIMEOUT_HEALTH) -> bool:
+    host = get_settings().get_hub_host()
+    url = f"http://{host}:{api_port}/api/health"
+    deadline = time.monotonic() + timeout
+    async with httpx.AsyncClient(timeout=5) as client:
+        while time.monotonic() < deadline:
+            try:
+                r = await client.get(url)
+                if r.status_code == 200:
+                    return True
+            except httpx.HTTPError:
+                pass
+            await asyncio.sleep(3)
+    return False
+
+
+async def _run_deployment(deployment_id: int, slug: str, session_factory=None) -> None:
+    """Pipeline complet. Chaque étape journalise en DB (statut + étape + logs)."""
+    async with _deploy_lock:
+        factory = session_factory or async_session_maker
+        await _update_deployment(deployment_id, factory, status="running", current_step="clone",
+                                 logs=f"[{_now():%H:%M:%S}] Déploiement démarré\n")
+        try:
+            async with factory() as db:
+                result = await db.execute(
+                    select(Application).where(Application.slug == slug)
+                )
+                app = result.scalar_one()
+                repo_url = app.git_repo_url
+                host = get_settings().get_hub_host()
+                allocation, _reused = await allocate_ports_for_app(db, slug, host, get_settings())
+                token = await _get_github_token(db)
+
+            app_dir = get_apps_dir() / slug
+            api_port, frontend_port = allocation.api_port, allocation.frontend_port
+
+            # --- Étape 1 : clone / pull ---
+            git_common = ["git", "-c", "safe.directory=*"]
+            if (app_dir / ".git").exists():
+                cmd = git_common + _git_auth_args(token) + ["-C", str(app_dir), "pull"]
+                cwd = app_dir
+            else:
+                app_dir.parent.mkdir(parents=True, exist_ok=True)
+                cmd = git_common + _git_auth_args(token) + ["clone", repo_url, str(app_dir)]
+                cwd = app_dir.parent
+            logger.info(f"[deploy:{slug}] git {'pull' if 'pull' in cmd else 'clone'}")
+            out = await _run_cmd(cmd, cwd, TIMEOUT_CLONE)
+            await _update_deployment(deployment_id, factory, current_step="env",
+                                     logs=out[-2000:] + "\n")
+
+            # --- Étape 2 : .env ---
+            env_path = app_dir / ".env"
+            example = app_dir / ".env.example"
+            if not env_path.exists():
+                if not example.exists():
+                    raise RuntimeError(
+                        "Aucun .env ni .env.example dans le dépôt — "
+                        "impossible de configurer l'app automatiquement."
+                    )
+                env_path.write_text(example.read_text())
+                values = {**build_env_values(slug, api_port, frontend_port, host),
+                          **generate_secrets()}
+            else:
+                values = build_env_values(slug, api_port, frontend_port, host)
+            apply_env_values(env_path, values)
+            await _update_deployment(
+                deployment_id, factory, current_step="build",
+                logs=f"[{_now():%H:%M:%S}] .env configuré (API={api_port}, FRONT={frontend_port})\n")
+
+            # --- Étapes 3-4 : build + up (Makefile si présent, sinon compose) ---
+            has_makefile = (app_dir / "Makefile").exists()
+            if has_makefile:
+                build_cmd, up_cmd = ["make", "build"], ["make", "up"]
+            else:
+                build_cmd, up_cmd = ["docker", "compose", "build"], ["docker", "compose", "up", "-d"]
+            out = await _run_cmd(build_cmd, app_dir, TIMEOUT_BUILD)
+            await _update_deployment(deployment_id, factory, current_step="up",
+                                     logs=out[-4000:] + "\n")
+            out = await _run_cmd(up_cmd, app_dir, TIMEOUT_UP)
+            await _update_deployment(deployment_id, factory, current_step="health",
+                                     logs=out[-2000:] + "\n")
+
+            # --- Étape 5 : health check ---
+            healthy = await _wait_healthy(api_port)
+            if not healthy:
+                raise RuntimeError(
+                    f"Health check KO après {TIMEOUT_HEALTH}s sur le port {api_port}"
+                )
+            await _update_deployment(
+                deployment_id, factory, status="success", current_step="done",
+                finished_at=_now(),
+                logs=f"[{_now():%H:%M:%S}] ✅ App en ligne (port {api_port})\n",
+            )
+            logger.info(f"[deploy:{slug}] succès")
+        except asyncio.CancelledError:
+            await _update_deployment(deployment_id, factory, status="failed",
+                                     current_step="annulé", finished_at=_now(),
+                                     logs="Déploiement annulé (shutdown du HUB)\n")
+            raise
+        except Exception as e:
+            logger.error(f"[deploy:{slug}] échec: {e}", exc_info=True)
+            await _update_deployment(deployment_id, factory, status="failed",
+                                     finished_at=_now(),
+                                     logs=f"[{_now():%H:%M:%S}] ❌ {e}\n")
+
+
+def _now():
+    from app.models import utcnow
+    return utcnow()
