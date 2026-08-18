@@ -5,6 +5,14 @@
 
 ---
 
+## [3.33.2] - 18 août 2026
+
+### ⚡ Déploiement auto — schéma HTTP du HUB forcé
+
+- **Corrigé** : certaines apps (cas exemple-app) joignent l'API du HUB en `https://…:8000` alors que ce port est servi en HTTP (SSL : WRONG_VERSION_NUMBER → JWKS inaccessible → 503 « Service d'authentification non disponible »). Le pipeline injecte désormais `HUB_HTTPS_ENABLED=false` dans le `.env` généré (remplacement si présent + ajout sinon : « le HUB décide, l'app suit »).
+
+---
+
 ## [3.33.1] - 18 août 2026
 
 ### ⚡ Déploiement auto — table admin corrigée
