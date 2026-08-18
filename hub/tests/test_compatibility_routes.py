@@ -20,10 +20,10 @@ class TestCompatibilityRoutes:
         response = await client.get("/api/health")
 
         assert response.status_code == 200
-        assert response.json() == {
-            "status": "healthy",
-            "service": "hub-auth",
-        }
+        payload = response.json()
+        assert payload["status"] == "healthy"
+        assert payload["service"] == "hub-auth"
+        assert "version" in payload  # champ ajouté par /health (get_hub_version)
 
     @pytest.mark.asyncio
     async def test_backup_list_alias_matches_canonical_route(
