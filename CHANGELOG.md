@@ -5,6 +5,18 @@
 
 ---
 
+## [3.34.0] - 18 août 2026
+
+### 🔓 Override des rôles dérivés des profils
+
+- **Ajouté** : les admins peuvent modifier le niveau de droits d'une app couverte par un profil (override) — auparavant verrouillé côté UI. L'override est matérialisé par `user_app_roles.source = "override:<profile_id>"`, survit à la synchronisation du profil jusqu'à réinitialisation explicite, et disparaît quand son profil d'origine ne couvre plus l'app (recréation du rôle attendu si un autre profil couvre l'app).
+- **Ajouté** : visibilité des droits modifiés — filtre « Droits modifiés » dans la liste utilisateurs (`?app_role_override=`), badge « Modifié » sur les lignes concernées (`has_role_overrides`), marqueur par app « rôle · modifié (profil : X) » dans la ligne extensible, et bouton « Réinitialiser selon profil » dans la modal utilisateur.
+- **API** : `UserAppRoleResponse` enrichi (`profile_role`, `overridden`) ; `POST /api/users/{id}/apps` et `POST /api/users/bulk/roles` acceptent `reset` par assignment ; endpoint `GET /api/users/{id}/apps` expose `profile_role`/`overridden`.
+- **Corrigé** : le filtre obsolète `source == "profile"` (valeur morte depuis la migration 011, réelle `profile:<id>`) ne matche jamais — un appel API direct pouvait créer une ligne `manual` dupliquée sur une app profilée. Remplacement par une logique upsert + contrainte d'unicité.
+- **Migration 055** : contrainte unique `uq_user_app_roles_user_app` sur `user_app_roles(user_id, app_id)` + dédoublonnage des lignes existantes (priorité à la ligne profil).
+
+---
+
 ## [3.33.2] - 18 août 2026
 
 ### ⚡ Déploiement auto — schéma HTTP du HUB forcé
