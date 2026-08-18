@@ -557,6 +557,20 @@ async def get_apps_status(
     }
 
 
+async def _load_last_deployments(db: AsyncSession) -> dict[str, dict]:
+    """Map {slug: {status, finished_at}} du dernier déploiement success/failed par app."""
+    dep_result = await db.execute(
+        select(AppDeployment.app_slug, AppDeployment.status, AppDeployment.finished_at)
+        .where(AppDeployment.status.in_(["success", "failed"]))
+        .order_by(AppDeployment.id.desc())
+    )
+    last: dict[str, dict] = {}
+    for dep_slug, dep_status, dep_finished in dep_result:
+        if dep_slug not in last:
+            last[dep_slug] = {"status": dep_status, "finished_at": dep_finished}
+    return last
+
+
 @router.get("/", response_model=List[AppResponseWithMyRole])
 async def list_apps(
     db: AsyncSession = Depends(get_db),
@@ -601,15 +615,7 @@ async def list_apps(
         return None
 
     # Dernier déploiement automatique (success/failed) par app — badge « Non déployée »
-    dep_result = await db.execute(
-        select(AppDeployment.app_slug, AppDeployment.status, AppDeployment.finished_at)
-        .where(AppDeployment.status.in_(["success", "failed"]))
-        .order_by(AppDeployment.id.desc())
-    )
-    last_deployments: dict[str, dict] = {}
-    for dep_slug, dep_status, dep_finished in dep_result:
-        if dep_slug not in last_deployments:
-            last_deployments[dep_slug] = {"status": dep_status, "finished_at": dep_finished}
+    last_deployments = await _load_last_deployments(db)
     
     # Appliquer le filtre atelier (admin uniquement ; pour les users, toujours prod)
     _apply_workshop_query = lambda query: (
@@ -849,8 +855,12 @@ async def list_all_apps_with_users(
     
     result = await db.execute(query)
     apps = result.scalars().all()
+    # Dernier déploiement automatique par app (badge « Non déployée » + bouton Déployer)
+    last_deployments = await _load_last_deployments(db)
     return [
-        AppWithUsersAndDocker.from_orm_model_with_docker(app)
+        AppWithUsersAndDocker.from_orm_model_with_docker(
+            app, last_deployment=last_deployments.get(app.slug)
+        )
         for app in apps
     ]
 

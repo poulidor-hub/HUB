@@ -332,6 +332,19 @@ async def test_apps_list_exposes_last_deployment(client, admin_token, app_with_r
 
 
 @pytest.mark.asyncio
+async def test_apps_all_exposes_git_repo_and_last_deployment(client, admin_token, app_with_repo, async_session):
+    """La table admin (GET /api/apps/all) doit exposer git_repo_url + last_deployment
+    (badge « Non déployée » + bouton Déployer)."""
+    async_session.add(AppDeployment(app_slug="exemple-app", status="failed"))
+    await async_session.commit()
+    r = await client.get("/api/apps/all", headers=get_auth_header(admin_token))
+    assert r.status_code == 200
+    mine = [a for a in r.json() if a["slug"] == "exemple-app"][0]
+    assert mine["git_repo_url"] == "https://github.com/Poutchouli/exemple-app.git"
+    assert mine["last_deployment"]["status"] == "failed"
+
+
+@pytest.mark.asyncio
 async def test_app_deployment_model_persists(async_session):
     """La table app_deployments existe et persiste (migration via Base.metadata en test)."""
     dep = AppDeployment(
