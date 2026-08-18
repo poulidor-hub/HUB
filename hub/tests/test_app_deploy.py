@@ -94,6 +94,26 @@ def test_apply_env_https_port_not_appended_if_absent(tmp_path):
     assert "FRONTEND_HTTPS_PORT" not in env.read_text()
 
 
+def test_build_env_values_forces_hub_http():
+    """Le port API du HUB est HTTP dans ce parc → HUB_HTTPS_ENABLED forcé à false."""
+    vals = build_env_values(slug="x", api_port=9000, frontend_port=4200, hub_host="192.0.2.10")
+    assert vals["HUB_HTTPS_ENABLED"] == "false"
+
+
+def test_apply_env_replaces_hub_https_enabled_true(tmp_path):
+    """Un .env avec HUB_HTTPS_ENABLED=true (ex: exemple-app) est corrigé à false."""
+    env = _write_env(tmp_path, "HUB_HTTPS_ENABLED=true\nAPP_SLUG=x\n")
+    apply_env_values(env, build_env_values(slug="x", api_port=9000, frontend_port=4200, hub_host="h"))
+    assert "HUB_HTTPS_ENABLED=false" in env.read_text()
+
+
+def test_apply_env_ensures_hub_https_enabled_present(tmp_path):
+    """Sans la clé dans le .env, elle est ajoutée (explicit > default)."""
+    env = _write_env(tmp_path, "APP_SLUG=x\n")
+    apply_env_values(env, build_env_values(slug="x", api_port=9000, frontend_port=4200, hub_host="h"))
+    assert "HUB_HTTPS_ENABLED=false" in env.read_text()
+
+
 def test_generate_secrets(tmp_path):
     s1 = generate_secrets()
     s2 = generate_secrets()
