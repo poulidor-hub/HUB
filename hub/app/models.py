@@ -836,6 +836,25 @@ class PortAllocation(Base):
     allocated_at = Column(DateTime, default=utcnow)
 
 
+class AppDeployment(Base):
+    """Déploiement automatique d'une app (clone -> .env -> build -> up -> health).
+
+    Lien par app_slug (pas de FK, cohérent avec PortAllocation).
+    Un déploiement à la fois globalement (lock asyncio dans deploy_service).
+    """
+
+    __tablename__ = "app_deployments"
+
+    id = Column(Integer, primary_key=True, index=True)
+    app_slug = Column(String(50), index=True, nullable=False)
+    status = Column(String(16), default="pending", nullable=False)  # pending|running|success|failed
+    current_step = Column(String(50), nullable=True)  # clone|env|build|up|health
+    logs = Column(Text, default="")
+    triggered_by = Column(String(100), nullable=True)  # username admin
+    started_at = Column(DateTime, default=utcnow)
+    finished_at = Column(DateTime, nullable=True)
+
+
 class AppDependency(Base):
     """Dépendance déclarée entre deux apps (M2M).
 

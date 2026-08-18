@@ -297,6 +297,12 @@ class Settings(BaseSettings):
     app_subnet_pool: str = "10.50.0.0/16"
     app_subnet_size: int = 24
 
+    # === Déploiement automatique des apps ===
+    # Chemin absolu du dossier APPS/ — doit être identique côté hôte et côté
+    # conteneur hub-api (montage au même chemin) pour que les bind mounts des
+    # docker compose des apps soient résolus correctement par le daemon hôte.
+    apps_host_path: str = "/home/kkleskk/MyCOMPANY/HUB_stack/POULIDOR/APPS"
+
     # Host du Hub (IP ou hostname accessible par les clients)
     # Si non défini, sera détecté automatiquement
     hub_host: str = ""
