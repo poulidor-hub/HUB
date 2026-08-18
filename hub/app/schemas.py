@@ -469,9 +469,11 @@ class AppWithUsersAndDocker(AppWithUsers):
     health_status: Optional[str] = None  # Conservé pour compatibilité, toujours None
     category: Optional[str] = None  # Catégorie (badge/filtre dashboard)
     group_id: Optional[int] = None  # Groupe visuel (null = hors groupe)
+    git_repo_url: Optional[str] = None  # URL du dépôt Git (déploiement auto, update-check)
+    last_deployment: Optional[dict] = None  # Dernier déploiement auto (success/failed) — null si jamais déployée
 
     @classmethod
-    def from_orm_model_with_docker(cls, app) -> "AppWithUsersAndDocker":
+    def from_orm_model_with_docker(cls, app, last_deployment: Optional[dict] = None) -> "AppWithUsersAndDocker":
         """Convertit une Application ORM avec user_roles en AppWithUsersAndDocker"""
         users = [
             UserBriefWithRole(
@@ -505,7 +507,9 @@ class AppWithUsersAndDocker(AppWithUsers):
             frontend_https_port=getattr(app, 'frontend_https_port', None),
             approval_status=approval_status,
             created_at=app.created_at,
-            users=users
+            users=users,
+            git_repo_url=getattr(app, 'git_repo_url', None),
+            last_deployment=last_deployment,
         )
 
 
