@@ -57,6 +57,7 @@ services:
       - ADMIN_PASSWORD=${ADMIN_PASSWORD:?Définir ADMIN_PASSWORD dans .env}
       - ADMIN_EMAIL=${ADMIN_EMAIL:-admin@local.lan}
       - HUB_HOST=${HUB_HOST:-}
+      - APPS_HOST_PATH=${APPS_HOST_PATH:-/home/kkleskk/MyCOMPANY/HUB_stack/POULIDOR/APPS}
       - AUTO_GENERATE_KEYS=${AUTO_GENERATE_KEYS:-false}
       - APP_WHITELIST_NETWORKS=${APP_WHITELIST_NETWORKS:-}
       - AUDIT_SSE_COOLDOWN=${AUDIT_SSE_COOLDOWN:-5.0}
@@ -116,6 +117,10 @@ services:
       - ./storage/snapshots:/code/storage/snapshots:rw
       # Code source des apps (PRA : capture + restauration automatique apps_code.tar)
       - ../APPS:/code/apps_source:rw
+      # Déploiement auto : APPS/ monté au MÊME chemin que sur l'hôte —
+      # les bind mounts relatifs des compose des apps sont résolus par le
+      # daemon hôte, les chemins conteneur/hôte doivent coïncider.
+      - ${APPS_HOST_PATH:-/home/kkleskk/MyCOMPANY/HUB_stack/POULIDOR/APPS}:${APPS_HOST_PATH:-/home/kkleskk/MyCOMPANY/HUB_stack/POULIDOR/APPS}:rw
       # Certificats PKI (CA + cert serveur), partagés avec le frontend
       - ./certs:/code/certs:rw
       # Configuration VPN WireGuard (volume partagé avec wireguard-server)

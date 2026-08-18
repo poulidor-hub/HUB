@@ -17,6 +17,23 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     wireguard-tools \
     && rm -rf /var/lib/apt/lists/*
 
+# === Déploiement automatique des apps (spec 2026-08-18) ===
+# git/make pour le pipeline, CLI docker + compose pour piloter le daemon hôte
+# via le socket déjà monté. Binaires statiques officiels, versions pinées.
+ARG DOCKER_CLI_VERSION=27.5.1
+ARG DOCKER_COMPOSE_VERSION=2.34.0
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        git make curl ca-certificates xz-utils \
+    && rm -rf /var/lib/apt/lists/* \
+    && curl -fsSL "https://download.docker.com/linux/static/stable/x86_64/docker-${DOCKER_CLI_VERSION}.tgz" \
+        | tar -xz -C /usr/local/bin --strip-components=1 docker/docker \
+    && curl -fsSL "https://github.com/docker/compose/releases/download/v${DOCKER_COMPOSE_VERSION}/docker-compose-linux-x86_64" \
+        -o /usr/local/bin/docker-compose \
+    && chmod +x /usr/local/bin/docker-compose \
+    && mkdir -p /usr/local/lib/docker/cli-plugins \
+    && ln -sf /usr/local/bin/docker-compose /usr/local/lib/docker/cli-plugins/docker-compose \
+    && git config --system --add safe.directory '*'
+
 COPY requirements.txt .
 RUN pip install --no-cache-dir --upgrade -r requirements.txt
 
