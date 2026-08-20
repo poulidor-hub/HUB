@@ -295,7 +295,7 @@ async def event_generator(request: Request, queue: asyncio.Queue, user_id: Optio
             
             try:
                 # Attendre un événement avec timeout pour vérifier la connexion
-                event = await asyncio.wait_for(queue.get(), timeout=30.0)
+                event = await asyncio.wait_for(queue.get(), timeout=15.0)
                 
                 # Message shutdown = sortie immédiate
                 if event.get("type") == "shutdown":
@@ -346,7 +346,9 @@ async def event_stream(request: Request):
     - `users_updated` : Un utilisateur a été créé, modifié ou supprimé
     - `service_accounts_updated` : Un service account a été modifié
     - `stats_updated` : Statistiques mises à jour
-    - `ping` : Keep-alive (toutes les 30s) - Met aussi à jour l'activité de session
+    - `ping` : Keep-alive (toutes les 15s) - Met aussi à jour l'activité de session
+      Note : rester < ~25 s — Firefox coupe une connexion SSE ~25-29 s après
+      le dernier octet reçu (sinon déconnexions toutes les ~55 s).
     
     Le ping SSE sert de heartbeat pour:
     - Maintenir la connexion active

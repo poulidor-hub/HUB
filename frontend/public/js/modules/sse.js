@@ -7,13 +7,20 @@
 
 // ===== Server-Sent Events (SSE) pour mises à jour temps réel =====
 
-// Polling de sécurité : resynchronise les badges toutes les 30s
-// pour couvrir les cas où le SSE est silencieux (déconnexion, onglet arrière-plan, cooldown)
+// Polling de repli : resynchronise les badges toutes les 30s UNIQUEMENT
+// pendant les coupures SSE (le handler onerror l'active, onopen l'arrête).
+// Le heartbeat serveur à 15s maintient désormais la connexion active —
+// cf. app/routes/events.py — un polling permanent n'a plus de justification
+// et générait des rafales de XHR + écritures audit en cascade.
 let _badgeRefreshInterval = null;
 
 function startBadgePolling() {
     if (_badgeRefreshInterval) return;
-    _badgeRefreshInterval = setInterval(refreshAllBadges, 30000);
+    _badgeRefreshInterval = setInterval(() => {
+        // SSE connecté : le temps réel suffit, pas de polling
+        if (eventSource && eventSource.readyState === EventSource.OPEN) return;
+        refreshAllBadges();
+    }, 30000);
 }
 
 function stopBadgePolling() {
@@ -63,7 +70,8 @@ function initEventSource(isReconnect = false) {
                 refreshAfterReconnect();
             }
             sseWasConnected = true;
-            startBadgePolling();
+            // SSE reconnecté : le temps réel reprend, couper le polling de repli
+            stopBadgePolling();
         };
         
         eventSource.onmessage = (event) => {
@@ -78,6 +86,8 @@ function initEventSource(isReconnect = false) {
         eventSource.onerror = (error) => {
             console.warn('SSE: erreur de connexion, reconnexion dans 5s...', error);
             eventSource.close();
+            // Coupure SSE : activer le polling de repli pendant l'interruption
+            startBadgePolling();
             // Reconnexion automatique après 5 secondes
             // Renouveler le beacon_token AVANT de reconnecter le SSE
             // (le secret serveur est régénéré après un redémarrage/reload)
@@ -127,13 +137,13 @@ async function refreshAfterReconnect() {
         // Mettre à jour currentUser
         currentUser = userValid;
         
-        // Renouveler le beacon_token (régénéré côté serveur après redémarrage)
+        // Rafraîchir le beacon_token en cache pour la prochaine reconnexion.
+        // NB : inutile de rouvrir la connexion ici — le beacon utilisé par la
+        // connexion courante a déjà été renouvelé par le handler onerror AVANT
+        // la reconnexion. L'ancien initEventSource(false) tuait la connexion
+        // saine qui venait de s'ouvrir (double reconnexion systématique).
         if (userValid.beacon_token) {
             beaconToken = userValid.beacon_token;
-            console.log('🔑 Beacon token renouvelé après reconnexion');
-            
-            // Reconnecter le SSE avec le nouveau beacon_token
-            initEventSource(false);
         }
         
         // Rafraîchir les applications (page principale)

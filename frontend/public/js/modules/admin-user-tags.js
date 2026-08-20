@@ -89,7 +89,6 @@ async function showTagCategoryModal(slug) {
     document.getElementById('tagFormM2mColumn').innerHTML = '<option value="">-- Choisir --</option>';
     document.getElementById('tagFormTableColGroup').classList.add('d-none');
     document.getElementById('tagFormValues').value = '';
-    document.getElementById('tagFormM2mEndpoint').style.display = 'none';
 
     await loadSourceAppsDropdown();
 
