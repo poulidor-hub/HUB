@@ -5,6 +5,18 @@
 
 ---
 
+## [3.34.1] - 21 août 2026
+
+### ⚡ Stabilité SSE — heartbeat accéléré + frontend temps réel allégé
+
+- **Corrigé (SSE)** : heartbeat serveur 30 s → **15 s** (`events.py`, `asyncio.wait_for(queue.get())`). Firefox coupe une connexion SSE active ~25-29 s après le dernier octet reçu — avec un ping à 30 s, chaque ping arrivait trop tard et la connexion mourait entre deux pings (déconnexions toutes les ~55 s en boucle, reconnexion automatique 5 s plus tard). Reproduit en labo (Firefox headless profil vierge, indépendant de nginx/hub-api — curl stable) et bisectionné : ping 10 s et 20 s survivent, 30 s meurt. Coût : ~24 octets tous les 15 s par client.
+- **Ajouté (test)** : `hub/tests/test_api_events_sse.py` — régression sur la cadence du premier ping (< 22 s). Pilote l'app en **ASGI brut** : le `receive()` d'httpx ASGITransport renvoie `http.disconnect` dès la fin du body d'un GET, faux positif qui tuait artificiellement le générateur via `is_disconnected()` (piège documenté dans le docstring du test).
+- **Optimisé** : polling de badges 30 s en **repli uniquement pendant les coupures SSE** (activé par `onerror`, coupé par `onopen`, tick ignoré si `readyState === OPEN`). En régime nominal, fini les rafales permanentes de 5 XHR toutes les 30 s et leurs écritures audit en cascade.
+- **Corrigé** : suppression de la **double reconnexion** post-coupure — `refreshAfterReconnect()` rouvrait systématiquement la connexion via `initEventSource(false)`, tuant la connexion saine qui venait de s'ouvrir (connexion fantôme de ~50 ms dans les logs). Le beacon_token est déjà renouvelé avant reconnexion par le handler `onerror` ; il est simplement mis en cache pour la prochaine fois.
+- **Corrigé (UI)** : `admin-user-tags.js` — suppression de la référence à `tagFormM2mEndpoint`, champ disparu du modal lors du passage au sélecteur table+colonne (8849ada) ; il provoquait un TypeError au clic « Nouvelle/préférence existante ». Crosscheck effectué : plus aucun `getElementById` du fichier ne référence un ID absent d'`index.html`.
+
+---
+
 ## [3.34.0] - 18 août 2026
 
 ### 🔓 Override des rôles dérivés des profils
