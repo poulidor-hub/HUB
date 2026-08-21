@@ -1443,7 +1443,54 @@ async def register_app(
                 await db.commit()
                 logger.info(f"🔑 Secret M2M régénéré pour '{app_data.slug}' (ré-enregistrement)")
             else:
-                client_secret = None
+                # T1 (self-healing) : app existante dont le SA a disparu
+                # (ex: delete_app en cascade d'une inscription doublon, puis
+                # ré-enregistrement). On recrée un SA dédié et on retourne des
+                # credentials frais — même contrat que la rotation ci-dessus.
+                new_client_id = ServiceAccount.generate_client_id()
+                client_secret = ServiceAccount.generate_client_secret()
+                sa = ServiceAccount(
+                    name=f"SA - {existing_app.name}",
+                    description=f"Service account M2M de '{existing_app.slug}' (recréé automatiquement au ré-enregistrement)",
+                    client_id=new_client_id,
+                    client_secret_hash=get_password_hash(client_secret),
+                    is_active=True,
+                )
+                db.add(sa)
+                sa.applications.append(existing_app)
+
+                # Associer les shared services (même logique/isolation que
+                # create_service_account : parité de contexte atelier)
+                sa_is_workshop = bool(getattr(existing_app, "is_workshop", False))
+                shared_result = await db.execute(
+                    select(Application).where(Application.is_shared_service == True)
+                )
+                for shared_app in shared_result.scalars().all():
+                    if shared_app not in sa.applications:
+                        if bool(getattr(shared_app, "is_workshop", False)) == sa_is_workshop:
+                            sa.applications.append(shared_app)
+
+                await db.commit()
+
+                await log_action(
+                    db=db,
+                    user_id=None,
+                    service_account_id=sa.id,
+                    action="m2m_sa_recreated",
+                    target=app_data.slug,
+                    request=request,
+                    response_status=status.HTTP_200_OK,
+                    details=f"Service account recréé pour '{existing_app.slug}' (SA absent au ré-enregistrement, IP trusted {client_ip})",
+                )
+                await db.commit()
+
+                save_service_account_credentials(
+                    name=existing_app.slug,
+                    client_id=new_client_id,
+                    client_secret=client_secret,
+                    app_slugs=[a.slug for a in sa.applications],
+                )
+                logger.info(f"🔧 SA recréé pour '{app_data.slug}' (ré-enregistrement sans SA)")
             
             return AppRegisterResponse(
                 message=message,

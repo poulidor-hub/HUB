@@ -164,9 +164,11 @@ class TestAppAutoReplace:
         # L'app peut être mise à jour (URLs différentes) ou inchangée
         msg = data["message"].lower()
         assert "déjà enregistrée" in msg or "mise à jour" in msg
-        # Pas de client_secret fourni (seulement client_id si SA existe)
+        # T1 (self-healing) : sans SA, le ré-enregistrement trusted recrée un SA
+        # et retourne des credentials complets (client_id + client_secret)
         if data.get("credentials"):
-            assert "client_secret" not in data["credentials"]
+            assert data["credentials"]["client_id"]
+            assert data["credentials"]["client_secret"]
 
     @pytest.mark.asyncio
     async def test_legacy_reregistration_stays_compat_and_is_audited(
