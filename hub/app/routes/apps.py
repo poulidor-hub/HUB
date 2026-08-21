@@ -272,6 +272,20 @@ def generate_slug(name: str) -> str:
     return slug
 
 
+def is_owner_service_account(sa, app_slug: str, app_name: str) -> bool:
+    """Un SA est 'propriétaire' d'une app s'il a été créé pour elle lors de
+    l'auto-registration. Convention nominale partagée avec delete_app_cascade.
+    Pour une app partagée, la relation N-N contient aussi les SA des autres
+    apps (accès shared) — ils ne doivent JAMAIS être sélectionnés pour une
+    rotation/recréation."""
+    sa_name_lower = sa.name.lower()
+    return (
+        app_slug in sa_name_lower
+        or app_name.lower() in sa_name_lower
+        or sa.name == f"SA - {app_name}"
+    )
+
+
 async def delete_app_cascade(
     db: AsyncSession,
     app: Application,
@@ -302,14 +316,7 @@ async def delete_app_cascade(
     for sa in list(app.service_accounts):
         # Vérifier si ce SA est le "principal" de cette app (créé lors de l'auto-registration)
         # Le nom du SA suit le pattern "SA - <App Name>" ou contient le slug
-        sa_name_lower = sa.name.lower()
-        is_owner_sa = (
-            app_slug in sa_name_lower or 
-            app_name.lower() in sa_name_lower or
-            sa.name == f"SA - {app_name}"
-        )
-        
-        if is_owner_sa:
+        if is_owner_service_account(sa, app_slug, app_name):
             logger.info(f"🗑️ Suppression du Service Account '{sa.name}' (id={sa.id}) de l'app '{app_slug}'")
             
             # Supprimer le fichier credentials si demandé
@@ -1425,7 +1432,18 @@ async def register_app(
                 .where(Application.id == existing_app.id)
             )
             existing_app = result_sa.scalar_one()
-            sa = next((sa for sa in existing_app.service_accounts), None)
+            # Ne sélectionner que le SA "propriétaire" de cette app. Pour une
+            # app partagée, la relation N-N contient aussi les SA des autres
+            # apps (accès shared) : rotationner leur secret casserait leur M2M
+            # (bug réel : SA de Philia Proxy livré à exemple-app-7).
+            sa = next(
+                (
+                    sa
+                    for sa in existing_app.service_accounts
+                    if is_owner_service_account(sa, app_data.slug, existing_app.name)
+                ),
+                None,
+            )
             
             # Régénérer le secret M2M : l'app qui se ré-enregistre provient du
             # réseau Docker (trusted) et a probablement perdu ses credentials
