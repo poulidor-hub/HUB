@@ -5,6 +5,18 @@
 
 ---
 
+## [3.34.2] - 22 août 2026
+
+### ⚡ Self-healing M2M — ré-enregistrement trusted fiable
+
+| Fonctionnalité | Description |
+|----------------|-------------|
+| **Sélection du SA propriétaire** | `POST /api/apps/register` (branche ré-enregistrement) sélectionne désormais le SA *propriétaire* via la convention nominale de `delete_app_cascade` (helper partagé `is_owner_service_account`). Corrige un bug préexistant : une app partagée rotationnait le secret du premier SA venu de la relation N-N — c'est-à-dire le SA d'une *autre* app (cas réel : exemple-app-7 a reçu le SA de Philia Proxy, invalidant son secret). |
+| **Recréation du SA disparu** | Une app existante dont le SA a été supprimé en cascade (ex. `delete_app` d'une inscription doublon) retrouve un SA dédié recréé automatiquement au ré-enregistrement (actif, lié à l'app + shared services, parité atelier), tracé en audit `m2m_sa_recreated`. Elle n'est plus muette à vie. |
+| **Sécurité inchangée** | `regenerate-secret` sans token M2M reste 401 (H9) ; garde `is_docker_network_ip` sur `/api/apps/register` inchangée ; le secret n'est jamais loggé. |
+
+---
+
 ## [3.34.1] - 21 août 2026
 
 ### ⚡ Stabilité SSE — heartbeat accéléré + frontend temps réel allégé

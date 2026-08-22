@@ -272,6 +272,20 @@ def generate_slug(name: str) -> str:
     return slug
 
 
+def is_owner_service_account(sa, app_slug: str, app_name: str) -> bool:
+    """Un SA est 'propriétaire' d'une app s'il a été créé pour elle lors de
+    l'auto-registration. Convention nominale partagée avec delete_app_cascade.
+    Pour une app partagée, la relation N-N contient aussi les SA des autres
+    apps (accès shared) — ils ne doivent JAMAIS être sélectionnés pour une
+    rotation/recréation."""
+    sa_name_lower = sa.name.lower()
+    return (
+        app_slug in sa_name_lower
+        or app_name.lower() in sa_name_lower
+        or sa.name == f"SA - {app_name}"
+    )
+
+
 async def delete_app_cascade(
     db: AsyncSession,
     app: Application,
@@ -302,14 +316,7 @@ async def delete_app_cascade(
     for sa in list(app.service_accounts):
         # Vérifier si ce SA est le "principal" de cette app (créé lors de l'auto-registration)
         # Le nom du SA suit le pattern "SA - <App Name>" ou contient le slug
-        sa_name_lower = sa.name.lower()
-        is_owner_sa = (
-            app_slug in sa_name_lower or 
-            app_name.lower() in sa_name_lower or
-            sa.name == f"SA - {app_name}"
-        )
-        
-        if is_owner_sa:
+        if is_owner_service_account(sa, app_slug, app_name):
             logger.info(f"🗑️ Suppression du Service Account '{sa.name}' (id={sa.id}) de l'app '{app_slug}'")
             
             # Supprimer le fichier credentials si demandé
@@ -1425,7 +1432,18 @@ async def register_app(
                 .where(Application.id == existing_app.id)
             )
             existing_app = result_sa.scalar_one()
-            sa = next((sa for sa in existing_app.service_accounts), None)
+            # Ne sélectionner que le SA "propriétaire" de cette app. Pour une
+            # app partagée, la relation N-N contient aussi les SA des autres
+            # apps (accès shared) : rotationner leur secret casserait leur M2M
+            # (bug réel : SA de Philia Proxy livré à exemple-app-7).
+            sa = next(
+                (
+                    sa
+                    for sa in existing_app.service_accounts
+                    if is_owner_service_account(sa, app_data.slug, existing_app.name)
+                ),
+                None,
+            )
             
             # Régénérer le secret M2M : l'app qui se ré-enregistre provient du
             # réseau Docker (trusted) et a probablement perdu ses credentials
@@ -1443,7 +1461,54 @@ async def register_app(
                 await db.commit()
                 logger.info(f"🔑 Secret M2M régénéré pour '{app_data.slug}' (ré-enregistrement)")
             else:
-                client_secret = None
+                # T1 (self-healing) : app existante dont le SA a disparu
+                # (ex: delete_app en cascade d'une inscription doublon, puis
+                # ré-enregistrement). On recrée un SA dédié et on retourne des
+                # credentials frais — même contrat que la rotation ci-dessus.
+                new_client_id = ServiceAccount.generate_client_id()
+                client_secret = ServiceAccount.generate_client_secret()
+                sa = ServiceAccount(
+                    name=f"SA - {existing_app.name}",
+                    description=f"Service account M2M de '{existing_app.slug}' (recréé automatiquement au ré-enregistrement)",
+                    client_id=new_client_id,
+                    client_secret_hash=get_password_hash(client_secret),
+                    is_active=True,
+                )
+                db.add(sa)
+                sa.applications.append(existing_app)
+
+                # Associer les shared services (même logique/isolation que
+                # create_service_account : parité de contexte atelier)
+                sa_is_workshop = bool(getattr(existing_app, "is_workshop", False))
+                shared_result = await db.execute(
+                    select(Application).where(Application.is_shared_service == True)
+                )
+                for shared_app in shared_result.scalars().all():
+                    if shared_app not in sa.applications:
+                        if bool(getattr(shared_app, "is_workshop", False)) == sa_is_workshop:
+                            sa.applications.append(shared_app)
+
+                await db.commit()
+
+                await log_action(
+                    db=db,
+                    user_id=None,
+                    service_account_id=sa.id,
+                    action="m2m_sa_recreated",
+                    target=app_data.slug,
+                    request=request,
+                    response_status=status.HTTP_200_OK,
+                    details=f"Service account recréé pour '{existing_app.slug}' (SA absent au ré-enregistrement, IP trusted {client_ip})",
+                )
+                await db.commit()
+
+                save_service_account_credentials(
+                    name=existing_app.slug,
+                    client_id=new_client_id,
+                    client_secret=client_secret,
+                    app_slugs=[a.slug for a in sa.applications],
+                )
+                logger.info(f"🔧 SA recréé pour '{app_data.slug}' (ré-enregistrement sans SA)")
             
             return AppRegisterResponse(
                 message=message,
