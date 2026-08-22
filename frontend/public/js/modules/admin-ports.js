@@ -103,7 +103,7 @@ function renderPortsPool(data) {
             <td><span class="badge bg-secondary">${escapeHtml(String(a.frontend_https_port))}</span></td>
             <td class="text-end">
                 <button class="btn btn-sm btn-outline-danger" title="Libérer (supprimer l'allocation)"
-                    onclick="removePortAllocation(${a.id}, '${escapeHtml(a.app_slug)}')">
+                    data-action="removePortAllocation" data-arg1="${a.id}" data-arg2="${escapeHtml(a.app_slug)}">
                     <i class="bi bi-trash"></i>
                 </button>
             </td>

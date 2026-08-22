@@ -24,7 +24,7 @@ function renderGithubApps(data) {
     const summary = document.getElementById('githubAppsSummary');
     const fetchedStr = data.fetched_at ? ' · sync ' + formatRelative(data.fetched_at) : ' · jamais synchronisé';
     var tokenBadge = data.token_configured
-        ? ' · <span style="color:#16a34a;font-size:12px;">🔑 token configuré</span> <a href="#" onclick="toggleGithubTokenForm();return false;" style="font-size:12px;">(modifier)</a>'
+        ? ' · <span style="color:#16a34a;font-size:12px;">🔑 token configuré</span> <a href="#" data-action="toggleGithubTokenForm" style="font-size:12px;">(modifier)</a>'
         : ' · <span style="color:#dc2626;font-size:12px;">⚠️ pas de token</span>';
     summary.innerHTML = '<strong>' + data.total + '</strong> repo(s)' + fetchedStr + tokenBadge;
 
@@ -41,7 +41,7 @@ function renderGithubApps(data) {
                 '<div style="font-size:32px;">📦</div>' +
                 '<h5>Aucun repo en cache</h5>' +
                 '<p class="text-muted">Synchronisez depuis GitHub pour voir vos dépôts.</p>' +
-                '<button class="btn btn-primary" onclick="syncGithubRepos()">🔄 Synchroniser maintenant</button>' +
+                '<button class="btn btn-primary" data-action="syncGithubRepos">🔄 Synchroniser maintenant</button>' +
             '</div>' +
             tokenFormHTML;
         return;
@@ -66,10 +66,10 @@ function renderGithubRepoCard(repo) {
             ? '<span class="badge bg-secondary">📦 Archivé</span>'
             : '<span class="badge bg-success">🟢 Dispo</span>';
     var action = integrated
-        ? '<button class="btn btn-sm btn-outline-secondary w-100" onclick="viewAppForRepo(\'' + escapeHtml(repo.full_name) + '\')">✓ Voir l\'app →</button>'
+        ? '<button class="btn btn-sm btn-outline-secondary w-100" data-action="viewAppForRepo" data-arg1="' + escapeHtml(repo.full_name) + '">✓ Voir l\'app →</button>'
         : archived
             ? '<button class="btn btn-sm btn-outline-secondary w-100" disabled>+ Ajouter au HUB</button>'
-            : '<button class="btn btn-sm btn-success w-100" onclick="addRepoToHub(\'' + escapeHtml(repo.full_name) + '\')">+ Ajouter au HUB</button>';
+            : '<button class="btn btn-sm btn-success w-100" data-action="addRepoToHub" data-arg1="' + escapeHtml(repo.full_name) + '">+ Ajouter au HUB</button>';
     var desc = repo.description ? '<div class="small text-muted">' + escapeHtml(repo.description) + '</div>' : '';
     return '<div class="card h-100 ' + (integrated || archived ? 'opacity-75' : '') + '">' +
         '<div class="card-body d-flex flex-column">' +
@@ -157,7 +157,7 @@ function _ghTokenFormHTML() {
     return '<div id="ghTokenFormWrapper" style="display:none;margin-top:16px;padding:16px;border:1px solid #e2e8f0;border-radius:8px;background:#f8fafc;">' +
         '<div class="d-flex justify-content-between align-items-center mb-2">' +
             '<strong style="font-size:14px;">🔑 Token GitHub</strong>' +
-            '<button class="btn btn-sm btn-outline-secondary" onclick="toggleGithubTokenForm()">✕</button>' +
+            '<button class="btn btn-sm btn-outline-secondary" data-action="toggleGithubTokenForm">✕</button>' +
         '</div>' +
         '<p class="text-muted small mb-2">Personal Access Token (classic) avec les droits <code>repo</code> et <code>read:org</code>.</p>' +
         _ghTokenFormContent() +
@@ -168,12 +168,12 @@ function _ghTokenFormContent() {
     return '<div class="mx-auto" style="max-width:450px;">' +
         '<div class="input-group mb-2">' +
             '<input type="password" id="githubTokenInput" class="form-control" placeholder="ghp_..." autocomplete="off">' +
-            '<button class="btn btn-outline-secondary" type="button" onclick="toggleGithubTokenVisibility()" title="Afficher/masquer">' +
+            '<button class="btn btn-outline-secondary" type="button" data-action="toggleGithubTokenVisibility" title="Afficher/masquer">' +
                 '<i class="bi bi-eye"></i>' +
             '</button>' +
         '</div>' +
         '<div class="d-flex gap-2 justify-content-center">' +
-            '<button class="btn btn-primary btn-sm" onclick="saveGithubToken()">Enregistrer le token</button>' +
+            '<button class="btn btn-primary btn-sm" data-action="saveGithubToken">Enregistrer le token</button>' +
         '</div>' +
     '</div>';
 }

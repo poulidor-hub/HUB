@@ -332,7 +332,7 @@ function renderUserCard(user) {
             <div class="vpn-device-list">${devicesHtml}</div>
             <div class="vpn-user-footer">
                 <button class="vpn-add-device"
-                        onclick="openAddPeerForUser(${user.user_id}, ${attrStr(user.username)})">
+                        data-action="openAddPeerForUser" data-arg1="${user.user_id}" data-arg2="${attrStr(user.username)}">
                     <i class="bi bi-plus-lg"></i> Ajouter un device
                 </button>
             </div>
@@ -369,18 +369,18 @@ function renderDeviceRow(d) {
             <span class="vpn-device-status ${statusClass}"
                   title="${d.connected ? 'Connecté' : 'Hors ligne'}"></span>
             <div class="vpn-device-actions">
-                <button class="vpn-device-btn" onclick="downloadPeerConfig(${d.id})" title="Télécharger .conf">
+                <button class="vpn-device-btn" data-action="downloadPeerConfig" data-arg1="${d.id}" title="Télécharger .conf">
                     <i class="bi bi-download"></i>
                 </button>
                 <button class="vpn-device-btn"
-                        onclick="showPeerQrCode(${d.id}, ${attrStr(d.username)}, ${attrStr(d.name)})" title="QR code">
+                        data-action="showPeerQrCode" data-arg1="${d.id}" data-arg2="${attrStr(d.username)}" data-arg3="${attrStr(d.name)}" title="QR code">
                     <i class="bi bi-qr-code"></i>
                 </button>
-                <button class="vpn-device-btn toggle-on" onclick="handleTogglePeer(${d.id})" title="${toggleTitle}">
+                <button class="vpn-device-btn toggle-on" data-action="handleTogglePeer" data-arg1="${d.id}" title="${toggleTitle}">
                     <i class="bi ${toggleIcon}"></i>
                 </button>
                 <button class="vpn-device-btn delete"
-                        onclick="handleDeletePeer(${d.id}, ${attrStr(d.username)}, ${attrStr(d.name)})" title="Supprimer">
+                        data-action="handleDeletePeer" data-arg1="${d.id}" data-arg2="${attrStr(d.username)}" data-arg3="${attrStr(d.name)}" title="Supprimer">
                     <i class="bi bi-trash"></i>
                 </button>
             </div>

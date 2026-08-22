@@ -120,11 +120,11 @@ function renderSnapshotTable(snapshots) {
                         <i class="bi bi-three-dots"></i>
                     </button>
                     <ul class="dropdown-menu dropdown-menu-end">
-                        <li><a class="dropdown-item" href="#" onclick="showSnapshotDetail('${escapeHtml(s.snapshot_id)}')"><i class="bi bi-eye me-2"></i>Details</a></li>
-                        ${s.status === 'success' ? `<li><a class="dropdown-item" href="#" onclick="downloadSnapshot('${escapeHtml(s.snapshot_id)}')"><i class="bi bi-download me-2"></i>Telecharger</a></li>` : ''}
-                        ${s.status === 'success' ? `<li><a class="dropdown-item text-warning" href="#" onclick="showSnapshotDetail('${escapeHtml(s.snapshot_id)}', 'restore')"><i class="bi bi-arrow-counterclockwise me-2"></i>Restaurer</a></li>` : ''}
+                        <li><a class="dropdown-item" href="#" data-action="showSnapshotDetail" data-arg1="${escapeHtml(s.snapshot_id)}"><i class="bi bi-eye me-2"></i>Details</a></li>
+                        ${s.status === 'success' ? `<li><a class="dropdown-item" href="#" data-action="downloadSnapshot" data-arg1="${escapeHtml(s.snapshot_id)}"><i class="bi bi-download me-2"></i>Telecharger</a></li>` : ''}
+                        ${s.status === 'success' ? `<li><a class="dropdown-item text-warning" href="#" data-action="showSnapshotDetail" data-arg1="${escapeHtml(s.snapshot_id)}" data-arg2="restore"><i class="bi bi-arrow-counterclockwise me-2"></i>Restaurer</a></li>` : ''}
                         <li><hr class="dropdown-divider"></li>
-                        ${s.status !== 'running' ? `<li><a class="dropdown-item text-danger" href="#" onclick="deleteSnapshot('${escapeHtml(s.snapshot_id)}')"><i class="bi bi-trash me-2"></i>Supprimer</a></li>` : ''}
+                        ${s.status !== 'running' ? `<li><a class="dropdown-item text-danger" href="#" data-action="deleteSnapshot" data-arg1="${escapeHtml(s.snapshot_id)}"><i class="bi bi-trash me-2"></i>Supprimer</a></li>` : ''}
                     </ul>
                 </div>
             </td>
@@ -169,7 +169,7 @@ async function showSnapshotDetail(snapshotId, openTab) {
                         </div>
                     </div>
                     <div class="modal-footer">
-                        ${data.status === 'success' ? `<button class="btn btn-outline-primary" onclick="downloadSnapshot('${escapeHtml(data.snapshot_id)}')"><i class="bi bi-download me-1"></i>Telecharger</button>` : ''}
+                        ${data.status === 'success' ? `<button class="btn btn-outline-primary" data-action="downloadSnapshot" data-arg1="${escapeHtml(data.snapshot_id)}"><i class="bi bi-download me-1"></i>Telecharger</button>` : ''}
                         <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Fermer</button>
                     </div>
                 </div>
@@ -243,7 +243,7 @@ async function showSnapshotDetail(snapshotId, openTab) {
             <ul class="list-group mb-3">${contentRows || '<li class="list-group-item text-muted">Aucun collecteur</li>'}</ul>
             ${data.status === 'success' ? `
                 <div class="d-flex gap-2">
-                    <button class="btn btn-outline-warning" onclick="confirmRestoreSnapshot('${escapeHtml(data.snapshot_id)}')">
+                    <button class="btn btn-outline-warning" data-action="confirmRestoreSnapshot" data-arg1="${escapeHtml(data.snapshot_id)}">
                         <i class="bi bi-arrow-counterclockwise me-1"></i>Restaurer ce snapshot
                     </button>
                 </div>

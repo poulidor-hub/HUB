@@ -180,7 +180,7 @@ function renderDockerGroups(groups) {
                                     data-group-slug="${escapeHtml(group.base_slug)}"
                                     ${isRegistered ? 'disabled' : ''}
                                     ${isChecked ? 'checked' : ''}
-                                    onchange="toggleDockerGroupSelection('${escapeHtml(group.base_slug)}')">
+                                    data-action="toggleDockerGroupSelection" data-arg1="${escapeHtml(group.base_slug)}">
                             </div>
                             <div class="flex-grow-1">
                                 <div class="d-flex align-items-center mb-1">
@@ -344,7 +344,7 @@ async function batchImportDockerSelection() {
                     </div>
                     ${r.credentials?.client_secret ? `
                         <div class="text-end">
-                            <button class="btn btn-sm btn-outline-dark" onclick="copyToClipboard('${escapeHtml(r.credentials.client_id)}\\n${escapeHtml(r.credentials.client_secret)}')" title="Copier credentials">
+                            <button class="btn btn-sm btn-outline-dark" data-action="copyToClipboard" data-arg1="${escapeHtml(r.credentials.client_id)}&#10;${escapeHtml(r.credentials.client_secret)}" title="Copier credentials">
                                 <i class="bi bi-clipboard me-1"></i>Credentials
                             </button>
                         </div>

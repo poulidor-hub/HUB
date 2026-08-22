@@ -137,7 +137,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     <i class="bi bi-check-circle-fill" style="font-size: 4rem; color: #198754; margin-bottom: 1rem;"></i>
                     <h2 style="color: #212529; margin-bottom: 0.5rem;">Déconnecté</h2>
                     <p style="color: #6c757d;">Vous pouvez fermer cet onglet.</p>
-                    <button onclick="window.close()" style="margin-top: 1rem; padding: 0.5rem 1.5rem; background: #0d6efd; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 1rem;">
+                    <button data-action="closeWindow" style="margin-top: 1rem; padding: 0.5rem 1.5rem; background: #0d6efd; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 1rem;">
                         Fermer l'onglet
                     </button>
                 </div>

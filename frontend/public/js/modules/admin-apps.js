@@ -460,7 +460,7 @@ function renderAppsTable(apps) {
         container.innerHTML = `
             <div class="d-flex justify-content-between align-items-center mb-2">
                 <small class="text-muted">${countLabel} • triées de A à Z</small>
-                <button class="btn btn-sm btn-outline-secondary" onclick="refreshAppsStatus()" title="Vérifier la connectivité">
+                <button class="btn btn-sm btn-outline-secondary" data-action="refreshAppsStatus" title="Vérifier la connectivité">
                     <i class="bi bi-arrow-clockwise me-1"></i>Tester connectivité
                 </button>
             </div>
@@ -474,7 +474,7 @@ function renderAppsTable(apps) {
     container.innerHTML = `
         <div class="d-flex justify-content-between align-items-center mb-2">
             <small class="text-muted">${countLabel} • triées de A à Z</small>
-            <button class="btn btn-sm btn-outline-secondary" onclick="refreshAppsStatus()" title="Vérifier la connectivité">
+            <button class="btn btn-sm btn-outline-secondary" data-action="refreshAppsStatus" title="Vérifier la connectivité">
                 <i class="bi bi-arrow-clockwise me-1"></i>Tester connectivité
             </button>
         </div>
@@ -504,20 +504,20 @@ function renderAppsTable(apps) {
                     if (approvalStatus === 'pending') {
                         approvalBadge = '<span class="badge bg-warning text-dark ms-1">En attente</span>';
                         approvalActions = `
-                            <button class="btn btn-sm btn-success me-1" onclick="approveApp('${escapeHtml(app.slug)}')" title="Approuver">
+                            <button class="btn btn-sm btn-success me-1" data-action="approveApp" data-arg1="${escapeHtml(app.slug)}" title="Approuver">
                                 <i class="bi bi-check-lg"></i>
                             </button>
-                            <button class="btn btn-sm btn-outline-danger me-1" data-app-name="${escapeHtml(app.name)}" onclick="showRejectAppModal('${escapeHtml(app.slug)}', this.dataset.appName)" title="Rejeter">
+                            <button class="btn btn-sm btn-outline-danger me-1" data-app-name="${escapeHtml(app.name)}" data-action="showRejectAppModal" data-arg1="${escapeHtml(app.slug)}" data-arg2="$el" title="Rejeter">
                                 <i class="bi bi-x-lg"></i>
                             </button>
                         `;
                     } else if (approvalStatus === 'rejected') {
                         approvalBadge = '<span class="badge bg-danger ms-1">Rejeté</span>';
                         approvalActions = `
-                            <button class="btn btn-sm btn-success me-1" onclick="approveApp('${escapeHtml(app.slug)}')" title="Approuver">
+                            <button class="btn btn-sm btn-success me-1" data-action="approveApp" data-arg1="${escapeHtml(app.slug)}" title="Approuver">
                                 <i class="bi bi-check-lg"></i>
                             </button>
-                            <button class="btn btn-sm btn-outline-secondary me-1" onclick="deletePendingApp('${escapeHtml(app.slug)}')" title="Supprimer">
+                            <button class="btn btn-sm btn-outline-secondary me-1" data-action="deletePendingApp" data-arg1="${escapeHtml(app.slug)}" title="Supprimer">
                                 <i class="bi bi-trash"></i>
                             </button>
                         `;
@@ -530,7 +530,7 @@ function renderAppsTable(apps) {
                             <input class="form-check-input" type="checkbox" role="switch" 
                                 id="toggleApp-${app.id}" 
                                 ${app.is_active ? 'checked' : ''} 
-                                onchange="toggleAppActive(${app.id})"
+                                data-action="toggleAppActive" data-arg1="${app.id}"
                                 title="${app.is_active ? 'Désactiver' : 'Activer'}">
                         </div>
                     `;
@@ -568,17 +568,17 @@ function renderAppsTable(apps) {
                             ${approvalActions}
                             ${!isPending ? `
                                 ${app.git_repo_url && (!app.last_deployment || app.last_deployment.status !== 'success') ? `
-                                    <button class="btn btn-sm btn-outline-success me-1" onclick="triggerDeploy('${app.slug}')" title="Déployer automatiquement (clone, .env, build, démarrage)">
+                                    <button class="btn btn-sm btn-outline-success me-1" data-action="triggerDeploy" data-arg1="${app.slug}" title="Déployer automatiquement (clone, .env, build, démarrage)">
                                         <i class="bi bi-rocket-takeoff"></i>
                                     </button>
                                 ` : ''}
-                                <button class="btn btn-sm btn-outline-info me-1" onclick="showDockerDetails('${app.slug}')" title="Détails Docker">
+                                <button class="btn btn-sm btn-outline-info me-1" data-action="showDockerDetails" data-arg1="${app.slug}" title="Détails Docker">
                                     <i class="bi bi-eye"></i>
                                 </button>
-                                <button class="btn btn-sm btn-outline-primary me-1" onclick="editApp(${app.id})">
+                                <button class="btn btn-sm btn-outline-primary me-1" data-action="editApp" data-arg1="${app.id}">
                                     <i class="bi bi-pencil"></i>
                                 </button>
-                                <button class="btn btn-sm btn-outline-danger" data-app-name="${escapeHtml(app.name)}" onclick="deleteApp(${app.id}, this.dataset.appName)">
+                                <button class="btn btn-sm btn-outline-danger" data-app-name="${escapeHtml(app.name)}" data-action="deleteApp" data-arg1="${app.id}" data-arg2="$el">
                                     <i class="bi bi-trash"></i>
                                 </button>
                             ` : ''}
@@ -655,10 +655,10 @@ function renderUsersTable(users) {
                                 : '<span class="status-inactive"><i class="bi bi-x-circle-fill"></i></span>'}
                         </td>
                         <td class="text-end">
-                            <button class="btn btn-sm btn-outline-primary me-1" onclick="editUser(${user.id})">
+                            <button class="btn btn-sm btn-outline-primary me-1" data-action="editUser" data-arg1="${user.id}">
                                 <i class="bi bi-pencil"></i>
                             </button>
-                            <button class="btn btn-sm btn-outline-danger" onclick="deleteUser(${user.id}, '${escapeHtml(user.username)}')" 
+                            <button class="btn btn-sm btn-outline-danger" data-action="deleteUser" data-arg1="${user.id}" data-arg2="${escapeHtml(user.username)}" 
                                 ${user.id === currentUser.id ? 'disabled' : ''}>
                                 <i class="bi bi-trash"></i>
                             </button>

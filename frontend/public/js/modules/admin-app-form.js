@@ -377,6 +377,7 @@ function formatDateTime(isoString) {
 }
 
 async function editApp(id) {
+    id = parseInt(id, 10);
     const app = allApps.find(a => a.id === id);
     if (!app) {
         showToast('Erreur', 'Application non trouvée. Veuillez rafraîchir la page.', 'danger');
@@ -571,7 +572,8 @@ async function handleSaveApp(event) {
     }
 }
 
-async function deleteApp(id, name) {
+async function deleteApp(id, el) {
+    const name = el?.dataset?.appName || '';
     if (!confirm(`Supprimer l'application "${name}" ?`)) return;
     
     try {
@@ -738,7 +740,7 @@ function renderIconPicker() {
     grid.innerHTML = BOOTSTRAP_ICONS.map(icon => `
         <div class="icon-picker-item ${icon === currentIcon ? 'selected' : ''}" 
              data-icon="${icon}" 
-             onclick="selectIcon('${icon}')"
+             data-action="selectIcon" data-arg1="${icon}"
              title="${icon}">
             <i class="bi ${icon}"></i>
         </div>
@@ -809,7 +811,7 @@ function openAppFormPrefilled(prepared) {
 // Fermer le picker si on clique en dehors
 document.addEventListener('click', (e) => {
     const picker = document.getElementById('iconPickerContainer');
-    const toggleBtn = e.target.closest('[onclick="toggleIconPicker()"]');
+    const toggleBtn = e.target.closest('[data-action="toggleIconPicker"]');
     const pickerContainer = e.target.closest('#iconPickerContainer');
     
     if (iconPickerVisible && !toggleBtn && !pickerContainer) {

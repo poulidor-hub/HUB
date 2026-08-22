@@ -851,7 +851,8 @@ async def list_app_backups(
         app_name=app.name,
         backups=[AppBackupResponse.from_orm_model(b) for b in backups],
         total=len(backups),
-        backup_config=backup_config
+        backup_config=backup_config,
+        is_unmanaged=bool(getattr(app, "is_unmanaged", False))
     )
 
 
@@ -2450,6 +2451,7 @@ async def get_all_backups_overview(
             app_slug=app.slug,
             app_name=app.name,
             is_system_app=bool(getattr(app, "is_system_app", False)),
+            is_unmanaged=bool(getattr(app, "is_unmanaged", False)),
             backup_mode=_safe_backup_mode(app.backup_mode),
             backup_cron=app.backup_cron,
             backup_retention=app.backup_retention or 5,

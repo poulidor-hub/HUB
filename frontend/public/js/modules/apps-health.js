@@ -146,10 +146,10 @@ function renderAppCard(app) {
     if (!isSystemApp) {
         actionButtons =
             '<div style="display:flex;gap:4px;">' +
-                '<button onclick="startApp(\'' + slug + '\')" class="btn btn-sm btn-outline-success py-0 px-2" style="font-size:11px;" title="Demarrer">▶</button>' +
-                '<button onclick="stopApp(\'' + slug + '\')" class="btn btn-sm btn-outline-danger py-0 px-2" style="font-size:11px;" title="Arreter">■</button>' +
-                '<button onclick="restartApp(\'' + slug + '\')" class="btn btn-sm btn-outline-secondary py-0 px-2" style="font-size:11px;" id="restartBtn_' + slug + '" title="Redemarrer">⟳</button>' +
-                '<button onclick="showLogs(\'' + slug + '\')" class="btn btn-sm btn-outline-secondary py-0 px-2" style="font-size:11px;" title="Logs">📋</button>' +
+                '<button data-action="startApp" data-arg1="' + slug + '" class="btn btn-sm btn-outline-success py-0 px-2" style="font-size:11px;" title="Demarrer">▶</button>' +
+                '<button data-action="stopApp" data-arg1="' + slug + '" class="btn btn-sm btn-outline-danger py-0 px-2" style="font-size:11px;" title="Arreter">■</button>' +
+                '<button data-action="restartApp" data-arg1="' + slug + '" class="btn btn-sm btn-outline-secondary py-0 px-2" style="font-size:11px;" id="restartBtn_' + slug + '" title="Redemarrer">⟳</button>' +
+                '<button data-action="showLogs" data-arg1="' + slug + '" class="btn btn-sm btn-outline-secondary py-0 px-2" style="font-size:11px;" title="Logs">📋</button>' +
             '</div>';
     }
 
@@ -266,7 +266,7 @@ function renderUpdateBadge(slug, update) {
     badge.style.display = 'block';
     badge.style.marginTop = '6px';
     badge.innerHTML =
-        '<button onclick="showChangelog(\'' + slug + '\', \'' + escapeHtml(update.current_version || '') + '\')" ' +
+        '<button data-action="showChangelog" data-arg1="' + slug + '" data-arg2="' + escapeHtml(update.current_version || '') + '" ' +
         'style="background:#fef3c7;color:#92400e;border:1px solid #fcd34d;font-size:11px;padding:3px 10px;border-radius:6px;cursor:pointer;display:inline-block;width:100%;text-align:left;">' +
         '🔄 Mise à jour disponible : <strong>' + escapeHtml(update.current_version) + '</strong> → <strong>' + escapeHtml(update.latest_version) + '</strong>' +
         ' <span style="float:right;color:#b45309;">📋 Voir le changelog</span>' +
@@ -324,13 +324,13 @@ function _renderChangelogBody(modal) {
 
     modal.querySelector('.modal-body').innerHTML =
         '<div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;flex-wrap:wrap;">' +
-            '<select onchange="_changelogSelectVersion(this.value)" class="form-select form-select-sm" style="width:auto;">' +
+            '<select data-action="_changelogSelectVersion" data-arg1="$el" class="form-select form-select-sm" style="width:auto;">' +
                 options +
             '</select>' +
             (release.html_url ? '<a href="' + escapeHtml(release.html_url) + '" target="_blank" style="font-size:12px;color:#6366f1;text-decoration:none;">GitHub ↗</a>' : '') +
             '<div style="margin-left:auto;">' +
-                '<button onclick="_changelogTab(\'notes\')" class="btn btn-sm ' + notesBtn + '">📖 Notes</button> ' +
-                '<button onclick="_changelogTab(\'code\')" class="btn btn-sm ' + codeBtn + '"' +
+                '<button data-action="_changelogTab" data-args="notes" class="btn btn-sm ' + notesBtn + '">📖 Notes</button> ' +
+                '<button data-action="_changelogTab" data-args="code" class="btn btn-sm ' + codeBtn + '"' +
                     (prevTag ? '' : ' disabled title="Première version : pas de comparaison"') +
                 '> Code</button>' +
             '</div>' +
@@ -452,7 +452,7 @@ function _renderDiffTab(diff) {
     var fileList = diff.files.map(function (f, i) {
         var icon = f.status === 'added' ? '🟢' : f.status === 'removed' ? '🔴' : f.status === 'renamed' ? '🔄' : '🟡';
         var toggleBtn = f.patch
-            ? '<button onclick="_toggleDiff(\'diff-' + i + '\', this)" class="btn btn-sm btn-outline-secondary py-0 px-1" style="font-size:11px;">▸</button>'
+            ? '<button data-action="_toggleDiff" data-arg1="diff-' + i + '" data-arg2="$el" class="btn btn-sm btn-outline-secondary py-0 px-1" style="font-size:11px;">▸</button>'
             : '<span style="font-size:11px;color:#94a3b8;">(diff trop grand)</span>';
         var patchHtml = f.patch
             ? '<div id="diff-' + i + '" style="display:none;margin-top:6px;">' + _colorizeDiff(f.patch) + '</div>'
@@ -498,11 +498,19 @@ function _toggleDiff(id, btn) {
     }
 }
 
-function _changelogSelectVersion(index) {
-    _changelogState.selectedIndex = parseInt(index, 10);
+function _changelogSelectVersion(el) {
+    _changelogState.selectedIndex = parseInt(el.value, 10);
     _changelogState.tab = 'notes';
     var modal = document.getElementById('appsHealthModal');
     if (modal) _renderChangelogBody(modal);
+}
+
+/**
+ * Ferme le modal de santé des apps (data-action du btn-close du modal généré)
+ */
+function closeAppsHealthModal() {
+    var modal = document.getElementById('appsHealthModal');
+    if (modal) modal.remove();
 }
 
 function _changelogTab(tab) {
@@ -534,7 +542,7 @@ function _showModal(title, bodyHtml) {
         '<div class="modal-content">' +
         '<div class="modal-header">' +
         '<h5 class="modal-title">' + escapeHtml(title) + '</h5>' +
-        '<button type="button" class="btn-close" onclick="document.getElementById(\'appsHealthModal\').remove()"></button>' +
+        '<button type="button" class="btn-close" data-action="closeAppsHealthModal"></button>' +
         '</div>' +
         '<div class="modal-body">' + bodyHtml + '</div>' +
         '</div></div></div>';

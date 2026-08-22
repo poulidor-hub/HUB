@@ -34,7 +34,7 @@ async function loadApps() {
                 <div class="col-12 empty-state">
                     <i class="bi bi-exclamation-triangle text-warning"></i>
                     <h4>Erreur de chargement</h4>
-                    <p>Impossible de charger les applications. <a href="#" onclick="loadApps(); return false;">Réessayer</a></p>
+                    <p>Impossible de charger les applications. <a href="#" data-action="loadApps">Réessayer</a></p>
                 </div>
             `;
         }
@@ -94,6 +94,7 @@ function filterDashboardApps() {
 
 async function toggleFavorite(event, appId) {
     event.stopPropagation();
+    appId = parseInt(appId, 10);
     const app = dashboardApps.find(a => a.id === appId);
     if (!app) return;
     try {
@@ -127,17 +128,19 @@ function renderAppTile(app, opts = {}) {
         : 'Cette application n’a pas d’URL de lancement configurée.';
     const appVersionLabel = formatAppVersionLabel(app.app_version);
     const favIcon = app.is_favorite ? 'bi-star-fill text-warning' : 'bi-star';
-    const clickAction = !isUnavailable
-        ? `${opts.inModal ? `closeAppGroupModal();` : ''}openApp('${app.slug}')`
-        : `showToast('Application indisponible', '${unavailableMessage}', 'warning')`;
+    // data-action de la carte : wrappers globaux (openAppFromCard / appCardUnavailable)
+    const cardAction = !isUnavailable ? 'openAppFromCard' : 'appCardUnavailable';
+    const cardArgs = !isUnavailable
+        ? `data-arg1="${escapeHtml(app.slug)}" data-arg2="${opts.inModal ? '1' : ''}"`
+        : `data-arg1="${escapeHtml(unavailableMessage || '')}"`;
 
     return `
         <div class="col-sm-6 col-md-4 col-lg-3">
             <div class="card app-card shadow-sm h-100 ${isUnavailable ? 'app-inactive' : ''}"
                  data-app-slug="${app.slug}"
-                 onclick="${clickAction}">
+                 data-action="${cardAction}" ${cardArgs}>
                 <div class="card-body position-relative">
-                    <button class="btn btn-sm btn-link favorite-btn" onclick="toggleFavorite(event, ${app.id})" title="${app.is_favorite ? 'Retirer des favoris' : 'Ajouter aux favoris'}">
+                    <button class="btn btn-sm btn-link favorite-btn" data-action="toggleFavorite" data-arg1="event" data-arg2="${app.id}" title="${app.is_favorite ? 'Retirer des favoris' : 'Ajouter aux favoris'}">
                         <i class="bi ${favIcon}"></i>
                     </button>
                     <div class="app-card-header">
@@ -156,10 +159,10 @@ function renderAppTile(app, opts = {}) {
                             : `<span class="app-version-badge app-version-unknown" title="Affichage de version non supporté par cette application">n/d</span>`}
                     </div>
                     ${isAdmin ? `
-                        <div class="app-role-selector" onclick="event.stopPropagation()">
+                        <div class="app-role-selector" data-action="noop">
                             <select class="form-select form-select-sm"
                                     id="appRole_${app.slug}"
-                                    onchange="updateMyAppRole('${app.slug}', this.value)"
+                                    data-action="updateMyAppRole" data-arg1="${escapeHtml(app.slug)}" data-arg2="$el"
                                     title="Mon rôle sur cette application">
                                 <option value="" ${!app.my_role ? 'selected' : ''}>-- Mon rôle --</option>
                                 <option value="admin" ${app.my_role === 'admin' ? 'selected' : ''}>Admin</option>
@@ -184,7 +187,7 @@ function renderGroupTile(group, groupApps) {
         <div class="col-sm-6 col-md-4 col-lg-3">
             <div class="card app-card app-group-card shadow-sm h-100"
                  data-group-id="${group.id}"
-                 onclick="openAppGroupModal(${group.id})">
+                 data-action="openAppGroupModal" data-arg1="${group.id}">
                 <div class="card-body position-relative">
                     <div class="app-card-header">
                         <div class="app-icon" style="background-color: ${group.color}">
@@ -211,6 +214,7 @@ function renderGroupTile(group, groupApps) {
  * (elles viennent de dashboardApps, déjà filtrées par le backend).
  */
 function openAppGroupModal(groupId) {
+    groupId = parseInt(groupId, 10);
     const groupApps = dashboardApps.filter(a => a.group && a.group.id === groupId);
     if (groupApps.length === 0) return;
     const group = groupApps[0].group;
@@ -356,7 +360,8 @@ async function refreshTokenAfterAppChange(actionType = null, silent = false) {
 /**
  * Met à jour le rôle de l'admin courant sur une application
  */
-async function updateMyAppRole(appSlug, role) {
+async function updateMyAppRole(appSlug, el) {
+    const role = el?.value || null;
     try {
         const result = await api.updateMyAppRole(appSlug, role || null);
         const roleText = role ? `défini à "${role}"` : 'supprimé';
@@ -386,6 +391,22 @@ async function updateMyAppRole(appSlug, role) {
         // Recharger pour remettre la bonne valeur
         await loadApps();
     }
+}
+
+/**
+ * data-action des cartes app du dashboard : ouvre l'app
+ * (et ferme le modal groupe si la carte est rendue dans un modal)
+ */
+function openAppFromCard(slug, inModal) {
+    if (inModal) closeAppGroupModal();
+    openApp(slug);
+}
+
+/**
+ * data-action des cartes app indisponibles : toast explicite
+ */
+function appCardUnavailable(message) {
+    showToast('Application indisponible', message || 'Cette application est indisponible', 'warning');
 }
 
 async function openApp(slug) {
@@ -452,10 +473,11 @@ async function openApp(slug) {
                         <h2 style="margin-top:0;margin-bottom:1rem;">Connexion au Hub requise</h2>
                         <p style="margin-bottom:1.5rem;color:#6c757d;">L'application n'a pas pu être ouverte car le lancement Hub n'a pas pu être préparé. Reconnectez-vous puis relancez l'application.</p>
                         <div style="display:flex;gap:0.75rem;justify-content:center;flex-wrap:wrap;">
-                            <button onclick="window.location.href='${loginUrl}'" style="padding:0.75rem 1rem;border:none;border-radius:8px;background:#0d6efd;color:white;cursor:pointer;">Ouvrir le Hub</button>
-                            <button onclick="window.close()" style="padding:0.75rem 1rem;border:1px solid #ced4da;border-radius:8px;background:white;color:#212529;cursor:pointer;">Fermer</button>
+                            <a href="${loginUrl}" style="padding:0.75rem 1rem;border:none;border-radius:8px;background:#0d6efd;color:white;cursor:pointer;text-decoration:none;display:inline-block;">Ouvrir le Hub</a>
+                            <button id="closeWindowBtn" style="padding:0.75rem 1rem;border:1px solid #ced4da;border-radius:8px;background:white;color:#212529;cursor:pointer;">Fermer</button>
                         </div>
                     </div>
+                    <script src="/js/window-close.js"></script>
                 </body></html>
             `);
             appWindow.document.close();

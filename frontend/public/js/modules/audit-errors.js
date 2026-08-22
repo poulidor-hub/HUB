@@ -248,7 +248,7 @@ function renderErrorsTable(data) {
                         <td><small class="text-muted" title="${escapeHtml(e.error_message || '')}">${truncateText(e.error_message, 40)}</small></td>
                         <td><code class="small">${e.ip_address || '-'}</code></td>
                         <td>
-                            ${e.has_stack_trace ? `<button class="btn btn-outline-secondary btn-sm" onclick="showErrorDetail(${e.id})" title="Voir le détail"><i class="bi bi-eye"></i></button>` : ''}
+                            ${e.has_stack_trace ? `<button class="btn btn-outline-secondary btn-sm" data-action="showErrorDetail" data-arg1="${e.id}" title="Voir le détail"><i class="bi bi-eye"></i></button>` : ''}
                         </td>
                     </tr>
                 `).join('')}

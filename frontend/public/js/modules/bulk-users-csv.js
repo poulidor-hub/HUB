@@ -108,14 +108,14 @@ async function loadBulkUserSelection() {
                 <div class="input-group input-group-sm">
                     <span class="input-group-text"><i class="bi bi-search"></i></span>
                     <input type="text" class="form-control" id="bulkUserSearch" 
-                           placeholder="Rechercher..." onkeyup="filterBulkUsers()">
+                           placeholder="Rechercher..." data-action="filterBulkUsers">
                 </div>
             </div>
             <div class="mb-2">
-                <button type="button" class="btn btn-sm btn-outline-secondary me-1" onclick="selectAllBulkUsers()">
+                <button type="button" class="btn btn-sm btn-outline-secondary me-1" data-action="selectAllBulkUsers">
                     <i class="bi bi-check-all"></i> Tout sélectionner
                 </button>
-                <button type="button" class="btn btn-sm btn-outline-secondary" onclick="deselectAllBulkUsers()">
+                <button type="button" class="btn btn-sm btn-outline-secondary" data-action="deselectAllBulkUsers">
                     <i class="bi bi-x-lg"></i> Tout désélectionner
                 </button>
                 <span class="ms-2 text-muted small" id="bulkSelectedCount">0 sélectionné(s)</span>
@@ -125,7 +125,7 @@ async function loadBulkUserSelection() {
                     <div class="form-check bulk-user-item" data-username="${escapeHtml(user.username.toLowerCase())}">
                         <input class="form-check-input bulk-user-checkbox" type="checkbox" 
                                value="${user.id}" id="bulkUser_${user.id}"
-                               onchange="toggleBulkUserSelection(${user.id})">
+                               data-action="toggleBulkUserSelection" data-args="${user.id}">
                         <label class="form-check-label d-flex justify-content-between w-100" for="bulkUser_${user.id}">
                             <span>
                                 <strong>${escapeHtml(user.username)}</strong>
@@ -179,12 +179,14 @@ function filterBulkUsers() {
 
 /**
  * Toggle la sélection d'un utilisateur
+ * (userId peut venir d'un data-args — chaîne — ou d'un appel JS — nombre)
  */
 function toggleBulkUserSelection(userId) {
-    if (selectedUsersForBulk.has(userId)) {
-        selectedUsersForBulk.delete(userId);
+    const id = parseInt(userId);
+    if (selectedUsersForBulk.has(id)) {
+        selectedUsersForBulk.delete(id);
     } else {
-        selectedUsersForBulk.add(userId);
+        selectedUsersForBulk.add(id);
     }
     updateBulkSelectedCount();
 }
@@ -304,7 +306,7 @@ async function loadBulkAdvancedApps() {
                 <div class="form-check me-3" style="min-width: 200px;">
                     <input class="form-check-input bulk-adv-app-cb" type="checkbox" 
                         value="${app.id}" id="bulkAdvApp${app.id}"
-                        onchange="toggleBulkAdvRole(${app.id})">
+                        data-action="toggleBulkAdvRole" data-args="${app.id}">
                     <label class="form-check-label" for="bulkAdvApp${app.id}">
                         <i class="${app.icon} me-1" style="color: ${app.color}"></i>
                         ${escapeHtml(app.name)}
@@ -411,7 +413,7 @@ function addBulkCreateUserRow() {
                        placeholder="Mot de passe *" name="password_${rowIndex}" required>
             </div>
             <div class="col-md-1 d-flex align-items-center">
-                <button type="button" class="btn btn-sm btn-outline-danger" onclick="removeBulkCreateRow(this)">
+                <button type="button" class="btn btn-sm btn-outline-danger" data-action="removeBulkCreateRow" data-args="$el">
                     <i class="bi bi-trash"></i>
                 </button>
             </div>

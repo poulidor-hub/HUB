@@ -84,13 +84,13 @@ async function loadPendingApps() {
                             <td><small class="text-muted">${formatDate(app.created_at)}</small></td>
                             <td class="text-end">
                                 <div class="btn-group btn-group-sm">
-                                    <button class="btn btn-success" onclick="approveApp('${escapeHtml(app.slug)}')" title="Approuver">
+                                    <button class="btn btn-success" data-action="approveApp" data-arg1="${escapeHtml(app.slug)}" title="Approuver">
                                         <i class="bi bi-check-lg"></i> Approuver
                                     </button>
-                                    <button class="btn btn-outline-danger" data-app-name="${escapeHtml(app.name)}" onclick="showRejectAppModal('${escapeHtml(app.slug)}', this.dataset.appName)" title="Rejeter">
+                                    <button class="btn btn-outline-danger" data-app-name="${escapeHtml(app.name)}" data-action="showRejectAppModal" data-arg1="${escapeHtml(app.slug)}" data-arg2="$el" title="Rejeter">
                                         <i class="bi bi-x-lg"></i>
                                     </button>
-                                    <button class="btn btn-outline-secondary" onclick="deletePendingApp('${escapeHtml(app.slug)}')" title="Supprimer">
+                                    <button class="btn btn-outline-secondary" data-action="deletePendingApp" data-arg1="${escapeHtml(app.slug)}" title="Supprimer">
                                         <i class="bi bi-trash"></i>
                                     </button>
                                 </div>
@@ -128,7 +128,8 @@ async function approveApp(slug) {
 /**
  * Affiche le modal de rejet avec champ raison
  */
-function showRejectAppModal(slug, name) {
+function showRejectAppModal(slug, el) {
+    const name = el?.dataset?.appName || '';
     document.getElementById('rejectAppSlug').value = slug;
     document.getElementById('rejectAppName').textContent = name;
     document.getElementById('rejectAppReason').value = '';

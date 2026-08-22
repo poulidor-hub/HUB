@@ -48,22 +48,22 @@ function renderOidcClientsTable(clients) {
                         <td class="text-end">
                             <div class="btn-group btn-group-sm">
                                 <button class="btn btn-outline-warning"
-                                        onclick="regenerateOidcClientSecret(${c.id}, '${escapeHtml(c.name)}')"
+                                        data-action="regenerateOidcClientSecret" data-arg1="${c.id}" data-arg2="${escapeHtml(c.name)}"
                                         title="Régénérer le secret">
                                     <i class="bi bi-key"></i>
                                 </button>
                                 <button class="btn btn-outline-secondary"
-                                        onclick="toggleOidcClientActive(${c.id})"
+                                        data-action="toggleOidcClientActive" data-arg1="${c.id}"
                                         title="${c.is_active ? 'Désactiver' : 'Activer'}">
                                     <i class="bi bi-power"></i>
                                 </button>
                                 <button class="btn btn-outline-primary"
-                                        onclick="editOidcClient(${c.id})"
+                                        data-action="editOidcClient" data-arg1="${c.id}"
                                         title="Modifier">
                                     <i class="bi bi-pencil"></i>
                                 </button>
                                 <button class="btn btn-outline-danger"
-                                        onclick="deleteOidcClient(${c.id}, '${escapeHtml(c.name)}')"
+                                        data-action="deleteOidcClient" data-arg1="${c.id}" data-arg2="${escapeHtml(c.name)}"
                                         title="Supprimer">
                                     <i class="bi bi-trash"></i>
                                 </button>
@@ -84,6 +84,7 @@ function showAddOidcClientForm() {
 }
 
 function editOidcClient(id) {
+    id = parseInt(id, 10);
     const c = allOidcClients.find(x => x.id === id);
     if (!c) return;
     document.getElementById('oidcFormTitle').textContent = `Modifier ${c.name}`;

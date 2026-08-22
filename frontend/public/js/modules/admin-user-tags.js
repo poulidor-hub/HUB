@@ -48,7 +48,7 @@ function renderTagCategoriesTable(categories) {
     }
     const rows = categories.map(cat => {
         const syncBtn = cat.source === 'm2m'
-            ? `<button class="btn btn-sm btn-outline-primary me-1" onclick="handleImportTagM2m('${cat.slug}')" title="Synchroniser depuis l'application"><i class="bi bi-arrow-repeat"></i></button>`
+            ? `<button class="btn btn-sm btn-outline-primary me-1" data-action="handleImportTagM2m" data-arg1="${cat.slug}" title="Synchroniser depuis l'application"><i class="bi bi-arrow-repeat"></i></button>`
             : '';
         return `
         <tr>
@@ -58,8 +58,8 @@ function renderTagCategoriesTable(categories) {
             <td>${cat.is_active ? '<span class="badge bg-success">Actif</span>' : '<span class="badge bg-danger">Inactif</span>'}</td>
             <td>
                 ${syncBtn}
-                <button class="btn btn-sm btn-primary me-1" onclick="showTagCategoryModal('${cat.slug}')"><i class="bi bi-pencil"></i></button>
-                <button class="btn btn-sm btn-danger" onclick="deleteTagCategory('${cat.slug}')"><i class="bi bi-trash"></i></button>
+                <button class="btn btn-sm btn-primary me-1" data-action="showTagCategoryModal" data-arg1="${cat.slug}"><i class="bi bi-pencil"></i></button>
+                <button class="btn btn-sm btn-danger" data-action="deleteTagCategory" data-arg1="${cat.slug}"><i class="bi bi-trash"></i></button>
             </td>
         </tr>
     `}).join('');
@@ -395,7 +395,7 @@ function renderAdminTagUsersTable(users) {
             <td><strong>${escapeHtml(u.username)}</strong></td>
             <td>${badges}</td>
             <td>${tagCount}</td>
-            <td><button class="btn btn-sm btn-primary" onclick="showUserTagsModal('${escapeHtml(u.username)}')"><i class="bi bi-pencil me-1"></i>Modifier</button></td>
+            <td><button class="btn btn-sm btn-primary" data-action="showUserTagsModal" data-arg1="${escapeHtml(u.username)}"><i class="bi bi-pencil me-1"></i>Modifier</button></td>
         </tr>`;
     }).join('');
     container.innerHTML = `<table class="table table-hover align-middle mb-0">

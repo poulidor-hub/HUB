@@ -321,10 +321,10 @@ async function loadAccountRequestsTab() {
 
             if (req.status === 'pending') {
                 html += `
-                    <button class="btn btn-success btn-sm me-1" onclick="showApproveRequestModal(${req.id}, '${safeFN}', '${safeLN}', '${safeUN}', '${safeEmail}')" title="Approuver">
+                    <button class="btn btn-success btn-sm me-1" data-action="showApproveRequestModal" data-arg1="${req.id}" data-arg2="${safeFN}" data-arg3="${safeLN}" data-arg4="${safeUN}" data-arg5="${safeEmail}" title="Approuver">
                         <i class="bi bi-check-lg"></i>
                     </button>
-                    <button class="btn btn-danger btn-sm" onclick="showRejectRequestModal(${req.id}, '${safeFN}', '${safeLN}')" title="Refuser">
+                    <button class="btn btn-danger btn-sm" data-action="showRejectRequestModal" data-arg1="${req.id}" data-arg2="${safeFN}" data-arg3="${safeLN}" title="Refuser">
                         <i class="bi bi-x-lg"></i>
                     </button>`;
             } else if (req.status === 'rejected' && req.rejection_reason) {

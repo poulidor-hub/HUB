@@ -180,7 +180,7 @@ function renderAuditLiveSessions(data) {
                     <span class="badge text-bg-light border">${escapeHtml(s.current_app_name || 'Hub')}</span>
                     <code class="small text-muted">${s.ip_address || '-'}</code>
                 </div>
-                <a href="#" class="small text-danger fw-semibold text-decoration-none" onclick="auditForceLogout(${s.id}); return false;">Forcer déco.</a>
+                <a href="#" class="small text-danger fw-semibold text-decoration-none" data-action="auditForceLogout" data-arg1="${s.id}">Forcer déco.</a>
             </div>
         </div>`).join('');
 }
@@ -354,7 +354,7 @@ function renderPageTopApps(apps) {
                         <td><span class="badge bg-secondary">${app.access_count}</span></td>
                         <td><span class="badge bg-light text-dark">${app.unique_users}</span></td>
                         <td>
-                            <button class="btn btn-sm btn-outline-secondary" onclick="showPageAppAuditDetail('${app.slug}')">
+                            <button class="btn btn-sm btn-outline-secondary" data-action="showPageAppAuditDetail" data-arg1="${app.slug}">
                                 <i class="bi bi-eye"></i>
                             </button>
                         </td>
@@ -449,7 +449,7 @@ function renderAppGridSortBar() {
                 const active = appGridSortKey === k.key;
                 const dirIcon = active ? (appGridSortDir === 'asc' ? 'bi-sort-up' : 'bi-sort-down') : k.icon;
                 const cls = active ? 'btn-primary' : 'btn-outline-secondary';
-                return `<button class="btn btn-sm ${cls} app-sort-btn" onclick="setAppGridSort('${k.key}')">
+                return `<button class="btn btn-sm ${cls} app-sort-btn" data-action="setAppGridSort" data-arg1="${k.key}">
                     <i class="bi ${dirIcon} me-1"></i>${k.label}
                 </button>`;
             }).join('')}
@@ -507,7 +507,7 @@ function renderPageAuditAppsGrid(apps) {
         const backupColor = app.backupSize !== '-' && app.backupSize !== '0 B' ? '' : 'text-muted';
         return `
         <div class="col-sm-6 col-md-4 col-lg-3 mb-3">
-            <div class="card h-100 cursor-pointer" onclick="showPageAppAuditDetail('${app.slug}')" style="cursor:pointer;transition:transform .15s,box-shadow .15s;">
+            <div class="card h-100 cursor-pointer" data-action="showPageAppAuditDetail" data-arg1="${app.slug}" style="cursor:pointer;transition:transform .15s,box-shadow .15s;">
                 <div class="card-body text-center p-3">
                     <div class="mb-2">
                         <span class="rounded-circle d-inline-flex align-items-center justify-content-center"
@@ -891,7 +891,7 @@ function sortSessions(sessions, key, dir) {
 }
 
 function makeSortTh(key, label) {
-    return `<th class="cursor-pointer" onclick="setSessionSort('${key}')" style="cursor:pointer;user-select:none;">${label}${sessionSortIcon(key)}</th>`;
+    return `<th class="cursor-pointer" data-action="setSessionSort" data-arg1="${key}" style="cursor:pointer;user-select:none;">${label}${sessionSortIcon(key)}</th>`;
 }
 
 function renderPageSessionHistory(data) {
@@ -974,7 +974,7 @@ function renderPageSessionHistory(data) {
                             </td>
                             <td><code class="small bg-light px-2 py-1 rounded">${s.ip_address || '-'}</code></td>
                             <td class="text-end">
-                                <a href="#" class="small text-danger fw-semibold text-decoration-none" onclick="auditForceLogout(${s.id}); return false;"><i class="bi bi-box-arrow-right me-1"></i>Forcer déco.</a>
+                                <a href="#" class="small text-danger fw-semibold text-decoration-none" data-action="auditForceLogout" data-arg1="${s.id}"><i class="bi bi-box-arrow-right me-1"></i>Forcer déco.</a>
                             </td>
                         </tr>
                     `).join('')}

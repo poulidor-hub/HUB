@@ -70,7 +70,7 @@ function renderPagination(currentPage, totalPages, functionName) {
 
     // Précédent
     html += `<li class="page-item ${currentPage === 1 ? 'disabled' : ''}">
-        <a class="page-link" href="#" onclick="${functionName}(${currentPage - 1}); return false;">&laquo;</a>
+        <a class="page-link" href="#" data-action="${functionName}" data-arg1="${currentPage - 1}">&laquo;</a>
     </li>`;
 
     // Pages
@@ -83,24 +83,24 @@ function renderPagination(currentPage, totalPages, functionName) {
     }
 
     if (startPage > 1) {
-        html += `<li class="page-item"><a class="page-link" href="#" onclick="${functionName}(1); return false;">1</a></li>`;
+        html += `<li class="page-item"><a class="page-link" href="#" data-action="${functionName}" data-arg1="${1}">1</a></li>`;
         if (startPage > 2) html += '<li class="page-item disabled"><span class="page-link">...</span></li>';
     }
 
     for (let i = startPage; i <= endPage; i++) {
         html += `<li class="page-item ${i === currentPage ? 'active' : ''}">
-            <a class="page-link" href="#" onclick="${functionName}(${i}); return false;">${i}</a>
+            <a class="page-link" href="#" data-action="${functionName}" data-arg1="${i}">${i}</a>
         </li>`;
     }
 
     if (endPage < totalPages) {
         if (endPage < totalPages - 1) html += '<li class="page-item disabled"><span class="page-link">...</span></li>';
-        html += `<li class="page-item"><a class="page-link" href="#" onclick="${functionName}(${totalPages}); return false;">${totalPages}</a></li>`;
+        html += `<li class="page-item"><a class="page-link" href="#" data-action="${functionName}" data-arg1="${totalPages}">${totalPages}</a></li>`;
     }
 
     // Suivant
     html += `<li class="page-item ${currentPage === totalPages ? 'disabled' : ''}">
-        <a class="page-link" href="#" onclick="${functionName}(${currentPage + 1}); return false;">&raquo;</a>
+        <a class="page-link" href="#" data-action="${functionName}" data-arg1="${currentPage + 1}">&raquo;</a>
     </li>`;
 
     html += '</ul></nav>';

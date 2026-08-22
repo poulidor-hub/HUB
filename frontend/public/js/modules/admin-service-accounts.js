@@ -24,7 +24,7 @@ function renderServiceAccountsTable(serviceAccounts) {
     container.innerHTML = `
         <div class="d-flex justify-content-between align-items-center mb-2">
             <small class="text-muted">${serviceAccounts.length} service account(s)</small>
-            <button class="btn btn-sm btn-outline-secondary" onclick="refreshServiceAccountsStatus()" title="Vérifier les credentials">
+            <button class="btn btn-sm btn-outline-secondary" data-action="refreshServiceAccountsStatus" title="Vérifier les credentials">
                 <i class="bi bi-arrow-clockwise me-1"></i>Vérifier credentials
             </button>
         </div>
@@ -68,13 +68,13 @@ function renderServiceAccountsTable(serviceAccounts) {
                         </td>
                         <td class="text-end">
                             <div class="btn-group btn-group-sm">
-                                <button class="btn btn-outline-warning" onclick="regenerateServiceAccountSecret(${sa.id}, '${escapeHtml(sa.name)}')" title="Régénérer le secret">
+                                <button class="btn btn-outline-warning" data-action="regenerateServiceAccountSecret" data-arg1="${sa.id}" data-arg2="${escapeHtml(sa.name)}" title="Régénérer le secret">
                                     <i class="bi bi-key"></i>
                                 </button>
-                                <button class="btn btn-outline-primary" onclick="editServiceAccount(${sa.id})" title="Modifier">
+                                <button class="btn btn-outline-primary" data-action="editServiceAccount" data-arg1="${sa.id}" title="Modifier">
                                     <i class="bi bi-pencil"></i>
                                 </button>
-                                <button class="btn btn-outline-danger" onclick="deleteServiceAccount(${sa.id}, '${escapeHtml(sa.name)}')" title="Supprimer">
+                                <button class="btn btn-outline-danger" data-action="deleteServiceAccount" data-arg1="${sa.id}" data-arg2="${escapeHtml(sa.name)}" title="Supprimer">
                                     <i class="bi bi-trash"></i>
                                 </button>
                             </div>
@@ -99,6 +99,7 @@ function showAddServiceAccountForm() {
 }
 
 async function editServiceAccount(id) {
+    id = parseInt(id, 10);
     const sa = allServiceAccounts.find(s => s.id === id);
     if (!sa) return;
 

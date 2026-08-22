@@ -163,9 +163,9 @@ function renderMessageCards(data) {
             ? `<span>⏰ Expire ${parseUTCDate(m.expires_at).toLocaleDateString('fr-FR')}</span>`
             : '<span>∞ Sans expiration</span>';
 
-        return `<div class="msg-card ${opacity}" style="border-left: 4px solid ${prioColor};" onclick="openMessageDetail(${m.id})">
-            <div class="msg-card-left" onclick="event.stopPropagation()">
-                <input type="checkbox" class="form-check-input msg-select-checkbox" value="${m.id}" onchange="updateDeleteSelectedButton()">
+        return `<div class="msg-card ${opacity}" style="border-left: 4px solid ${prioColor};" data-action="openMessageDetail" data-arg1="${m.id}">
+            <div class="msg-card-left" data-action="noop">
+                <input type="checkbox" class="form-check-input msg-select-checkbox" value="${m.id}" data-action="updateDeleteSelectedButton">
                 <span style="font-size:1.1rem;">${prioIcon}</span>
             </div>
             <div class="msg-card-body">
@@ -209,8 +209,8 @@ function renderMessageCompact(data) {
         const read = m.read_count || 0;
         const pct = total > 0 ? Math.round((read / total) * 100) : 0;
 
-        return `<div class="msg-compact-row" onclick="openMessageDetail(${m.id})">
-            <input type="checkbox" class="form-check-input msg-select-checkbox" value="${m.id}" onclick="event.stopPropagation()" onchange="updateDeleteSelectedButton()">
+        return `<div class="msg-compact-row" data-action="openMessageDetail" data-arg1="${m.id}">
+            <input type="checkbox" class="form-check-input msg-select-checkbox" value="${m.id}" data-action="updateDeleteSelectedButton">
             <span class="msg-compact-prio">${prioIcon}</span>
             <span class="msg-compact-title">${escapeHtml(m.title)}</span>
             <span class="msg-compact-source">${escapeHtml(sourceLabel)}</span>
@@ -227,15 +227,15 @@ function renderMessagesPagination(currentPageNum, totalPages, total) {
     if (totalPages <= 1) { container.innerHTML = ''; return; }
 
     let html = `<ul class="pagination pagination-sm justify-content-center">`;
-    html += `<li class="page-item ${currentPageNum <= 1 ? 'disabled' : ''}"><a class="page-link" href="#" onclick="messagesGoToPage(${currentPageNum - 1})">«</a></li>`;
+    html += `<li class="page-item ${currentPageNum <= 1 ? 'disabled' : ''}"><a class="page-link" href="#" data-action="messagesGoToPage" data-arg1="${currentPageNum - 1}">«</a></li>`;
     for (let i = 1; i <= totalPages; i++) {
         if (i === 1 || i === totalPages || (i >= currentPageNum - 2 && i <= currentPageNum + 2)) {
-            html += `<li class="page-item ${i === currentPageNum ? 'active' : ''}"><a class="page-link" href="#" onclick="messagesGoToPage(${i})">${i}</a></li>`;
+            html += `<li class="page-item ${i === currentPageNum ? 'active' : ''}"><a class="page-link" href="#" data-action="messagesGoToPage" data-arg1="${i}">${i}</a></li>`;
         } else if (i === currentPageNum - 3 || i === currentPageNum + 3) {
             html += `<li class="page-item disabled"><span class="page-link">...</span></li>`;
         }
     }
-    html += `<li class="page-item ${currentPageNum >= totalPages ? 'disabled' : ''}"><a class="page-link" href="#" onclick="messagesGoToPage(${currentPageNum + 1})">»</a></li>`;
+    html += `<li class="page-item ${currentPageNum >= totalPages ? 'disabled' : ''}"><a class="page-link" href="#" data-action="messagesGoToPage" data-arg1="${currentPageNum + 1}">»</a></li>`;
     html += `</ul><div class="text-center text-muted small">${total} message(s)</div>`;
     container.innerHTML = html;
 }
@@ -311,9 +311,9 @@ function _renderMessageDetailHTML(m, receipts) {
 
     return `<div class="msg-detail-content">
         <div class="msg-detail-topbar">
-            <button class="btn btn-sm btn-outline-secondary d-xl-none" onclick="closeMessageDetail()"><i class="bi bi-arrow-left"></i></button>
+            <button class="btn btn-sm btn-outline-secondary d-xl-none" data-action="closeMessageDetail"><i class="bi bi-arrow-left"></i></button>
             <div class="flex-grow-1"></div>
-            <button class="btn btn-sm btn-outline-secondary" onclick="closeMessageDetail()"><i class="bi bi-x-lg"></i></button>
+            <button class="btn btn-sm btn-outline-secondary" data-action="closeMessageDetail"><i class="bi bi-x-lg"></i></button>
         </div>
         <div class="msg-detail-header">
             <div class="d-flex gap-2 mb-2">${prioBadge} ${statusBadge}</div>
@@ -333,10 +333,10 @@ function _renderMessageDetailHTML(m, receipts) {
         </div>
         <div class="msg-detail-actions">
             ${m.status === 'archived'
-                ? `<button class="btn btn-outline-success btn-sm" onclick="restoreMessageAction(${m.id})"><i class="bi bi-arrow-counterclockwise me-1"></i>Restaurer</button>`
-                : `<button class="btn btn-outline-secondary btn-sm" onclick="archiveMessageAction(${m.id})"><i class="bi bi-archive me-1"></i>Archiver</button>`
+                ? `<button class="btn btn-outline-success btn-sm" data-action="restoreMessageAction" data-arg1="${m.id}"><i class="bi bi-arrow-counterclockwise me-1"></i>Restaurer</button>`
+                : `<button class="btn btn-outline-secondary btn-sm" data-action="archiveMessageAction" data-arg1="${m.id}"><i class="bi bi-archive me-1"></i>Archiver</button>`
             }
-            <button class="btn btn-outline-danger btn-sm" onclick="hardDeleteMessageAction(${m.id})"><i class="bi bi-trash me-1"></i>Supprimer</button>
+            <button class="btn btn-outline-danger btn-sm" data-action="hardDeleteMessageAction" data-arg1="${m.id}"><i class="bi bi-trash me-1"></i>Supprimer</button>
         </div>
     </div>`;
 }
@@ -474,7 +474,7 @@ async function openComposePanel() {
         const templates = await api.getTemplates();
         const container = document.getElementById('composeTemplateList');
         if (container) container.innerHTML = templates.map(t =>
-            `<div class="msg-template-item" onclick="loadTemplate(${t.id})">
+            `<div class="msg-template-item" data-action="loadTemplate" data-arg1="${t.id}">
                 <span>${escapeHtml(t.name)}</span>
                 <span class="text-muted small">${t.default_priority}</span>
             </div>`
@@ -537,6 +537,7 @@ function setComposeExpiresPreset() {
 
 async function loadTemplate(templateId) {
     try {
+        templateId = parseInt(templateId, 10);
         const templates = await api.getTemplates();
         const tmpl = templates.find(t => t.id === templateId);
         if (!tmpl) return;
@@ -785,7 +786,7 @@ function _renderInboxSidebar() {
             const unreadBadge = info.unread > 0
                 ? `<span class="inbox-app-unread" style="background:${color}">${info.unread}</span>`
                 : `<span class="text-muted" style="font-size:0.72rem;">${info.count}</span>`;
-            return `<button class="inbox-tab ${active}" onclick="selectInboxApp('${slug}')">
+            return `<button class="inbox-tab ${active}" data-action="selectInboxApp" data-arg1="${slug}">
                 <span class="inbox-app-dot" style="background:${color};"></span>
                 <span class="flex-grow-1">${escapeHtml(info.label)}</span>
                 ${unreadBadge}
@@ -824,7 +825,7 @@ function _renderInboxList() {
             ? '<span class="inbox-expiring-badge">Expire bientot</span>' : '';
         const isReadBadge = m.is_read ? '<span class="inbox-read-badge">✓ Lu</span>' : '';
 
-        return `<div class="inbox-msg-item ${readCls} ${selectedCls} ${prioCls}" onclick="selectInboxMessage(${m.id})">
+        return `<div class="inbox-msg-item ${readCls} ${selectedCls} ${prioCls}" data-action="selectInboxMessage" data-arg1="${m.id}">
             <div class="inbox-msg-item-dot"></div>
             <div class="inbox-msg-item-content">
                 <div class="inbox-msg-item-top">
@@ -858,6 +859,7 @@ function _renderInboxDetailEmpty() {
 }
 
 function selectInboxMessage(id) {
+    id = parseInt(id, 10);
     _clearInboxMarkReadTimer(); _inboxSelectedId = id;
     const m = _inboxMessages.find(x => x.id === id); if (!m) return;
     _renderInboxList(); _renderInboxDetail(m); _showInboxDetailView();
@@ -888,12 +890,12 @@ function _renderInboxDetail(m) {
     const expiresSoon = m.expires_at && !_isExpired(m) && (parseUTCDate(m.expires_at) - new Date()) < 24 * 3600 * 1000
         ? '<span class="inbox-expiring-badge">Expire bientot</span>' : '';
     const action = m.action_url
-        ? `<a href="${escapeHtml(m.action_url)}" target="_blank" rel="noopener" class="btn btn-primary btn-sm" onclick="inboxClickAction(${m.id}, '${escapeHtml(m.action_url)}')"><i class="bi bi-box-arrow-up-right me-1"></i>${escapeHtml(m.action_label || 'Consulter')}</a>` : '';
+        ? `<a href="${escapeHtml(m.action_url)}" target="_blank" rel="noopener" class="btn btn-primary btn-sm" data-action="inboxClickAction" data-arg1="${m.id}" data-arg2="${escapeHtml(m.action_url)}"><i class="bi bi-box-arrow-up-right me-1"></i>${escapeHtml(m.action_label || 'Consulter')}</a>` : '';
 
     document.getElementById('inboxDetail').innerHTML = `
         <div class="inbox-detail-header">
             <div class="d-flex align-items-start gap-2">
-                <button type="button" class="btn btn-sm btn-outline-secondary d-lg-none" onclick="returnToInboxList()"><i class="bi bi-arrow-left"></i></button>
+                <button type="button" class="btn btn-sm btn-outline-secondary d-lg-none" data-action="returnToInboxList"><i class="bi bi-arrow-left"></i></button>
                 <div class="flex-grow-1">
                     <div class="d-flex gap-2 align-items-center mb-1">${prioBadge}${expiresSoon}</div>
                     <h4 class="mb-1">${escapeHtml(m.title)}</h4>
@@ -904,8 +906,8 @@ function _renderInboxDetail(m) {
                     </div>
                 </div>
                 <div class="d-flex gap-1">
-                    <button class="btn btn-sm btn-outline-secondary" onclick="markSingleMessageRead(${m.id})" title="Marquer comme lu" ${m.is_read ? 'disabled' : ''}><i class="bi bi-check2"></i></button>
-                    <button class="btn btn-sm btn-outline-danger" onclick="userDeleteFromInbox(${m.id})" title="Retirer"><i class="bi bi-trash"></i></button>
+                    <button class="btn btn-sm btn-outline-secondary" data-action="markSingleMessageRead" data-arg1="${m.id}" title="Marquer comme lu" ${m.is_read ? 'disabled' : ''}><i class="bi bi-check2"></i></button>
+                    <button class="btn btn-sm btn-outline-danger" data-action="userDeleteFromInbox" data-arg1="${m.id}" title="Retirer"><i class="bi bi-trash"></i></button>
                 </div>
             </div>
         </div>
@@ -996,12 +998,12 @@ function showNotificationCard(msgData) {
         <div class="notif-card-content">
             <div class="notif-card-header">
                 <strong class="notif-card-title">${escapeHtml(msgData.title || 'Notification')}</strong>
-                <button class="notif-card-close" onclick="dismissNotificationCard(${id}, true)" title="Fermer">
+                    <button class="notif-card-close" data-action="dismissNotificationCard" data-arg1="${id}" data-arg2="true" title="Fermer">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
                 </button>
             </div>
             ${msgData.body ? `<p class="notif-card-body">${escapeHtml(msgData.body)}</p>` : ''}
-            ${msgData.action_url ? `<div class="notif-card-action-wrapper"><a href="${escapeHtml(msgData.action_url)}" target="_blank" rel="noopener noreferrer" class="notif-card-action" onclick="dismissNotificationCard(${id}, true)">${escapeHtml(msgData.action_label || 'Consulter')}<svg class="notif-card-action-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg></a></div>` : ''}
+            ${msgData.action_url ? `<div class="notif-card-action-wrapper"><a href="${escapeHtml(msgData.action_url)}" target="_blank" rel="noopener noreferrer" class="notif-card-action" data-action="openNotificationAction" data-arg1="${id}" data-arg2="${escapeHtml(msgData.action_url)}">${escapeHtml(msgData.action_label || 'Consulter')}<svg class="notif-card-action-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg></a></div>` : ''}
             <div class="notif-card-meta">
                 ${(msgData.sender_app_slug || msgData.sender_type) ? `<span class="notif-card-sender"><span class="notif-card-sender-dot"></span>${escapeHtml(msgData.sender_app_slug || msgData.sender_type)}</span>` : ''}
                 <span class="notif-card-time"><svg class="notif-card-time-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>${time}</span>
@@ -1016,6 +1018,8 @@ function showNotificationCard(msgData) {
 }
 
 function dismissNotificationCard(id, markAsRead = false) {
+    // markAsRead peut venir d'un data-arg2 (chaîne "true"/"false")
+    const shouldMarkRead = markAsRead === true || markAsRead === 'true';
     const container = document.getElementById('notificationBanner');
     const card = container?.querySelector(`[data-notif-id="${id}"]`);
     if (card) {
@@ -1027,7 +1031,7 @@ function dismissNotificationCard(id, markAsRead = false) {
             updateNotificationBannerControls();
         }, 250);
 
-        if (markAsRead && id) {
+        if (shouldMarkRead && id) {
             api.markMessageRead(id).then(() => {
                 const badge = document.getElementById('messageBellBadge');
                 const current = parseInt(badge?.textContent) || 0;
@@ -1037,6 +1041,15 @@ function dismissNotificationCard(id, markAsRead = false) {
             }).catch(() => {});
         }
     }
+}
+
+/**
+ * data-action des liens d'action des notifications :
+ * le délégateur preventDefault() le <a>, on gère l'ouverture ici.
+ */
+function openNotificationAction(id, url) {
+    dismissNotificationCard(id, true);
+    if (url) window.open(url, '_blank', 'noopener');
 }
 
 function dismissAllNotificationCards() {
@@ -1064,6 +1077,6 @@ function updateNotificationBannerControls() {
     const cards = container.querySelectorAll('.notif-card');
     if (cards.length > 1) {
         if (!controls) { controls = document.createElement('div'); controls.className = 'notif-banner-controls'; container.prepend(controls); }
-        controls.innerHTML = `<span class="notif-banner-count">${cards.length} notifications</span><button class="notif-banner-dismiss-all" onclick="dismissAllNotificationCards()">Tout fermer<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>`;
+        controls.innerHTML = `<span class="notif-banner-count">${cards.length} notifications</span><button class="notif-banner-dismiss-all" data-action="dismissAllNotificationCards">Tout fermer<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>`;
     } else if (controls) { controls.remove(); }
 }

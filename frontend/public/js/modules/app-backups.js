@@ -104,6 +104,14 @@ function parseCronToBuilder(cron) {
     return { preset: 'custom', time, weekday: '1', monthday: '1', cron: raw };
 }
 
+/**
+ * data-action du select #backupCronPreset (remplace l'ancien escape-hatch onChange)
+ */
+function onBackupCronPresetChange() {
+    updateCronBuilderVisibility();
+    updateCronFromBuilder();
+}
+
 function updateCronBuilderVisibility() {
     const preset = document.getElementById('backupCronPreset')?.value || 'daily';
     document.getElementById('backupCronWeekdayGroup')?.classList.toggle('d-none', preset !== 'weekly');
@@ -228,7 +236,7 @@ function renderRunningBackups() {
                         <button type="button"
                                 class="btn btn-sm btn-outline-danger"
                                 title="Annuler / Kill-switch"
-                                onclick="cancelRunningBackup('${escapeHtml(entry.backup_id)}', '${safeName.replace(/'/g, "\\'")}')">
+                                data-action="cancelRunningBackup" data-arg1="${escapeHtml(entry.backup_id)}" data-arg2="${safeName}">
                             <i class="bi bi-x-circle"></i> Annuler
                         </button>
                     </div>
@@ -372,15 +380,23 @@ async function loadAppBackupsOverview() {
             }
 
             const isRunning = runningBackups.has(app.app_slug);
+            const isUnmanaged = !!app.is_unmanaged;
             const systemBadge = app.is_system_app
-                ? '<span class="badge bg-dark ms-2"><i class="bi bi-grid-3x3-gap-fill me-1"></i>Hub</span>'
+                ? '<span class="badge bg-dark ms-2"><i class="bi bi-grid-3x3-gap-fill me-2"></i>Hub</span>'
                 : '';
-            const triggerCell = isRunning
+            const unmanagedBadge = isUnmanaged
+                ? '<span class="badge bg-secondary ms-2" title="Application lien only — non gérée par le HUB">Lien only</span>'
+                : '';
+            const triggerCell = isUnmanaged
+                ? `<button class="btn btn-outline-secondary" disabled title="Application non gérée (lien only) — sauvegarde indisponible">
+                       <i class="bi bi-slash-circle"></i>
+                   </button>`
+                : isRunning
                 ? `<button class="btn btn-outline-secondary" disabled title="Sauvegarde en cours">
                        <span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>
                        <span class="ms-1">En cours…</span>
                    </button>`
-                : `<button class="btn btn-outline-success" onclick="showTriggerBackupConfirm('${app.app_slug}', '${escapeHtml(app.app_name).replace(/'/g, "\\'")}')"
+                : `<button class="btn btn-outline-success" data-action="showTriggerBackupConfirm" data-arg1="${app.app_slug}" data-arg2="${escapeHtml(app.app_name)}"
                      title="Déclencher sauvegarde" ${app.backup_mode === 'disabled' ? 'style="display: none;"' : ''}>
                         <i class="bi bi-play-circle"></i>
                     </button>`;
@@ -388,7 +404,7 @@ async function loadAppBackupsOverview() {
             return `
                 <tr>
                     <td>
-                        <strong>${escapeHtml(app.app_name)}</strong>${systemBadge}
+                        <strong>${escapeHtml(app.app_name)}</strong>${systemBadge}${unmanagedBadge}
                         <br><small class="text-muted">${escapeHtml(app.app_slug)}</small>
                     </td>
                     <td>${modeBadge}</td>
@@ -401,13 +417,13 @@ async function loadAppBackupsOverview() {
                     <td class="text-end">
                         <div class="btn-group btn-group-sm">
                             ${triggerCell}
-                            <button class="btn btn-outline-primary" onclick="showAppBackupsList('${app.app_slug}')" title="Voir les sauvegardes">
+                            <button class="btn btn-outline-primary" data-action="showAppBackupsList" data-arg1="${app.app_slug}" title="Voir les sauvegardes">
                                 <i class="bi bi-hdd-stack"></i>
                             </button>
-                            <button class="btn btn-outline-secondary" onclick="showAppBackupConfig('${app.app_slug}', '${escapeHtml(app.app_name).replace(/'/g, "\\'")}')"
+                            ${isUnmanaged ? '' : `<button class="btn btn-outline-secondary" data-action="showAppBackupConfig" data-arg1="${app.app_slug}" data-arg2="${escapeHtml(app.app_name)}"
                              title="Configurer">
                                 <i class="bi bi-gear"></i>
-                            </button>
+                            </button>`}
                         </div>
                     </td>
                 </tr>
@@ -508,7 +524,7 @@ async function saveAppBackupConfig(event) {
 async function loadBackupClusters() {
     const tbody = document.getElementById('backupClustersTableBody');
     if (tbody) {
-        tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted py-4">Clusters remplaces par les <a href="#" onclick="showPage(\'snapshots\')">Snapshots</a></td></tr>';
+        tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted py-4">Clusters remplaces par les <a href="#" data-action="showPage" data-args="snapshots">Snapshots</a></td></tr>';
     }
 }
 
@@ -549,13 +565,13 @@ function renderBackupClustersTable() {
                 <td>${escapeHtml(cluster.total_size_human || '0 B')}</td>
                 <td class="text-end">
                     <div class="btn-group btn-group-sm">
-                        <button class="btn btn-outline-success" onclick="triggerBackupCluster(${cluster.id})" title="Déclencher les sauvegardes du cluster">
+                        <button class="btn btn-outline-success" data-action="triggerBackupCluster" data-arg1="${cluster.id}" title="Déclencher les sauvegardes du cluster">
                             <i class="bi bi-play-circle"></i>
                         </button>
-                        <button class="btn btn-outline-primary" onclick="showBackupClusterModal(${cluster.id})" title="Modifier">
+                        <button class="btn btn-outline-primary" data-action="showBackupClusterModal" data-arg1="${cluster.id}" title="Modifier">
                             <i class="bi bi-pencil"></i>
                         </button>
-                        <button class="btn btn-outline-danger" onclick="deleteBackupCluster(${cluster.id})" title="Supprimer">
+                        <button class="btn btn-outline-danger" data-action="deleteBackupCluster" data-arg1="${cluster.id}" title="Supprimer">
                             <i class="bi bi-trash"></i>
                         </button>
                     </div>
@@ -572,6 +588,7 @@ async function ensureBackupAppsForClusterModal() {
 }
 
 async function showBackupClusterModal(clusterId = null) {
+    if (clusterId != null) clusterId = parseInt(clusterId, 10);
     if (!backupClusterModal) {
         backupClusterModal = new bootstrap.Modal(document.getElementById('backupClusterModal'));
     }
@@ -615,7 +632,7 @@ function renderBackupClusterAppChoices(selectedIds = new Set()) {
         return `
             <label class="d-flex align-items-center justify-content-between border-bottom py-2 mb-0">
                 <span>
-                    <input class="form-check-input me-2 backup-cluster-app-choice" type="checkbox" value="${appId}" ${checked} onchange="updateBackupClusterSelectedCount()">
+                    <input class="form-check-input me-2 backup-cluster-app-choice" type="checkbox" value="${appId}" ${checked} data-action="updateBackupClusterSelectedCount">
                     <strong>${escapeHtml(app.app_name)}</strong>${systemBadge}
                     <small class="text-muted ms-2">${escapeHtml(app.app_slug)}</small>
                 </span>
@@ -683,6 +700,7 @@ async function saveBackupCluster(event) {
 }
 
 async function deleteBackupCluster(clusterId) {
+    clusterId = parseInt(clusterId, 10);
     const cluster = backupClusters.find(item => item.id === clusterId);
     if (!cluster) return;
     if (!confirm(`Supprimer le cluster ${cluster.name} ?\n\nLes sauvegardes existantes ne seront pas supprimées.`)) {
@@ -699,6 +717,7 @@ async function deleteBackupCluster(clusterId) {
 }
 
 async function triggerBackupCluster(clusterId) {
+    clusterId = parseInt(clusterId, 10);
     const cluster = backupClusters.find(item => item.id === clusterId);
     if (!cluster || !cluster.apps?.length) return;
     const candidates = cluster.apps.filter(app => app.backup_mode !== 'disabled' && !runningBackups.has(app.app_slug));
@@ -743,7 +762,8 @@ async function showAppBackupsList(slug) {
         // Afficher/masquer le bouton de déclenchement selon le mode
         const triggerBtn = document.getElementById('triggerBackupBtn');
         if (triggerBtn) {
-            triggerBtn.style.display = data.backup_config?.backup_mode !== 'disabled' ? '' : 'none';
+            const unmanaged = !!data.is_unmanaged;
+            triggerBtn.style.display = (!unmanaged && data.backup_config?.backup_mode !== 'disabled') ? '' : 'none';
         }
         
         // Liste des backups
@@ -805,13 +825,13 @@ async function showAppBackupsList(slug) {
                         </td>
                         <td class="text-end">
                             <div class="btn-group btn-group-sm">
-                                <button class="btn btn-outline-warning" onclick="showRestoreBackupModal('${slug}', '${backup.backup_id}', '${escapedAppName}')" title="Restaurer">
+                                <button class="btn btn-outline-warning" data-action="showRestoreBackupModal" data-arg1="${slug}" data-arg2="${backup.backup_id}" data-arg3="${escapedAppName}" title="Restaurer">
                                     <i class="bi bi-arrow-counterclockwise"></i>
                                 </button>
-                                <button class="btn btn-outline-success" onclick="exportEncryptedBackup('${slug}', '${backup.backup_id}')" title="Exporter chiffré">
+                                <button class="btn btn-outline-success" data-action="exportEncryptedBackup" data-arg1="${slug}" data-arg2="${backup.backup_id}" title="Exporter chiffré">
                                     <i class="bi bi-shield-lock"></i>
                                 </button>
-                                <button class="btn btn-outline-danger" onclick="deleteAppBackup('${slug}', '${backup.backup_id}', '${escapedAppName}', '${dateStr}')" title="Supprimer">
+                                <button class="btn btn-outline-danger" data-action="deleteAppBackup" data-arg1="${slug}" data-arg2="${backup.backup_id}" data-arg3="${escapedAppName}" data-arg4="${dateStr}" title="Supprimer">
                                     <i class="bi bi-trash"></i>
                                 </button>
                             </div>

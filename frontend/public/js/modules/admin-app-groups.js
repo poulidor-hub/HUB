@@ -63,10 +63,10 @@ function renderAppGroupsTable(groups) {
                         <td class="text-muted">${escapeHtml(g.description || '—')}</td>
                         <td class="text-center"><span class="badge app-group-badge">${g.app_count}</span></td>
                         <td class="text-end">
-                            <button class="btn btn-outline-secondary btn-sm me-1" onclick="editAppGroup(${g.id})" title="Modifier">
+                            <button class="btn btn-outline-secondary btn-sm me-1" data-action="editAppGroup" data-arg1="${g.id}" title="Modifier">
                                 <i class="bi bi-pencil"></i>
                             </button>
-                            <button class="btn btn-outline-danger btn-sm" onclick="confirmDeleteAppGroup(${g.id})" title="Supprimer">
+                            <button class="btn btn-outline-danger btn-sm" data-action="confirmDeleteAppGroup" data-arg1="${g.id}" title="Supprimer">
                                 <i class="bi bi-trash"></i>
                             </button>
                         </td>
@@ -104,6 +104,7 @@ function showAddGroupForm() {
 }
 
 function editAppGroup(id) {
+    id = parseInt(id, 10);
     const group = allAppGroups.find(g => g.id === id);
     if (!group) return;
     document.getElementById('appGroupFormTitle').textContent = 'Modifier le groupe';
@@ -158,6 +159,7 @@ async function handleSaveAppGroup(event) {
 }
 
 function confirmDeleteAppGroup(id) {
+    id = parseInt(id, 10);
     const group = allAppGroups.find(g => g.id === id);
     if (!group) return;
     pendingDeleteGroupId = id;

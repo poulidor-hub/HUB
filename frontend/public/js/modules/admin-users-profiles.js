@@ -154,7 +154,7 @@ function populateProfileFilter(profiles) {
     if (userProfileCheckboxes) {
         userProfileCheckboxes.innerHTML = profiles.map(p => `
             <div class="form-check mb-1">
-                <input class="form-check-input user-profile-cb" type="checkbox" value="${p.id}" id="userProfileCb${p.id}" onchange="onUserProfileChange()">
+                <input class="form-check-input user-profile-cb" type="checkbox" value="${p.id}" id="userProfileCb${p.id}" data-action="onUserProfileChange">
                 <label class="form-check-label small" for="userProfileCb${p.id}">
                     <span class="badge badge-profile me-1" style="background-color: ${p.color};">&nbsp;</span>
                     ${escapeHtml(p.name)}
@@ -195,7 +195,7 @@ function renderUsersPageTable(users) {
                 ${users.map(user => `
                     <tr class="user-row" id="userRow${user.id}">
                         <td>
-                            <button class="btn btn-sm btn-link p-0 text-muted user-expand-btn" onclick="toggleUserApps(${user.id})" title="Voir les applications">
+                            <button class="btn btn-sm btn-link p-0 text-muted user-expand-btn" data-action="toggleUserApps" data-arg1="${user.id}" title="Voir les applications">
                                 <i class="bi bi-chevron-right"></i>
                             </button>
                         </td>
@@ -228,17 +228,17 @@ function renderUsersPageTable(users) {
                         </td>
                         <td class="text-end">
                             <div class="btn-group">
-                                <button class="btn btn-sm btn-outline-secondary" onclick="editUserPage(${user.id})" title="Modifier">
+                                <button class="btn btn-sm btn-outline-secondary" data-action="editUserPage" data-arg1="${user.id}" title="Modifier">
                                     <i class="bi bi-pencil"></i>
                                 </button>
-                                <button class="btn btn-sm btn-outline-warning" onclick="revokeUserSessions(${user.id}, '${escapeHtml(user.username)}')" 
+                                <button class="btn btn-sm btn-outline-warning" data-action="revokeUserSessions" data-arg1="${user.id}" data-arg2="${escapeHtml(user.username)}" 
                                     title="Révoquer les sessions" ${user.id === currentUser.id ? 'disabled' : ''}>
                                     <i class="bi bi-door-closed"></i>
                                 </button>
-                                ${user.totp_enabled ? `<button class="btn btn-sm btn-outline-info" onclick="adminDisableUserTotp(${user.id})" title="Désactiver l'authentificateur">
+                                ${user.totp_enabled ? `<button class="btn btn-sm btn-outline-info" data-action="adminDisableUserTotp" data-arg1="${user.id}" title="Désactiver l'authentificateur">
                                     <i class="bi bi-shield-slash"></i>
                                 </button>` : ''}
-                                <button class="btn btn-sm btn-outline-danger" onclick="deleteUserPage(${user.id}, '${escapeHtml(user.username)}')" 
+                                <button class="btn btn-sm btn-outline-danger" data-action="deleteUserPage" data-arg1="${user.id}" data-arg2="${escapeHtml(user.username)}" 
                                     title="Supprimer" ${user.id === currentUser.id ? 'disabled' : ''}>
                                     <i class="bi bi-trash"></i>
                                 </button>
@@ -362,7 +362,7 @@ function renderProfilesList(profiles) {
                 <i class="bi bi-person-badge display-4"></i>
                 <h5 class="mt-3">Aucun profil créé</h5>
                 <p>Les profils permettent d'assigner un ensemble d'apps et de rôles en un seul clic.</p>
-                <button class="btn btn-primary" onclick="showProfileModal()">
+                <button class="btn btn-primary" data-action="showProfileModal">
                     <i class="bi bi-plus-lg me-1"></i>Créer un profil
                 </button>
             </div>
@@ -379,13 +379,13 @@ function renderProfilesList(profiles) {
                         <span class="badge bg-light text-dark ms-2">${profile.user_count} user${profile.user_count !== 1 ? 's' : ''}</span>
                     </div>
                     <div class="btn-group btn-group-sm">
-                        <button class="btn btn-outline-secondary" onclick="showProfileModal(${profile.id})" title="Modifier">
+                        <button class="btn btn-outline-secondary" data-action="showProfileModal" data-arg1="${profile.id}" title="Modifier">
                             <i class="bi bi-pencil"></i>
                         </button>
-                        <button class="btn btn-outline-primary" onclick="showApplyProfileModal(${profile.id})" title="Appliquer à des utilisateurs">
+                        <button class="btn btn-outline-primary" data-action="showApplyProfileModal" data-arg1="${profile.id}" title="Appliquer à des utilisateurs">
                             <i class="bi bi-person-plus"></i>
                         </button>
-                        <button class="btn btn-outline-danger" onclick="deleteProfile(${profile.id}, '${escapeHtml(profile.name)}')" title="Supprimer">
+                        <button class="btn btn-outline-danger" data-action="deleteProfile" data-arg1="${profile.id}" data-arg2="${escapeHtml(profile.name)}" title="Supprimer">
                             <i class="bi bi-trash"></i>
                         </button>
                     </div>
@@ -407,6 +407,7 @@ function renderProfilesList(profiles) {
 }
 
 function showProfileModal(profileId = null) {
+    if (profileId != null) profileId = parseInt(profileId, 10);
     if (!profileFormModal) {
         profileFormModal = new bootstrap.Modal(document.getElementById('profileFormModal'));
     }
@@ -481,7 +482,7 @@ function loadProfileAppsCheckboxes(existingRoles) {
                 <div class="form-check me-3" style="min-width: 200px;">
                     <input class="form-check-input profile-app-checkbox" type="checkbox" value="${app.id}" 
                         id="profileApp${app.id}" ${isChecked ? 'checked' : ''}
-                        onchange="toggleProfileRoleSelect(${app.id})">
+                        data-action="toggleProfileRoleSelect" data-arg1="${app.id}">
                     <label class="form-check-label" for="profileApp${app.id}">
                         <i class="${app.icon} me-1" style="color: ${app.color}"></i>
                         ${escapeHtml(app.name)}
@@ -605,6 +606,7 @@ async function deleteProfile(id, name) {
 
 
 async function showApplyProfileModal(profileId) {
+    profileId = parseInt(profileId, 10);
     if (!applyProfileModal) {
         applyProfileModal = new bootstrap.Modal(document.getElementById('applyProfileModal'));
     }
@@ -805,6 +807,7 @@ function showAddUserFormPage() {
 }
 
 async function editUserPage(id) {
+    id = parseInt(id, 10);
     let user = allUsersPage.find(u => u.id === id);
     if (!user) {
         try {

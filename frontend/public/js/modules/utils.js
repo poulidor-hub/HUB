@@ -146,3 +146,21 @@ function parseCsvLocally(text) {
     }
     return results;
 }
+
+// =============================================================================
+// ===== GLOBALES POUR LA DÉLÉGATION data-action =====
+// =============================================================================
+
+/**
+ * data-action="noop" — bloque la propagation vers le data-action du parent
+ * (closest() s'arrête ici) sans autre effet.
+ * Remplace les anciens handlers stopPropagation inline.
+ */
+function noop() {}
+
+/**
+ * data-action="closeWindow" — ferme l'onglet/fenêtre courant (ouvert par script)
+ */
+function closeWindow() {
+    window.close();
+}

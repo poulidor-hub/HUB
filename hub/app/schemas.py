@@ -1225,6 +1225,7 @@ class AppBackupListResponse(BaseModel):
     backups: List[AppBackupResponse] = []
     total: int = 0
     backup_config: Optional[AppBackupConfig] = None
+    is_unmanaged: bool = False
 
 
 class AppBackupStatusResponse(BaseModel):
@@ -1233,6 +1234,7 @@ class AppBackupStatusResponse(BaseModel):
     app_name: str
     app_id: Optional[int] = None
     is_system_app: bool = False
+    is_unmanaged: bool = False
     backup_mode: BackupModeEnum
     backup_cron: Optional[str] = None
     backup_retention: int = 5

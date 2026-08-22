@@ -28,6 +28,7 @@ function showAddUserForm() {
 }
 
 async function editUser(id) {
+    id = parseInt(id, 10);
     const users = await api.getUsers();
     const user = users.find(u => u.id === id);
     if (!user) return;
@@ -105,7 +106,7 @@ function loadUserAppsWithRoles(userAppRoles) {
                         ${profileRole !== null ? 'disabled' : ''}
                         data-source="${source}"
                         data-profile-role="${profileRole || ''}"
-                        onchange="toggleRoleSelect(${app.id})">
+                        data-action="toggleRoleSelect" data-arg1="${app.id}">
                     <label class="form-check-label" for="userApp${app.id}">
                         <i class="${app.icon} me-1" style="color: ${app.color}"></i>
                         ${escapeHtml(app.name)}
@@ -128,7 +129,7 @@ function loadUserAppsWithRoles(userAppRoles) {
                         <i class="bi bi-pencil-fill"></i> Modifié
                     </span>
                     <button type="button" class="btn btn-sm btn-outline-secondary ms-1" 
-                        onclick="resetAppRoleToProfile(${app.id})" title="Réinitialiser selon profil">
+                        data-action="resetAppRoleToProfile" data-arg1="${app.id}" title="Réinitialiser selon profil">
                         <i class="bi bi-arrow-counterclockwise"></i>
                     </button>
                 ` : ''}
