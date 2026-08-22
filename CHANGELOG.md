@@ -5,6 +5,22 @@
 
 ---
 
+## [3.34.3] - 23 août 2026
+
+### ⚡ Régression opérations en masse + complétion de la migration CSP (data-action)
+
+| Fonctionnalité | Description |
+|----------------|-------------|
+| **Fix bulk users** | Les 5 opérations en masse (assigner rôles, retirer accès, créer, import CSV, supprimer) étaient inutilisables depuis `1f18ceba` (27/06) : `data-args` avec apostrophes résiduelles (`"'assign-roles'"` → aucun `case` du switch), attribut fusionné `disableddata-action` (bouton « Analyser » CSV mort) et handlers inline générés dynamiquement bloqués par la CSP. Les 2 liens audit (`'errors'`/`'sessions'`) touchés par la même coquille sont corrigés. |
+| **Migration CSP complétée** | **156 handlers inline** restants (15 `index.html` + 141 dans 24 modules) migrés vers la délégation `data-action` — tous étaient morts depuis le retrait de `'unsafe-inline'` (dashboard filtres workshop, bloc GitHub, modals tags, paginations audit, messages, santé apps, VPN peers, etc.). **176 attributs collés** `"data-action` normalisés, escape-hatch `onChange`/`new Function` (bloqué sans `unsafe-eval`) remplacé par `onBackupCronPresetChange`. |
+| **Délégateur étendu** | `parseArgs` supporte les attributs positionnels `data-arg1..9` (valeurs brutes sans split ni éval, keywords `$el`/`event`) — obligatoire pour les contenus dynamiques contenant `|` ou quotes. Répare au passage des bugs préexistants : usernames/noms contenant `'` cassaient les anciens `onclick` (entités HTML décodées avant exécution). |
+| **Fix coercions d'ids** | Les ids passés via `data-arg` arrivent en chaîne : **16 récepteurs** comparant en strict `===` (`editUserPage`, `editApp`, `editAppGroup`, `editOidcClient`, `editServiceAccount`, `editUser`, `showProfileModal`, `showApplyProfileModal`, `showBackupClusterModal`, `deleteBackupCluster`, `triggerBackupCluster`, `toggleFavorite`, `openAppGroupModal`, `loadTemplate`, `selectInboxMessage`, `confirmDeleteAppGroup`) font désormais `parseInt(…, 10)` en entrée — boutons « Modifier » muets sinon. |
+| **UX backup apps lien only** | `is_unmanaged` exposé dans `AppBackupStatusResponse` (overview) et `AppBackupListResponse` ; l'UI Sauvegardes affiche un badge « Lien only », désactive « Déclencher » et masque « Configurer » pour ces apps (le backend 400 reste le garde-fou). Avant : bouton actif → 400 « application non gérée » pour les apps lien only (ex. vikunja). |
+| **Pages autonomes** | Page d'erreur de lancement d'app (`document.write`) : « Ouvrir le Hub » devient un `<a href>` (zéro JS) et « Fermer » passe par le nouveau `js/window-close.js` self-hosted — les handlers inline y étaient morts (CSP héritée). Bouton « Déconnecté » (init.js) idem via `closeWindow`. |
+| **Divers** | Bouton mort `data-action="handleAddPeer"` retiré (modal VPN ouvert par Bootstrap seul) ; sélecteur interne `closest('[onclick=…]')` du picker d'icônes migré ; wrapper `openNotificationAction` (le `preventDefault` du délégateur bloquait les `<a>` d'action notifications) ; `noop` (remplace `event.stopPropagation()` inline). |
+
+---
+
 ## [3.34.2] - 22 août 2026
 
 ### ⚡ Self-healing M2M — ré-enregistrement trusted fiable
