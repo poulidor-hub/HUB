@@ -279,44 +279,47 @@ async def handle_user_disconnect(user_id: int):
         logger.warning(f"⚠️ Erreur fermeture session SSE: {e}")
 
 
-async def event_generator(request: Request, queue: asyncio.Queue, user_id: Optional[int] = None):
+HEARTBEAT_INTERVAL_S = 15.0
+
+
+async def _emit_heartbeat(user_id: int, app_slug: str = None) -> None:
+    """Heartbeat DB à cadence fixe : last_activity (+ segment d'app en phase 2).
+    Best-effort : une erreur DB ne doit jamais casser le flux SSE."""
+    try:
+        from app.database import async_session_maker
+        from app.routes.audit import update_session_activity
+        async with async_session_maker() as db:
+            await update_session_activity(db, user_id, app_slug=app_slug)
+            await db.commit()
+    except Exception:
+        pass
+
+
+async def event_generator(request: Request, queue: asyncio.Queue, user_id: Optional[int] = None, app_slug: Optional[str] = None):
     """Générateur d'événements SSE pour un client."""
     try:
-        # Envoyer un premier ping immédiatement pour confirmer la connexion
         yield f"data: {json.dumps({'type': 'connected'})}\n\n"
-        
+        last_beat = utcnow()
+
         while True:
-            # Vérifier le shutdown global
             if _shutdown_event.is_set():
                 break
-            
-            # Vérifier si le client est toujours connecté
             if await request.is_disconnected():
                 break
-            
+
             try:
-                # Attendre un événement avec timeout pour vérifier la connexion
-                event = await asyncio.wait_for(queue.get(), timeout=15.0)
-                
-                # Message shutdown = sortie immédiate
+                event = await asyncio.wait_for(queue.get(), timeout=HEARTBEAT_INTERVAL_S)
                 if event.get("type") == "shutdown":
                     break
-                
                 yield f"data: {json.dumps(event)}\n\n"
             except asyncio.TimeoutError:
-                # Envoyer un ping pour maintenir la connexion
+                # Ping uniquement en période de silence (garde le proxy/navigateur vivants)
                 yield f"data: {json.dumps({'type': 'ping'})}\n\n"
-                
-                # Mettre à jour l'activité de la session si user_id connu
-                if user_id:
-                    try:
-                        from app.database import async_session_maker
-                        from app.routes.audit import update_session_activity
-                        async with async_session_maker() as db:
-                            await update_session_activity(db, user_id)
-                            await db.commit()
-                    except Exception:
-                        pass  # Ignorer les erreurs de mise à jour d'activité
+
+            # Heartbeat DB à cadence fixe, QUEL QUE SOIT le trafic SSE
+            if user_id and (utcnow() - last_beat).total_seconds() >= HEARTBEAT_INTERVAL_S:
+                last_beat = utcnow()
+                await _emit_heartbeat(user_id, app_slug)
     except asyncio.CancelledError:
         pass
     finally:
