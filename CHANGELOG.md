@@ -21,9 +21,9 @@
 
 | Fonctionnalité | Description |
 |-------------|-------------|
+| « Activité de la journée » en heatmap | Remplace la timeline à rectangles : **lignes = applications** (nom en étiquette, identification structurelle indépendante des couleurs), **colonnes = 8 tranches de 3 h**, intensité de la cellule = proportion de présence dans la tranche (opacité de la couleur de l'app), cellule inactive grisée. Tooltip = durée exacte + % de la tranche. Les timestamps naïfs du backend sont désormais interprétés en **UTC explicite** (cohérent avec le badge UTC de la page — l'ancien rendu les lisait en heure locale du navigateur) |
 | Répartition multi-lignes | La « Répartition du temps » passe d'une barre empilée unique à **une barre horizontale par application** (nom sur l'axe, durée en bout, tooltip avec % du total et % de la journée — l'usage parallèle de plusieurs apps pouvant dépasser le temps réel) |
-| Étiquettes de rangée (timeline) | Le nom de chaque application figure en tête de sa rangée dans la timeline du jour — identification immédiate même à couleurs identiques |
-| Différenciation des couleurs dupliquées | Les apps partageant la même couleur reçoivent un motif distinctif : **decal ECharts** sur les barres (points, tirets, hachures, grille — contraste calculé selon la luminance) et **bordures pointillées distinctes** sur les segments de la timeline. La 1re occurrence d'un groupe reste pleine |
+| Différenciation des couleurs dupliquées | Sur la répartition : les apps partageant la même couleur reçoivent un **motif decal** (points, tirets, hachures — contraste calculé selon la luminance) ; la 1re occurrence d'un groupe reste pleine. La heatmap n'en dépend plus (nom de ligne structurel) |
 | KPI renommé | « Bascules » → « Segments » (avec les segments parallèles par app, ce ne sont plus des bascules) |
 
 ---
