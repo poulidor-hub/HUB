@@ -153,7 +153,7 @@ function prefSyncFieldByContainer(field) {
     if (!field) return;
     if (field.classList.contains('pref-select')) prefSelectRefresh(field);
     const pageRoot = field.closest('[data-pref-autosave]');
-    if (pageRoot && typeof updatePrefSummaryDots === 'function') {
+    if (pageRoot) {
         updatePrefSummaryDots(pageRoot);
         prefAutosave(pageRoot);
     }
@@ -173,6 +173,125 @@ function collectTagsFromForm(containerSelector) {
         tags[cat].push(input.value);
     });
     return tags;
+}
+
+// ===== Page « Mes préférences » (sommaire sticky + autosave) =====
+
+let _prefObserver = null;
+let _prefSaveTimer = null;
+let _prefSaveSeq = 0;
+let _prefStatusTimer = null;
+
+/** Indicateur d'état d'enregistrement (dans l'en-tête de page). */
+function setPrefSaveStatus(state) {
+    const el = document.getElementById('prefSaveStatus');
+    if (!el) return;
+    clearTimeout(_prefStatusTimer);
+    if (state === 'pending') {
+        el.className = 'pref-save-status';
+        el.innerHTML = '<i class="bi bi-arrow-repeat" aria-hidden="true"></i> Enregistrement…';
+        return;
+    }
+    if (state === 'saved') {
+        el.className = 'pref-save-status saved';
+        el.innerHTML = '<i class="bi bi-check-lg" aria-hidden="true"></i> Enregistré';
+        _prefStatusTimer = setTimeout(() => setPrefSaveStatus('idle'), 2000);
+        return;
+    }
+    if (state === 'error') {
+        el.className = 'pref-save-status error';
+        el.innerHTML = '<i class="bi bi-exclamation-triangle" aria-hidden="true"></i> Échec de l\'enregistrement';
+        return;
+    }
+    // idle
+    el.className = 'pref-save-status';
+    el.textContent = '';
+}
+
+/** Autosave debouncé : relit tout le formulaire et envoie l'objet complet. */
+function prefAutosave(pageRoot) {
+    setPrefSaveStatus('pending');
+    clearTimeout(_prefSaveTimer);
+    _prefSaveTimer = setTimeout(async () => {
+        const tags = collectTagsFromForm('#' + pageRoot.id);
+        const seq = ++_prefSaveSeq;
+        try {
+            await api.updateMyTags({ tags });
+            if (seq === _prefSaveSeq) setPrefSaveStatus('saved');
+        } catch (e) {
+            if (seq === _prefSaveSeq) {
+                setPrefSaveStatus('error');
+                showToast('Erreur', e.message || 'Échec de l\'enregistrement des préférences', 'danger');
+            }
+        }
+    }, 600);
+}
+
+/** Pastilles du sommaire : remplies si ≥ 1 choix dans la catégorie. */
+function updatePrefSummaryDots(pageRoot) {
+    const summary = document.getElementById('prefSummary');
+    if (!summary) return;
+    pageRoot.querySelectorAll('.pref-card[data-slug]').forEach(card => {
+        const item = summary.querySelector(`.pref-summary-item[data-slug="${card.dataset.slug}"]`);
+        if (item) item.classList.toggle('done', !!card.querySelector('input:checked'));
+    });
+}
+
+/** Entrée de sommaire → scroll doux vers la carte. */
+function prefScrollTo(slug) {
+    const card = document.getElementById('prefCard_' + slug);
+    if (card) card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+/** Rend la page complète (sommaire + cartes) à partir des catégories et tags. */
+function renderPrefsPage(categories, myTags) {
+    const summaryBody = document.querySelector('#prefSummary .pref-summary-body');
+    const sections = document.getElementById('prefSections');
+    if (!summaryBody || !sections) return;
+
+    if (_prefObserver) { _prefObserver.disconnect(); _prefObserver = null; }
+
+    if (!categories.length) {
+        const msg = (typeof currentUser !== 'undefined' && currentUser?.is_admin)
+            ? 'Aucune préférence définie. Créez-en une dans l\'onglet Catégories.'
+            : 'Aucune préférence disponible pour le moment.';
+        summaryBody.innerHTML = '';
+        sections.innerHTML = `<div class="data-empty">${msg}</div>`;
+        return;
+    }
+
+    summaryBody.innerHTML = categories.map(cat => `
+        <a href="#" class="pref-summary-item" data-slug="${cat.slug}"
+           data-action="prefScrollTo" data-arg1="${cat.slug}">
+            <span class="pref-summary-dot" aria-hidden="true"></span>${escapeHtml(cat.label)}
+        </a>`).join('');
+
+    sections.innerHTML = categories.map(cat => `
+        <div class="pref-card card" id="prefCard_${cat.slug}" data-slug="${cat.slug}">
+            <div class="card-body">
+                <div class="pref-card-head">
+                    <h2 class="pref-card-title">${escapeHtml(cat.label)}</h2>
+                    <span class="pref-card-type">${cat.is_multiple ? 'plusieurs choix' : '1 choix'}</span>
+                </div>
+                ${buildPrefFieldHTML(cat, myTags[cat.slug] || [], 'page')}
+            </div>
+        </div>`).join('');
+
+    updatePrefSummaryDots(document.getElementById('prefPageRoot'));
+    setPrefSaveStatus('idle');
+
+    // Surlignage de la section visible dans le sommaire
+    _prefObserver = new IntersectionObserver(entries => {
+        entries.forEach(entry => {
+            if (!entry.isIntersecting) return;
+            const slug = entry.target.getAttribute('data-slug');
+            const item = document.querySelector(`#prefSummary .pref-summary-item[data-slug="${slug}"]`);
+            if (!item || item.classList.contains('active')) return;
+            document.querySelectorAll('#prefSummary .pref-summary-item').forEach(i => i.classList.remove('active'));
+            item.classList.add('active');
+        });
+    }, { root: null, rootMargin: '-84px 0px -60% 0px', threshold: 0 });
+    sections.querySelectorAll('.pref-card').forEach(c => _prefObserver.observe(c));
 }
 
 // ===== Popup d'onboarding Préférences =====

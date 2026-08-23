@@ -307,55 +307,18 @@ async function handleSyncM2mFromModal(slug) {
     }
 }
 
-// ─── Mes préférences (sélection personnelle) ──────────────────────
+// ─── Mes préférences (sélection personnelle, autosave) ────────────
 
 async function loadAdminMyTags() {
-    const fieldsContainer = document.getElementById('adminMyTagsFormFields');
-    if (!fieldsContainer) return;
-
     try {
         const [categoriesData, myTagsData] = await Promise.all([
             api.getActiveTagCategories(), api.getMyTags()
         ]);
-        const categories = categoriesData.categories || [];
-        const myTags = myTagsData.tags || {};
-
-        if (!categories.length) {
-            fieldsContainer.innerHTML = '<p class="text-muted mb-0">Aucune préférence disponible. Créez-en une ci-dessus.</p>';
-            return;
-        }
-
-        fieldsContainer.innerHTML = buildTagsFormHTML(categories, myTags, 'admin_tag');
+        renderPrefsPage(categoriesData.categories || [], myTagsData.tags || {});
     } catch (error) {
-        console.error('Erreur chargement préférences admin:', error);
-        fieldsContainer.innerHTML = '<p class="text-danger mb-0">Erreur lors du chargement de vos préférences.</p>';
-    }
-}
-
-async function handleSaveAdminMyTags() {
-    const feedback = document.getElementById('adminMyTagsFeedback');
-    if (feedback) feedback.textContent = '';
-
-    const tags = {};
-    document.querySelectorAll('#adminMyTagsFormFields input:checked').forEach(input => {
-        const cat = input.getAttribute('data-category');
-        if (!tags[cat]) tags[cat] = [];
-        tags[cat].push(input.value);
-    });
-
-    try {
-        await api.updateMyTags({ tags });
-        if (feedback) {
-            feedback.textContent = 'Préférences enregistrées';
-            feedback.className = 'ms-2 small text-success';
-        }
-        showToast('Préférences enregistrées', 'success');
-    } catch (error) {
-        if (feedback) {
-            feedback.textContent = error.message || 'Erreur';
-            feedback.className = 'ms-2 small text-danger';
-        }
-        showToast(error.message || 'Erreur lors de l\'enregistrement', 'danger');
+        console.error('Erreur chargement préférences:', error);
+        const sections = document.getElementById('prefSections');
+        if (sections) sections.innerHTML = '<div class="data-error">Erreur lors du chargement de vos préférences.</div>';
     }
 }
 
