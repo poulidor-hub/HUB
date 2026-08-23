@@ -5,6 +5,24 @@
 
 ---
 
+## [3.35.1] - 23 août 2026
+
+### 🐛 Stabilisation du suivi d'uptime utilisateur (sessions/segments)
+
+| Correctif | Description |
+|-----------|-------------|
+| `limit(1)` sur requêtes de session active | `MultipleResultsFound` silencieux dès 2 sessions ouvertes (heartbeats perdus, launch app en 500) — `end_session` et `update_session_activity` ciblent désormais toujours la plus récente |
+| Commit de la fermeture SSE | `handle_user_disconnect` ne committait pas : fermetures `sse_disconnect` perdues → sessions zombies. Vérifié E2E : la fermeture est désormais persistée ~5 s après la coupure du flux |
+| Heartbeat à cadence fixe | Le ping 15 s n'était émis qu'en cas de silence SSE : `last_activity_at` non rafraîchi sous trafic continu → sessions d'utilisateurs actifs fermées en "timeout". Le heartbeat DB bat désormais à cadence fixe quel que soit le trafic (`HEARTBEAT_INTERVAL_S = 15.0`, `_emit_heartbeat`) |
+| Clamp des `logout_at` | Fin virtuelle `last_activity + 20 min` clampée à `now()` dans `start_session` : plus de fermetures dans le futur (session #409 en prod) |
+| Refresh recrée la session | Race SSE (fermeture à tort) → trou d'uptime permanent réparé au refresh (< 30 min) : un refresh token valide recrée la session ouverte |
+| Cleanup au boot + dédoublonnage | Nettoyage des sessions toutes les 2 min dès le démarrage (plus conditionné aux clients SSE — fini les sessions zombies post-crash) ; au plus 1 session ouverte par utilisateur restaurée à chaque cycle |
+| UI uptime | Toast d'erreur au chargement de la liste users (avant : page vide muette) + polling 60 s de secours quand l'onglet Uptime est visible |
+
+**Infra de tests** : fixture autouse `_patch_session_maker` (conftest) redirigeant `async_session_maker` vers la DB de test — a exposé et corrigé un test backup qui passait pour la mauvaise raison (écritures en vraie DB pendant les tests) ; fix d'une race pré-existante du harness SSE.
+
+---
+
 ## [3.35.0] - 23 août 2026
 
 ### ✨ Refonte UI de la vue Préférences (visible par tous les utilisateurs)
