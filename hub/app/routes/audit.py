@@ -361,6 +361,23 @@ async def update_session_activity(
     return session
 
 
+async def ensure_session_presence(
+    db: AsyncSession,
+    user_id: int,
+    app_slug: str = None,
+    ip_address: str = None,
+    user_agent: str = None
+) -> Optional[UserSession]:
+    """Heartbeat + segment d'usage ; recrée une session si aucune n'est ouverte
+    (ex: passage SSO OIDC d'un utilisateur dont la session HUB a expiré)."""
+    session = await update_session_activity(db, user_id, app_slug=app_slug)
+    if session is None:
+        session = await start_session(db, user_id, ip_address=ip_address, user_agent=user_agent)
+        if app_slug:
+            await update_session_activity(db, user_id, app_slug=app_slug)
+    return session
+
+
 async def cleanup_stale_sessions(db: AsyncSession) -> int:
     """
     Ferme les sessions inactives basé sur last_activity_at.
