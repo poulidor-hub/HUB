@@ -5,6 +5,20 @@
 
 ---
 
+## [3.37.0] - 23 août 2026
+
+### ✨ Traçage SSO OIDC dans l'uptime
+
+| Fonctionnalité | Description |
+|-------------|-------------|
+| Helper `ensure_session_presence` | Heartbeat + segment d'usage ; recrée une session si aucune n'est ouverte (utilisateur dont la session HUB a expiré mais qui passe le SSO) |
+| `/oidc/authorize` tracé | Le passage SSO maintient la session et ouvre le segment d'usage de l'app liée au client OIDC (ex : Vikunja) |
+| `/api/oidc/launch/{client_id}` tracé | Le lancement d'une app SSO = activité sur cette app (session maintenue + segment ouvert) |
+
+**Limite assumée** : trace le *passage* SSO, pas l'activité continue dans l'app tierce. Les apps issues du template (≥ 2.17.0) bénéficient quant à elles de la présence continue via SSE (v3.36.0).
+
+---
+
 ## [3.36.0] - 23 août 2026
 
 ### ✨ Présence utilisateur par application via SSE (uptime)
