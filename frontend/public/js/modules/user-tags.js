@@ -63,8 +63,7 @@ function buildPrefFieldHTML(cat, selected, idPrefix) {
         const chips = values.map(val => {
             const checked = sel.includes(val) ? ' checked' : '';
             return `<label class="pref-chip">
-                <input type="${inputType}" name="${name}" value="${escapeAttr(val)}" data-category="${cat.slug}"${checked}
-                       data-action="prefFieldChange" data-arg1="$el">
+                <input type="${inputType}" name="${name}" value="${escapeAttr(val)}" data-category="${cat.slug}"${checked}>
                 <i class="bi bi-check-lg pref-chip-check" aria-hidden="true"></i><span>${escapeHtml(val)}</span>
             </label>`;
         }).join('');
@@ -74,8 +73,7 @@ function buildPrefFieldHTML(cat, selected, idPrefix) {
     const options = values.map(val => {
         const checked = sel.includes(val) ? ' checked' : '';
         return `<label class="pref-select-option">
-            <input type="${inputType}" name="${name}" value="${escapeAttr(val)}" data-category="${cat.slug}"${checked}
-                   data-action="prefFieldChange" data-arg1="$el">
+            <input type="${inputType}" name="${name}" value="${escapeAttr(val)}" data-category="${cat.slug}"${checked}>
             <span>${escapeHtml(val)}</span>
         </label>`;
     }).join('');
@@ -143,10 +141,19 @@ function prefSelectClear(btnEl, slug) {
     prefSyncFieldByContainer(field);
 }
 
-/** Change natif d'un input chips/sélecteur (event change). */
+/** Change natif d'un input chips/sélecteur (souris ou clavier). */
 function prefFieldChange(inputEl) {
     prefSyncFieldByContainer(inputEl.closest('.pref-select, .pref-card'));
 }
+
+// Listener dédié : PAS de data-action sur ces inputs — le délégué click global
+// (app.js) fait preventDefault() sur tout [data-action], ce qui annulerait le
+// toggle natif des checkbox/radio. On écoute donc l'event change natif ici.
+document.addEventListener('change', (e) => {
+    if (e.target.matches('.pref-chip input[data-category], .pref-select-option input[data-category]')) {
+        prefFieldChange(e.target);
+    }
+});
 
 /** Synchronise l'UI après tout changement (natif ou programmatique). */
 function prefSyncFieldByContainer(field) {
