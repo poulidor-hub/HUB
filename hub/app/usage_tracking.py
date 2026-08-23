@@ -3,6 +3,7 @@ Ouverture/clôture des segments d'usage par application.
 
 Branché sur le cycle de vie des sessions UserSession :
 - présence dans une app (update_session_activity) -> ouverture d'un segment par (session, app)
+- déconnexion SSE de l'app (handle_app_disconnect) -> clôture 'disconnect'
 - logout (end_session)                    -> clôture 'logout'
 - timeout (cleanup_stale_sessions)        -> clôture 'timeout'
 - révocation admin (revoke_session)       -> clôture 'forced'
@@ -44,7 +45,11 @@ async def _get_open_segment(
 async def close_open_segments(
     db: AsyncSession, session_id: int, ended_at: datetime, end_reason: str
 ) -> int:
-    """Clôture tous les segments ouverts d'une session (défensif : normalement 0 ou 1)."""
+    """Clôture tous les segments ouverts d'une session.
+
+    Usage parallèle : N segments ouverts par (session, app) est le cas normal ;
+    ceux encore ouverts à la fermeture de session (leur connexion SSE n'a pas
+    signalé de départ) sont clos ici d'un coup."""
     result = await db.execute(
         select(AppUsageSegment).where(
             and_(
@@ -56,6 +61,24 @@ async def close_open_segments(
     segments = result.scalars().all()
     for seg in segments:
         # Clamp défensif : jamais de ended_at antérieur au started_at
+        seg.ended_at = max(ended_at, seg.started_at)
+        seg.end_reason = end_reason
+    return len(segments)
+
+
+async def close_app_segment(
+    db: AsyncSession, session_id: int, app_slug: str, ended_at: datetime, end_reason: str
+) -> int:
+    """Ferme le(s) segment(s) ouverts d'un couple (session, app) uniquement."""
+    result = await db.execute(
+        select(AppUsageSegment).where(and_(
+            AppUsageSegment.session_id == session_id,
+            AppUsageSegment.app_slug == app_slug,
+            AppUsageSegment.ended_at == None,  # noqa: E711
+        ))
+    )
+    segments = result.scalars().all()
+    for seg in segments:
         seg.ended_at = max(ended_at, seg.started_at)
         seg.end_reason = end_reason
     return len(segments)

@@ -247,6 +247,44 @@ def unregister_user_connection(user_id: int, queue: asyncio.Queue):
             del _user_connections[user_id]
 
 
+# Connexions SSE par couple (user, app) — pour fermer le bon segment
+_app_connections: dict = {}
+
+
+def register_app_connection(user_id: int, app_slug: str, queue: asyncio.Queue):
+    _app_connections.setdefault((user_id, app_slug), set()).add(queue)
+
+
+def unregister_app_connection(user_id: int, app_slug: str, queue: asyncio.Queue):
+    conns = _app_connections.get((user_id, app_slug))
+    if conns is not None:
+        conns.discard(queue)
+        if not conns:
+            _app_connections.pop((user_id, app_slug), None)
+
+
+async def handle_app_disconnect(user_id: int, app_slug: str):
+    """Ferme le segment d'usage de l'app quand sa dernière connexion SSE part."""
+    from app.database import async_session_maker
+    from app.routes.audit import get_active_session_for_user
+    from app.usage_tracking import close_app_segment
+
+    await asyncio.sleep(5)  # tolère une reconnexion rapide
+    if _app_connections.get((user_id, app_slug)):
+        return
+
+    try:
+        async with async_session_maker() as db:
+            session = await get_active_session_for_user(db, user_id)
+            if session:
+                await close_app_segment(db, session.id, app_slug, utcnow(), "disconnect")
+                if session.current_app_slug == app_slug:
+                    session.current_app_slug = None
+                await db.commit()
+    except Exception as e:
+        logger.warning(f"⚠️ Fermeture segment app {app_slug} user {user_id}: {e}")
+
+
 async def handle_user_disconnect(user_id: int):
     """
     Appelé quand un utilisateur se déconnecte du SSE.
@@ -329,7 +367,15 @@ async def event_generator(request: Request, queue: asyncio.Queue, user_id: Optio
                 loop.create_task(handle_user_disconnect(user_id))
             except RuntimeError:
                 pass
-        
+
+            if app_slug:
+                unregister_app_connection(user_id, app_slug, queue)
+                try:
+                    loop = asyncio.get_running_loop()
+                    loop.create_task(handle_app_disconnect(user_id, app_slug))
+                except RuntimeError:
+                    pass
+
         # Arrêter le cleanup si plus aucun client
         stop_cleanup_task()
 
@@ -453,6 +499,8 @@ async def event_stream(request: Request):
 
     if user_id:
         register_user_connection(user_id, queue)
+        if user_id and app_slug:
+            register_app_connection(user_id, app_slug, queue)
 
     start_cleanup_task()
 

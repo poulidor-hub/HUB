@@ -541,8 +541,10 @@ class UserSession(Base):
 class AppUsageSegment(Base):
     """
     Segment d'usage d'une application au sein d'une session utilisateur.
-    Ouvert à chaque accès app, clôt à la bascule (switch), au logout,
-    au timeout ou à la révocation forced.
+    Ouvert à chaque accès app (usage parallèle multi-onglets : N segments
+    ouverts simultanément, un par app), clôt à la déconnexion SSE de sa
+    propre connexion (disconnect), au logout, au timeout ou à la révocation
+    forced. "switch" est une valeur legacy (ancienne bascule d'app).
     NULL sur ended_at = segment en cours.
     """
     __tablename__ = "app_usage_segments"
@@ -553,7 +555,7 @@ class AppUsageSegment(Base):
     app_slug = Column(String(50), nullable=False, index=True)
     started_at = Column(DateTime, nullable=False, default=utcnow)
     ended_at = Column(DateTime, nullable=True)   # NULL = segment en cours
-    end_reason = Column(String(20))              # switch, logout, timeout, forced
+    end_reason = Column(String(20))              # disconnect, logout, timeout, forced (switch = legacy)
 
     __table_args__ = (
         Index('ix_app_usage_user_started', 'user_id', 'started_at'),
