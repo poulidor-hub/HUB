@@ -1,6 +1,4 @@
 """Heartbeat SSE : cadence fixe indépendante du trafic, app_slug propagé."""
-from unittest.mock import AsyncMock
-
 import pytest
 
 from app.routes import events
@@ -20,8 +18,7 @@ async def test_emit_heartbeat_calls_update_activity(monkeypatch):
         async def __aexit__(self, *a): return False
 
     monkeypatch.setattr("app.routes.audit.update_session_activity", fake_update)
-    monkeypatch.setattr(events, "async_session_maker", FakeMaker, raising=False)
-    # Le vrai module importe async_session_maker localement ; on patche la source :
+    # Le module importe async_session_maker localement ; on patche la source :
     import app.database as database
     monkeypatch.setattr(database, "async_session_maker", FakeMaker)
 

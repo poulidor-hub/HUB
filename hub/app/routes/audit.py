@@ -364,9 +364,9 @@ async def update_session_activity(
 async def ensure_session_presence(
     db: AsyncSession,
     user_id: int,
-    app_slug: str = None,
-    ip_address: str = None,
-    user_agent: str = None
+    app_slug: Optional[str] = None,
+    ip_address: Optional[str] = None,
+    user_agent: Optional[str] = None
 ) -> Optional[UserSession]:
     """Heartbeat + segment d'usage ; recrée une session si aucune n'est ouverte
     (ex: passage SSO OIDC d'un utilisateur dont la session HUB a expiré)."""

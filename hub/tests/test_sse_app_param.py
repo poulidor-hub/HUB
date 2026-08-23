@@ -3,10 +3,10 @@ import pytest
 
 from sqlalchemy import select
 
-from app.models import AppUsageSegment, UserSession
+from app.models import AppUsageSegment
 from app.main import app
 from app.routes.auth import generate_beacon_token
-from tests.test_api_events_sse import _collecter_premier_ping  # si non exporté, copier le helper
+from tests.test_api_events_sse import _collecter_premier_ping
 
 
 @pytest.mark.asyncio

@@ -314,7 +314,7 @@ async def handle_user_disconnect(user_id: int):
 HEARTBEAT_INTERVAL_S = 15.0
 
 
-async def _emit_heartbeat(user_id: int, app_slug: str = None) -> None:
+async def _emit_heartbeat(user_id: int, app_slug: Optional[str] = None) -> None:
     """Heartbeat DB à cadence fixe : last_activity (+ segment d'app en phase 2).
     Best-effort : une erreur DB ne doit jamais casser le flux SSE."""
     try:
