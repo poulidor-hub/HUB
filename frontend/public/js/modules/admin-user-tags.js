@@ -213,7 +213,11 @@ async function handleSaveTagCategory() {
             showToast('Préférence mise à jour', 'success');
         } else {
             if (!slug) { showToast('Le nom ne permet pas de générer un identifiant valide', 'danger'); return; }
-            await api.createTagCategory({ slug, label, is_multiple: isMultiple, source, source_app_id: sourceAppId, m2m_endpoint: m2mEndpoint, values });
+            // m2m_endpoint: str non-Optional côté backend (default '/api/tags/export')
+            // — ne pas envoyer la clé quand elle est nulle (source csv), sinon 422.
+            const payload = { slug, label, is_multiple: isMultiple, source, source_app_id: sourceAppId, values };
+            if (m2mEndpoint) payload.m2m_endpoint = m2mEndpoint;
+            await api.createTagCategory(payload);
             showToast('Préférence créée', 'success');
         }
         tagModalInstance.hide();
