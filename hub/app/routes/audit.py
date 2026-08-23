@@ -305,9 +305,10 @@ async def end_session(
                 UserSession.logout_at == None
             )
         ).order_by(UserSession.login_at.desc())
+        .limit(1)
     )
     session = result.scalar_one_or_none()
-    
+
     if session:
         session.logout_at = utcnow()
         session.logout_reason = reason
@@ -343,9 +344,10 @@ async def update_session_activity(
                 UserSession.logout_at == None
             )
         ).order_by(UserSession.login_at.desc())
+        .limit(1)
     )
     session = result.scalar_one_or_none()
-    
+
     if session:
         session.last_activity_at = utcnow()
         if app_slug is not None:
