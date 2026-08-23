@@ -20,6 +20,7 @@ import pytest
 
 from app.main import app
 from app.routes.auth import generate_beacon_token
+from app.routes.events import close_all_sse_connections, reset_shutdown_event
 
 # Fenêtre de test : le premier ping doit arriver en moins de 22 s
 # (heartbeat sain ≤ 20 s ; seuil de coupure Firefox ~25-29 s).
@@ -72,9 +73,20 @@ async def _collecter_premier_ping(path_qs: str, timeout_s: float) -> bool:
     except asyncio.TimeoutError:
         return False
     finally:
-        task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await task
+        # Déconnexion coopérative : même chemin que le shutdown du serveur
+        # (close_all_sse_connections pousse un message shutdown) — le
+        # générateur sort proprement entre deux heartbeats. Un task.cancel()
+        # pendant un heartbeat DB en vol wedge la connexion aiosqlite
+        # (StaticPool partagé) et fait hang le teardown (drop_all) de la
+        # fixture async_engine.
+        await close_all_sse_connections()
+        try:
+            await asyncio.wait_for(task, timeout=5)
+        except (asyncio.TimeoutError, asyncio.CancelledError):
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+        reset_shutdown_event()
 
 
 class TestSSEHeartbeatCadence:

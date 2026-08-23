@@ -110,6 +110,10 @@ class TestTriggerAsync:
     ):
         # Empêcher la tâche de fond d'aboutir : on patch perform_app_backup
         # pour qu'elle soit un no-op (le test vérifie juste le 202 + pending).
+        # NB: le patch doit rester actif PENDANT le sleep — la tâche de fond
+        # (_run_backup_job) ouvre sa propre session via async_session_maker
+        # (redirigée vers la DB de test par la fixture _patch_session_maker)
+        # et ferait passer la ligne en 'running' sinon.
         with patch(
             "app.routes.app_backups.perform_app_backup",
             new=AsyncMock(return_value=None),
@@ -119,7 +123,11 @@ class TestTriggerAsync:
                 headers=get_auth_header(admin_token),
             )
 
-        assert response.status_code == 202, response.text
+            assert response.status_code == 202, response.text
+
+            # Laisser tourner brièvement la tâche de fond (patchée -> noop,
+            # la ligne reste 'pending')
+            await asyncio.sleep(0.05)
         data = response.json()
         assert data["success"] is True
         assert data["status"] == "pending"

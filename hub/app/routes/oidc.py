@@ -38,7 +38,7 @@ from app.oidc_helpers import (
     generate_refresh_token,
     validate_pkce,
 )
-from app.routes.audit import log_action
+from app.routes.audit import ensure_session_presence, log_action
 
 router = APIRouter(tags=["OIDC"])
 settings = get_settings()
@@ -149,6 +149,7 @@ async def authorize_oidc(
 
     # Vérifier l'accès app (admin global OU UserAppRole explicite)
     # On lit app_id (colonne directe) au lieu de oauth_client.application (lazy='raise').
+    linked_app = None
     if oauth_client.app_id:
         app_result = await db.execute(
             select(Application).where(Application.id == oauth_client.app_id)
@@ -169,6 +170,15 @@ async def authorize_oidc(
                     403,
                     f"Accès refusé à l'app '{linked_app.slug}' (rôle manquant)"
                 )
+
+    # Présence : le passage SSO maintient la session + ouvre le segment de
+    # l'app liée (après le contrôle d'accès ; réutilise linked_app résolu).
+    await ensure_session_presence(
+        db, user.id,
+        app_slug=linked_app.slug if linked_app else None,
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent", "")[:255] or None,
+    )
 
     # 7. Générer le code OIDC one-shot
     raw_code = generate_authorization_code()
@@ -289,6 +299,13 @@ async def launch_oidc(
     user = user_result.scalar_one_or_none()
     if not user:
         raise HTTPException(401, f"Utilisateur '{username}' introuvable")
+
+    # Présence : lancement de l'app SSO = activité sur cette app
+    await ensure_session_presence(
+        db, user.id, app_slug=linked_app.slug,
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent", "")[:255] or None,
+    )
 
     # 6. Audit + commit
     await log_action(

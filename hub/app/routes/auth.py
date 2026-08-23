@@ -166,9 +166,19 @@ async def login_for_token(
             beacon_token = generate_beacon_token(user.id)
             tags = user.get_tags()
             
-            # Mettre à jour l'activité de la session (le refresh = activité)
+            # Mettre à jour l'activité de la session (le refresh = activité).
+            # Si la session a été fermée par une race SSE, le refresh token
+            # valide prouve que l'utilisateur est actif : recréer la session.
+            # NB : start_session reste l'import module-level ; un import local
+            # ferait de lui une variable locale et casserait le grant password.
             from app.routes.audit import update_session_activity
-            await update_session_activity(db, user.id)
+            session = await update_session_activity(db, user.id)
+            if session is None:
+                await start_session(
+                    db, user.id,
+                    ip_address=_get_client_ip(request),
+                    user_agent=request.headers.get("user-agent", ""),
+                )
 
             # Re-poser le cookie OIDC pour garder le SSO OIDC synchronisé avec
             # la session dashboard (sinon expiration après 8h malgré refresh 7j).

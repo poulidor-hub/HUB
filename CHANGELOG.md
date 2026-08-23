@@ -5,6 +5,62 @@
 
 ---
 
+## [3.37.0] - 23 août 2026
+
+### ✨ Traçage SSO OIDC dans l'uptime
+
+| Fonctionnalité | Description |
+|-------------|-------------|
+| Helper `ensure_session_presence` | Heartbeat + segment d'usage ; recrée une session si aucune n'est ouverte (utilisateur dont la session HUB a expiré mais qui passe le SSO) |
+| `/oidc/authorize` tracé | Le passage SSO maintient la session et ouvre le segment d'usage de l'app liée au client OIDC (ex : Vikunja) |
+| `/api/oidc/launch/{client_id}` tracé | Le lancement d'une app SSO = activité sur cette app (session maintenue + segment ouvert) |
+
+**Limite assumée** : trace le *passage* SSO, pas l'activité continue dans l'app tierce. Les apps issues du template (≥ 2.17.0) bénéficient quant à elles de la présence continue via SSE (v3.36.0).
+
+### 🎨 Graphiques uptime adaptés à l'usage parallèle multi-apps
+
+| Fonctionnalité | Description |
+|-------------|-------------|
+| « Activité de la journée » en heatmap | Remplace la timeline à rectangles : **lignes = applications** (nom en étiquette, identification structurelle indépendante des couleurs), **colonnes = 8 tranches de 3 h**, intensité de la cellule = proportion de présence dans la tranche (opacité de la couleur de l'app), cellule inactive grisée. Tooltip = durée exacte + % de la tranche. Les timestamps naïfs du backend sont désormais interprétés en **UTC explicite** (cohérent avec le badge UTC de la page — l'ancien rendu les lisait en heure locale du navigateur) |
+| Répartition multi-lignes | La « Répartition du temps » passe d'une barre empilée unique à **une barre horizontale par application** (nom sur l'axe, durée en bout, tooltip avec % du total et % de la journée — l'usage parallèle de plusieurs apps pouvant dépasser le temps réel) |
+| Différenciation des couleurs dupliquées | Sur la répartition : les apps partageant la même couleur reçoivent un **motif decal** (points, tirets, hachures — contraste calculé selon la luminance) ; la 1re occurrence d'un groupe reste pleine. La heatmap n'en dépend plus (nom de ligne structurel) |
+| KPI renommé | « Bascules » → « Segments » (avec les segments parallèles par app, ce ne sont plus des bascules) |
+
+---
+
+## [3.36.0] - 23 août 2026
+
+### ✨ Présence utilisateur par application via SSE (uptime)
+
+| Fonctionnalité | Description |
+|-------------|-------------|
+| Segments d'usage parallèles | `touch_app_presence` remplace `record_app_switch` : un segment par couple (session, app), plusieurs apps utilisables simultanément (multi-onglets) sans se fermer l'une l'autre. La raison `switch` n'est plus écrite (reste lisible sur l'historique) |
+| Param `?app=<slug>` sur `/api/events/stream` | Le heartbeat SSE (15 s) propage le slug de l'app → le segment d'usage s'ouvre et reste vivant tant que l'onglet de l'app garde sa SSE ouverte. Slug validé (app existante + active), sinon ignoré avec warning — jamais d'échec de stream. Rétrocompatible : param optionnel, ignoré par les HUB anciens côté apps |
+| Fermeture ciblée `disconnect` | À la coupure de la dernière SSE d'un couple (user, app), SON segment se ferme (raison `disconnect`) après un délai de reconnexion de 5 s — sans toucher aux segments des autres apps ni à la session utilisateur |
+| Timeline uptime multi-rangées | Une rangée par application dans la timeline du jour (hauteur dynamique, `animation: false` pour la stabilité) : les usages parallèles ne se chevauchent plus |
+
+**Sémantique** : `day_total_seconds` = somme des temps par app (l'usage parallèle de 2 apps compte 2×). **Côté apps** : template 2.17.0 — l'URL SSE construite par les apps porte `&app=<slug>` (`VITE_APP_SLUG`).
+
+---
+
+## [3.35.1] - 23 août 2026
+
+### 🐛 Stabilisation du suivi d'uptime utilisateur (sessions/segments)
+
+| Correctif | Description |
+|-----------|-------------|
+| `limit(1)` sur requêtes de session active | `MultipleResultsFound` silencieux dès 2 sessions ouvertes (heartbeats perdus, launch app en 500) — `end_session` et `update_session_activity` ciblent désormais toujours la plus récente |
+| Commit de la fermeture SSE | `handle_user_disconnect` ne committait pas : fermetures `sse_disconnect` perdues → sessions zombies. Vérifié E2E : la fermeture est désormais persistée ~5 s après la coupure du flux |
+| Heartbeat à cadence fixe | Le ping 15 s n'était émis qu'en cas de silence SSE : `last_activity_at` non rafraîchi sous trafic continu → sessions d'utilisateurs actifs fermées en "timeout". Le heartbeat DB bat désormais à cadence fixe quel que soit le trafic (`HEARTBEAT_INTERVAL_S = 15.0`, `_emit_heartbeat`) |
+| Clamp des `logout_at` | Fin virtuelle `last_activity + 20 min` clampée à `now()` dans `start_session` : plus de fermetures dans le futur (session #409 en prod) |
+| Refresh recrée la session | Race SSE (fermeture à tort) → trou d'uptime permanent réparé au refresh (< 30 min) : un refresh token valide recrée la session ouverte |
+| Cleanup au boot + dédoublonnage | Nettoyage des sessions toutes les 2 min dès le démarrage (plus conditionné aux clients SSE — fini les sessions zombies post-crash) ; au plus 1 session ouverte par utilisateur restaurée à chaque cycle |
+| UI uptime | Toast d'erreur au chargement de la liste users (avant : page vide muette) + polling 60 s de secours quand l'onglet Uptime est visible |
+
+**Infra de tests** : fixture autouse `_patch_session_maker` (conftest) redirigeant `async_session_maker` vers la DB de test — a exposé et corrigé un test backup qui passait pour la mauvaise raison (écritures en vraie DB pendant les tests) ; fix d'une race pré-existante du harness SSE.
+
+---
+
 ## [3.35.0] - 23 août 2026
 
 ### ✨ Refonte UI de la vue Préférences (visible par tous les utilisateurs)

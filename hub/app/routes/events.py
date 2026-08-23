@@ -189,15 +189,9 @@ def start_cleanup_task():
 
 
 def stop_cleanup_task():
-    """Arrête la tâche de cleanup et le health checker si plus aucun client connecté."""
-    global _cleanup_task
+    """Arrête le health checker quand plus aucun client SSE (le cleanup des
+    sessions, lui, tourne désormais en continu depuis le lifespan)."""
     if len(_connected_clients) == 0:
-        if _cleanup_task and not _cleanup_task.done():
-            _cleanup_task.cancel()
-            _cleanup_task = None
-            logger.info("🔄 Tâche de cleanup des sessions arrêtée")
-        
-        # Arrêter aussi le health checker
         if is_health_checker_running():
             stop_health_checker()
 
@@ -253,6 +247,44 @@ def unregister_user_connection(user_id: int, queue: asyncio.Queue):
             del _user_connections[user_id]
 
 
+# Connexions SSE par couple (user, app) — pour fermer le bon segment
+_app_connections: dict = {}
+
+
+def register_app_connection(user_id: int, app_slug: str, queue: asyncio.Queue):
+    _app_connections.setdefault((user_id, app_slug), set()).add(queue)
+
+
+def unregister_app_connection(user_id: int, app_slug: str, queue: asyncio.Queue):
+    conns = _app_connections.get((user_id, app_slug))
+    if conns is not None:
+        conns.discard(queue)
+        if not conns:
+            _app_connections.pop((user_id, app_slug), None)
+
+
+async def handle_app_disconnect(user_id: int, app_slug: str):
+    """Ferme le segment d'usage de l'app quand sa dernière connexion SSE part."""
+    from app.database import async_session_maker
+    from app.routes.audit import get_active_session_for_user
+    from app.usage_tracking import close_app_segment
+
+    await asyncio.sleep(5)  # tolère une reconnexion rapide
+    if _app_connections.get((user_id, app_slug)):
+        return
+
+    try:
+        async with async_session_maker() as db:
+            session = await get_active_session_for_user(db, user_id)
+            if session:
+                await close_app_segment(db, session.id, app_slug, utcnow(), "disconnect")
+                if session.current_app_slug == app_slug:
+                    session.current_app_slug = None
+                await db.commit()
+    except Exception as e:
+        logger.warning(f"⚠️ Fermeture segment app {app_slug} user {user_id}: {e}")
+
+
 async def handle_user_disconnect(user_id: int):
     """
     Appelé quand un utilisateur se déconnecte du SSE.
@@ -273,49 +305,53 @@ async def handle_user_disconnect(user_id: int):
             session = await end_session(db, user_id, reason="sse_disconnect")
             if session:
                 logger.info(f"📴 Session fermée (déconnexion SSE): user_id={user_id}")
+                await db.commit()
                 await broadcast_stats_update()
     except Exception as e:
         logger.warning(f"⚠️ Erreur fermeture session SSE: {e}")
 
 
-async def event_generator(request: Request, queue: asyncio.Queue, user_id: Optional[int] = None):
+HEARTBEAT_INTERVAL_S = 15.0
+
+
+async def _emit_heartbeat(user_id: int, app_slug: Optional[str] = None) -> None:
+    """Heartbeat DB à cadence fixe : last_activity (+ segment d'app en phase 2).
+    Best-effort : une erreur DB ne doit jamais casser le flux SSE."""
+    try:
+        from app.database import async_session_maker
+        from app.routes.audit import update_session_activity
+        async with async_session_maker() as db:
+            await update_session_activity(db, user_id, app_slug=app_slug)
+            await db.commit()
+    except Exception:
+        pass
+
+
+async def event_generator(request: Request, queue: asyncio.Queue, user_id: Optional[int] = None, app_slug: Optional[str] = None):
     """Générateur d'événements SSE pour un client."""
     try:
-        # Envoyer un premier ping immédiatement pour confirmer la connexion
         yield f"data: {json.dumps({'type': 'connected'})}\n\n"
-        
+        last_beat = utcnow()
+
         while True:
-            # Vérifier le shutdown global
             if _shutdown_event.is_set():
                 break
-            
-            # Vérifier si le client est toujours connecté
             if await request.is_disconnected():
                 break
-            
+
             try:
-                # Attendre un événement avec timeout pour vérifier la connexion
-                event = await asyncio.wait_for(queue.get(), timeout=15.0)
-                
-                # Message shutdown = sortie immédiate
+                event = await asyncio.wait_for(queue.get(), timeout=HEARTBEAT_INTERVAL_S)
                 if event.get("type") == "shutdown":
                     break
-                
                 yield f"data: {json.dumps(event)}\n\n"
             except asyncio.TimeoutError:
-                # Envoyer un ping pour maintenir la connexion
+                # Ping uniquement en période de silence (garde le proxy/navigateur vivants)
                 yield f"data: {json.dumps({'type': 'ping'})}\n\n"
-                
-                # Mettre à jour l'activité de la session si user_id connu
-                if user_id:
-                    try:
-                        from app.database import async_session_maker
-                        from app.routes.audit import update_session_activity
-                        async with async_session_maker() as db:
-                            await update_session_activity(db, user_id)
-                            await db.commit()
-                    except Exception:
-                        pass  # Ignorer les erreurs de mise à jour d'activité
+
+            # Heartbeat DB à cadence fixe, QUEL QUE SOIT le trafic SSE
+            if user_id and (utcnow() - last_beat).total_seconds() >= HEARTBEAT_INTERVAL_S:
+                last_beat = utcnow()
+                await _emit_heartbeat(user_id, app_slug)
     except asyncio.CancelledError:
         pass
     finally:
@@ -331,7 +367,15 @@ async def event_generator(request: Request, queue: asyncio.Queue, user_id: Optio
                 loop.create_task(handle_user_disconnect(user_id))
             except RuntimeError:
                 pass
-        
+
+            if app_slug:
+                unregister_app_connection(user_id, app_slug, queue)
+                try:
+                    loop = asyncio.get_running_loop()
+                    loop.create_task(handle_app_disconnect(user_id, app_slug))
+                except RuntimeError:
+                    pass
+
         # Arrêter le cleanup si plus aucun client
         stop_cleanup_task()
 
@@ -431,16 +475,37 @@ async def event_stream(request: Request):
             detail="Authentification requise pour le flux SSE. Utilisez un token Bearer, ?token=JWT, ou beacon_token+user_id."
         )
 
+    # Présence par app (optionnel) : slug validé, sinon ignoré (jamais d'échec)
+    app_slug = None
+    app_param = request.query_params.get("app")
+    if app_param:
+        from app.database import async_session_maker
+        from app.models import Application
+        async with async_session_maker() as db:
+            result = await db.execute(
+                select(Application).where(
+                    Application.slug == app_param,
+                    Application.is_active == True,  # noqa: E712
+                )
+            )
+            found = result.scalar_one_or_none()
+        if found:
+            app_slug = found.slug
+        else:
+            logger.warning(f"SSE: param app='{app_param}' inconnu ou désactivée — ignoré")
+
     queue: asyncio.Queue = asyncio.Queue()
     _connected_clients.add(queue)
 
     if user_id:
         register_user_connection(user_id, queue)
+        if user_id and app_slug:
+            register_app_connection(user_id, app_slug, queue)
 
     start_cleanup_task()
 
     return StreamingResponse(
-        event_generator(request, queue, user_id),
+        event_generator(request, queue, user_id, app_slug=app_slug),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

@@ -1036,6 +1036,8 @@ function renderPageSessionHistory(data) {
 
 // ===== Onglet Uptime utilisateurs =====
 
+let uptimePollTimer = null;
+
 async function loadUptimeUserOptions() {
     const select = document.getElementById('uptimeUserSelect');
     if (!select) return;
@@ -1048,6 +1050,7 @@ async function loadUptimeUserOptions() {
             uptimeUsersLoaded = true;
         } catch (e) {
             console.error('Erreur chargement utilisateurs:', e);
+            showToast('Erreur', 'Impossible de charger la liste des utilisateurs', 'danger');
             return;
         }
     }
@@ -1095,7 +1098,7 @@ async function loadAuditPageUptime() {
             auditKpiCard('#e7f1ff', '#0d6efd', 'bi-person', escapeHtml(data.username), 'Utilisateur', '<span class="audit-trend flat">UTC</span>') +
             auditKpiCard('#e6f4ea', '#28a745', 'bi-stopwatch', uptimeFmtDuration(data.day_total_seconds || 0), 'Temps total du jour', '') +
             auditKpiCard('#f1f3f5', '#6c757d', 'bi-grid', data.totals.length, 'Applications utilisées', '') +
-            auditKpiCard('#fff1e6', '#fd7e14', 'bi-arrow-repeat', data.segments.length, 'Bascules', '');
+            auditKpiCard('#fff1e6', '#fd7e14', 'bi-arrow-repeat', data.segments.length, 'Segments', '');
 
         const hasData = data.segments.length > 0;
         document.getElementById('uptimeTimelineChart').classList.toggle('d-none', !hasData);
@@ -1117,9 +1120,19 @@ document.addEventListener('DOMContentLoaded', () => {
     document.querySelectorAll('#auditPageTabs [data-bs-toggle="tab"]').forEach(btn => {
         btn.addEventListener('hidden.bs.tab', (e) => {
             const target = e.target.getAttribute('data-bs-target');
-            if (target === '#auditPageUptime') usageChartsDispose(['uptimeTimelineChart', 'uptimeBreakdownChart']);
+            if (target === '#auditPageUptime') {
+                usageChartsDispose(['uptimeTimelineChart', 'uptimeBreakdownChart']);
+                if (uptimePollTimer) { clearInterval(uptimePollTimer); uptimePollTimer = null; }
+            }
             if (target === '#auditPageApps') usageChartsDispose(['pageAppUsageChart']);
             if (target === '#auditPageOverview') usageChartsDispose(['auditHeatmapChart']);
+        });
+        btn.addEventListener('shown.bs.tab', (e) => {
+            if (e.target.getAttribute('data-bs-target') === '#auditPageUptime') {
+                if (uptimePollTimer) clearInterval(uptimePollTimer);
+                // Secours si le SSE audit_updated est down : rafraîchissement minute
+                uptimePollTimer = setInterval(loadAuditPageUptime, 60000);
+            }
         });
     });
 });

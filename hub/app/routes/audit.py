@@ -39,7 +39,7 @@ from app.usage_stats import (
 from app.usage_tracking import (
     SEGMENT_REASON_MAP,
     close_segments_for_session,
-    record_app_switch,
+    touch_app_presence,
 )
 
 router = APIRouter(prefix="/api/audit", tags=["Audit"])
@@ -237,9 +237,13 @@ async def start_session(
     orphan_sessions = result.scalars().all()
     
     for session in orphan_sessions:
-        # Utiliser last_activity_at pour déterminer le moment réel du timeout
+        # Utiliser last_activity_at pour déterminer le moment réel du timeout,
+        # sans jamais poser une fermeture dans le futur (clamp à now)
         last_activity = getattr(session, 'last_activity_at', None) or session.login_at
-        session.logout_at = last_activity + timedelta(minutes=settings.session_timeout_minutes)
+        session.logout_at = min(
+            last_activity + timedelta(minutes=settings.session_timeout_minutes),
+            now,
+        )
         session.logout_reason = "timeout"
         await close_segments_for_session(db, session, "timeout", ended_at=session.logout_at)
     
@@ -305,9 +309,10 @@ async def end_session(
                 UserSession.logout_at == None
             )
         ).order_by(UserSession.login_at.desc())
+        .limit(1)
     )
     session = result.scalar_one_or_none()
-    
+
     if session:
         session.logout_at = utcnow()
         session.logout_reason = reason
@@ -343,15 +348,33 @@ async def update_session_activity(
                 UserSession.logout_at == None
             )
         ).order_by(UserSession.login_at.desc())
+        .limit(1)
     )
     session = result.scalar_one_or_none()
-    
+
     if session:
         session.last_activity_at = utcnow()
         if app_slug is not None:
             session.current_app_slug = app_slug
-            await record_app_switch(db, session, app_slug)
+            await touch_app_presence(db, session, app_slug)
 
+    return session
+
+
+async def ensure_session_presence(
+    db: AsyncSession,
+    user_id: int,
+    app_slug: Optional[str] = None,
+    ip_address: Optional[str] = None,
+    user_agent: Optional[str] = None
+) -> Optional[UserSession]:
+    """Heartbeat + segment d'usage ; recrée une session si aucune n'est ouverte
+    (ex: passage SSO OIDC d'un utilisateur dont la session HUB a expiré)."""
+    session = await update_session_activity(db, user_id, app_slug=app_slug)
+    if session is None:
+        session = await start_session(db, user_id, ip_address=ip_address, user_agent=user_agent)
+        if app_slug:
+            await update_session_activity(db, user_id, app_slug=app_slug)
     return session
 
 
@@ -362,7 +385,32 @@ async def cleanup_stale_sessions(db: AsyncSession) -> int:
     Retourne le nombre de sessions fermées.
     """
     timeout = utcnow() - timedelta(minutes=settings.session_timeout_minutes)
-    
+
+    now = utcnow()
+
+    # Défensif : au plus une session ouverte par utilisateur. Les doublons
+    # (crash, ancien bug de commit) sont fermés en gardant la plus récente.
+    result = await db.execute(
+        select(UserSession)
+        .where(UserSession.logout_at == None)  # noqa: E711
+        .order_by(UserSession.login_at.desc(), UserSession.id.desc())
+    )
+    duplicate_closed = 0
+    seen_users = set()
+    for session in result.scalars().all():
+        if session.user_id in seen_users:
+            last_activity = session.last_activity_at or session.login_at
+            session.logout_at = min(
+                last_activity + timedelta(minutes=settings.session_timeout_minutes),
+                now,
+            )
+            session.logout_reason = "timeout"
+            session.current_app_slug = None
+            await close_segments_for_session(db, session, "timeout", ended_at=session.logout_at)
+            duplicate_closed += 1
+        else:
+            seen_users.add(session.user_id)
+
     # Sélectionner les sessions dont la dernière activité dépasse le timeout
     result = await db.execute(
         select(UserSession).where(
@@ -383,11 +431,11 @@ async def cleanup_stale_sessions(db: AsyncSession) -> int:
             db, session, "timeout", ended_at=session.logout_at
         )
 
-    if stale_sessions:
+    if stale_sessions or duplicate_closed:
         await db.commit()
         _notify_audit()
-    
-    return len(stale_sessions)
+
+    return len(stale_sessions) + duplicate_closed
 
 
 # =============================================================================

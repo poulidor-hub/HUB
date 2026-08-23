@@ -335,6 +335,13 @@ async def lifespan(app: FastAPI):
     
     # Démarrer la tâche de purge des logs
     _log_purge_task = asyncio.create_task(periodic_log_purge())
+
+    # Démarrer le cleanup périodique des sessions utilisateurs (timeout 20 min).
+    # Avant : démarré au 1er client SSE -> après un restart, les sessions
+    # restées ouvertes au crash restaient "actives" indéfiniment.
+    from app.routes.events import start_cleanup_task
+    start_cleanup_task()
+    logger.info("🧹 Cleanup des sessions utilisateurs démarré (boot)")
     
     # Démarrer le scheduler de backups
     _backup_scheduler_task = asyncio.create_task(periodic_backup_scheduler())
