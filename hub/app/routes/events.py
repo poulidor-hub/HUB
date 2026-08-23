@@ -429,6 +429,25 @@ async def event_stream(request: Request):
             detail="Authentification requise pour le flux SSE. Utilisez un token Bearer, ?token=JWT, ou beacon_token+user_id."
         )
 
+    # Présence par app (optionnel) : slug validé, sinon ignoré (jamais d'échec)
+    app_slug = None
+    app_param = request.query_params.get("app")
+    if app_param:
+        from app.database import async_session_maker
+        from app.models import Application
+        async with async_session_maker() as db:
+            result = await db.execute(
+                select(Application).where(
+                    Application.slug == app_param,
+                    Application.is_active == True,  # noqa: E712
+                )
+            )
+            found = result.scalar_one_or_none()
+        if found:
+            app_slug = found.slug
+        else:
+            logger.warning(f"SSE: param app='{app_param}' inconnu ou désactivée — ignoré")
+
     queue: asyncio.Queue = asyncio.Queue()
     _connected_clients.add(queue)
 
@@ -438,7 +457,7 @@ async def event_stream(request: Request):
     start_cleanup_task()
 
     return StreamingResponse(
-        event_generator(request, queue, user_id),
+        event_generator(request, queue, user_id, app_slug=app_slug),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
