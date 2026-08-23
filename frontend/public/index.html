@@ -1584,8 +1584,8 @@
             <!-- En-tête -->
             <div class="d-flex justify-content-between align-items-center mb-4">
                 <div>
-                    <h1 class="h3 mb-1"><i class="bi bi-sliders2 me-2"></i>Préférences utilisateur</h1>
-                    <p class="text-muted mb-0">Définir des choix que les utilisateurs pourront sélectionner pour personnaliser leur expérience</p>
+                    <h1 class="h3 mb-1"><i class="bi bi-sliders2 me-2"></i>Préférences</h1>
+                    <p class="text-muted mb-0">Personnalisez votre expérience — chaque changement est enregistré automatiquement</p>
                 </div>
             </div>
 
@@ -1674,16 +1674,21 @@
 
                 <!-- Onglet 3 : Mes préférences -->
                 <div class="tab-pane fade" id="tabTagMine">
-                    <div class="card">
-                        <div class="card-body">
-                            <div id="adminMyTagsFormFields">
-                                <p class="text-muted mb-0">Chargement de vos préférences...</p>
-                            </div>
-                            <div class="mt-3">
-                                <button class="btn btn-primary btn-sm" data-action="handleSaveAdminMyTags">
-                                    <i class="bi bi-check-lg me-1"></i>Enregistrer mes choix
-                                </button>
-                                <span id="adminMyTagsFeedback" class="ms-2 small"></span>
+                    <div id="prefPageRoot" data-pref-autosave>
+                        <div class="pref-status-row">
+                            <span class="pref-save-status" id="prefSaveStatus" aria-live="polite"></span>
+                        </div>
+                        <div class="row g-4">
+                            <aside class="col-lg-3 d-none d-lg-block">
+                                <nav class="pref-summary" id="prefSummary" aria-label="Sommaire des préférences">
+                                    <div class="pref-summary-title">Catégories</div>
+                                    <div class="pref-summary-body">
+                                        <div class="data-loading">Chargement...</div>
+                                    </div>
+                                </nav>
+                            </aside>
+                            <div class="col-lg-9" id="prefSections">
+                                <div class="data-loading">Chargement...</div>
                             </div>
                         </div>
                     </div>
