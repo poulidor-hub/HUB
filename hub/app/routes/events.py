@@ -273,6 +273,7 @@ async def handle_user_disconnect(user_id: int):
             session = await end_session(db, user_id, reason="sse_disconnect")
             if session:
                 logger.info(f"📴 Session fermée (déconnexion SSE): user_id={user_id}")
+                await db.commit()
                 await broadcast_stats_update()
     except Exception as e:
         logger.warning(f"⚠️ Erreur fermeture session SSE: {e}")

@@ -105,6 +105,19 @@ async def async_session(async_engine) -> AsyncGenerator[AsyncSession, None]:
         yield session
 
 
+@pytest.fixture(autouse=True)
+def _patch_session_maker(async_engine, monkeypatch):
+    """Redirige async_session_maker vers la DB de test.
+    Les chemins 'background' (SSE, cleanup) ouvrent leur propre session via
+    app.database.async_session_maker — sans ce patch ils écriraient dans la
+    base réelle du conteneur au lieu de la SQLite de test."""
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+    import app.database as database
+    maker = async_sessionmaker(async_engine, class_=AsyncSession, expire_on_commit=False)
+    monkeypatch.setattr(database, "async_session_maker", maker)
+    yield
+
+
 @pytest.fixture(scope="function")
 async def client(async_engine, async_session) -> AsyncGenerator[AsyncClient, None]:
     """Client HTTP de test avec base de données en mémoire"""
