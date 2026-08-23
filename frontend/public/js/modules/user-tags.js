@@ -7,8 +7,8 @@
 
 /**
  * Construit le HTML des champs d'un formulaire de préférences.
- * - cat.is_multiple = true  -> checkboxes
- * - cat.is_multiple = false -> radios
+ * Wrapper conservé pour les call sites existants (popup onboarding,
+ * onglet "Mes préférences", modale admin d'un utilisateur).
  * @param {Array} categories - catégories actives ({slug,label,is_multiple,values})
  * @param {Object} selectedMap - { slug: [values] } sélectionnées
  * @param {string} idPrefix - préfixe d'id pour éviter les collisions DOM
@@ -16,27 +16,147 @@
  */
 function buildTagsFormHTML(categories, selectedMap, idPrefix) {
     if (!Array.isArray(categories) || categories.length === 0) return '';
+    return categories
+        .map(cat => buildPrefFieldHTML(cat, selectedMap[cat.slug] || [], idPrefix))
+        .join('');
+}
 
-    return categories.map(cat => {
-        const selected = selectedMap[cat.slug] || [];
-        const inputType = cat.is_multiple ? 'checkbox' : 'radio';
-        const inputName = idPrefix + '_' + cat.slug;
+// ===== Composants de sélection (chips / sélecteur avec recherche) =====
 
-        const options = (cat.values || []).map(val => {
-            const checked = selected.includes(val) ? 'checked' : '';
-            const id = idPrefix + '_' + cat.slug + '_' + val.replace(/[^a-zA-Z0-9]/g, '_');
-            return `<div class="form-check form-check-inline">
-                <input class="form-check-input" type="${inputType}" name="${inputName}"
-                    id="${id}" value="${escapeHtml(val)}" ${checked} data-category="${cat.slug}">
-                <label class="form-check-label" for="${id}">${escapeHtml(val)}</label>
-            </div>`;
+/** Seuil de bascule chips → sélecteur avec recherche. */
+const PREF_SELECT_THRESHOLD = 12;
+
+/** Normalisation pour recherche : minuscules + sans accents (NFD). */
+function normalizeSearch(text) {
+    return String(text || '')
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .toLowerCase();
+}
+
+/** escapeHtml n'échappe pas les guillemets — requis pour les attributs HTML. */
+function escapeAttr(text) {
+    return escapeHtml(text).replace(/"/g, '&quot;');
+}
+
+/** Zone chips sélectionnées d'un sélecteur (HTML interne, sans le compteur). */
+function _prefSelectedChipsHTML(slug, values) {
+    if (!values.length) return '<span class="pref-select-hint">Aucune sélection</span>';
+    return values.map(val => `<span class="pref-chip-sm">${escapeHtml(val)}
+        <button type="button" class="pref-chip-x" aria-label="Retirer ${escapeAttr(val)}"
+                data-action="prefSelectRemove" data-arg1="$el" data-arg2="${slug}" data-arg3="${escapeAttr(val)}"><i class="bi bi-x-lg" aria-hidden="true"></i></button>
+    </span>`).join('');
+}
+
+/**
+ * Construit le HTML du champ de sélection d'une catégorie.
+ * - ≤ PREF_SELECT_THRESHOLD valeurs → chips cliquables (inputs natifs masqués)
+ * - > PREF_SELECT_THRESHOLD valeurs → sélecteur avec recherche
+ */
+function buildPrefFieldHTML(cat, selected, idPrefix) {
+    const sel = Array.isArray(selected) ? selected : [];
+    const inputType = cat.is_multiple ? 'checkbox' : 'radio';
+    const name = idPrefix + '_' + cat.slug;
+    const values = cat.values || [];
+
+    if (values.length <= PREF_SELECT_THRESHOLD) {
+        const chips = values.map(val => {
+            const checked = sel.includes(val) ? ' checked' : '';
+            return `<label class="pref-chip">
+                <input type="${inputType}" name="${name}" value="${escapeAttr(val)}" data-category="${cat.slug}"${checked}
+                       data-action="prefFieldChange" data-arg1="$el">
+                <i class="bi bi-check-lg pref-chip-check" aria-hidden="true"></i><span>${escapeHtml(val)}</span>
+            </label>`;
         }).join('');
+        return `<div class="pref-chips" role="group" aria-label="${escapeAttr(cat.label)}">${chips}</div>`;
+    }
 
-        return `<div class="mb-3">
-            <label class="form-label fw-bold">${escapeHtml(cat.label)}</label>
-            <div>${options}</div>
-        </div>`;
+    const options = values.map(val => {
+        const checked = sel.includes(val) ? ' checked' : '';
+        return `<label class="pref-select-option">
+            <input type="${inputType}" name="${name}" value="${escapeAttr(val)}" data-category="${cat.slug}"${checked}
+                   data-action="prefFieldChange" data-arg1="$el">
+            <span>${escapeHtml(val)}</span>
+        </label>`;
     }).join('');
+
+    return `<div class="pref-select" data-pref-slug="${cat.slug}">
+        <div class="pref-select-selected">${_prefSelectedChipsHTML(cat.slug, sel)}
+            <span class="pref-select-count">${sel.length}/${values.length} sélectionné${sel.length > 1 ? 's' : ''}</span>
+        </div>
+        <input type="search" class="form-control pref-select-search" placeholder="Rechercher…"
+               aria-label="Rechercher dans ${escapeAttr(cat.label)}"
+               data-action="prefSelectSearch" data-arg1="$el">
+        <div class="pref-select-list">${options}</div>
+        <div class="pref-select-noresult d-none">Aucun résultat</div>
+        <div class="pref-select-footer">
+            <span class="pref-select-results">${values.length} valeurs</span>
+            ${cat.is_multiple ? `<button type="button" class="pref-select-clear" data-action="prefSelectClear" data-arg1="$el" data-arg2="${cat.slug}">Tout effacer</button>` : ''}
+        </div>
+    </div>`;
+}
+
+// ─── Interactions (délégation data-action) ────────────────────────
+
+/** Recherche instantanée insensible à la casse et aux accents (event input). */
+function prefSelectSearch(inputEl) {
+    const field = inputEl.closest('.pref-select');
+    if (!field) return;
+    const q = normalizeSearch(inputEl.value);
+    let visible = 0;
+    const opts = field.querySelectorAll('.pref-select-option');
+    opts.forEach(opt => {
+        const match = normalizeSearch(opt.textContent).includes(q);
+        opt.classList.toggle('d-none', !match);
+        if (match) visible++;
+    });
+    const noresult = field.querySelector('.pref-select-noresult');
+    if (noresult) noresult.classList.toggle('d-none', visible !== 0);
+    const results = field.querySelector('.pref-select-results');
+    if (results) results.textContent = visible + ' résultat' + (visible > 1 ? 's' : '') + ' sur ' + opts.length;
+}
+
+/** Re-rend la zone chips sélectionnées + compteur d'un sélecteur. */
+function prefSelectRefresh(field) {
+    const slug = field.getAttribute('data-pref-slug');
+    const values = [...field.querySelectorAll('.pref-select-list input:checked')].map(i => i.value);
+    const total = field.querySelectorAll('.pref-select-list input').length;
+    field.querySelector('.pref-select-selected').innerHTML =
+        _prefSelectedChipsHTML(slug, values) +
+        `<span class="pref-select-count">${values.length}/${total} sélectionné${values.length > 1 ? 's' : ''}</span>`;
+}
+
+/** Bouton ✕ d'une chip sélectionnée (décoche l'input + synchronise). */
+function prefSelectRemove(btnEl, slug, value) {
+    const field = btnEl.closest('.pref-select');
+    if (!field) return;
+    const input = [...field.querySelectorAll('.pref-select-list input')].find(i => i.value === value);
+    if (input) input.checked = false;
+    prefSyncFieldByContainer(field);
+}
+
+/** Lien « Tout effacer » (catégories multiples uniquement). */
+function prefSelectClear(btnEl, slug) {
+    const field = btnEl.closest('.pref-select');
+    if (!field) return;
+    field.querySelectorAll('.pref-select-list input:checked').forEach(i => { i.checked = false; });
+    prefSyncFieldByContainer(field);
+}
+
+/** Change natif d'un input chips/sélecteur (event change). */
+function prefFieldChange(inputEl) {
+    prefSyncFieldByContainer(inputEl.closest('.pref-select, .pref-card'));
+}
+
+/** Synchronise l'UI après tout changement (natif ou programmatique). */
+function prefSyncFieldByContainer(field) {
+    if (!field) return;
+    if (field.classList.contains('pref-select')) prefSelectRefresh(field);
+    const pageRoot = field.closest('[data-pref-autosave]');
+    if (pageRoot && typeof updatePrefSummaryDots === 'function') {
+        updatePrefSummaryDots(pageRoot);
+        prefAutosave(pageRoot);
+    }
 }
 
 /**
