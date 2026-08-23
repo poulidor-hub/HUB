@@ -17,6 +17,15 @@
 
 **Limite assumée** : trace le *passage* SSO, pas l'activité continue dans l'app tierce. Les apps issues du template (≥ 2.17.0) bénéficient quant à elles de la présence continue via SSE (v3.36.0).
 
+### 🎨 Graphiques uptime adaptés à l'usage parallèle multi-apps
+
+| Fonctionnalité | Description |
+|-------------|-------------|
+| Répartition multi-lignes | La « Répartition du temps » passe d'une barre empilée unique à **une barre horizontale par application** (nom sur l'axe, durée en bout, tooltip avec % du total et % de la journée — l'usage parallèle de plusieurs apps pouvant dépasser le temps réel) |
+| Étiquettes de rangée (timeline) | Le nom de chaque application figure en tête de sa rangée dans la timeline du jour — identification immédiate même à couleurs identiques |
+| Différenciation des couleurs dupliquées | Les apps partageant la même couleur reçoivent un motif distinctif : **decal ECharts** sur les barres (points, tirets, hachures, grille — contraste calculé selon la luminance) et **bordures pointillées distinctes** sur les segments de la timeline. La 1re occurrence d'un groupe reste pleine |
+| KPI renommé | « Bascules » → « Segments » (avec les segments parallèles par app, ce ne sont plus des bascules) |
+
 ---
 
 ## [3.36.0] - 23 août 2026

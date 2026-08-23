@@ -1098,7 +1098,7 @@ async function loadAuditPageUptime() {
             auditKpiCard('#e7f1ff', '#0d6efd', 'bi-person', escapeHtml(data.username), 'Utilisateur', '<span class="audit-trend flat">UTC</span>') +
             auditKpiCard('#e6f4ea', '#28a745', 'bi-stopwatch', uptimeFmtDuration(data.day_total_seconds || 0), 'Temps total du jour', '') +
             auditKpiCard('#f1f3f5', '#6c757d', 'bi-grid', data.totals.length, 'Applications utilisées', '') +
-            auditKpiCard('#fff1e6', '#fd7e14', 'bi-arrow-repeat', data.segments.length, 'Bascules', '');
+            auditKpiCard('#fff1e6', '#fd7e14', 'bi-arrow-repeat', data.segments.length, 'Segments', '');
 
         const hasData = data.segments.length > 0;
         document.getElementById('uptimeTimelineChart').classList.toggle('d-none', !hasData);
