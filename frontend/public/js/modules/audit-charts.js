@@ -60,16 +60,22 @@ function renderUserDayTimeline(containerId, data) {
     const dayStart = new Date(data.date + 'T00:00:00Z').getTime();
     const dayEnd = dayStart + 86400000;
 
-    const series = data.totals.map(app => ({
+    // Une rangée par app (36px) — les usages parallèles ne se chevauchent plus
+    const el = document.getElementById(containerId);
+    const neededHeight = Math.max(140, 40 + data.totals.length * 36 + 30);
+    if (el && el.clientHeight < neededHeight) el.style.height = `${neededHeight}px`;
+
+    const series = data.totals.map((app, appIndex) => ({
         name: app.app_name,
         type: 'custom',
         renderItem: (params, api) => {
             const x1 = api.coord([api.value(0), 0])[0];
             const x2 = api.coord([api.value(1), 0])[0];
             const height = 28;
+            const rowY = 10 + appIndex * 36;
             return {
                 type: 'rect',
-                shape: { x: x1, y: params.coordSys.y + 10, width: Math.max(x2 - x1, 2), height },
+                shape: { x: x1, y: params.coordSys.y + rowY, width: Math.max(x2 - x1, 2), height },
                 style: { fill: app.color }
             };
         },
@@ -97,8 +103,10 @@ function renderUserDayTimeline(containerId, data) {
             splitLine: { show: false }
         },
         yAxis: { show: false, data: [''] },
+        animation: false,
         series
     }, true);
+    chart.resize();
 }
 
 // Répartition du temps par app : barre empilée horizontale (1 barre = journée)
