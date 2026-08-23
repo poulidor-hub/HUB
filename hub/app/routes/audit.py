@@ -368,7 +368,32 @@ async def cleanup_stale_sessions(db: AsyncSession) -> int:
     Retourne le nombre de sessions fermées.
     """
     timeout = utcnow() - timedelta(minutes=settings.session_timeout_minutes)
-    
+
+    now = utcnow()
+
+    # Défensif : au plus une session ouverte par utilisateur. Les doublons
+    # (crash, ancien bug de commit) sont fermés en gardant la plus récente.
+    result = await db.execute(
+        select(UserSession)
+        .where(UserSession.logout_at == None)  # noqa: E711
+        .order_by(UserSession.login_at.desc(), UserSession.id.desc())
+    )
+    duplicate_closed = 0
+    seen_users = set()
+    for session in result.scalars().all():
+        if session.user_id in seen_users:
+            last_activity = session.last_activity_at or session.login_at
+            session.logout_at = min(
+                last_activity + timedelta(minutes=settings.session_timeout_minutes),
+                now,
+            )
+            session.logout_reason = "timeout"
+            session.current_app_slug = None
+            await close_segments_for_session(db, session, "timeout", ended_at=session.logout_at)
+            duplicate_closed += 1
+        else:
+            seen_users.add(session.user_id)
+
     # Sélectionner les sessions dont la dernière activité dépasse le timeout
     result = await db.execute(
         select(UserSession).where(
@@ -389,11 +414,11 @@ async def cleanup_stale_sessions(db: AsyncSession) -> int:
             db, session, "timeout", ended_at=session.logout_at
         )
 
-    if stale_sessions:
+    if stale_sessions or duplicate_closed:
         await db.commit()
         _notify_audit()
-    
-    return len(stale_sessions)
+
+    return len(stale_sessions) + duplicate_closed
 
 
 # =============================================================================
