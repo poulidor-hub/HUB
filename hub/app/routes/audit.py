@@ -237,9 +237,13 @@ async def start_session(
     orphan_sessions = result.scalars().all()
     
     for session in orphan_sessions:
-        # Utiliser last_activity_at pour déterminer le moment réel du timeout
+        # Utiliser last_activity_at pour déterminer le moment réel du timeout,
+        # sans jamais poser une fermeture dans le futur (clamp à now)
         last_activity = getattr(session, 'last_activity_at', None) or session.login_at
-        session.logout_at = last_activity + timedelta(minutes=settings.session_timeout_minutes)
+        session.logout_at = min(
+            last_activity + timedelta(minutes=settings.session_timeout_minutes),
+            now,
+        )
         session.logout_reason = "timeout"
         await close_segments_for_session(db, session, "timeout", ended_at=session.logout_at)
     
