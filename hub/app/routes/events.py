@@ -189,15 +189,9 @@ def start_cleanup_task():
 
 
 def stop_cleanup_task():
-    """Arrête la tâche de cleanup et le health checker si plus aucun client connecté."""
-    global _cleanup_task
+    """Arrête le health checker quand plus aucun client SSE (le cleanup des
+    sessions, lui, tourne désormais en continu depuis le lifespan)."""
     if len(_connected_clients) == 0:
-        if _cleanup_task and not _cleanup_task.done():
-            _cleanup_task.cancel()
-            _cleanup_task = None
-            logger.info("🔄 Tâche de cleanup des sessions arrêtée")
-        
-        # Arrêter aussi le health checker
         if is_health_checker_running():
             stop_health_checker()
 

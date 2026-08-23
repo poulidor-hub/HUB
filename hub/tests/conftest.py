@@ -118,6 +118,18 @@ def _patch_session_maker(async_engine, monkeypatch):
     yield
 
 
+@pytest.fixture(autouse=True)
+def _stop_session_cleanup_task():
+    """Annule la tâche de cleanup des sessions après chaque test.
+    En prod, cette tâche vit de `lifespan` à `force_stop_cleanup_task` (main.py).
+    En test, la loop est session-scopée : si un test démarre le cleanup via
+    /api/events/stream, la tâche immortelle survit au test et bloque le
+    finalizer pytest-asyncio (hang sur le drop_all de la fixture async_engine)."""
+    yield
+    from app.routes.events import force_stop_cleanup_task
+    force_stop_cleanup_task()
+
+
 @pytest.fixture(scope="function")
 async def client(async_engine, async_session) -> AsyncGenerator[AsyncClient, None]:
     """Client HTTP de test avec base de données en mémoire"""
