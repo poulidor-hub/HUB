@@ -5,6 +5,21 @@
 
 ---
 
+## [3.36.0] - 23 août 2026
+
+### ✨ Présence utilisateur par application via SSE (uptime)
+
+| Fonctionnalité | Description |
+|-------------|-------------|
+| Segments d'usage parallèles | `touch_app_presence` remplace `record_app_switch` : un segment par couple (session, app), plusieurs apps utilisables simultanément (multi-onglets) sans se fermer l'une l'autre. La raison `switch` n'est plus écrite (reste lisible sur l'historique) |
+| Param `?app=<slug>` sur `/api/events/stream` | Le heartbeat SSE (15 s) propage le slug de l'app → le segment d'usage s'ouvre et reste vivant tant que l'onglet de l'app garde sa SSE ouverte. Slug validé (app existante + active), sinon ignoré avec warning — jamais d'échec de stream. Rétrocompatible : param optionnel, ignoré par les HUB anciens côté apps |
+| Fermeture ciblée `disconnect` | À la coupure de la dernière SSE d'un couple (user, app), SON segment se ferme (raison `disconnect`) après un délai de reconnexion de 5 s — sans toucher aux segments des autres apps ni à la session utilisateur |
+| Timeline uptime multi-rangées | Une rangée par application dans la timeline du jour (hauteur dynamique, `animation: false` pour la stabilité) : les usages parallèles ne se chevauchent plus |
+
+**Sémantique** : `day_total_seconds` = somme des temps par app (l'usage parallèle de 2 apps compte 2×). **Côté apps** : template 2.17.0 — l'URL SSE construite par les apps porte `&app=<slug>` (`VITE_APP_SLUG`).
+
+---
+
 ## [3.35.1] - 23 août 2026
 
 ### 🐛 Stabilisation du suivi d'uptime utilisateur (sessions/segments)
