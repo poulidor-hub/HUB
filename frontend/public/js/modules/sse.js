@@ -527,16 +527,19 @@ function handleSSEEvent(data) {
             var action = data.data?.action;
             var affectedUserId = data.data?.user_id;
             if (action === 'user_tags_changed' && currentUser && affectedUserId === currentUser.id) {
-                if (typeof refreshTokenAfterAppChange === 'function') refreshTokenAfterAppChange();
+                // Silencieux : les tags sont dans les claims du JWT, le token doit être
+                // rafraîchi — mais l'autosave des préférences émet cet événement à chaque
+                // interaction, un spinner navbar + toast à chaque clic serait insupportable.
+                if (typeof refreshTokenAfterAppChange === 'function') refreshTokenAfterAppChange(null, true);
             }
             if (typeof currentPage !== 'undefined' && currentPage === 'admin-user-tags') {
+                // Re-render uniquement quand les catégories changent (nouvelles valeurs
+                // possibles). user_tags_changed = écriture de l'utilisateur lui-même :
+                // l'UI locale est déjà à jour, un re-render écraserait scroll/recherche/focus.
                 if (['category_created', 'category_updated', 'category_deleted',
-                     'category_csv_import', 'category_m2m_import'].indexOf(action) !== -1
-                    && typeof loadUserTagsAdmin === 'function') {
-                    loadUserTagsAdmin();
-                }
-                if (typeof loadAdminMyTags === 'function') {
-                    loadAdminMyTags();
+                     'category_csv_import', 'category_m2m_import'].indexOf(action) !== -1) {
+                    if (typeof loadUserTagsAdmin === 'function') loadUserTagsAdmin();
+                    if (typeof loadAdminMyTags === 'function') loadAdminMyTags();
                 }
             }
             break;
