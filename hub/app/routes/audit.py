@@ -39,7 +39,7 @@ from app.usage_stats import (
 from app.usage_tracking import (
     SEGMENT_REASON_MAP,
     close_segments_for_session,
-    record_app_switch,
+    touch_app_presence,
 )
 
 router = APIRouter(prefix="/api/audit", tags=["Audit"])
@@ -356,7 +356,7 @@ async def update_session_activity(
         session.last_activity_at = utcnow()
         if app_slug is not None:
             session.current_app_slug = app_slug
-            await record_app_switch(db, session, app_slug)
+            await touch_app_presence(db, session, app_slug)
 
     return session
 

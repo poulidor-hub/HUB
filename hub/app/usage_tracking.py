@@ -2,7 +2,7 @@
 Ouverture/clôture des segments d'usage par application.
 
 Branché sur le cycle de vie des sessions UserSession :
-- bascule d'app (update_session_activity) -> clôture 'switch' + ouverture
+- présence dans une app (update_session_activity) -> ouverture d'un segment par (session, app)
 - logout (end_session)                    -> clôture 'logout'
 - timeout (cleanup_stale_sessions)        -> clôture 'timeout'
 - révocation admin (revoke_session)       -> clôture 'forced'
@@ -25,14 +25,18 @@ SEGMENT_REASON_MAP = {
 }
 
 
-async def _get_open_segment(db: AsyncSession, session_id: int) -> Optional[AppUsageSegment]:
+async def _get_open_segment(
+    db: AsyncSession, session_id: int, app_slug: Optional[str] = None
+) -> Optional[AppUsageSegment]:
+    conditions = [
+        AppUsageSegment.session_id == session_id,
+        AppUsageSegment.ended_at == None,  # noqa: E711
+    ]
+    if app_slug is not None:
+        conditions.append(AppUsageSegment.app_slug == app_slug)
     result = await db.execute(
-        select(AppUsageSegment).where(
-            and_(
-                AppUsageSegment.session_id == session_id,
-                AppUsageSegment.ended_at == None,  # noqa: E711
-            )
-        ).order_by(AppUsageSegment.started_at.desc()).limit(1)
+        select(AppUsageSegment).where(and_(*conditions))
+        .order_by(AppUsageSegment.started_at.desc()).limit(1)
     )
     return result.scalar_one_or_none()
 
@@ -57,20 +61,18 @@ async def close_open_segments(
     return len(segments)
 
 
-async def record_app_switch(db: AsyncSession, session: UserSession, app_slug: str) -> None:
-    """À l'accès à une app : clôture le segment ouvert si l'app change, ouvre un nouveau."""
-    open_seg = await _get_open_segment(db, session.id)
-    now = utcnow()
+async def touch_app_presence(db: AsyncSession, session: UserSession, app_slug: str) -> None:
+    """Présence dans une app : ouvre un segment par couple (session, app).
+    Les segments des autres apps restent ouverts (usage parallèle multi-onglets) ;
+    ils sont fermés par leur propre connexion SSE ou à la fermeture de session."""
+    open_seg = await _get_open_segment(db, session.id, app_slug)
     if open_seg is not None:
-        if open_seg.app_slug == app_slug:
-            return  # même app, pas de nouveau segment
-        open_seg.ended_at = max(now, open_seg.started_at)
-        open_seg.end_reason = "switch"
+        return
     db.add(AppUsageSegment(
         session_id=session.id,
         user_id=session.user_id,
         app_slug=app_slug,
-        started_at=now,
+        started_at=utcnow(),
     ))
 
 
