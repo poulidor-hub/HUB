@@ -5,6 +5,23 @@
 
 ---
 
+## [3.35.0] - 23 août 2026
+
+### ✨ Refonte UI de la vue Préférences (visible par tous les utilisateurs)
+
+| Fonctionnalité | Description |
+|----------------|-------------|
+| **Composants de sélection à seuil auto** | Catégories ≤ 12 valeurs : chips cliquables (surface entière, état actif plein bleu, coche, inputs natifs masqués → clavier et lecteurs d'écran natifs). Catégories > 12 valeurs (ex: 50+ villes) : sélecteur avec recherche instantanée insensible à la casse/accents (normalisation NFD), chips de sélection retitrables (✕), compteur « X/Y sélectionnés » et « X résultats sur Y », « Tout effacer » (multi), liste scrollable 240px. |
+| **Autosave** | Fini le bouton « Enregistrer mes choix » sur la page : chaque interaction est sauvegardée (debounce 600 ms, objet complet envoyé à `PUT /api/tags/my`, dernière écriture gagnante) avec indicateur d'état discret dans l'en-tête (« Enregistrement… » / « ✓ Enregistré » / « ⚠ Échec » + toast). Le popup d'onboarding garde son bouton (sémantique d'action délibérée + acquittement des catégories). |
+| **Structure page** | Sommaire sticky à gauche (clic = scroll doux, pastille remplie quand la catégorie a un choix, section active surlignée via IntersectionObserver), cartes par catégorie à droite. Sous `lg` le sommaire disparaît (scroll naturel). |
+| **Onglets admin-only** | Les non-admin ne voient plus la barre d'onglets orpheline : contenu « Mes préférences » direct, titre neutre (« Préférences » / « chaque changement est enregistré automatiquement »). Admin : 3 onglets inchangés, « Mes préférences » = nouveau layout. |
+| **Fix toggle chips** | Le délégué global `data-action` (app.js) fait `preventDefault()` sur tout clic `[data-action]` : posé sur les inputs checkbox/radio, il annulait le toggle natif (sélection figée). Les inputs restent natifs, la synchro passe par un listener `change` dédié dans `user-tags.js`. |
+| **Fix SSE `tags_updated` bruyant** | Chaque autosave émet `tags_updated` : le handler SSE déclenchait un spinner navbar « Sync... » (`refreshTokenAfterAppChange` non silencieux) + re-render complet de la page (scroll/recherche/focus écrasés). Le refresh token reste (les tags sont dans les claims du JWT, `auth.py`) mais devient **silencieux** ; le re-render ne se fait plus que sur les actions `category_*` (création/modif/suppression/import), plus sur les écritures de l'utilisateur lui-même. |
+| **Fix création catégorie 422** | Régression préexistante (`211d622`) : `TagCategoryCreate.m2m_endpoint` est `str` non-Optional côté backend, mais le frontend envoyait toujours `m2m_endpoint: null` pour les catégories CSV → 422 systématique à la création manuelle. La clé est désormais omise quand nulle (le backend applique son default). |
+| **Cohérence** | Popup d'onboarding et modale admin « préférences d'un utilisateur » utilisent les mêmes composants (chips/sélecteur) via `buildTagsFormHTML` (wrapper sur `buildPrefFieldHTML`). Aucun changement backend. |
+
+---
+
 ## [3.34.3] - 23 août 2026
 
 ### ⚡ Régression opérations en masse + complétion de la migration CSP (data-action)

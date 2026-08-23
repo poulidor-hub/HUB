@@ -279,32 +279,26 @@ function showPage(page) {
 }
 
 /**
- * Affiche/masque les onglets de la page Préférences selon le rôle.
- * Non-admin : uniquement l'onglet "Mes préférences" (actif).
- * Admin : les 3 onglets (comportement inchangé).
+ * Onglets de la page Préférences selon le rôle.
+ * Non-admin : barre d'onglets masquée, contenu "Mes préférences" direct.
+ * Admin : 3 onglets, premier (Catégories) actif.
  */
 function applyUserTagsTabsVisibility() {
+    const section = document.getElementById('adminUserTagsSection');
+    if (!section) return;
     const isAdmin = !!currentUser?.is_admin;
-    document.querySelectorAll('#adminUserTagsSection .nav-tabs .nav-link').forEach(link => {
-        const target = link.getAttribute('data-bs-target');
-        const adminOnly = (target === '#tabTagCategories' || target === '#tabTagUsers');
-        if (adminOnly && !isAdmin) {
-            link.classList.add('d-none');
-        } else {
-            link.classList.remove('d-none');
-        }
-    });
-    if (!isAdmin) {
-        const mineLink = document.querySelector('#adminUserTagsSection .nav-tabs .nav-link[data-bs-target="#tabTagMine"]');
-        const minePane = document.getElementById('tabTagMine');
-        document.querySelectorAll('#adminUserTagsSection .tab-pane').forEach(p => {
-            p.classList.remove('show', 'active');
-        });
-        document.querySelectorAll('#adminUserTagsSection .nav-tabs .nav-link').forEach(l => {
-            l.classList.remove('active');
-        });
-        if (mineLink) mineLink.classList.add('active');
-        if (minePane) minePane.classList.add('show', 'active');
+
+    const tabsNav = section.querySelector('.nav-tabs');
+    if (tabsNav) tabsNav.classList.toggle('d-none', !isAdmin);
+
+    section.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('show', 'active'));
+    section.querySelectorAll('.nav-tabs .nav-link').forEach(l => l.classList.remove('active'));
+
+    if (isAdmin) {
+        section.querySelector('.nav-tabs .nav-link[data-bs-target="#tabTagCategories"]')?.classList.add('active');
+        document.getElementById('tabTagCategories')?.classList.add('show', 'active');
+    } else {
+        document.getElementById('tabTagMine')?.classList.add('show', 'active');
     }
 }
 
