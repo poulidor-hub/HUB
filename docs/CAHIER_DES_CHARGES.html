@@ -64,7 +64,7 @@ strong { color: var(--dark); }
 <tbody>
 <tr>
 <td><strong>Version documentée</strong></td>
-<td>3.29.0 (état de l'art à la date de rédaction)</td>
+<td>3.37.0 (état de l'art à la date de rédaction)</td>
 </tr>
 <tr>
 <td><strong>Nature du document</strong></td>
@@ -142,7 +142,7 @@ fournit à l'administrateur et à l'exploitant les outils d'administration du pa
 </tbody>
 </table>
 <p>Cette grille de lecture structure la partie 2 du présent document.</p>
-<h3>2.3 Chiffres clés (version 3.29.0)</h3>
+<h3>2.3 Chiffres clés (version 3.37.0)</h3>
 <table>
 <thead>
 <tr>
@@ -157,7 +157,7 @@ fournit à l'administrateur et à l'exploitant les outils d'administration du pa
 </tr>
 <tr>
 <td>Tables de base de données</td>
-<td>32</td>
+<td>≈ 34</td>
 </tr>
 <tr>
 <td>Outils d'automatisation exposés (serveur MCP compagnon)</td>
@@ -165,11 +165,11 @@ fournit à l'administrateur et à l'exploitant les outils d'administration du pa
 </tr>
 <tr>
 <td>Tests automatisés</td>
-<td>≈ 630 (59 fichiers de tests)</td>
+<td>≈ 726 (78 fichiers de tests)</td>
 </tr>
 <tr>
 <td>Domaines fonctionnels</td>
-<td>19 modules décrits dans ce document</td>
+<td>22 modules décrits dans ce document</td>
 </tr>
 </tbody>
 </table>
@@ -386,7 +386,7 @@ peut les restaurer.</p>
 </tr>
 <tr>
 <td>Vérification continue</td>
-<td>≈ 630 tests automatisés (authentification, OIDC, sauvegardes, snapshots, VPN, PKI, migrations…)</td>
+<td>≈ 726 tests automatisés (authentification, OIDC, sauvegardes, snapshots, VPN, PKI, migrations…)</td>
 </tr>
 </tbody>
 </table>
@@ -461,6 +461,9 @@ messagerie externe.</p>
 - <strong>rôles</strong> : rôle global (administrateur / utilisateur) et <strong>rôles par application</strong> ;
 - <strong>profils</strong> : gabarits d'ensembles « applications + rôles » applicables en une action à
   des utilisateurs (avec synchronisation et détachement) ;
+- <strong>override de rôles de profil</strong> : ajustement individuel du niveau de droits d'une
+  application couverte par un profil (badge « modifié », réinitialisation selon le
+  profil) ;
 - gestion des <strong>sessions</strong> : révocation immédiate des sessions d'un utilisateur
   (déconnexion forcée propagée en temps réel) ;
 - désactivation du second facteur d'un utilisateur (support) ;
@@ -477,8 +480,9 @@ traitent en quelques actions, droits applicatifs compris.</p>
   statut « en attente » ; l'administrateur approuve ou rejette avec motif ;
 - <strong>comptes de service</strong> (machine-à-machine) : création avec secret affiché une seule
   fois, régénération, périmètre d'applications attaché, secrets chiffrés au repos ;
-- <strong>allocation de ports</strong> : le HUB gère un pool de plages (front / API) et alloue les
-  ports des nouvelles applications sans collision, avec vue d'état et libération ;
+- <strong>allocation de ports et de sous-réseaux</strong> : le HUB gère un pool de plages (front /
+  API) et de <strong>sous-réseaux Docker</strong> par application, alloue ports et sous-réseau des
+  nouvelles applications sans collision, avec vue d'état et libération ;
 - <strong>catalogue GitHub</strong> : mise en cache des dépôts de l'organisation, marquage des dépôts
   déjà intégrés, pré-remplissage de la création d'application depuis un dépôt (avec
   allocation automatique des ports) ;
@@ -486,6 +490,9 @@ traitent en quelques actions, droits applicatifs compris.</p>
   conteneurs orphelins, resynchronisation ;
 - <strong>graphe de dépendances</strong> : déclaration et consultation des dépendances entre
   applications ;
+- <strong>groupes d'applications</strong> : regroupement visuel du portail (tuiles de groupes,
+  badge, recherche par groupe), gestion administrateur (CRUD, affectation d'une
+  application à un groupe) ;
 - gestion des <strong>favoris</strong> et des rôles applicatifs par utilisateur.</p>
 <p><strong>Bénéfice</strong> — le parc est inventorié, versionné et contrôlé ; rien n'y entre sans
 validation explicite.</p>
@@ -541,8 +548,8 @@ importé la CA.</p>
 - <strong>paramètres à chaud</strong> (clé/valeur) : activation des demandes de compte, intégration
   GitHub, configuration VPN…, avec propagation temps réel aux interfaces connectées ;
 - <strong>snapshots système</strong> : image complète du HUB (export de la base de données, fichiers,
-  sauvegardes d'applications, configuration des conteneurs), compressée puis
-  <strong>chiffrée</strong> (RSA-OAEP + AES-256-GCM), avec :
+  <strong>code source des applications</strong>, sauvegardes d'applications, configuration des
+  conteneurs), compressée puis <strong>chiffrée</strong> (RSA-OAEP + AES-256-GCM), avec :
   - planification cron, rétention paramétrable, statistiques,
   - téléchargement de l'archive, <strong>archivage optionnel vers stockage S3</strong>,
   - <strong>restauration avec prévisualisation</strong> avant application ;
@@ -550,6 +557,19 @@ importé la CA.</p>
   applications, rôles, comptes de service) et réimport sur une autre instance, en modes
   création/mise à jour.</p>
 <p><strong>Bénéfice</strong> — le HUB est lui-même un objet sauvegardé, restaurable et relocalisable.</p>
+<h3>7.7 Déploiement automatique des applications</h3>
+<p><strong>Objectif</strong> — mettre en service une application depuis son dépôt Git en une action.</p>
+<p><strong>Fonctionnalités</strong>
+- <strong>déploiement complet</strong> déclenché depuis l'administration : clonage / mise à jour du
+  dépôt, génération et injection du fichier d'environnement (slug, ports, secrets),
+  construction des conteneurs, démarrage puis vérification de santé ;
+- <strong>suivi en temps réel</strong> : statut courant, étape en cours, journaux, historique des
+  déploiements (un déploiement à la fois, persistance inter-redémarrages, annulation
+  propre à l'arrêt du HUB) ;
+- <strong>lancement automatique</strong> après ajout d'une application avec URL Git, badge « non
+  déployée » et relance manuelle pour les applications sans déploiement réussi.</p>
+<p><strong>Bénéfice</strong> — l'ajout d'une application au parc est automatisé de bout en bout, de son
+dépôt jusqu'à sa mise en service, sans manipulation manuelle d'environnement.</p>
 <hr>
 <h2>8. Parcours « Exploitant / Supervision »</h2>
 <h3>8.1 Audit et traçabilité</h3>
@@ -587,6 +607,22 @@ décidées sur information, pas au hasard.</p>
 - <strong>indicateurs (KPIs) et alertes</strong> : vue de synthèse de l'activité (connexions,
   utilisateurs, applications, sauvegardes) et points d'attention.</p>
 <p><strong>Bénéfice</strong> — un seul endroit pour juger de la santé générale du système.</p>
+<h3>8.4 Suivi d'usage et présence (uptime)</h3>
+<p><strong>Objectif</strong> — mesurer l'utilisation réelle de chaque application, en continu.</p>
+<p><strong>Fonctionnalités</strong>
+- <strong>segments d'usage par application</strong> : présence enregistrée par couple (session,
+  application), avec prise en charge de l'usage <strong>parallèle</strong> de plusieurs applications
+  (multi-onglets) sans se fermer l'une l'autre ;
+- <strong>présence continue par SSE</strong> : le battement de cœur des applications maintient les
+  segments ouverts tant que l'application est utilisée ; le passage par le SSO OIDC des
+  applications tierces est également tracé ;
+- <strong>clôture fidèle des segments</strong> : déconnexion, bascule d'application, expiration de
+  session ou révocation (raisons distinctes) ;
+- <strong>visualisations</strong> : chronologie du jour par application (heatmap d'activité),
+  répartition du temps par application, indicateurs de pic / moyenne / percentiles,
+  simultanés sur longue période, avec filtres par application et par période.</p>
+<p><strong>Bénéfice</strong> — l'exploitant mesure la charge et l'adoption réelle du parc, application
+par application, sans sondage intrusif.</p>
 <hr>
 <h2>9. Parcours « Développeur d'applications »</h2>
 <h3>9.1 Gabarit d'application (template)</h3>
@@ -607,6 +643,9 @@ sans intervention humaine.</p>
 <p><strong>Fonctionnalités</strong>
 - <strong>auto-enregistrement</strong> : l'application naissante s'annonce au HUB et passe en attente
   d'approbation ; import en masse possible côté administration ;
+- <strong>ré-enregistrement auto-réparant</strong> : à la ré-inscription, le HUB retrouve ou recrée
+  automatiquement le compte de service propriétaire de l'application (y compris après
+  suppression en cascade) ;
 - octroi <strong>client_credentials</strong> : l'application obtient des jetons avec ses identifiants
   de compte de service (secret régénérable, chiffré au repos) ;
 - <strong>découverte de services</strong> : les applications déclarées « services partagés »
@@ -743,12 +782,24 @@ HUB sans documentation externe à maintenir.</p>
 <td>Registre, approbation, ports, scanner Docker, dépendances, découverte M2M</td>
 </tr>
 <tr>
+<td>Groupes d'applications</td>
+<td>Regroupement visuel du portail, CRUD, affectation d'une application</td>
+</tr>
+<tr>
 <td>Comptes de service</td>
 <td>CRUD M2M, secrets, périmètre d'applications</td>
 </tr>
 <tr>
+<td>Déploiement d'applications</td>
+<td>Déclenchement, suivi temps réel, historique, journaux</td>
+</tr>
+<tr>
 <td>Santé des applications</td>
 <td>État, cycle de vie conteneurs, journaux, versions/dépôt Git</td>
+</tr>
+<tr>
+<td>Usage / présence</td>
+<td>Segments par application, timeline, heatmap, statistiques</td>
 </tr>
 <tr>
 <td>Sauvegardes d'applications</td>
@@ -894,7 +945,7 @@ HUB sans documentation externe à maintenir.</p>
 <tbody>
 <tr>
 <td>Version documentée</td>
-<td>3.29.0</td>
+<td>3.37.0</td>
 </tr>
 <tr>
 <td>Composants livrés</td>
@@ -926,7 +977,7 @@ HUB sans documentation externe à maintenir.</p>
 </tr>
 <tr>
 <td>Vérification</td>
-<td>≈ 630 tests automatisés — authentification, OIDC, SLO, M2M, sauvegardes, snapshots, VPN, PKI, migrations</td>
+<td>≈ 726 tests automatisés — authentification, OIDC, SLO, M2M, sauvegardes, snapshots, VPN, PKI, migrations</td>
 </tr>
 </tbody>
 </table>

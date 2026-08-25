@@ -5,6 +5,20 @@
 
 ---
 
+## [3.37.1] - 25 août 2026
+
+### 📖 Cahier des charges mis à jour à l'état de l'art v3.37.0
+
+| Fonctionnalité | Description |
+|----------------|-------------|
+| Version documentée | `CAHIER_DES_CHARGES.md` passé de v3.29.0 à **v3.37.0** (état de l'art) |
+| Nouveaux modules | §7.7 Déploiement automatique des applications, §8.4 Suivi d'usage et présence (uptime) |
+| Mises à jour | §7.1 override des rôles de profils, §7.2 groupes d'applications + sous-réseaux Docker, §7.6 snapshots incluant le code source, §9.2 self-healing M2M, Annexe A +3 domaines |
+| Chiffres clés | Tests ≈630→726 (78 fichiers), tables 32→34, domaines 19→22 |
+| Livrables | Rebuild `CAHIER_DES_CHARGES.html` (autonome) |
+
+---
+
 ## [3.37.0] - 23 août 2026
 
 ### ✨ Traçage SSO OIDC dans l'uptime

@@ -4,7 +4,7 @@
 
 | | |
 |---|---|
-| **Version documentée** | 3.29.0 (état de l'art à la date de rédaction) |
+| **Version documentée** | 3.37.0 (état de l'art à la date de rédaction) |
 | **Nature du document** | Cahier des charges descriptif — fonctionnalités livrées et démontrables |
 | **Diffusion** | Interne / externe (document anonymisé) |
 
@@ -68,15 +68,15 @@ fournit à l'administrateur et à l'exploitant les outils d'administration du pa
 
 Cette grille de lecture structure la partie 2 du présent document.
 
-### 2.3 Chiffres clés (version 3.29.0)
+### 2.3 Chiffres clés (version 3.37.0)
 
 | Indicateur | Valeur |
 |---|---|
 | Endpoints d'API REST | ≈ 250 |
-| Tables de base de données | 32 |
+| Tables de base de données | ≈ 34 |
 | Outils d'automatisation exposés (serveur MCP compagnon) | 65 |
-| Tests automatisés | ≈ 630 (59 fichiers de tests) |
-| Domaines fonctionnels | 19 modules décrits dans ce document |
+| Tests automatisés | ≈ 726 (78 fichiers de tests) |
+| Domaines fonctionnels | 22 modules décrits dans ce document |
 
 ### 2.4 Empilement technique
 
@@ -210,7 +210,7 @@ peut les restaurer.
 | Sauvegardes | Export chiffré hybride **RSA-OAEP + AES-256-GCM** avec clés dédiées distinctes des clés de signature |
 | Traçabilité | Identifiant de requête sur chaque appel (`X-Request-ID`), journalisation des actions sensibles, exceptions capturées en base avec pile d'appels |
 | Réseau | Seul le port VPN est exposé ; enregistrement des applications restreint par liste blanche réseau |
-| Vérification continue | ≈ 630 tests automatisés (authentification, OIDC, sauvegardes, snapshots, VPN, PKI, migrations…) |
+| Vérification continue | ≈ 726 tests automatisés (authentification, OIDC, sauvegardes, snapshots, VPN, PKI, migrations…) |
 
 ---
 
@@ -307,6 +307,9 @@ messagerie externe.
 - **rôles** : rôle global (administrateur / utilisateur) et **rôles par application** ;
 - **profils** : gabarits d'ensembles « applications + rôles » applicables en une action à
   des utilisateurs (avec synchronisation et détachement) ;
+- **override de rôles de profil** : ajustement individuel du niveau de droits d'une
+  application couverte par un profil (badge « modifié », réinitialisation selon le
+  profil) ;
 - gestion des **sessions** : révocation immédiate des sessions d'un utilisateur
   (déconnexion forcée propagée en temps réel) ;
 - désactivation du second facteur d'un utilisateur (support) ;
@@ -327,8 +330,9 @@ traitent en quelques actions, droits applicatifs compris.
   statut « en attente » ; l'administrateur approuve ou rejette avec motif ;
 - **comptes de service** (machine-à-machine) : création avec secret affiché une seule
   fois, régénération, périmètre d'applications attaché, secrets chiffrés au repos ;
-- **allocation de ports** : le HUB gère un pool de plages (front / API) et alloue les
-  ports des nouvelles applications sans collision, avec vue d'état et libération ;
+- **allocation de ports et de sous-réseaux** : le HUB gère un pool de plages (front /
+  API) et de **sous-réseaux Docker** par application, alloue ports et sous-réseau des
+  nouvelles applications sans collision, avec vue d'état et libération ;
 - **catalogue GitHub** : mise en cache des dépôts de l'organisation, marquage des dépôts
   déjà intégrés, pré-remplissage de la création d'application depuis un dépôt (avec
   allocation automatique des ports) ;
@@ -336,6 +340,9 @@ traitent en quelques actions, droits applicatifs compris.
   conteneurs orphelins, resynchronisation ;
 - **graphe de dépendances** : déclaration et consultation des dépendances entre
   applications ;
+- **groupes d'applications** : regroupement visuel du portail (tuiles de groupes,
+  badge, recherche par groupe), gestion administrateur (CRUD, affectation d'une
+  application à un groupe) ;
 - gestion des **favoris** et des rôles applicatifs par utilisateur.
 
 **Bénéfice** — le parc est inventorié, versionné et contrôlé ; rien n'y entre sans
@@ -407,8 +414,8 @@ importé la CA.
 - **paramètres à chaud** (clé/valeur) : activation des demandes de compte, intégration
   GitHub, configuration VPN…, avec propagation temps réel aux interfaces connectées ;
 - **snapshots système** : image complète du HUB (export de la base de données, fichiers,
-  sauvegardes d'applications, configuration des conteneurs), compressée puis
-  **chiffrée** (RSA-OAEP + AES-256-GCM), avec :
+  **code source des applications**, sauvegardes d'applications, configuration des
+  conteneurs), compressée puis **chiffrée** (RSA-OAEP + AES-256-GCM), avec :
   - planification cron, rétention paramétrable, statistiques,
   - téléchargement de l'archive, **archivage optionnel vers stockage S3**,
   - **restauration avec prévisualisation** avant application ;
@@ -417,6 +424,23 @@ importé la CA.
   création/mise à jour.
 
 **Bénéfice** — le HUB est lui-même un objet sauvegardé, restaurable et relocalisable.
+
+### 7.7 Déploiement automatique des applications
+
+**Objectif** — mettre en service une application depuis son dépôt Git en une action.
+
+**Fonctionnalités**
+- **déploiement complet** déclenché depuis l'administration : clonage / mise à jour du
+  dépôt, génération et injection du fichier d'environnement (slug, ports, secrets),
+  construction des conteneurs, démarrage puis vérification de santé ;
+- **suivi en temps réel** : statut courant, étape en cours, journaux, historique des
+  déploiements (un déploiement à la fois, persistance inter-redémarrages, annulation
+  propre à l'arrêt du HUB) ;
+- **lancement automatique** après ajout d'une application avec URL Git, badge « non
+  déployée » et relance manuelle pour les applications sans déploiement réussi.
+
+**Bénéfice** — l'ajout d'une application au parc est automatisé de bout en bout, de son
+dépôt jusqu'à sa mise en service, sans manipulation manuelle d'environnement.
 
 ---
 
@@ -469,6 +493,26 @@ décidées sur information, pas au hasard.
 
 **Bénéfice** — un seul endroit pour juger de la santé générale du système.
 
+### 8.4 Suivi d'usage et présence (uptime)
+
+**Objectif** — mesurer l'utilisation réelle de chaque application, en continu.
+
+**Fonctionnalités**
+- **segments d'usage par application** : présence enregistrée par couple (session,
+  application), avec prise en charge de l'usage **parallèle** de plusieurs applications
+  (multi-onglets) sans se fermer l'une l'autre ;
+- **présence continue par SSE** : le battement de cœur des applications maintient les
+  segments ouverts tant que l'application est utilisée ; le passage par le SSO OIDC des
+  applications tierces est également tracé ;
+- **clôture fidèle des segments** : déconnexion, bascule d'application, expiration de
+  session ou révocation (raisons distinctes) ;
+- **visualisations** : chronologie du jour par application (heatmap d'activité),
+  répartition du temps par application, indicateurs de pic / moyenne / percentiles,
+  simultanés sur longue période, avec filtres par application et par période.
+
+**Bénéfice** — l'exploitant mesure la charge et l'adoption réelle du parc, application
+par application, sans sondage intrusif.
+
 ---
 
 ## 9. Parcours « Développeur d'applications »
@@ -497,6 +541,9 @@ sans intervention humaine.
 **Fonctionnalités**
 - **auto-enregistrement** : l'application naissante s'annonce au HUB et passe en attente
   d'approbation ; import en masse possible côté administration ;
+- **ré-enregistrement auto-réparant** : à la ré-inscription, le HUB retrouve ou recrée
+  automatiquement le compte de service propriétaire de l'application (y compris après
+  suppression en cascade) ;
 - octroi **client_credentials** : l'application obtient des jetons avec ses identifiants
   de compte de service (secret régénérable, chiffré au repos) ;
 - **découverte de services** : les applications déclarées « services partagés »
@@ -650,8 +697,11 @@ HUB sans documentation externe à maintenir.
 | Utilisateurs | CRUD, rôles, opérations en masse, import CSV, sessions |
 | Demandes de compte | Formulaire public, suivi, approbation/rejet, notification des administrateurs |
 | Applications | Registre, approbation, ports, scanner Docker, dépendances, découverte M2M |
+| Groupes d'applications | Regroupement visuel du portail, CRUD, affectation d'une application |
 | Comptes de service | CRUD M2M, secrets, périmètre d'applications |
+| Déploiement d'applications | Déclenchement, suivi temps réel, historique, journaux |
 | Santé des applications | État, cycle de vie conteneurs, journaux, versions/dépôt Git |
+| Usage / présence | Segments par application, timeline, heatmap, statistiques |
 | Sauvegardes d'applications | Réception, planification, rétention, export chiffré, restauration, orphelins |
 | Snapshots système | Déclenchement, configuration, restauration avec aperçu, S3 |
 | Audit | Journal, sessions, erreurs, statistiques, exports CSV |
@@ -692,7 +742,7 @@ HUB sans documentation externe à maintenir.
 
 | Élément | Valeur |
 |---|---|
-| Version documentée | 3.29.0 |
+| Version documentée | 3.37.0 |
 | Composants livrés | API (FastAPI), interface web (SPA native), PostgreSQL, frontal Nginx, serveur VPN WireGuard, serveur MCP compagnon (65 outils) |
 | Empaquetage | Docker Compose (projet unique pour le HUB ; un projet par application du parc) |
 | Plages réservées aux applications | Front : 4200-4699 · API : 9000-9499 (allocation gérée par le HUB) |
@@ -700,4 +750,4 @@ HUB sans documentation externe à maintenir.
 | Prérequis d'exécution | Hôte Docker, accès socket Docker (lecture + pilotage ciblé) ; clés RSA et clé de chiffrement des secrets générées au premier démarrage |
 | Comptes | 1 administrateur minimum (mot de passe forcément changé à la première connexion) |
 | Sauvegardes | Applications : planification cron + rétention par nombre · HUB : snapshots chiffrés (rétention 7 / 24 h par défaut), archivage S3 optionnel |
-| Vérification | ≈ 630 tests automatisés — authentification, OIDC, SLO, M2M, sauvegardes, snapshots, VPN, PKI, migrations |
+| Vérification | ≈ 726 tests automatisés — authentification, OIDC, SLO, M2M, sauvegardes, snapshots, VPN, PKI, migrations |
