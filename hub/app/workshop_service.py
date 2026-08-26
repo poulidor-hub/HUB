@@ -516,11 +516,142 @@ async def _op_update(op_id: int, slug: str) -> None:
                      finished_at=utcnow())
 
 
-# ── ship / remove : implémentés en Task 4 (stubs pour le dispatch) ──
+# ── SHIP (déploiement prod + suppression atelier) ──
 
 async def _op_ship(op_id: int, slug: str) -> None:
-    raise NotImplementedError(f"Opération ship non implémentée (Task 4) : {slug}")
+    app_dir = get_apps_dir() / slug
+    ws_slug = f"{slug}-ws"
+    compose_file = app_dir / "docker-compose.yml"
+    env = _read_env_file(_ws_env_path(slug))
+    if not env:
+        raise RuntimeError(f"Atelier « {ws_slug} » inexistant")
 
+    # Garde-fou 1 : on ne déploie QUE ce qui a été testé sur main (release-on-main)
+    ws_ref, ws_commit = env.get("WS_REF", "n/a"), env.get("WS_COMMIT", "")
+    if ws_ref != "main" or not ws_commit:
+        raise RuntimeError(
+            f"L'atelier teste « {ws_ref} » — le déploiement ne concerne que origin/main. "
+            "Mergez vers main (release-on-main), mettez à jour l'atelier, puis réessayez.")
+
+    state = await _git_state(app_dir)
+    if not state["ok"]:
+        raise RuntimeError(f"{app_dir} n'est pas un repo git avec remote origin")
+    if not await _worktree_clean(app_dir):
+        raise RuntimeError("Working tree sale — commit/push ou stash avant le déploiement")
+
+    prev_branch, prev_commit = state["branch"], state["head"]
+
+    # Garde-fou 2 : atelier sain avant de toucher à la prod
+    await _step(op_id, "guards", f"Santé atelier (port {env.get('API_PORT')})")
+    if not await _wait_healthy(int(env.get("API_PORT", "10000")), timeout=T_HEALTH):
+        raise RuntimeError("L'atelier n'est pas sain — on ne déploie pas. "
+                           "Diagnostiquez puis relancez.")
+
+    has_makefile = (app_dir / "Makefile").exists()
+    build_cmd = ["make", "build"] if has_makefile else \
+        ["docker", "compose", "-f", str(compose_file), "build"]
+    up_cmd = ["make", "up"] if has_makefile else \
+        ["docker", "compose", "-f", str(compose_file), "up", "-d"]
+
+    try:
+        await _step(op_id, "guards", "Sync origin/main")
+        await _git(app_dir, "fetch", "--quiet", "origin")
+        await _git(app_dir, "checkout", "--quiet", "main")
+        await _git(app_dir, "reset", "--hard", "origin/main")
+
+        # Garde-fou 3 : main n'a pas avancé depuis la validation atelier
+        target = await _origin_main(app_dir)
+        if target != ws_commit:
+            raise RuntimeError(
+                f"main a avancé depuis le test atelier (testé {ws_commit[:8]}, "
+                f"main {(target or 'n/a')[:8]}) — relancez la mise à jour puis revalidez.")
+
+        await _step(op_id, "build", "Build prod (main @ " + ws_commit[:8] + ")")
+        await _run_cmd(build_cmd, app_dir, T_BUILD)
+
+        await _step(op_id, "up", "Démarrage prod")
+        await _run_cmd(up_cmd, app_dir, T_UP)
+
+        await _step(op_id, "health", "Santé prod (60 s)")
+        prod_api = int(_read_env_file(app_dir / ".env").get("API_PORT", "9000"))
+        if not await _wait_healthy(prod_api, timeout=T_HEALTH):
+            raise RuntimeError("Prod pas healthy après déploiement")
+    except Exception as e:
+        await _step(op_id, "rollback", "Rollback prod — atelier conservé")
+        await _restore_git(app_dir, prev_branch, prev_commit)
+        try:
+            await _run_cmd(build_cmd, app_dir, T_BUILD)
+            await _run_cmd(up_cmd, app_dir, T_UP)
+            await _wait_healthy(int(_read_env_file(app_dir / ".env").get("API_PORT", "9000")),
+                                timeout=T_HEALTH)
+        except Exception as e2:
+            logger.warning(f"rollback ship incomplet pour {slug}: {e2}")
+        raise RuntimeError(
+            f"Déploiement échoué ({e}) — rollback prod effectué, "
+            "atelier conservé pour diagnostic."
+        ) from None
+
+    # Succès : suppression atelier (seul down -v légitime du cycle)
+    await _step(op_id, "cleanup", f"Suppression atelier « {ws_slug} »")
+    compose_env = _ws_compose_env(slug)
+    try:
+        await _run_cmd(["docker", "compose", "-p", ws_slug, "-f", str(compose_file),
+                        "down", "-v"], app_dir, T_UP, env_extra=compose_env)
+    except Exception as e:
+        logger.warning(f"down -v atelier échoué ({e}) — .workshop.env supprimé quand même")
+    _ws_env_path(slug).unlink(missing_ok=True)
+
+    from app.models import utcnow
+    prev_v = _read_env_file(app_dir / ".env").get("APP_VERSION", "?")
+    await _update_op(op_id, status="success", current_step="done",
+                     logs=f"✓ Prod « {slug} » déployée (main @ {ws_commit[:8]}, "
+                          f"version {prev_v}), atelier « {ws_slug} » supprimé\n",
+                     finished_at=utcnow())
+
+
+# ── REMOVE ──
 
 async def _op_remove(op_id: int, slug: str) -> None:
-    raise NotImplementedError(f"Opération remove non implémentée (Task 4) : {slug}")
+    app_dir = get_apps_dir() / slug
+    ws_slug = f"{slug}-ws"
+    compose_file = app_dir / "docker-compose.yml"
+    env = _read_env_file(_ws_env_path(slug))
+    if not env:
+        raise RuntimeError(f"Atelier « {ws_slug} » inexistant")
+
+    await _step(op_id, "down", f"docker compose -p {ws_slug} down -v")
+    compose_env = _ws_compose_env(slug)
+    try:
+        await _run_cmd(["docker", "compose", "-p", ws_slug, "-f", str(compose_file),
+                        "down", "-v"], app_dir, T_UP, env_extra=compose_env)
+    except Exception as e:
+        logger.warning(f"down -v atelier échoué ({e}) — poursuite du cleanup")
+
+    await _step(op_id, "cleanup", "Suppression .workshop.env")
+    _ws_env_path(slug).unlink(missing_ok=True)
+
+    from app.models import utcnow
+    await _update_op(op_id, status="success", current_step="done",
+                     logs=f"✓ Atelier « {ws_slug} » supprimé (ports + subnet + disque libérés)\n",
+                     finished_at=utcnow())
+
+
+# ── Purge ──
+
+async def purge_workshop_operations(db: AsyncSession, retention_days: int) -> int:
+    """Supprime les opérations terminées plus vieilles que retention_days."""
+    from datetime import timedelta
+    from app.models import utcnow
+    if retention_days <= 0:
+        return 0
+    cutoff = utcnow() - timedelta(days=retention_days)
+    result = await db.execute(
+        select(WorkshopOperation).where(
+            WorkshopOperation.status.in_(("success", "failed")),
+            WorkshopOperation.finished_at < cutoff,
+        ))
+    ops = list(result.scalars().all())
+    for op in ops:
+        await db.delete(op)
+    await db.commit()
+    return len(ops)

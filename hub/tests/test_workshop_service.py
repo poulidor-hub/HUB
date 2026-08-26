@@ -131,6 +131,8 @@ async def test_has_active_workshop_operation(async_session):
 
 import asyncio
 
+from sqlalchemy import select
+
 import app.deploy_service as ds
 
 
@@ -165,6 +167,8 @@ def _install_exec(monkeypatch, results):
 def _mk_app(tmp_path, monkeypatch, *, with_ws=False, version="0.8.3"):
     app = tmp_path / "wstest"; app.mkdir(exist_ok=True)
     (app / "docker-compose.yml").write_text("services: {}\n")
+    # Makefile : _op_ship préfère make build/up quand il existe (parité hubctl)
+    (app / "Makefile").write_text("build:\nup:\n")
     (app / "VERSION").write_text(version + "\n")
     (app / ".env").write_text("API_PORT=9001\nFRONTEND_PORT=4201\nAPP_VERSION=0.8.2\n")
     if with_ws:
@@ -325,3 +329,135 @@ async def test_op_create_refuse_existant(tmp_path, monkeypatch, async_session):
     failed = await async_session.get(WorkshopOperation, op.id)
     assert failed.status == "failed"
     assert calls == []
+
+
+# ── Opérations ship / remove + purge ──
+
+
+async def test_op_ship_refuse_ref_non_main(tmp_path, monkeypatch, async_session):
+    app = _mk_app(tmp_path, monkeypatch, with_ws=True)
+    # atelier teste feat/x
+    ws.apply_env_values(app / ".workshop.env", {"WS_REF": "feat/x", "WS_COMMIT": "abc"})
+    op = await _mk_op(async_session, op="ship")
+    calls = _install_exec(monkeypatch, [])
+    await ws._run_workshop_operation(op.id, "wstest", "ship")
+    failed = await async_session.get(WorkshopOperation, op.id)
+    assert failed.status == "failed"
+    assert "main" in failed.logs
+    assert calls == []
+
+
+async def test_op_ship_refuse_main_avance(tmp_path, monkeypatch, async_session):
+    app = _mk_app(tmp_path, monkeypatch, with_ws=True)  # WS_COMMIT=prev123
+    op = await _mk_op(async_session, op="ship")
+    monkeypatch.setattr(ws, "_git_state",
+                        lambda d: asyncio.sleep(0, result={"ok": True, "branch": "main", "head": "prev123"}))
+    monkeypatch.setattr(ws, "_worktree_clean", lambda d: asyncio.sleep(0, result=True))
+    async def _healthy(port, timeout=60):
+        return int(port) == 10000  # atelier sain, prod KO (pas atteinte)
+    monkeypatch.setattr(ws, "_wait_healthy", _healthy)
+    def _exec(cmd, **kw):
+        calls.append({"cmd": cmd})
+        if "origin/main" in " ".join(cmd):
+            return _FakeProc(0, b"new456\n")  # origin/main a avancé
+        return _FakeProc(0, b"")
+    calls = []
+    async def _fake_exec(*cmd, cwd=None, env=None, stdout=None, stderr=None):
+        return _exec(cmd)
+    monkeypatch.setattr(ds.asyncio, "create_subprocess_exec", _fake_exec)
+    await ws._run_workshop_operation(op.id, "wstest", "ship")
+    failed = await async_session.get(WorkshopOperation, op.id)
+    assert failed.status == "failed"
+    assert "avancé" in failed.logs or "avance" in failed.logs
+    # git restauré vers prev123
+    flat = [" ".join(c["cmd"]) for c in calls]
+    assert any("reset" in f and "prev123" in f for f in flat)
+    # .workshop.env conservé (atelier non supprimé)
+    assert (app / ".workshop.env").exists()
+
+
+async def test_op_ship_nominal(tmp_path, monkeypatch, async_session):
+    app = _mk_app(tmp_path, monkeypatch, with_ws=True)  # WS_COMMIT=prev123
+    op = await _mk_op(async_session, op="ship")
+    monkeypatch.setattr(ws, "_git_state",
+                        lambda d: asyncio.sleep(0, result={"ok": True, "branch": "main", "head": "prev123"}))
+    monkeypatch.setattr(ws, "_worktree_clean", lambda d: asyncio.sleep(0, result=True))
+    healthy_ports = []
+    async def _healthy(port, timeout=60):
+        healthy_ports.append(int(port))
+        return True
+    monkeypatch.setattr(ws, "_wait_healthy", _healthy)
+    def _exec(cmd, **kw):
+        calls.append({"cmd": cmd})
+        if "origin/main" in " ".join(cmd):
+            return _FakeProc(0, b"prev123\n")  # == WS_COMMIT
+        return _FakeProc(0, b"")
+    calls = []
+    async def _fake_exec(*cmd, cwd=None, env=None, stdout=None, stderr=None):
+        return _exec(cmd)
+    monkeypatch.setattr(ds.asyncio, "create_subprocess_exec", _fake_exec)
+    await ws._run_workshop_operation(op.id, "wstest", "ship")
+    done = await async_session.get(WorkshopOperation, op.id)
+    assert done.status == "success"
+    # make build puis make up (prod), puis down -v atelier
+    flat = [" ".join(c["cmd"]) for c in calls]
+    assert any(f.startswith("make") and "build" in f for f in flat)
+    assert any(f.startswith("make") and " up" in f for f in flat)
+    assert any("down" in f and "-v" in f for f in flat), flat
+    # atelier supprimé
+    assert not (app / ".workshop.env").exists()
+    # health : atelier (10000) puis prod (9001 du .env)
+    assert 10000 in healthy_ports and 9001 in healthy_ports
+
+
+async def test_op_ship_echec_build_atelier_conserve(tmp_path, monkeypatch, async_session):
+    app = _mk_app(tmp_path, monkeypatch, with_ws=True)
+    op = await _mk_op(async_session, op="ship")
+    monkeypatch.setattr(ws, "_git_state",
+                        lambda d: asyncio.sleep(0, result={"ok": True, "branch": "main", "head": "prev123"}))
+    monkeypatch.setattr(ws, "_worktree_clean", lambda d: asyncio.sleep(0, result=True))
+    monkeypatch.setattr(ws, "_wait_healthy",
+                        lambda p, timeout=60: asyncio.sleep(0, result=True))
+    def _exec(cmd, **kw):
+        calls.append({"cmd": cmd})
+        if "origin/main" in " ".join(cmd):
+            return _FakeProc(0, b"prev123\n")
+        if list(cmd[:1]) == ["make"] and "build" in cmd:
+            return _FakeProc(1, b"make build failed")
+        return _FakeProc(0, b"")
+    calls = []
+    async def _fake_exec(*cmd, cwd=None, env=None, stdout=None, stderr=None):
+        return _exec(cmd)
+    monkeypatch.setattr(ds.asyncio, "create_subprocess_exec", _fake_exec)
+    await ws._run_workshop_operation(op.id, "wstest", "ship")
+    failed = await async_session.get(WorkshopOperation, op.id)
+    assert failed.status == "failed"
+    assert (app / ".workshop.env").exists()  # atelier conservé
+
+
+async def test_op_remove_nominal(tmp_path, monkeypatch, async_session):
+    app = _mk_app(tmp_path, monkeypatch, with_ws=True)
+    op = await _mk_op(async_session, op="remove")
+    calls = _install_exec(monkeypatch, [(0, b"") for _ in range(4)])
+    await ws._run_workshop_operation(op.id, "wstest", "remove")
+    done = await async_session.get(WorkshopOperation, op.id)
+    assert done.status == "success"
+    flat = [" ".join(c["cmd"]) for c in calls]
+    assert any("down" in f and "-v" in f for f in flat)
+    assert not (app / ".workshop.env").exists()
+
+
+async def test_purge_workshop_operations(async_session):
+    from datetime import datetime, timedelta
+    from app.models import utcnow
+    old = WorkshopOperation(app_slug="x", operation="update", status="success",
+                            finished_at=utcnow() - timedelta(days=99))
+    recent = WorkshopOperation(app_slug="x", operation="update", status="success",
+                               finished_at=utcnow())
+    async_session.add_all([old, recent])
+    await async_session.commit()
+    removed = await ws.purge_workshop_operations(async_session, retention_days=30)
+    assert removed == 1
+    remaining = (await async_session.execute(
+        select(WorkshopOperation))).scalars().all()
+    assert len(remaining) == 1 and remaining[0].id == recent.id
