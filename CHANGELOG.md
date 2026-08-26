@@ -5,6 +5,28 @@
 
 ---
 
+## [3.38.0] - 27 août 2026
+
+### ✨ Pilotage de l'atelier (workshop) depuis la vue Santé — parité hubctl v0.6.1
+
+| Fonctionnalité | Description |
+|----------------|-------------|
+| Service `workshop_service.py` | Le **cycle complet de l'atelier** (créer clone DB / mettre à jour / déployer en prod / supprimer) est exécutable par `hub-api` lui-même, en parité comportementale avec `hubctl atelier` v0.6.1 : allocation ports + subnet, build/up du projet `-ws`, health check, rollbacks (update → rollback git, ship → rollback prod) |
+| 6 endpoints admin | `GET /api/apps/{slug}/workshop` (état + contrat `.workshop.env` + git_ok), `POST .../workshop` (create), `POST .../workshop/update`, `POST .../workshop/ship`, `DELETE .../workshop` (remove), `GET .../workshop/status` (opération courante + historique). Erreurs typées : **409** (atelier déjà existant/absent, une opération à la fois, ship d'un ref ≠ main), **400** (app sans repo git/remote), **503** (pool de subnets épuisé) |
+| Une opération à la fois | Pattern `deploy_service` : garde-fou global (toutes apps), exécution en tâche de fond sous lock, **suivi pas-à-pas en DB** (table `workshop_operations`, migration 057 : steps + logs + statut + déclencheur), **purge après 30 j** (`workshop_retention_days`), opérations en vol **annulées au shutdown** de l'API |
+| Dualité UI/CLI | `.workshop.env` (7 clés) = **contrat partagé** entre hubctl et `workshop_service`, figé par des **contract tests des deux côtés** (hubctl reste l'outil de secours HUB-down). Warning journalisé si `.workshop.env` a moins de 60 s (mtime) — pas de lockfile inter-outils en v1 : ne pas lancer hubctl et l'UI simultanément sur la même app |
+| Garde-fous ship identiques | `origin/main` **uniquement** (409 si l'atelier teste un autre ref — mergez via release-on-main d'abord), commit testé exigé (refus si main a avancé), **atelier conservé** en cas d'échec du déploiement prod (diagnostic) |
+| Allocation ressources | Mêmes plages que hubctl : API `[10000-10499]`, frontend `[5200-5699]`, subnet `/24` du pool `10.210.0.0/24`..`10.210.63.0/24` avec overlap-check des réseaux docker existants et des autres ateliers |
+
+### 🎨 Bloc atelier dans la vue « Santé des Applications » (admin)
+
+| Fonctionnalité | Description |
+|----------------|-------------|
+| Bloc atelier sur les cartes santé | État de l'atelier (ref + commit testés, ports, subnet) + les 4 actions (créer / mettre à jour / déployer / supprimer) avec confirmations explicites — visible uniquement par les admins |
+| Modal de progression | Polling 2 s de `.../workshop/status` (pattern admin-app-deploy) : étape courante + logs en direct pour les 4 opérations ; garde anti-timer-zombie à la fermeture (✕) et tolérance de 5 erreurs de poll transitoires |
+
+---
+
 ## [3.37.1] - 25 août 2026
 
 ### 📖 Cahier des charges mis à jour à l'état de l'art v3.37.0
