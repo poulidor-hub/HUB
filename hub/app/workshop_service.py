@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.deploy_service import (
     DeployTimeout,
     _run_cmd,
+    _wait_healthy,
     apply_env_values,
     get_apps_dir,
 )
@@ -270,3 +271,256 @@ async def has_active_workshop_operation(db: AsyncSession, slug: str | None = Non
         q = q.where(WorkshopOperation.app_slug == slug)
     result = await db.execute(q)
     return result.scalar_one_or_none() is not None
+
+
+# ── Exécution des opérations (pattern deploy_service) ──
+
+LOGS_CAP = 100_000
+_WS_MTIME_WARN_S = 60  # dualité : hubctl vient probablement d'agir
+
+
+async def _update_op(op_id: int, **fields) -> None:
+    from app.database import async_session_maker
+    async with async_session_maker() as db:
+        op = await db.get(WorkshopOperation, op_id)
+        if op is None:
+            return
+        for k, v in fields.items():
+            if k == "logs":
+                merged = (op.logs or "") + (v or "")
+                setattr(op, k, merged[-LOGS_CAP:])
+            else:
+                setattr(op, k, v)
+        await db.commit()
+
+
+async def _step(op_id: int, step: str, msg: str = "") -> None:
+    await _update_op(op_id, current_step=step, logs=f"[{step}] {msg}\n")
+
+
+async def _fail(op_id: int, e: Exception) -> None:
+    from app.models import utcnow
+    await _update_op(op_id, status="failed", logs=f"❌ {e}\n",
+                    finished_at=utcnow())
+
+
+def cancel_all_workshop_operations() -> None:
+    """Shutdown : annule les opérations atelier en cours."""
+    for task in list(_workshop_tasks):
+        task.cancel()
+    _workshop_tasks.clear()
+
+
+async def start_workshop_operation(slug: str, operation: str,
+                                   triggered_by: str | None) -> int:
+    """Crée la ligne d'opération et lance la tâche de fond (non-bloquant)."""
+    from app.database import async_session_maker
+    async with async_session_maker() as db:
+        op = WorkshopOperation(app_slug=slug, operation=operation,
+                               status="pending", triggered_by=triggered_by)
+        db.add(op)
+        await db.commit()
+        await db.refresh(op)
+        op_id = op.id
+    task = asyncio.create_task(_run_workshop_operation(op_id, slug, operation))
+    _workshop_tasks.add(task)
+    task.add_done_callback(_workshop_tasks.discard)
+    return op_id
+
+
+async def _ws_mtime_warning(slug: str, op_id: int) -> None:
+    """Dualité UI/CLI : .workshop.env touché il y a < 60 s → warning (best-effort)."""
+    path = _ws_env_path(slug)
+    try:
+        if path.exists() and time.time() - path.stat().st_mtime < _WS_MTIME_WARN_S:
+            await _update_op(op_id, logs=(
+                "⚠ .workshop.env modifié il y a moins de 60 s — "
+                "hubctl a peut-être agi récemment sur cet atelier.\n"))
+    except OSError:
+        pass
+
+
+async def _run_workshop_operation(op_id: int, slug: str, operation: str) -> None:
+    """Dispatch sous lock global — une opération atelier à la fois."""
+    async with _workshop_lock:
+        await _update_op(op_id, status="running")
+        await _ws_mtime_warning(slug, op_id)
+        handlers = {"create": _op_create, "update": _op_update,
+                    "ship": _op_ship, "remove": _op_remove}
+        handler = handlers.get(operation)
+        try:
+            if handler is None:
+                raise RuntimeError(f"Opération inconnue : {operation}")
+            await handler(op_id, slug)
+        except asyncio.CancelledError:
+            from app.models import utcnow
+            await _update_op(op_id, status="failed", current_step="annulé",
+                             finished_at=utcnow())
+            raise
+        except Exception as e:
+            await _fail(op_id, e)
+            logger.exception(f"Opération atelier {operation}/{slug} échouée : {e}")
+
+
+async def _origin_main(app_dir: Path) -> str | None:
+    ok, sha = await _git_try(app_dir, "rev-parse", "origin/main")
+    return sha or None
+
+
+# ── CREATE ──
+
+async def _op_create(op_id: int, slug: str) -> None:
+    app_dir = get_apps_dir() / slug
+    ws_slug = f"{slug}-ws"
+    compose_file = app_dir / "docker-compose.yml"
+
+    if not app_dir.exists() or not compose_file.exists():
+        raise RuntimeError(f"Source introuvable ou sans docker-compose.yml : {app_dir}")
+    if _ws_env_path(slug).exists():
+        raise RuntimeError(f"Atelier « {ws_slug} » déjà existant")
+
+    await _step(op_id, "allocate", "Ports + subnet atelier")
+    ports = _alloc_ports()
+    if ports is None:
+        raise RuntimeError("Plus de ports libres pour l'atelier (plages 10000-10499 / 5200-5699)")
+    ws_api, ws_fe = ports
+    subnet = _alloc_subnet()
+    if subnet is None:
+        raise RuntimeError("Pool de subnets atelier épuisé (10.210.0.0/24 ×64)")
+
+    state = await _git_state(app_dir)
+    config = {
+        "APP_SLUG": ws_slug, "API_PORT": str(ws_api), "FRONTEND_PORT": str(ws_fe),
+        "FRONTEND_HTTPS_PORT": str(ws_fe + 1),
+        "WS_REF": (state["branch"] or "n/a") if state["ok"] else "n/a",
+        "WS_COMMIT": (state["head"] or "n/a") if state["ok"] else "n/a",
+        "APP_SUBNET": subnet,
+    }
+    _write_ws_env_full(_ws_env_path(slug), config)
+    compose_env = _ws_compose_env(slug)
+
+    try:
+        await _step(op_id, "clone-db", f"{slug}-postgres-data → {ws_slug}-postgres-data")
+        await _run_cmd(["docker", "volume", "create", f"{ws_slug}-postgres-data"],
+                       app_dir, 30)
+        await _run_cmd(
+            ["docker", "run", "--rm", "-v", f"{slug}-postgres-data:/from:ro",
+             "-v", f"{ws_slug}-postgres-data:/to", "alpine", "cp", "-a", "/from/.", "/to/"],
+            app_dir, 120)
+
+        await _step(op_id, "build", f"docker compose -p {ws_slug} build")
+        await _run_cmd(["docker", "compose", "-p", ws_slug, "-f", str(compose_file), "build"],
+                       app_dir, T_BUILD, env_extra=compose_env)
+
+        await _step(op_id, "up", f"docker compose -p {ws_slug} up -d")
+        await _run_cmd(["docker", "compose", "-p", ws_slug, "-f", str(compose_file), "up", "-d"],
+                       app_dir, T_UP, env_extra=compose_env)
+
+        await _step(op_id, "health", f"Santé atelier (port {ws_api}, 60 s)")
+        if not await _wait_healthy(ws_api, timeout=T_HEALTH):
+            raise RuntimeError(f"Atelier pas healthy après {T_HEALTH}s (port {ws_api})")
+    except Exception:
+        # Rollback création : down + config + volume cloné
+        try:
+            await _run_cmd(["docker", "compose", "-p", ws_slug, "-f", str(compose_file), "down"],
+                           app_dir, T_UP, env_extra=compose_env)
+        except Exception:
+            pass
+        _ws_env_path(slug).unlink(missing_ok=True)
+        try:
+            await _run_cmd(["docker", "volume", "rm", f"{ws_slug}-postgres-data"],
+                           app_dir, 30)
+        except Exception:
+            pass
+        raise
+
+    from app.models import utcnow
+    await _update_op(op_id, status="success", current_step="done",
+                     logs=f"✓ Atelier « {ws_slug} » créé (ports {ws_api}/{ws_fe}, subnet {subnet})\n",
+                     finished_at=utcnow())
+
+
+# ── UPDATE (toujours origin/main — décision spec) ──
+
+async def _op_update(op_id: int, slug: str) -> None:
+    app_dir = get_apps_dir() / slug
+    ws_slug = f"{slug}-ws"
+    compose_file = app_dir / "docker-compose.yml"
+    env = _read_env_file(_ws_env_path(slug))
+    if not env:
+        raise RuntimeError(f"Atelier « {ws_slug} » inexistant (.workshop.env manquant)")
+
+    state = await _git_state(app_dir)
+    if not state["ok"]:
+        raise RuntimeError(f"{app_dir} n'est pas un repo git avec remote origin")
+    if env.get("WS_REF", "n/a") == "n/a":
+        raise RuntimeError("Atelier créé sans support git (WS_REF=n/a) — supprimez et recréez")
+    if not await _worktree_clean(app_dir):
+        raise RuntimeError("Working tree sale (modifications locales ou commits non poussés) — "
+                           "commit/push ou stash avant la mise à jour")
+
+    prev_branch, prev_commit = state["branch"], state["head"]
+
+    await _step(op_id, "fetch", "git fetch origin")
+    await _git(app_dir, "fetch", "--quiet", "origin", "--tags")
+    target = await _origin_main(app_dir)
+    if not target:
+        raise RuntimeError("origin/main introuvable après fetch")
+
+    # Idempotence (parité hubctl)
+    if env.get("WS_REF") == "main" and env.get("WS_COMMIT") == target:
+        from app.models import utcnow
+        await _update_op(op_id, status="success", current_step="done",
+                         logs=f"✓ Atelier déjà à jour sur main @ {target[:8]}\n",
+                         finished_at=utcnow())
+        return
+
+    try:
+        await _step(op_id, "checkout", f"checkout {target[:8]} (detached)")
+        await _git(app_dir, "checkout", "--quiet", target)
+        compose_env = _ws_compose_env(slug)
+
+        await _step(op_id, "build", f"docker compose -p {ws_slug} build")
+        await _run_cmd(["docker", "compose", "-p", ws_slug, "-f", str(compose_file), "build"],
+                       app_dir, T_BUILD, env_extra=compose_env)
+
+        await _step(op_id, "up", f"docker compose -p {ws_slug} up -d")
+        await _run_cmd(["docker", "compose", "-p", ws_slug, "-f", str(compose_file), "up", "-d"],
+                       app_dir, T_UP, env_extra=compose_env)
+
+        await _step(op_id, "health", f"Santé atelier (port {env.get('API_PORT')}, 60 s)")
+        if not await _wait_healthy(int(env.get("API_PORT", "10000")), timeout=T_HEALTH):
+            raise RuntimeError("Atelier pas healthy après mise à jour")
+
+        apply_env_values(_ws_env_path(slug),
+                         {"WS_REF": "main", "WS_COMMIT": target})
+    except Exception:
+        await _step(op_id, "rollback", "Restauration git + rebuild ancien commit")
+        await _restore_git(app_dir, prev_branch, prev_commit)
+        try:
+            compose_env = _ws_compose_env(slug)
+            await _run_cmd(["docker", "compose", "-p", ws_slug, "-f", str(compose_file), "build"],
+                           app_dir, T_BUILD, env_extra=compose_env)
+            await _run_cmd(["docker", "compose", "-p", ws_slug, "-f", str(compose_file), "up", "-d"],
+                           app_dir, T_UP, env_extra=compose_env)
+        except Exception as e:
+            logger.warning(f"rebuild rollback partiel {ws_slug}: {e}")
+        raise RuntimeError(
+            "Mise à jour échouée (rollback git effectué). "
+            "DB du clone possiblement migrée — recréez l'atelier pour repartir du clone propre."
+        ) from None
+
+    from app.models import utcnow
+    await _update_op(op_id, status="success", current_step="done",
+                     logs=f"✓ Atelier « {ws_slug} » à jour : main @ {target[:8]}\n",
+                     finished_at=utcnow())
+
+
+# ── ship / remove : implémentés en Task 4 (stubs pour le dispatch) ──
+
+async def _op_ship(op_id: int, slug: str) -> None:
+    raise NotImplementedError(f"Opération ship non implémentée (Task 4) : {slug}")
+
+
+async def _op_remove(op_id: int, slug: str) -> None:
+    raise NotImplementedError(f"Opération remove non implémentée (Task 4) : {slug}")

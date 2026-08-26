@@ -122,3 +122,206 @@ async def test_has_active_workshop_operation(async_session):
     await async_session.commit()
     assert await ws.has_active_workshop_operation(async_session) is True
     assert await ws.has_active_workshop_operation(async_session, slug="b") is False
+
+
+# ── Opérations create / update ──
+# Patterns subprocess mockés (cf. test_app_deploy.py:132-170) : les commandes
+# passent par _run_cmd importé de deploy_service → monkeypatcher
+# deploy_service.asyncio.create_subprocess_exec.
+
+import asyncio
+
+import app.deploy_service as ds
+
+
+class _FakeProc:
+    def __init__(self, returncode=0, out=b""):
+        self.returncode = None
+        self._returncode = returncode
+        self._out = out
+
+    async def communicate(self):
+        self.returncode = self._returncode
+        return self._out, b""
+
+    def kill(self):
+        pass
+
+
+def _install_exec(monkeypatch, results):
+    """results: liste (returncode, stdout) consommée dans l'ordre (git+docker mélangés)."""
+    calls = []
+    queue = list(results)
+
+    async def _fake_exec(*cmd, cwd=None, env=None, stdout=None, stderr=None):
+        calls.append({"cmd": cmd, "cwd": str(cwd), "env": env or {}})
+        rc, out = queue.pop(0) if queue else (0, b"")
+        return _FakeProc(rc, out)
+
+    monkeypatch.setattr(ds.asyncio, "create_subprocess_exec", _fake_exec)
+    return calls
+
+
+def _mk_app(tmp_path, monkeypatch, *, with_ws=False, version="0.8.3"):
+    app = tmp_path / "wstest"; app.mkdir(exist_ok=True)
+    (app / "docker-compose.yml").write_text("services: {}\n")
+    (app / "VERSION").write_text(version + "\n")
+    (app / ".env").write_text("API_PORT=9001\nFRONTEND_PORT=4201\nAPP_VERSION=0.8.2\n")
+    if with_ws:
+        ws._write_ws_env_full(app / ".workshop.env", {
+            "APP_SLUG": "wstest-ws", "API_PORT": "10000", "FRONTEND_PORT": "5200",
+            "FRONTEND_HTTPS_PORT": "5201", "WS_REF": "main", "WS_COMMIT": "prev123",
+            "APP_SUBNET": "10.210.0.0/24",
+        })
+    monkeypatch.setattr(ws, "get_apps_dir", lambda: tmp_path)
+    return app
+
+
+async def _mk_op(async_session, op="update", slug="wstest"):
+    o = WorkshopOperation(app_slug=slug, operation=op, status="pending",
+                          triggered_by="admin")
+    async_session.add(o)
+    await async_session.commit()
+    await async_session.refresh(o)
+    # Évince l'objet de l'identity map : les écritures de fond passent par une
+    # autre session (maker patché) — sans expunge, async_session.get() rendrait
+    # l'instance en cache ("pending") sans relire la ligne (cf. refresh dans
+    # test_app_deploy.py).
+    async_session.expunge(o)
+    return o
+
+
+async def test_op_update_nominal(tmp_path, monkeypatch, async_session):
+    app = _mk_app(tmp_path, monkeypatch, with_ws=True)
+    op = await _mk_op(async_session)
+    # File ajustée à l'ordre réel des commandes émises par _op_update
+    # (latitude explicite du brief — invariant = résultat final + build_calls) :
+    seq = [
+        (0, b".git\n"),           # _git_state : rev-parse --git-dir
+        (0, b"https://origin\n"), # _git_state : remote get-url origin
+        (0, b"prev123\n"),        # _git_state : rev-parse HEAD
+        (0, b"main\n"),           # _git_state : rev-parse --abbrev-ref HEAD
+        (0, b""),                 # _worktree_clean : status --porcelain (vide)
+        (0, b"main\n"),           # _worktree_clean : abbrev-ref (base @{u})
+        (0, b""),                 # _worktree_clean : log @{u}..HEAD (vide = clean)
+        (0, b""),                 # git fetch --quiet origin --tags
+        (0, b"new456\n"),         # rev-parse origin/main (cible)
+        (0, b""),                 # git checkout --quiet new456 (detached)
+        (0, b""),                 # docker compose build
+        (0, b""),                 # docker compose up -d
+    ]
+    calls = _install_exec(monkeypatch, seq)
+
+    async def _fake_healthy(port, timeout=60):
+        return True
+
+    monkeypatch.setattr(ws, "_wait_healthy", _fake_healthy)
+    await ws._run_workshop_operation(op.id, "wstest", "update")
+    env = ws._read_env_file(app / ".workshop.env")
+    assert env["WS_COMMIT"] == "new456" and env["WS_REF"] == "main"
+    build_calls = [c for c in calls
+                   if list(c["cmd"][:2]) == ["docker", "compose"] and "build" in c["cmd"]]
+    assert build_calls and build_calls[0]["env"].get("APP_SLUG") == "wstest-ws"
+    assert build_calls[0]["env"].get("APP_VERSION") == "0.8.3"
+
+
+async def test_op_update_idempotent(tmp_path, monkeypatch, async_session):
+    _mk_app(tmp_path, monkeypatch, with_ws=True)  # WS_COMMIT=prev123
+    op = await _mk_op(async_session)
+    calls = _install_exec(monkeypatch, [])
+
+    async def _origin_main(app_dir):
+        return "prev123"  # == WS_COMMIT → déjà à jour
+
+    monkeypatch.setattr(ws, "_origin_main", _origin_main)
+    monkeypatch.setattr(ws, "_worktree_clean", lambda d: asyncio.sleep(0, result=True))
+    monkeypatch.setattr(ws, "_git_state",
+                        lambda d: asyncio.sleep(0, result={"ok": True, "branch": "main", "head": "prev123"}))
+    await ws._run_workshop_operation(op.id, "wstest", "update")
+    docker_calls = [c for c in calls if list(c["cmd"][:1]) == ["docker"]]
+    assert docker_calls == []  # aucun rebuild
+    async_session_explicit = await async_session.get(WorkshopOperation, op.id)
+    assert async_session_explicit.status == "success"
+
+
+async def test_op_update_refuse_worktree_sale(tmp_path, monkeypatch, async_session):
+    _mk_app(tmp_path, monkeypatch, with_ws=True)
+    op = await _mk_op(async_session)
+    calls = _install_exec(monkeypatch, [])
+    monkeypatch.setattr(ws, "_git_state",
+                        lambda d: asyncio.sleep(0, result={"ok": True, "branch": "main", "head": "prev123"}))
+    monkeypatch.setattr(ws, "_worktree_clean", lambda d: asyncio.sleep(0, result=False))
+    await ws._run_workshop_operation(op.id, "wstest", "update")
+    failed = await async_session.get(WorkshopOperation, op.id)
+    assert failed.status == "failed"
+    assert "working tree" in failed.logs.lower()
+    assert calls == []  # rien d'exécuté après le refus
+
+
+async def test_op_update_rollback_build_ko(tmp_path, monkeypatch, async_session):
+    app = _mk_app(tmp_path, monkeypatch, with_ws=True)
+    op = await _mk_op(async_session)
+    monkeypatch.setattr(ws, "_git_state",
+                        lambda d: asyncio.sleep(0, result={"ok": True, "branch": "main", "head": "prev123"}))
+    monkeypatch.setattr(ws, "_worktree_clean", lambda d: asyncio.sleep(0, result=True))
+    monkeypatch.setattr(ws, "_origin_main", lambda d: asyncio.sleep(0, result="new456"))
+
+    calls = []
+
+    def _exec(cmd, **kw):
+        calls.append({"cmd": cmd})
+        if "build" in cmd:
+            return _FakeProc(1, b"build failed")
+        return _FakeProc(0, b"")
+
+    async def _fake_exec(*cmd, cwd=None, env=None, stdout=None, stderr=None):
+        return _exec(cmd)
+
+    monkeypatch.setattr(ds.asyncio, "create_subprocess_exec", _fake_exec)
+    await ws._run_workshop_operation(op.id, "wstest", "update")
+    failed = await async_session.get(WorkshopOperation, op.id)
+    assert failed.status == "failed"
+    # git restauré (checkout main + reset prev123 passés)
+    git_calls = [c["cmd"] for c in calls if c["cmd"][0] == "git"]
+    flat = [" ".join(c) for c in git_calls]
+    assert any("reset" in f and "prev123" in f for f in flat), flat
+    # .workshop.env NON mis à jour
+    env = ws._read_env_file(app / ".workshop.env")
+    assert env["WS_COMMIT"] == "prev123"
+
+
+async def test_op_create_nominal(tmp_path, monkeypatch, async_session):
+    app = _mk_app(tmp_path, monkeypatch)  # sans .workshop.env
+    op = await _mk_op(async_session, op="create")
+    monkeypatch.setattr(ws, "_git_state",
+                        lambda d: asyncio.sleep(0, result={"ok": True, "branch": "main", "head": "abc000"}))
+    monkeypatch.setattr(ws, "_alloc_ports", lambda used=None: (10002, 5202))
+    monkeypatch.setattr(ws, "_alloc_subnet", lambda: "10.210.3.0/24")
+
+    async def _fake_healthy(port, timeout=60):
+        return True
+
+    monkeypatch.setattr(ws, "_wait_healthy", _fake_healthy)
+    calls = _install_exec(monkeypatch, [(0, b"") for _ in range(10)])
+    await ws._run_workshop_operation(op.id, "wstest", "create")
+    env = ws._read_env_file(app / ".workshop.env")
+    assert env["APP_SLUG"] == "wstest-ws"
+    assert env["API_PORT"] == "10002" and env["FRONTEND_PORT"] == "5202"
+    assert env["WS_REF"] == "main" and env["WS_COMMIT"] == "abc000"
+    assert env["APP_SUBNET"] == "10.210.3.0/24"
+    done = await async_session.get(WorkshopOperation, op.id)
+    assert done.status == "success"
+    # clone DB via alpine cp
+    clone_calls = [c["cmd"] for c in calls
+                   if list(c["cmd"][:1]) == ["docker"] and "alpine" in " ".join(c["cmd"])]
+    assert clone_calls
+
+
+async def test_op_create_refuse_existant(tmp_path, monkeypatch, async_session):
+    _mk_app(tmp_path, monkeypatch, with_ws=True)
+    op = await _mk_op(async_session, op="create")
+    calls = _install_exec(monkeypatch, [])
+    await ws._run_workshop_operation(op.id, "wstest", "create")
+    failed = await async_session.get(WorkshopOperation, op.id)
+    assert failed.status == "failed"
+    assert calls == []
