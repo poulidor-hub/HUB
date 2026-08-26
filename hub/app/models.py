@@ -860,6 +860,26 @@ class AppDeployment(Base):
     finished_at = Column(DateTime, nullable=True)
 
 
+class WorkshopOperation(Base):
+    """Opération atelier (create|update|ship|remove) pilotée depuis l'UI.
+
+    Lien par app_slug (pas de FK, cohérent avec AppDeployment/PortAllocation).
+    Une opération à la fois globalement (lock asyncio dans workshop_service).
+    """
+
+    __tablename__ = "workshop_operations"
+
+    id = Column(Integer, primary_key=True, index=True)
+    app_slug = Column(String(50), index=True, nullable=False)
+    operation = Column(String(16), nullable=False)  # create|update|ship|remove
+    status = Column(String(16), default="pending", nullable=False)  # pending|running|success|failed
+    current_step = Column(String(50), nullable=True)
+    logs = Column(Text, default="")
+    triggered_by = Column(String(100), nullable=True)
+    started_at = Column(DateTime, default=utcnow)
+    finished_at = Column(DateTime, nullable=True)
+
+
 class AppDependency(Base):
     """Dépendance déclarée entre deux apps (M2M).
 
