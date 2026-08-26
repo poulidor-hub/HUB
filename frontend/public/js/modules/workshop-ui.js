@@ -118,11 +118,13 @@ var WORKSHOP_STEPS = {
 };
 var WORKSHOP_POLL_MS = 2000;
 var WORKSHOP_MAX_WAIT_MS = 20 * 60 * 1000;
+var WORKSHOP_POLL_MAX_ERRORS = 5;
 var WORKSHOP_LABELS = {
     create: 'Création de l\'atelier', update: 'Mise à jour de l\'atelier',
     ship: 'Déploiement en production', remove: 'Suppression de l\'atelier'
 };
 var _workshopPollTimer = null;
+var _workshopPollErrors = 0;
 
 function _renderWorkshopSteps(steps, current, status) {
     var idx = -1;
@@ -170,9 +172,16 @@ function openWorkshopModal(slug, operation, operationId) {
     var modal = _showModal(title, '<div class="text-center"><span class="spinner-border"></span></div>');
     var startedAt = Date.now();
     if (_workshopPollTimer) clearInterval(_workshopPollTimer);
+    _workshopPollErrors = 0;
     _workshopPollTimer = setInterval(async function() {
+        if (!document.getElementById('appsHealthModal')) {
+            clearInterval(_workshopPollTimer);
+            _workshopPollTimer = null;
+            return;
+        }
         try {
             var payload = await api.getWorkshopStatus(slug);
+            _workshopPollErrors = 0;
             var cur = payload && payload.current;
             var body = _renderWorkshopBody(slug, operation, payload);
             var bodyEl = modal.querySelector('.modal-body');
@@ -191,8 +200,12 @@ function openWorkshopModal(slug, operation, operationId) {
                 showToast('Atelier', 'Suivi interrompu après 20 min — vérifiez le statut manuellement.', 'warning');
             }
         } catch (e) {
-            clearInterval(_workshopPollTimer); _workshopPollTimer = null;
-            showToast('Atelier', 'Erreur de suivi : ' + e.message, 'danger');
+            _workshopPollErrors++;
+            if (_workshopPollErrors >= WORKSHOP_POLL_MAX_ERRORS) {
+                clearInterval(_workshopPollTimer);
+                _workshopPollTimer = null;
+                showToast('Atelier', 'Erreur de suivi : ' + e.message, 'danger');
+            }
         }
     }, WORKSHOP_POLL_MS);
 }
