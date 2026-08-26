@@ -86,3 +86,113 @@ async function _triggerWorkshopOp(slug, operation) {
         showToast('Atelier', error.message, 'danger');
     }
 }
+
+// ─── Modal de progression (pattern admin-app-deploy.js) ───────────────
+
+var WORKSHOP_STEPS = {
+    create: [
+        { key: 'allocate', label: 'Ports + subnet atelier' },
+        { key: 'clone-db', label: 'Clone de la DB de prod' },
+        { key: 'build', label: 'Build de l\'atelier' },
+        { key: 'up', label: 'Démarrage de l\'atelier' },
+        { key: 'health', label: 'Santé de l\'atelier' }
+    ],
+    update: [
+        { key: 'fetch', label: 'git fetch origin' },
+        { key: 'checkout', label: 'Checkout du commit' },
+        { key: 'build', label: 'Rebuild de l\'atelier' },
+        { key: 'up', label: 'Redémarrage de l\'atelier' },
+        { key: 'health', label: 'Santé de l\'atelier' }
+    ],
+    ship: [
+        { key: 'guards', label: 'Garde-fous (atelier sain, commit testé)' },
+        { key: 'build', label: 'Build prod' },
+        { key: 'up', label: 'Démarrage prod' },
+        { key: 'health', label: 'Santé prod' },
+        { key: 'cleanup', label: 'Suppression de l\'atelier' }
+    ],
+    remove: [
+        { key: 'down', label: 'down -v (conteneurs + volume cloné)' },
+        { key: 'cleanup', label: 'Suppression de la config' }
+    ]
+};
+var WORKSHOP_POLL_MS = 2000;
+var WORKSHOP_MAX_WAIT_MS = 20 * 60 * 1000;
+var WORKSHOP_LABELS = {
+    create: 'Création de l\'atelier', update: 'Mise à jour de l\'atelier',
+    ship: 'Déploiement en production', remove: 'Suppression de l\'atelier'
+};
+var _workshopPollTimer = null;
+
+function _renderWorkshopSteps(steps, current, status) {
+    var idx = -1;
+    for (var i = 0; i < steps.length; i++) {
+        if (steps[i].key === current) { idx = i; break; }
+    }
+    if (status === 'success') idx = steps.length;
+    var html = '<div class="mb-2">';
+    steps.forEach(function(step, i) {
+        var icon = '<span>○</span>';
+        if (status === 'failed' && i === idx) icon = '<span class="text-danger">✗</span>';
+        else if (i < idx) icon = '<span class="text-success">✓</span>';
+        else if (i === idx) icon = '<span class="spinner-border spinner-border-sm"></span>';
+        html += '<div>' + icon + ' ' + escapeHtml(step.label) + '</div>';
+    });
+    return html + '</div>';
+}
+
+function _renderWorkshopBody(slug, operation, payload) {
+    var steps = WORKSHOP_STEPS[operation] || [];
+    var cur = payload && payload.current;
+    var html = '<h6>' + escapeHtml(slug) + ' — ' + WORKSHOP_LABELS[operation] + '</h6>';
+    if (!cur) return html + '<div class="text-muted">Aucune opération en cours.</div>';
+    html += _renderWorkshopSteps(steps, cur.current_step, cur.status);
+    if (cur.status === 'failed') {
+        html += '<div class="alert alert-danger py-1">Opération échouée — détails dans les logs ci-dessous.</div>';
+    } else if (cur.status === 'success') {
+        html += '<div class="alert alert-success py-1">Opération réussie.</div>';
+    }
+    if (cur.logs) {
+        html += '<pre class="bg-dark text-light p-2" style="max-height:260px;overflow:auto;font-size:11px;">'
+            + escapeHtml(cur.logs) + '</pre>';
+    }
+    return html;
+}
+
+function closeWorkshopModal() {
+    if (_workshopPollTimer) { clearInterval(_workshopPollTimer); _workshopPollTimer = null; }
+    var m = document.getElementById('appsHealthModal');
+    if (m) m.remove();
+}
+
+function openWorkshopModal(slug, operation, operationId) {
+    var title = WORKSHOP_LABELS[operation] || 'Atelier';
+    var modal = _showModal(title, '<div class="text-center"><span class="spinner-border"></span></div>');
+    var startedAt = Date.now();
+    if (_workshopPollTimer) clearInterval(_workshopPollTimer);
+    _workshopPollTimer = setInterval(async function() {
+        try {
+            var payload = await api.getWorkshopStatus(slug);
+            var cur = payload && payload.current;
+            var body = _renderWorkshopBody(slug, operation, payload);
+            var bodyEl = modal.querySelector('.modal-body');
+            if (bodyEl) bodyEl.innerHTML = body + '<button class="btn btn-sm btn-secondary" data-action="closeWorkshopModal">Fermer</button>';
+            if (cur && (cur.status === 'success' || cur.status === 'failed')) {
+                clearInterval(_workshopPollTimer); _workshopPollTimer = null;
+                if (typeof loadAppsHealth === 'function') loadAppsHealth();
+                if (cur.status === 'success') {
+                    showToast('Atelier', WORKSHOP_LABELS[operation] + ' : succès', 'success');
+                } else {
+                    showToast('Atelier', WORKSHOP_LABELS[operation] + ' : échec', 'danger');
+                }
+            }
+            if (Date.now() - startedAt > WORKSHOP_MAX_WAIT_MS) {
+                clearInterval(_workshopPollTimer); _workshopPollTimer = null;
+                showToast('Atelier', 'Suivi interrompu après 20 min — vérifiez le statut manuellement.', 'warning');
+            }
+        } catch (e) {
+            clearInterval(_workshopPollTimer); _workshopPollTimer = null;
+            showToast('Atelier', 'Erreur de suivi : ' + e.message, 'danger');
+        }
+    }, WORKSHOP_POLL_MS);
+}
