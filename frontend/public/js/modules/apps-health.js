@@ -64,6 +64,13 @@ async function renderAppsHealth(data) {
         await refreshGithubCache();
         checkAllUpdates(data.apps);
     }
+
+    // États atelier (contrat .workshop.env) — chargés après le rendu, non bloquant
+    var wsSlugs = (data.apps || []).filter(function (a) { return !(a.is_system_app === true || a.slug === 'hub'); })
+        .map(function (a) { return a.slug; });
+    if (wsSlugs.length && typeof loadWorkshopStates === 'function') {
+        loadWorkshopStates(wsSlugs);
+    }
 }
 
 function formatUptime(seconds) {
@@ -153,6 +160,10 @@ function renderAppCard(app) {
             '</div>';
     }
 
+    // Bloc atelier (workshop) — placeholder rempli par loadWorkshopStates (workshop-ui.js)
+    var workshopBlock = (!isSystemApp && typeof renderWorkshopBlock === 'function')
+        ? renderWorkshopBlock(slug) : '';
+
     // Couleur de fond speciale pour le HUB (leger fond bleute)
     var cardBg = isSystemApp ? '#f8faff' : statusStyle.cardBg;
 
@@ -176,6 +187,7 @@ function renderAppCard(app) {
             '<div id="update-badge-' + slug + '" style="display:none;"></div>' +
             healthNote +
             error +
+            workshopBlock +
             '<div style="display:flex;justify-content:space-between;align-items:center;border-top:1px solid ' + statusStyle.border + ';padding-top:8px;margin-top:auto;">' +
                 '<span style="font-size:11px;color:#94a3b8;">' +
                     'Verifie il y a <span class="apps-health-timestamp" data-ts="' + (app.checked_at || '') + '">…</span>' +

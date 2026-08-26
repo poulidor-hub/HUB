@@ -1754,6 +1754,31 @@ class HubAPI {
         return this.request(`/apps/${encodeURIComponent(slug)}/deploy/status`);
     }
 
+    // ===== Atelier (vue santé) =====
+    async getWorkshopState(slug) {
+        return this.request(`/apps/${encodeURIComponent(slug)}/workshop`);
+    }
+
+    async createWorkshop(slug) {
+        return this.request(`/apps/${encodeURIComponent(slug)}/workshop`, { method: 'POST' });
+    }
+
+    async updateWorkshop(slug) {
+        return this.request(`/apps/${encodeURIComponent(slug)}/workshop/update`, { method: 'POST' });
+    }
+
+    async shipWorkshop(slug) {
+        return this.request(`/apps/${encodeURIComponent(slug)}/workshop/ship`, { method: 'POST' });
+    }
+
+    async removeWorkshop(slug) {
+        return this.request(`/apps/${encodeURIComponent(slug)}/workshop`, { method: 'DELETE' });
+    }
+
+    async getWorkshopStatus(slug) {
+        return this.request(`/apps/${encodeURIComponent(slug)}/workshop/status`);
+    }
+
     // Settings
     async getSetting(key) {
         const resp = await fetch(`${API_BASE}/settings/${encodeURIComponent(key)}`);
