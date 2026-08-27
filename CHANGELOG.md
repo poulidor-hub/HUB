@@ -5,6 +5,20 @@
 
 ---
 
+## [3.38.2] - 27 août 2026
+
+### ⚡ Perf page Audit : heatmap quasi instantanée + plage limitée au mois
+
+| Correctif | Description |
+|-----------|-------------|
+| Heatmap O(n) (`usage_stats.py`) | `compute_activity_heatmap` réécrit en **O(sessions + heures couvertes)** (marquage direct des buckets recouverts en microsecondes entières) au lieu de O(jours × sessions × 24) — mesuré sur la prod (~3 700 sessions) : **13,3 s → 5 ms** à 90 j, 4,3 s → 4 ms à 30 j. Équivalence stricte avec l'ancien algo garantie par un test de propriété (cas aléatoires + edge cases : minuit, durée nulle, session ouverte, à cheval sur la fenêtre, sous-secondes) |
+| Hors event loop (`routes/audit.py`) | `/api/audit/usage/heatmap` exécute l'agrégation CPU-bound via `anyio.to_thread` (même pattern que `/usage/apps`) — l'API ne gèle plus pendant le calcul |
+| Vue d'ensemble non bloquée (`audit-page.js`) | La heatmap est **réellement** non bloquante : KPIs/alertes/sessions live s'affichent immédiatement, le graphique arrive dès sa réponse (un `.catch` dans le `Promise.all` attendait la plus lente des requêtes) + garde anti-réponse-périmée si la période change entre-temps |
+| Plage limitée à 30 j (`index.html`) | Bouton **90j retiré** du sélecteur de période (24h/7j/30j) — les agrégats au-delà du mois n'apportaient que des temps d'attente ; l'endpoint API reste inchangé (`days ≤ 90`) |
+| Tests | +2 dans `test_usage_stats.py` : équivalence vs référence naïve (propriété) et garde-fou perf 90 j / 4 000 sessions < 1 s |
+
+---
+
 ## [3.38.1] - 27 août 2026
 
 ### 🔧 Correctifs atelier (post-3.38.0, retour terrain canari)
