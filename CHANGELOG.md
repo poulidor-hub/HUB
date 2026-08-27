@@ -5,6 +5,16 @@
 
 ---
 
+## [3.38.1] - 27 août 2026
+
+### 🔧 Correctifs atelier (post-3.38.0, retour terrain canari)
+
+- `workshop_service.update` : garde `MultipleResultsFound` (limit 1) sur la lecture
+  de l'opération courante — cause racine d'un update affiché en double dans la modal,
+  bilan des versions au ship, rollback de création, placeholder UI.
+- Cartes santé : boutons **maj/ship désactivés** + note explicite quand l'app n'a pas
+  de remote git (au lieu d'un échec au clic) — retour terrain canari.
+
 ## [3.38.0] - 27 août 2026
 
 ### ✨ Pilotage de l'atelier (workshop) depuis la vue Santé — parité hubctl v0.6.1
