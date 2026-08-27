@@ -265,6 +265,8 @@ class Settings(BaseSettings):
     
     # Rétention des messages utilisateur (en jours) - 0 = pas de purge automatique
     message_retention_days: int = 90
+
+    workshop_retention_days: int = 30  # purge de l'historique workshop_operations
     
     # Intervalle de purge des logs (en heures)
     log_purge_interval_hours: int = 24

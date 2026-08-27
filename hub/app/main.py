@@ -15,7 +15,7 @@ from app.outbox import outbox_service
 from app.models import User, ErrorLog, utcnow
 from app.auth import get_password_hash, cleanup_expired_tokens, get_current_admin
 from app.config import get_settings, build_cors_config
-from app.routes import auth, users, apps, service_accounts, audit, docs, events, app_backups, profiles, apps_health, messages, account_requests, snapshots, vpn, oidc, github_catalog, hub_restore, tags, app_groups, app_deploy
+from app.routes import auth, users, apps, service_accounts, audit, docs, events, app_backups, profiles, apps_health, messages, account_requests, snapshots, vpn, oidc, github_catalog, hub_restore, tags, app_groups, app_deploy, workshop
 from app.routes import settings as settings_routes
 
 import logging
@@ -171,6 +171,16 @@ async def periodic_log_purge():
                 msg_deleted = await purge_old_messages(db, message_days)
                 if msg_deleted > 0:
                     logger.info(f"🗑️ Purge messages: {msg_deleted} message(s) supprimé(s)")
+
+                # Purge de l'historique des opérations atelier
+                try:
+                    from app.workshop_service import purge_workshop_operations
+                    ws_deleted = await purge_workshop_operations(
+                        db, settings.workshop_retention_days)
+                    if ws_deleted > 0:
+                        logger.info(f"🗑️ Purge atelier: {ws_deleted} opération(s) supprimée(s)")
+                except Exception:
+                    logger.exception("purge workshop_operations échouée")
             
             await asyncio.sleep(interval_hours * 3600)
         except asyncio.CancelledError:
@@ -452,6 +462,10 @@ async def lifespan(app: FastAPI):
     from app.deploy_service import cancel_all_deployments
     cancel_all_deployments()
 
+    # Annuler les opérations atelier en cours
+    from app.workshop_service import cancel_all_workshop_operations
+    cancel_all_workshop_operations()
+
     await outbox_service.stop_worker()
     await outbox_service.cleanup_old_messages()
     
@@ -712,6 +726,7 @@ app.include_router(vpn.router)
 app.include_router(oidc.router)
 app.include_router(github_catalog.router)
 app.include_router(app_deploy.router)
+app.include_router(workshop.router)
 app.include_router(hub_restore.router)
 app.include_router(tags.router)
 app.include_router(app_groups.router)
