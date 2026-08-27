@@ -181,7 +181,11 @@ async def test_git_connection(url: str) -> tuple[bool, str]:
         n = len([l for l in out.strip().splitlines() if l.strip()])
         return True, f"Connexion OK — {n} branche(s)"
     except Exception as e:
-        return False, str(e).splitlines()[0][:300]
+        # _run_cmd préfixe "Échec (N) de 'git':" — garder les lignes utiles
+        # de la sortie git (remote:/fatal:), pas le préfixe technique.
+        lines = [l.strip() for l in str(e).splitlines()
+                 if l.strip() and not l.startswith("Échec (")]
+        return False, (" — ".join(lines[:2])[:300]) if lines else str(e)[:300]
 
 
 # ── Allocation ports / subnet ──

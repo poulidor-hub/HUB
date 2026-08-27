@@ -564,9 +564,13 @@ async def test_git_connection_ok(monkeypatch, tmp_path):
 
 
 async def test_git_connection_fail(monkeypatch, tmp_path):
+    # Format RÉEL de _run_cmd : "Échec (N) de 'git':\n<sortie git utile>"
     async def _fake_run(cmd, cwd, timeout, env_extra=None):
-        raise RuntimeError("remote: Access denied\nfatal: Authentication failed")
+        raise RuntimeError("Échec (128) de 'git':\nremote: Repository not found\nfatal: repository 'https://github.com/x/nexiste-pas.git/' not found")
     monkeypatch.setattr(ws, "_run_cmd", _fake_run)
     _no_github_token(monkeypatch)
     ok, msg = await ws.test_git_connection("https://example.com/x.git")
-    assert ok is False and "Access denied" in msg and "Authentication failed" not in msg
+    assert ok is False
+    assert "Repository not found" in msg          # la cause utile est conservée
+    assert "Échec (128)" not in msg               # le préfixe technique est retiré
+    assert len(msg) <= 300
