@@ -33,13 +33,19 @@ function renderWorkshopBlockInner(slug, state) {
     var commit = (state.ws_commit || '').slice(0, 8) || '?';
     var version = state.version ? ' · ' + escapeHtml(state.version) : '';
     var busy = state.active_operation ? ' disabled' : '';
+    // Sans remote git (cas dégénéré, ex. canari) : maj/ship impossibles —
+    // boutons désactivés avec explication, seule la suppression reste active.
+    var noGit = state.git_ok ? '' : ' disabled title="Impossible : cette app n\'a pas de repo git avec remote origin"';
+    var noGitNote = state.git_ok ? '' :
+        '<div class="text-muted" style="font-size:10px;">Sans remote git : mise à jour et déploiement indisponibles.</div>';
     return '<span class="badge text-bg-secondary me-1" title="Atelier actif (contrat .workshop.env)">'
         + 'Atelier : ' + escapeHtml(ref) + ' @ ' + escapeHtml(commit) + version + '</span>'
+        + noGitNote
         + '<div style="display:flex;gap:4px;margin-top:4px;">'
-        + '<button data-action="updateWorkshopUI" data-arg1="' + escapeHtml(slug) + '"' + busy
+        + '<button data-action="updateWorkshopUI" data-arg1="' + escapeHtml(slug) + '"' + busy + noGit
         + ' class="btn btn-sm btn-outline-primary py-0 px-2" style="font-size:11px;"'
         + ' title="Récupérer origin/main et rebuild l\'atelier (clone de DB)">Mettre à jour</button>'
-        + '<button data-action="shipWorkshopUI" data-arg1="' + escapeHtml(slug) + '"' + busy
+        + '<button data-action="shipWorkshopUI" data-arg1="' + escapeHtml(slug) + '"' + busy + noGit
         + ' class="btn btn-sm btn-outline-success py-0 px-2" style="font-size:11px;"'
         + ' title="Déployer origin/main validé en prod, puis supprimer l\'atelier">Déployer en prod</button>'
         + '<button data-action="removeWorkshopUI" data-arg1="' + escapeHtml(slug) + '"' + busy
