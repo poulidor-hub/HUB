@@ -124,6 +124,16 @@ async def test_has_active_workshop_operation(async_session):
     assert await ws.has_active_workshop_operation(async_session, slug="b") is False
 
 
+async def test_has_active_workshop_operation_multiple_rows(async_session):
+    """Race double-clic : 2+ lignes pending/running ne doivent pas lever
+    MultipleResultsFound (500) — garde limit(1), pattern has_active_deployment."""
+    async_session.add(WorkshopOperation(app_slug="a", operation="update", status="running"))
+    async_session.add(WorkshopOperation(app_slug="a", operation="create", status="pending"))
+    await async_session.commit()
+    assert await ws.has_active_workshop_operation(async_session) is True
+    assert await ws.has_active_workshop_operation(async_session, slug="a") is True
+
+
 # ── Opérations create / update ──
 # Patterns subprocess mockés (cf. test_app_deploy.py:132-170) : les commandes
 # passent par _run_cmd importé de deploy_service → monkeypatcher

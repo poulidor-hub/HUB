@@ -265,12 +265,14 @@ def get_workshop_state(slug: str) -> dict:
 
 
 async def has_active_workshop_operation(db: AsyncSession, slug: str | None = None) -> bool:
-    q = select(WorkshopOperation).where(
+    # limit(1) + first : 2+ lignes pending/running (double-clic race) ne doivent
+    # pas lever MultipleResultsFound (pattern has_active_deployment).
+    q = select(WorkshopOperation.id).where(
         WorkshopOperation.status.in_(("pending", "running")))
     if slug is not None:
         q = q.where(WorkshopOperation.app_slug == slug)
-    result = await db.execute(q)
-    return result.scalar_one_or_none() is not None
+    q = q.limit(1)
+    return (await db.execute(q)).scalars().first() is not None
 
 
 # ── Exécution des opérations (pattern deploy_service) ──
@@ -426,7 +428,10 @@ async def _op_create(op_id: int, slug: str) -> None:
                            app_dir, T_UP, env_extra=compose_env)
         except Exception:
             pass
-        _ws_env_path(slug).unlink(missing_ok=True)
+        try:
+            _ws_env_path(slug).unlink(missing_ok=True)
+        except OSError as e:
+            logger.warning(f"suppression .workshop.env (rollback {ws_slug}) : {e}")
         try:
             await _run_cmd(["docker", "volume", "rm", f"{ws_slug}-postgres-data"],
                            app_dir, 30)
@@ -494,7 +499,7 @@ async def _op_update(op_id: int, slug: str) -> None:
 
         apply_env_values(_ws_env_path(slug),
                          {"WS_REF": "main", "WS_COMMIT": target})
-    except Exception:
+    except Exception as e:
         await _step(op_id, "rollback", "Restauration git + rebuild ancien commit")
         await _restore_git(app_dir, prev_branch, prev_commit)
         try:
@@ -503,10 +508,10 @@ async def _op_update(op_id: int, slug: str) -> None:
                            app_dir, T_BUILD, env_extra=compose_env)
             await _run_cmd(["docker", "compose", "-p", ws_slug, "-f", str(compose_file), "up", "-d"],
                            app_dir, T_UP, env_extra=compose_env)
-        except Exception as e:
-            logger.warning(f"rebuild rollback partiel {ws_slug}: {e}")
+        except Exception as e2:
+            logger.warning(f"rebuild rollback partiel {ws_slug}: {e2}")
         raise RuntimeError(
-            "Mise à jour échouée (rollback git effectué). "
+            f"Mise à jour échouée ({e}) — rollback git effectué. "
             "DB du clone possiblement migrée — recréez l'atelier pour repartir du clone propre."
         ) from None
 
@@ -552,6 +557,10 @@ async def _op_ship(op_id: int, slug: str) -> None:
         ["docker", "compose", "-f", str(compose_file), "build"]
     up_cmd = ["make", "up"] if has_makefile else \
         ["docker", "compose", "-f", str(compose_file), "up", "-d"]
+
+    # Version AVANT déploiement (bilan old → new) — lue avant tout build,
+    # sinon on relirait la nouvelle version après reset --hard origin/main.
+    prev_version = _read_env_file(app_dir / ".env").get("APP_VERSION", "?")
 
     try:
         await _step(op_id, "guards", "Sync origin/main")
@@ -602,10 +611,12 @@ async def _op_ship(op_id: int, slug: str) -> None:
     _ws_env_path(slug).unlink(missing_ok=True)
 
     from app.models import utcnow
-    prev_v = _read_env_file(app_dir / ".env").get("APP_VERSION", "?")
+    version_file = app_dir / "VERSION"
+    new_version = version_file.read_text().strip() if version_file.exists() else ""
+    new_version = new_version or "?"
     await _update_op(op_id, status="success", current_step="done",
-                     logs=f"✓ Prod « {slug} » déployée (main @ {ws_commit[:8]}, "
-                          f"version {prev_v}), atelier « {ws_slug} » supprimé\n",
+                     logs=f"✓ Prod « {slug} » déployée : {prev_version} → {new_version} "
+                          f"(main @ {ws_commit[:8]}), atelier « {ws_slug} » supprimé\n",
                      finished_at=utcnow())
 
 

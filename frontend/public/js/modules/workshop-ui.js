@@ -15,7 +15,10 @@ async function loadWorkshopStates(slugs) {
     results.forEach(function(pair) {
         window._workshopStates[pair[0]] = pair[1];
         var block = document.getElementById('workshop-block-' + pair[0]);
-        if (block && pair[1]) block.innerHTML = renderWorkshopBlockInner(pair[0], pair[1]);
+        if (!block) return;
+        block.innerHTML = pair[1] ? renderWorkshopBlockInner(pair[0], pair[1]) : '';
+        // Pas d'atelier → bloc masqué (sinon ~16px d'espace mort sur la carte)
+        block.style.display = block.innerHTML ? '' : 'none';
     });
 }
 
