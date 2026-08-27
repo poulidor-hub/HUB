@@ -521,8 +521,12 @@ async function handleSaveApp(event) {
             if (gitRepoUrl) data.git_repo_url = gitRepoUrl;
             else data.git_repo_url = null;  // Permettre de vider explicitement
             
-            await api.updateApp(id, data);
+            const updated = await api.updateApp(id, data);
             showToast('Succès', 'Application modifiée', 'success');
+            // Sync du remote best-effort (atelier) : informer sans bloquer si elle échoue
+            if (updated && typeof updated.git_sync === 'string' && updated.git_sync.startsWith('warning:')) {
+                showToast('Dépôt git', 'Remote local non synchronisé : ' + updated.git_sync.replace(/^warning:\s*/, ''), 'warning');
+            }
             
             appFormModal.hide();
             await loadAdminData();

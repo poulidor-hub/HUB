@@ -1779,6 +1779,12 @@ class HubAPI {
         return this.request(`/apps/${encodeURIComponent(slug)}/workshop/status`);
     }
 
+    async configureGit(slug, gitRepoUrl) {
+        return this.request(`/apps/${encodeURIComponent(slug)}/git-config`, {
+            method: 'POST', body: JSON.stringify({ git_repo_url: gitRepoUrl })
+        });
+    }
+
     // Settings
     async getSetting(key) {
         const resp = await fetch(`${API_BASE}/settings/${encodeURIComponent(key)}`);

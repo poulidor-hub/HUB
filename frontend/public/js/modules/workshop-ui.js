@@ -22,9 +22,16 @@ async function loadWorkshopStates(slugs) {
     });
 }
 
+function _renderGitConfigButton(slug) {
+    return '<button data-action="showGitConfigModal" data-arg1="' + escapeHtml(slug) + '"'
+        + ' class="btn btn-sm btn-outline-secondary py-0 px-2" style="font-size:11px;"'
+        + ' title="Renseigner l\'URL du dépôt git (HTTPS) pour activer l\'atelier">'
+        + 'Configurer le dépôt git</button>';
+}
+
 function renderWorkshopBlockInner(slug, state) {
     if (!state.exists) {
-        if (!state.git_ok) return '';
+        if (!state.git_ok) return _renderGitConfigButton(slug);
         return '<button data-action="createWorkshopUI" data-arg1="' + escapeHtml(slug) + '"'
             + ' class="btn btn-sm btn-outline-secondary py-0 px-2" style="font-size:11px;">'
             + 'Créer l\'atelier</button>';
@@ -37,7 +44,8 @@ function renderWorkshopBlockInner(slug, state) {
     // boutons désactivés avec explication, seule la suppression reste active.
     var noGit = state.git_ok ? '' : ' disabled title="Impossible : cette app n\'a pas de repo git avec remote origin"';
     var noGitNote = state.git_ok ? '' :
-        '<div class="text-muted" style="font-size:10px;">Sans remote git : mise à jour et déploiement indisponibles.</div>';
+        '<div class="text-muted" style="font-size:10px;">Sans remote git : mise à jour et déploiement indisponibles.</div>'
+        + _renderGitConfigButton(slug);
     return '<span class="badge text-bg-secondary me-1" title="Atelier actif (contrat .workshop.env)">'
         + 'Atelier : ' + escapeHtml(ref) + ' @ ' + escapeHtml(commit) + version + '</span>'
         + noGitNote
@@ -217,4 +225,45 @@ function openWorkshopModal(slug, operation, operationId) {
             }
         }
     }, WORKSHOP_POLL_MS);
+}
+
+// ─── Configuration du dépôt git (modale) ──────────────────────────────
+
+async function showGitConfigModal(slug) {
+    var st = window._workshopStates[slug] || {};
+    var current = st.git_repo_url || '';
+    var modal = _showModal('Configurer le dépôt git — ' + slug,
+        '<div class="mb-2 text-muted" style="font-size:12px;">L\'URL est enregistrée dans l\'app et configurée comme remote <code>origin</code> du dépôt local (APPS/' + escapeHtml(slug) + '). SSH non supporté — utilisez HTTPS.</div>'
+        + '<input type="text" class="form-control" id="gitConfigUrl" placeholder="https://github.com/org/repo.git" value="' + escapeHtml(current) + '">'
+        + '<div id="gitConfigResult" class="mt-2" style="font-size:12px;"></div>'
+        + '<div class="mt-3 d-flex gap-2">'
+        + '<button class="btn btn-sm btn-primary" data-action="saveGitConfig" data-arg1="' + escapeHtml(slug) + '">Enregistrer et tester</button>'
+        + '<button class="btn btn-sm btn-secondary" data-action="closeWorkshopModal">Fermer</button>'
+        + '</div>');
+    modal.querySelector('#gitConfigUrl').focus();
+}
+
+async function saveGitConfig(slug) {
+    var input = document.getElementById('gitConfigUrl');
+    var result = document.getElementById('gitConfigResult');
+    if (!input || !result) return;
+    var url = input.value.trim();
+    if (!url) { result.innerHTML = '<span class="text-danger">URL requise.</span>'; return; }
+    result.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Test en cours…';
+    try {
+        var r = await api.configureGit(slug, url);
+        if (r.ok) {
+            result.innerHTML = '<span class="text-success">✓ ' + escapeHtml(r.message) + '</span>';
+            setTimeout(function() {
+                closeWorkshopModal();
+                showToast('Dépôt git', 'Configuré : ' + slug, 'success');
+                if (typeof loadAppsHealth === 'function') loadAppsHealth();
+            }, 1200);
+        } else {
+            result.innerHTML = '<div class="alert alert-danger py-1 mb-0">' + escapeHtml(r.message)
+                + '</div><div class="text-muted mt-1">L\'URL est enregistrée — vérifiez le token GitHub (PAT) ou l\'URL, puis réessayez.</div>';
+        }
+    } catch (error) {
+        result.innerHTML = '<div class="alert alert-danger py-1 mb-0">' + escapeHtml(error.message) + '</div>';
+    }
 }
