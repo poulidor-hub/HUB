@@ -110,3 +110,119 @@ async def test_status_shape(client, async_session, admin_token):
     data = r.json()
     assert "current" in data and "history" in data
     assert data["current"] is None
+
+
+# ── git-config ──
+# Adaptations du brief : `rm` remplacé par le `route_mod` déjà importé en tête ;
+# `get_auth_header` retiré des signatures (helper conftest importé, pas une fixture).
+
+async def test_git_config_404(client, admin_token):
+    r = await client.post("/api/apps/nimporte/git-config",
+                          json={"git_repo_url": "https://x.git"},
+                          headers=get_auth_header(admin_token))
+    assert r.status_code == 404
+
+
+async def test_git_config_401(client):
+    r = await client.post("/api/apps/x/git-config", json={"git_repo_url": "https://x.git"})
+    assert r.status_code == 401
+
+
+async def test_git_config_rejects_ssh(client, async_session, admin_token):
+    await _mk_app(async_session)
+    for url in ("git@github.com:org/repo.git", "ssh://git@github.com/org/repo.git",
+                "git://github.com/org/repo.git", ""):
+        r = await client.post("/api/apps/wstest/git-config",
+                              json={"git_repo_url": url},
+                              headers=get_auth_header(admin_token))
+        assert r.status_code == 400, url
+    assert "SSH non supporté" in r.text or "URL git requise" in r.text
+
+
+async def test_git_config_409_not_a_repo(client, async_session, admin_token,
+                                         tmp_path, monkeypatch):
+    await _mk_app(async_session)
+    (tmp_path / "wstest").mkdir()
+    monkeypatch.setattr(route_mod, "get_apps_dir", lambda: tmp_path)
+
+    async def _real_remote(app_dir, url):  # pas un repo → RuntimeError
+        raise RuntimeError("/pas/un/repo n'est pas un dépôt git — déployez l'app depuis son dépôt d'abord")
+    monkeypatch.setattr(route_mod, "_configure_remote", _real_remote)
+    r = await client.post("/api/apps/wstest/git-config",
+                          json={"git_repo_url": "https://x.git"},
+                          headers=get_auth_header(admin_token))
+    assert r.status_code == 409
+
+
+async def test_git_config_success(client, async_session, admin_token,
+                                  monkeypatch):
+    app_row = await _mk_app(async_session)
+
+    async def _fake_remote(app_dir, url): return "added"
+
+    async def _fake_test(url): return True, "Connexion OK — 3 branche(s)"
+    monkeypatch.setattr(route_mod, "_configure_remote", _fake_remote)
+    monkeypatch.setattr(route_mod, "test_git_connection", _fake_test)
+    r = await client.post("/api/apps/wstest/git-config",
+                          json={"git_repo_url": "https://github.com/org/repo.git"},
+                          headers=get_auth_header(admin_token))
+    assert r.status_code == 200 and r.json() == {
+        "ok": True, "message": "Connexion OK — 3 branche(s)", "sync": "added"}
+    await async_session.refresh(app_row)
+    assert app_row.git_repo_url == "https://github.com/org/repo.git"
+
+
+async def test_git_config_verdict_echec_auth(client, async_session, admin_token,
+                                             monkeypatch):
+    await _mk_app(async_session)
+
+    async def _fake_remote(app_dir, url): return "added"
+
+    async def _fake_test(url): return False, "remote: Access denied"
+    monkeypatch.setattr(route_mod, "_configure_remote", _fake_remote)
+    monkeypatch.setattr(route_mod, "test_git_connection", _fake_test)
+    r = await client.post("/api/apps/wstest/git-config",
+                          json={"git_repo_url": "https://x.git"},
+                          headers=get_auth_header(admin_token))
+    assert r.status_code == 200 and r.json()["ok"] is False
+
+
+async def test_workshop_state_exposes_git_repo_url(client, async_session,
+                                                   admin_token,
+                                                   tmp_path, monkeypatch):
+    app_row = await _mk_app(async_session)
+    app_row.git_repo_url = "https://db.example/repo.git"
+    await async_session.commit()
+    monkeypatch.setattr(route_mod, "get_apps_dir", lambda: tmp_path)
+
+    # Adaptation du brief : get_workshop_state est SYNC côté route (réalité
+    # workshop_service) — le mock async du brief levait TypeError.
+    def _state(slug): return ws.get_workshop_state(slug)
+
+    async def _git_state(d): return {"ok": False, "branch": None, "head": None}
+    monkeypatch.setattr(route_mod, "get_workshop_state", _state)
+    monkeypatch.setattr(route_mod, "_git_state", _git_state)
+    r = await client.get("/api/apps/wstest/workshop", headers=get_auth_header(admin_token))
+    assert r.status_code == 200 and r.json()["git_repo_url"] == "https://db.example/repo.git"
+
+
+async def test_patch_git_repo_url_syncs_remote_best_effort(client, async_session,
+                                                           admin_token,
+                                                           monkeypatch):
+    app_row = await _mk_app(async_session)
+
+    async def _fake_remote(app_dir, url): return "added"
+    monkeypatch.setattr("app.workshop_service._configure_remote", _fake_remote)
+    r = await client.patch(f"/api/apps/{app_row.id}",
+                           json={"git_repo_url": "https://x.example/r.git"},
+                           headers=get_auth_header(admin_token))
+    assert r.status_code == 200
+    assert r.json().get("git_sync") == "ok"
+
+    async def _boom(app_dir, url): raise RuntimeError("pas un dépôt git")
+    monkeypatch.setattr("app.workshop_service._configure_remote", _boom)
+    r2 = await client.patch(f"/api/apps/{app_row.id}",
+                            json={"git_repo_url": "https://y.example/r.git"},
+                            headers=get_auth_header(admin_token))
+    assert r2.status_code == 200          # best-effort : jamais bloquant
+    assert str(r2.json().get("git_sync", "")).startswith("warning:")
