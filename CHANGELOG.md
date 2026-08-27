@@ -17,7 +17,7 @@
 | PAT GitHub dans les fetch de l'atelier | **Corrige les repos privés** : `ls-remote` (test connexion), `git-config` et les `fetch` du cycle atelier (`--maj`/`--prod`) passent désormais par le PAT GitHub existant (`github_token` en DB settings — jamais affiché) au lieu d'échouer en auth sur un repo privé |
 | Verdict d'échec lisible | Le verdict `ls-remote` en échec **conserve la cause git utile** (auth, repo introuvable, réseau) sans le préfixe technique interne |
 | État atelier | `GET /api/apps/{slug}/workshop` expose `git_repo_url` (valeur DB, pré-remplissage de la modale) |
-| Tests | **+8** (service `_configure_remote`/test connexion/PAT + routes git-config/409/400/state/`git_sync`) — **848 au total** (dont 2 pré-existants marqués env) |
+| Tests | **+15** (7 service `_configure_remote`/test connexion/PAT + 8 routes git-config/409/400/state/`git_sync`) — **848 passed au total** (dont 2 pré-existants marqués env) |
 
 ---
 
