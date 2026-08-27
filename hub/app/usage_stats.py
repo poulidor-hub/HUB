@@ -136,17 +136,39 @@ def compute_activity_heatmap(
     """
     Grille jour × heure : nombre de sessions actives par bucket horaire (UTC).
     sessions: liste de (login_at, logout_at|None).
+
+    O(sessions + heures couvertes) : chaque session marque directement
+    l'intervalle de buckets qu'elle recouvre, au lieu de re-scanner toute
+    la grille (jours × 24 buckets) pour chaque session. Bornes strictes
+    identiques à la référence naïve (cf. test d'équivalence) : un bucket
+    [b, b+1h) est couvert si login_at < b+1h et fin_virtuelle > b.
     """
+    HOUR_US = 3_600_000_000
+    WINDOW_US = days * 86_400_000_000
+
+    def to_us(dt: datetime) -> int:
+        delta = dt - start
+        return (delta.days * 86_400 + delta.seconds) * 1_000_000 + delta.microseconds
+
+    grid = [[0] * 24 for _ in range(days)]
+    for login_at, logout_at in sessions:
+        s = to_us(login_at)
+        e = to_us(logout_at or datetime.max)
+        if s < 0:
+            s = 0
+        if e > WINDOW_US:
+            e = WINDOW_US  # les buckets au-delà de la fenêtre n'existent pas
+        if s >= e:
+            continue  # hors fenêtre ou durée nulle
+        first = s // HOUR_US            # 1er bucket avec login_at < fin_bucket
+        last = -(-e // HOUR_US) - 1     # dernier bucket avec fin > début_bucket
+        for h in range(first, last + 1):
+            d, hh = divmod(h, 24)
+            grid[d][hh] += 1
     out = []
     for d in range(days):
-        day_start = start + timedelta(days=d)
-        hours = [0] * 24
-        for login_at, logout_at in sessions:
-            end = logout_at or datetime.max
-            for h in range(24):
-                b_start = day_start + timedelta(hours=h)
-                b_end = b_start + timedelta(hours=1)
-                if login_at < b_end and end > b_start:
-                    hours[h] += 1
-        out.append({"date": day_start.strftime("%Y-%m-%d"), "hours": hours})
+        out.append({
+            "date": (start + timedelta(days=d)).strftime("%Y-%m-%d"),
+            "hours": grid[d],
+        })
     return out

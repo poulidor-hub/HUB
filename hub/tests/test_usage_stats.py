@@ -137,3 +137,71 @@ def test_activity_heatmap():
     assert len(hours) == 24
     assert hours[10] == 1 and hours[11] == 1 and hours[12] == 1
     assert hours[9] == 0 and hours[13] == 0
+
+
+def _naive_activity_heatmap(sessions, start, days):
+    """Référence de spécification (lente) : une session compte dans le
+    bucket horaire (jour, heure) ssi login_at < fin_bucket et fin_virtuelle
+    > début_bucket."""
+    out = []
+    for d in range(days):
+        day_start = start + timedelta(days=d)
+        hours = [0] * 24
+        for login_at, logout_at in sessions:
+            end = logout_at or datetime.max
+            for h in range(24):
+                b_start = day_start + timedelta(hours=h)
+                b_end = b_start + timedelta(hours=1)
+                if login_at < b_end and end > b_start:
+                    hours[h] += 1
+        out.append({"date": day_start.strftime("%Y-%m-%d"), "hours": hours})
+    return out
+
+
+def test_activity_heatmap_matches_naive_reference():
+    """Propriété : l'implémentation optimisée doit rester strictement
+    équivalente à la référence naïve (edge cases inclus)."""
+    import random
+    rng = random.Random(42)
+    start = datetime(2026, 6, 1)
+    cases = [
+        [],                                        # vide
+        [(start, start)],                          # durée nulle au bord
+        [(start - timedelta(hours=5), start + timedelta(hours=3))],  # à cheval avant
+        [(start + timedelta(days=2, hours=23), None)],                # ouverte
+        [(start, datetime.max)],                   # ouverte réelle (datetime.max)
+        [(start + timedelta(days=10), start + timedelta(days=10))],   # durée nulle
+    ]
+    for _ in range(25):  # sessions aléatoires déterministes
+        login = start + timedelta(
+            seconds=rng.randint(-86400, 90 * 86400),
+            microseconds=rng.randint(0, 999999),
+        )
+        dur = rng.choice([
+            rng.randint(0, 3600),                  # < 1 h
+            rng.randint(0, 3 * 86400),             # multi-jours
+        ])
+        sessions = [(login, login + timedelta(seconds=dur,
+                                               microseconds=rng.randint(0, 999999)))]
+        cases.append(sessions)
+    for sessions in cases:
+        got = compute_activity_heatmap(sessions, start, 90)
+        want = _naive_activity_heatmap(sessions, start, 90)
+        assert got == want, f"divergence pour sessions={sessions[:1]}…"
+
+
+def test_perf_activity_heatmap_90j():
+    """Garde-fou : heatmap 90 j sur ~4000 sessions (volumétrie prod réelle)
+    calculée en < 1 s — l'implémentation O(days×sessions×24) met ~13 s."""
+    import random
+    rng = random.Random(7)
+    sessions = []
+    for _ in range(4000):
+        login = T0 + timedelta(seconds=rng.randint(0, 90 * 86400 - 1))
+        dur = rng.randint(60, 8 * 3600)
+        sessions.append((login, login + timedelta(seconds=dur)))
+    t0 = time.monotonic()
+    out = compute_activity_heatmap(sessions, T0, 90)
+    elapsed = time.monotonic() - t0
+    assert len(out) == 90 and len(out[0]["hours"]) == 24
+    assert elapsed < 1.0, f"heatmap 90j trop lente: {elapsed:.1f}s"

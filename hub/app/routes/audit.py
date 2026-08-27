@@ -2020,7 +2020,11 @@ async def get_usage_heatmap(
     )
     sessions = [(row[0], row[1]) for row in result.all()]
 
+    def _aggregate() -> list[dict]:
+        """Agrégation CPU-bound (fonction pure) — exécutée hors event loop."""
+        return compute_activity_heatmap(sessions, start, days)
+
     return {
         "period_days": days,
-        "days": compute_activity_heatmap(sessions, start, days),
+        "days": await anyio.to_thread.run_sync(_aggregate),
     }

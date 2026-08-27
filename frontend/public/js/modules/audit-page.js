@@ -64,19 +64,27 @@ async function loadAuditPageData() {
 async function loadAuditPageOverview() {
     const days = parseInt(document.getElementById('auditPeriodPage')?.value || 7);
     try {
-        const [kpis, alerts, active, heatmap] = await Promise.all([
+        const [kpis, alerts, active] = await Promise.all([
             api.getAuditKpis(days),
             api.getAuditAlerts(days),
-            api.getActiveSessions(),
-            api.getUsageHeatmap(days).catch(() => null) // non bloquant
+            api.getActiveSessions()
         ]);
         renderAuditKpis(kpis);
         renderAuditAlerts(alerts.alerts || []);
         renderAuditLiveSessions(active);
-        if (heatmap && (heatmap.days || []).length) {
-            renderUsageHeatmap('auditHeatmapChart', heatmap);
-        }
         updateErrorTabBadge();
+        // Heatmap réellement non bloquante : les KPIs/alertes s'affichent
+        // immédiatement, le graphique arrive dès que sa réponse revient.
+        // (Un simple .catch dans Promise.all ne suffit pas : l'await attend
+        // la plus lente des requêtes et retarde toute la vue d'ensemble.)
+        api.getUsageHeatmap(days).then(heatmap => {
+            // Période changée entre-temps : réponse périmée, on ignore
+            const cur = parseInt(document.getElementById('auditPeriodPage')?.value || 7);
+            if (cur !== days) return;
+            if (heatmap && (heatmap.days || []).length) {
+                renderUsageHeatmap('auditHeatmapChart', heatmap);
+            }
+        }).catch(() => { /* heatmap optionnelle */ });
     } catch (error) {
         console.error('Erreur chargement audit:', error);
         showToast('Erreur', "Impossible de charger les données d'audit", 'danger');
