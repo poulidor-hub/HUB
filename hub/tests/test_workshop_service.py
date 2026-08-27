@@ -174,6 +174,16 @@ def _install_exec(monkeypatch, results):
     return calls
 
 
+async def _no_token():
+    return None
+
+
+def _no_github_token(monkeypatch):
+    """Fetch sans PAT — isole les fetch authentifiés de la DB réelle
+    (ws.async_session_maker est bindé à l'import, hors patch conftest)."""
+    monkeypatch.setattr(ws, "_github_token", _no_token)
+
+
 def _mk_app(tmp_path, monkeypatch, *, with_ws=False, version="0.8.3"):
     app = tmp_path / "wstest"; app.mkdir(exist_ok=True)
     (app / "docker-compose.yml").write_text("services: {}\n")
@@ -225,6 +235,7 @@ async def test_op_update_nominal(tmp_path, monkeypatch, async_session):
         (0, b""),                 # docker compose up -d
     ]
     calls = _install_exec(monkeypatch, seq)
+    _no_github_token(monkeypatch)
 
     async def _fake_healthy(port, timeout=60):
         return True
@@ -248,6 +259,7 @@ async def test_op_update_idempotent(tmp_path, monkeypatch, async_session):
         return "prev123"  # == WS_COMMIT → déjà à jour
 
     monkeypatch.setattr(ws, "_origin_main", _origin_main)
+    _no_github_token(monkeypatch)
     monkeypatch.setattr(ws, "_worktree_clean", lambda d: asyncio.sleep(0, result=True))
     monkeypatch.setattr(ws, "_git_state",
                         lambda d: asyncio.sleep(0, result={"ok": True, "branch": "main", "head": "prev123"}))
@@ -279,6 +291,7 @@ async def test_op_update_rollback_build_ko(tmp_path, monkeypatch, async_session)
                         lambda d: asyncio.sleep(0, result={"ok": True, "branch": "main", "head": "prev123"}))
     monkeypatch.setattr(ws, "_worktree_clean", lambda d: asyncio.sleep(0, result=True))
     monkeypatch.setattr(ws, "_origin_main", lambda d: asyncio.sleep(0, result="new456"))
+    _no_github_token(monkeypatch)
 
     calls = []
 
@@ -363,6 +376,7 @@ async def test_op_ship_refuse_main_avance(tmp_path, monkeypatch, async_session):
     monkeypatch.setattr(ws, "_git_state",
                         lambda d: asyncio.sleep(0, result={"ok": True, "branch": "main", "head": "prev123"}))
     monkeypatch.setattr(ws, "_worktree_clean", lambda d: asyncio.sleep(0, result=True))
+    _no_github_token(monkeypatch)
     async def _healthy(port, timeout=60):
         return int(port) == 10000  # atelier sain, prod KO (pas atteinte)
     monkeypatch.setattr(ws, "_wait_healthy", _healthy)
@@ -392,6 +406,7 @@ async def test_op_ship_nominal(tmp_path, monkeypatch, async_session):
     monkeypatch.setattr(ws, "_git_state",
                         lambda d: asyncio.sleep(0, result={"ok": True, "branch": "main", "head": "prev123"}))
     monkeypatch.setattr(ws, "_worktree_clean", lambda d: asyncio.sleep(0, result=True))
+    _no_github_token(monkeypatch)
     healthy_ports = []
     async def _healthy(port, timeout=60):
         healthy_ports.append(int(port))
@@ -426,6 +441,7 @@ async def test_op_ship_echec_build_atelier_conserve(tmp_path, monkeypatch, async
     monkeypatch.setattr(ws, "_git_state",
                         lambda d: asyncio.sleep(0, result={"ok": True, "branch": "main", "head": "prev123"}))
     monkeypatch.setattr(ws, "_worktree_clean", lambda d: asyncio.sleep(0, result=True))
+    _no_github_token(monkeypatch)
     monkeypatch.setattr(ws, "_wait_healthy",
                         lambda p, timeout=60: asyncio.sleep(0, result=True))
     def _exec(cmd, **kw):
@@ -471,3 +487,86 @@ async def test_purge_workshop_operations(async_session):
     remaining = (await async_session.execute(
         select(WorkshopOperation))).scalars().all()
     assert len(remaining) == 1 and remaining[0].id == recent.id
+
+
+# ── git-config : remote local + auth PAT + test connexion ──
+
+import subprocess as _sp
+
+
+def _mk_repo(path):
+    path.mkdir(parents=True, exist_ok=True)
+    def g(*a): return _sp.run(["git", "-C", str(path), *a], capture_output=True, text=True)
+    g("init", "-q", "-b", "main"); g("config", "user.email", "t@t"); g("config", "user.name", "t")
+    (path / "f.txt").write_text("x"); g("add", "-A"); g("commit", "-qm", "init")
+    return path
+
+
+async def test_configure_remote_add(tmp_path, monkeypatch):
+    repo = _mk_repo(tmp_path / "wstest")
+    monkeypatch.setattr(ws, "get_apps_dir", lambda: tmp_path)
+    assert await ws._configure_remote(repo, "https://example.com/x.git") == "added"
+    out = _sp.run(["git", "-C", str(repo), "remote", "get-url", "origin"],
+                  capture_output=True, text=True).stdout.strip()
+    assert out == "https://example.com/x.git"
+
+
+async def test_configure_remote_update_and_unchanged(tmp_path, monkeypatch):
+    repo = _mk_repo(tmp_path / "wstest")
+    monkeypatch.setattr(ws, "get_apps_dir", lambda: tmp_path)
+    await ws._configure_remote(repo, "https://example.com/a.git")
+    assert await ws._configure_remote(repo, "https://example.com/b.git") == "updated"
+    assert await ws._configure_remote(repo, "https://example.com/b.git") == "unchanged"
+
+
+async def test_configure_remote_not_a_repo(tmp_path, monkeypatch):
+    d = tmp_path / "pasunrepo"; d.mkdir()
+    monkeypatch.setattr(ws, "get_apps_dir", lambda: tmp_path)
+    with pytest.raises(RuntimeError, match="n'est pas un dépôt git"):
+        await ws._configure_remote(d, "https://example.com/x.git")
+
+
+async def test_git_with_auth_args(monkeypatch, tmp_path):
+    calls = []
+    async def _fake_exec(*cmd, cwd=None, env=None, stdout=None, stderr=None):
+        calls.append(cmd)
+        return _FakeProc(0, b"")
+    monkeypatch.setattr(ds.asyncio, "create_subprocess_exec", _fake_exec)
+    auth = ["-c", "http.extraheader=Authorization: Basic dG9rZW46eA=="]
+    await ws._git(tmp_path, "fetch", "--quiet", "origin", auth_args=auth)
+    assert calls[0][0:2] == ("git", "-c") and "safe.directory=*" in calls[0][2]
+    assert "http.extraheader=Authorization: Basic" in " ".join(calls[0])
+    assert calls[0][-3:] == ("fetch", "--quiet", "origin")
+
+
+async def test_github_token_from_db(monkeypatch, async_session):
+    from app.models import AppSetting
+    async_session.add(AppSetting(key="github_token", value="ghp_test123"))
+    await async_session.commit()
+
+    class _Ctx:
+        def __init__(self, s): self._s = s
+        async def __aenter__(self): return self._s
+        async def __aexit__(self, *a): return False
+
+    monkeypatch.setattr(ws, "async_session_maker", lambda: _Ctx(async_session))
+    token = await ws._github_token()
+    assert token == "ghp_test123"
+
+
+async def test_git_connection_ok(monkeypatch, tmp_path):
+    async def _fake_run(cmd, cwd, timeout, env_extra=None):
+        return "ref1 refs/heads/main\nref2 refs/heads/dev\n"
+    monkeypatch.setattr(ws, "_run_cmd", _fake_run)
+    _no_github_token(monkeypatch)
+    ok, msg = await ws.test_git_connection("https://example.com/x.git")
+    assert ok is True and "2 branche(s)" in msg
+
+
+async def test_git_connection_fail(monkeypatch, tmp_path):
+    async def _fake_run(cmd, cwd, timeout, env_extra=None):
+        raise RuntimeError("remote: Access denied\nfatal: Authentication failed")
+    monkeypatch.setattr(ws, "_run_cmd", _fake_run)
+    _no_github_token(monkeypatch)
+    ok, msg = await ws.test_git_connection("https://example.com/x.git")
+    assert ok is False and "Access denied" in msg and "Authentication failed" not in msg
