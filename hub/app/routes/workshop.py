@@ -2,6 +2,7 @@
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -10,11 +11,13 @@ from app.database import get_db
 from app.models import Application, User, WorkshopOperation
 from app.workshop_service import (
     _alloc_subnet,
+    _configure_remote,
     _git_state,
     get_apps_dir,
     get_workshop_state,
     has_active_workshop_operation,
     start_workshop_operation,
+    test_git_connection,
 )
 
 logger = logging.getLogger("hub.workshop")
@@ -51,10 +54,11 @@ async def _ensure_no_active(db: AsyncSession) -> None:
 async def get_workshop(slug: str, db: AsyncSession = Depends(get_db),
                        _: User = Depends(get_current_admin)):
     """État atelier (contrat .workshop.env) + git_ok + opération active."""
-    await _get_app_or_404(db, slug)
+    app = await _get_app_or_404(db, slug)
     state = get_workshop_state(slug)
     state["git_ok"] = (await _git_state(get_apps_dir() / slug))["ok"]
     state["active_operation"] = await has_active_workshop_operation(db, slug=slug)
+    state["git_repo_url"] = app.git_repo_url  # valeur DB (pré-remplissage modale)
     return state
 
 
@@ -142,3 +146,34 @@ async def get_workshop_status(slug: str, db: AsyncSession = Depends(get_db),
     ops = list(result.scalars().all())
     return {"current": _op_to_dict(ops[0]) if ops else None,
             "history": [_op_to_dict(o) for o in ops]}
+
+
+class GitConfigIn(BaseModel):
+    git_repo_url: str
+
+
+@router.post("/{slug}/git-config")
+async def configure_app_git(slug: str, body: GitConfigIn,
+                            db: AsyncSession = Depends(get_db),
+                            admin: User = Depends(get_current_admin)):
+    """Configure le dépôt git d'une app : DB + remote local + test ls-remote."""
+    app = await _get_app_or_404(db, slug)
+    url = body.git_repo_url.strip()
+    if not url:
+        raise HTTPException(status_code=400, detail="URL git requise")
+    if url.startswith(("ssh://", "git@", "git://")):
+        raise HTTPException(
+            status_code=400,
+            detail="SSH non supporté côté HUB — utilisez l'URL HTTPS (http:// ou https://)")
+    if not url.startswith(("http://", "https://")):
+        raise HTTPException(status_code=400,
+                            detail="URL invalide — doit commencer par http:// ou https://")
+    try:
+        sync = await _configure_remote(get_apps_dir() / slug, url)
+    except RuntimeError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    app.git_repo_url = url
+    await db.commit()
+    ok, message = await test_git_connection(url)
+    logger.info(f"git-config {slug} → {url} (sync={sync}, test ok={ok}) par {admin.username}")
+    return {"ok": ok, "message": message, "sync": sync}

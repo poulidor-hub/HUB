@@ -370,6 +370,7 @@ class AppResponse(AppBase):
     is_workshop: bool = False
     is_unmanaged: bool = False  # True si app non gérée (launcher-only)
     git_repo_url: Optional[str] = None
+    git_sync: Optional[str] = None  # PATCH update_app uniquement : "ok" | "warning: …" | None (sync remote best-effort)
     
     @field_validator('is_remote', mode='before')
     @classmethod

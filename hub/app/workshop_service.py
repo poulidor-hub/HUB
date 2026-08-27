@@ -18,8 +18,11 @@ from pathlib import Path
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.database import async_session_maker
 from app.deploy_service import (
     DeployTimeout,
+    _git_auth_args,
+    _get_github_token,
     _run_cmd,
     _wait_healthy,
     apply_env_values,
@@ -79,9 +82,10 @@ def _write_ws_env_full(path: Path, config: dict[str, str]) -> None:
 
 # ── Helpers git (via _run_cmd, safe.directory comme deploy_service) ──
 
-async def _git(app_dir: Path, *args: str, timeout: int = T_GIT) -> str:
+async def _git(app_dir: Path, *args: str, timeout: int = T_GIT,
+              auth_args: list[str] | None = None) -> str:
     return await _run_cmd(
-        ["git", "-c", "safe.directory=*", "-C", str(app_dir), *args],
+        ["git", "-c", "safe.directory=*", *(auth_args or []), "-C", str(app_dir), *args],
         app_dir, timeout,
     )
 
@@ -140,6 +144,48 @@ async def _restore_git(app_dir: Path, prev_branch: str | None,
             await _git(app_dir, "reset", "--hard", prev_commit)
     except Exception as e:
         logger.warning(f"restore_git partiel pour {app_dir}: {e}")
+
+
+async def _github_token() -> str | None:
+    """PAT GitHub (settings puis DB) — jamais loggé, transite en mémoire."""
+    try:
+        async with async_session_maker() as db:
+            return await _get_github_token(db)
+    except Exception:
+        return None
+
+
+async def _configure_remote(app_dir: Path, url: str) -> str:
+    """Configure origin sur le repo local. added|updated|unchanged ;
+    RuntimeError si APPS/X n'est pas un dépôt git."""
+    ok, _ = await _git_try(app_dir, "rev-parse", "--git-dir")
+    if not ok:
+        raise RuntimeError(f"{app_dir} n'est pas un dépôt git — déployez l'app depuis son dépôt d'abord")
+    ok, current = await _git_try(app_dir, "remote", "get-url", "origin")
+    current = (current or "").strip()
+    if ok and current == url:
+        return "unchanged"
+    if ok:
+        await _git(app_dir, "remote", "set-url", "origin", url)
+        return "updated"
+    await _git(app_dir, "remote", "add", "origin", url)
+    return "added"
+
+
+async def test_git_connection(url: str) -> tuple[bool, str]:
+    """ls-remote avec PAT si dispo. (ok, message) — échec = verdict, pas exception."""
+    auth = _git_auth_args(await _github_token())
+    try:
+        out = await _run_cmd(["git", *auth, "ls-remote", "--heads", url],
+                             get_apps_dir(), 30)
+        n = len([l for l in out.strip().splitlines() if l.strip()])
+        return True, f"Connexion OK — {n} branche(s)"
+    except Exception as e:
+        # _run_cmd préfixe "Échec (N) de 'git':" — garder les lignes utiles
+        # de la sortie git (remote:/fatal:), pas le préfixe technique.
+        lines = [l.strip() for l in str(e).splitlines()
+                 if l.strip() and not l.startswith("Échec (")]
+        return False, (" — ".join(lines[:2])[:300]) if lines else str(e)[:300]
 
 
 # ── Allocation ports / subnet ──
@@ -467,7 +513,8 @@ async def _op_update(op_id: int, slug: str) -> None:
     prev_branch, prev_commit = state["branch"], state["head"]
 
     await _step(op_id, "fetch", "git fetch origin")
-    await _git(app_dir, "fetch", "--quiet", "origin", "--tags")
+    auth = _git_auth_args(await _github_token())
+    await _git(app_dir, "fetch", "--quiet", "origin", "--tags", auth_args=auth)
     target = await _origin_main(app_dir)
     if not target:
         raise RuntimeError("origin/main introuvable après fetch")
@@ -564,7 +611,8 @@ async def _op_ship(op_id: int, slug: str) -> None:
 
     try:
         await _step(op_id, "guards", "Sync origin/main")
-        await _git(app_dir, "fetch", "--quiet", "origin")
+        auth = _git_auth_args(await _github_token())
+        await _git(app_dir, "fetch", "--quiet", "origin", auth_args=auth)
         await _git(app_dir, "checkout", "--quiet", "main")
         await _git(app_dir, "reset", "--hard", "origin/main")
 

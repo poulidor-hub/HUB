@@ -3220,7 +3220,17 @@ async def update_app(
     
     # Notifier les clients SSE de la modification
     notify_event("apps_updated", {"action": "updated", "app_slug": app.slug, "app_name": app.name})
-    
+
+    # Sync best-effort du remote local quand git_repo_url est fourni dans le
+    # PATCH (modale git-config / atelier) — jamais bloquant.
+    if app.git_repo_url and "git_repo_url" in update_data:
+        try:
+            from app.workshop_service import _configure_remote, get_apps_dir
+            await _configure_remote(get_apps_dir() / app.slug, app.git_repo_url)
+            app.git_sync = "ok"
+        except Exception as e:
+            app.git_sync = f"warning: {str(e).splitlines()[0][:200]}"
+
     return app
 
 
