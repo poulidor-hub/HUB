@@ -5,6 +5,22 @@
 
 ---
 
+## [3.39.0] - 27 août 2026
+
+### ✨ Configurer le dépôt git d'une app depuis l'UI
+
+| Fonctionnalité | Description |
+|----------------|-------------|
+| Endpoint `git-config` | `POST /api/apps/{slug}/git-config` (admin) : enregistre l'URL en DB (`git_repo_url`), configure `origin` du repo local `APPS/X/`, puis **teste immédiatement** la connexion (`ls-remote`). Validation : **HTTPS/HTTP uniquement** (SSH `ssh://`/`git@`/`git://` refusé en 400), **409** si `APPS/X` n'est pas un repo git |
+| Modale configurer-et-tester | Bouton **« Configurer le dépôt git »** contextuel dans la vue Santé (apps **sans remote**, avec ou sans atelier — débloque maj/ship) + modale pré-remplie depuis l'état, verdict du test affiché à l'enregistrement |
+| Sync best-effort du form admin | Le PATCH admin (`update_app`) resynchronise le remote local quand `git_repo_url` est fourni — **jamais bloquant** : résultat dans `git_sync` de la réponse (`"ok"` ou `"warning: …"` si repo local absent/cassé) |
+| PAT GitHub dans les fetch de l'atelier | **Corrige les repos privés** : `ls-remote` (test connexion), `git-config` et les `fetch` du cycle atelier (`--maj`/`--prod`) passent désormais par le PAT GitHub existant (`github_token` en DB settings — jamais affiché) au lieu d'échouer en auth sur un repo privé |
+| Verdict d'échec lisible | Le verdict `ls-remote` en échec **conserve la cause git utile** (auth, repo introuvable, réseau) sans le préfixe technique interne |
+| État atelier | `GET /api/apps/{slug}/workshop` expose `git_repo_url` (valeur DB, pré-remplissage de la modale) |
+| Tests | **+8** (service `_configure_remote`/test connexion/PAT + routes git-config/409/400/state/`git_sync`) — **848 au total** (dont 2 pré-existants marqués env) |
+
+---
+
 ## [3.38.2] - 27 août 2026
 
 ### ⚡ Perf page Audit : heatmap quasi instantanée + plage limitée au mois
