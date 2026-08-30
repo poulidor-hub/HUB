@@ -1339,6 +1339,16 @@ class RestoreToAppResponse(BaseModel):
     requires_vaultwarden_restart: bool = False
 
 
+class BackupImportResponse(BaseModel):
+    """Réponse de l'import d'un backup .encrypted externe."""
+    success: bool
+    message: str
+    backup_stored: bool = False
+    backup_id: Optional[str] = None
+    decrypted_size_bytes: int = 0
+    restore: Optional[RestoreToAppResponse] = None
+
+
 # ===== Bulk Operations Schemas =====
 
 class BulkUserAppRoleAssignment(BaseModel):

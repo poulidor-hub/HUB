@@ -15,6 +15,7 @@ Endpoints:
 - GET  /api/apps/{slug}/backup/{id}     : Télécharger un backup spécifique
 - DELETE /api/apps/{slug}/backup/{id}   : Supprimer un backup
 - GET  /api/apps/{slug}/backup/{id}/export : Exporter un backup chiffré
+- POST /api/apps/{slug}/backup/import : Importer un backup externe (.encrypted/.zip)
 - PUT  /api/apps/{slug}/backup/config   : Configurer le scheduling
 - POST /api/apps/{slug}/backup/trigger  : Déclencher un backup manuellement
 - GET  /api/admin/backups               : Vue globale admin
@@ -52,7 +53,7 @@ from app.routes.audit import log_action
 from app.schemas import (
     AppBackupConfig, AppBackupConfigUpdate, AppBackupReceive,
     AppBackupResponse, AppBackupListResponse, AppBackupStatusResponse,
-    AllBackupsResponse, BackupTriggerResponse, BackupExportResponse,
+    AllBackupsResponse, BackupTriggerResponse, BackupExportResponse, BackupImportResponse,
     BackupModeEnum, RestoreToAppRequest, RestoreToAppResponse,
     InProgressBackupItem, InProgressBackupsResponse,
 )
@@ -2490,6 +2491,187 @@ async def restore_uploaded_backup_to_app(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"Impossible de contacter l'application: {str(e)}"
         )
+
+
+@router.post("/api/apps/{slug}/backup/import", response_model=BackupImportResponse)
+async def import_backup_file(
+    slug: str,
+    request: Request,
+    file: UploadFile = File(...),
+    password: Optional[str] = Form(None),
+    store_backup: bool = Form(True),
+    restore_now: bool = Form(False),
+    clear_existing: bool = Form(False),
+    restore_items: bool = Form(True),
+    restore_preferences: bool = Form(True),
+    restore_files: bool = Form(True),
+    restore_test_data: bool = Form(True),
+    restore_vaultwarden: bool = Form(False),
+    restore_secret_bundle: bool = Form(False),
+    require_vaultwarden_offline: bool = Form(True),
+    confirm_full_restore: bool = Form(False),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_admin)
+):
+    """
+    Importe un backup externe (migration depuis un autre hub) :
+    - .encrypted (v2 password ou v1 RSA) -> déchiffré avec `password` si nécessaire
+    - .zip brut accepté également
+
+    store_backup=True  : enregistre le ZIP déchiffré comme backup de l'app (visible dans la liste)
+    restore_now=True   : restaure immédiatement le contenu vers l'application
+    """
+    import httpx
+    from app.auth import create_access_token
+    from datetime import timedelta
+
+    options = RestoreToAppRequest(
+        clear_existing=clear_existing,
+        restore_items=restore_items,
+        restore_preferences=restore_preferences,
+        restore_files=restore_files,
+        restore_test_data=restore_test_data,
+        restore_vaultwarden=restore_vaultwarden,
+        restore_secret_bundle=restore_secret_bundle,
+        require_vaultwarden_offline=require_vaultwarden_offline,
+        confirm_full_restore=confirm_full_restore,
+    )
+    validate_vaultwarden_restore_options(options)
+
+    app = await get_app_or_404(db, slug)
+
+    filename = file.filename or ""
+    is_encrypted = filename.endswith('.encrypted')
+    is_zip = filename.endswith('.zip')
+    if not is_encrypted and not is_zip:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Le fichier doit être un .encrypted (exporté depuis un HUB) ou un .zip"
+        )
+
+    raw_content = await file.read()
+
+    # Déchiffrement éventuel
+    if is_encrypted:
+        backup_content, header = decrypt_encrypted_package(raw_content, password=password)
+        backup_id = header.get("backup_id") or str(uuid.uuid4())
+        description = f"Importé depuis un autre hub (export du {header.get('encrypted_at', '?')})"
+    else:
+        backup_content = raw_content
+        backup_id = str(uuid.uuid4())
+        description = "Importé depuis un fichier zip externe"
+
+    # Stockage comme backup de l'app
+    stored_backup_id = None
+    if store_backup:
+        zip_metadata = extract_metadata_from_zip(backup_content)
+        app_dir = ensure_storage_dir(slug)
+        storage_filename = f"backup_{backup_id}.zip"
+        storage_path = f"{slug}/{storage_filename}"
+        (app_dir / storage_filename).write_bytes(backup_content)
+
+        created_by = (
+            current_user.username if not hasattr(current_user, "client_id") else current_user.name
+        )
+        backup = AppBackup(
+            backup_id=backup_id,
+            app_id=app.id,
+            app_slug=slug,
+            app_version=zip_metadata.get("app_version"),
+            total_items=zip_metadata.get("total_items", 0),
+            total_preferences=zip_metadata.get("total_preferences", 0),
+            total_files=zip_metadata.get("total_files", 0),
+            format_version=zip_metadata.get("format_version"),
+            total_tables=zip_metadata.get("total_tables", 0),
+            total_rows=zip_metadata.get("total_rows", 0),
+            includes_vaultwarden_snapshot=bool(zip_metadata.get("includes_vaultwarden_snapshot")),
+            includes_secret_bundle=bool(zip_metadata.get("includes_secret_bundle")),
+            restore_requires_offline=bool(zip_metadata.get("restore_requires_offline")),
+            total_size_bytes=len(backup_content),
+            checksum=compute_checksum(backup_content),
+            storage_path=storage_path,
+            created_by=created_by,
+            created_by_type="user",
+            description=description,
+            status="success",
+            started_at=utcnow(),
+            completed_at=utcnow(),
+            duration_seconds=0,
+            progress_step="done",
+            progress_percent=100,
+        )
+        db.add(backup)
+        app.last_backup_at = utcnow()
+        app.last_backup_id = backup_id
+        app.last_backup_status = "success"
+        await db.commit()
+        await db.refresh(backup)
+        stored_backup_id = backup_id
+        logger.info(f"📥 Backup importé et stocké pour {slug}: {backup_id} ({human_readable_size(len(backup_content))})")
+
+    # Restauration immédiate vers l'application
+    restore_response = None
+    if restore_now:
+        if not app.api_url:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="L'application n'a pas d'URL d'API configurée"
+            )
+        sa_result = await db.execute(
+            select(ServiceAccount)
+            .join(ServiceAccount.applications)
+            .where(Application.slug == slug)
+            .limit(1)
+        )
+        sa = sa_result.scalar_one_or_none()
+        if not sa:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Aucun service account trouvé pour cette application"
+            )
+
+        m2m_token, _, _ = create_access_token(
+            username=sa.client_id,
+            apps={slug: "admin"},
+            expires_delta=timedelta(minutes=10),
+            is_service_account=True
+        )
+
+        output_filename = f"backup_{backup_id}.zip"
+        try:
+            async with httpx.AsyncClient(timeout=300.0) as http_client:
+                restore_url = f"{app.api_url.rstrip('/')}/api/admin/restore"
+                response = await http_client.post(
+                    restore_url,
+                    headers={"Authorization": f"Bearer {m2m_token}"},
+                    files={"file": (output_filename, backup_content, "application/zip")},
+                    data=build_restore_form_data(options),
+                )
+                if response.status_code != 200:
+                    error_detail = response.text[:2000] if response.text else "Pas de détails"
+                    raise HTTPException(
+                        status_code=status.HTTP_502_BAD_GATEWAY,
+                        detail=f"L'application a retourné une erreur: {response.status_code} - {error_detail}"
+                    )
+                result = response.json()
+                restore_response = build_restore_response(result, slug, backup_id)
+        except httpx.RequestError as e:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=f"Impossible de contacter l'application: {str(e)}"
+            )
+
+    return BackupImportResponse(
+        success=True,
+        message=(
+            f"Backup importé (stocké: {'oui' if stored_backup_id else 'non'}, "
+            f"restauré: {'oui' if restore_response and restore_response.success else 'non'})"
+        ),
+        backup_stored=stored_backup_id is not None,
+        backup_id=stored_backup_id,
+        decrypted_size_bytes=len(backup_content),
+        restore=restore_response,
+    )
 
 
 # =============================================================================

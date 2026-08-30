@@ -2,12 +2,16 @@
 Tests du déchiffrement des exports de backups protégés par mot de passe (format v2).
 """
 import base64
+import hashlib
+import io
 import json
+import zipfile
 
 import pytest
 from fastapi import HTTPException
 
 import app.routes.app_backups as ab
+from tests.conftest import get_auth_header
 
 
 def test_create_and_decrypt_password_roundtrip():
@@ -100,3 +104,69 @@ def test_decrypt_checksum_mismatch_generic_error():
     with pytest.raises(HTTPException) as exc:
         ab.decrypt_encrypted_package(corrupted, password="motdepasse-fort-1")
     assert "Checksum invalide" in exc.value.detail
+
+
+# ===== Endpoint POST /api/apps/{slug}/backup/import =====
+
+def make_small_zip() -> bytes:
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("data.json", json.dumps({"metadata": {}, "data": {}}))
+    return buffer.getvalue()
+
+
+@pytest.fixture
+def backup_storage(tmp_path, monkeypatch):
+    storage_path = tmp_path / "backups"
+    monkeypatch.setattr(ab, "STORAGE_BASE_DIR", storage_path)
+    return storage_path
+
+
+async def test_import_stores_backup(client, admin_token, test_app, backup_storage, async_session):
+    """Import d'un .encrypted password : déchiffré + stocké comme backup de l'app."""
+    from sqlalchemy import select
+    from app.models import AppBackup
+
+    content = make_small_zip()
+    package = ab.create_password_encrypted_package(content, "bk-mig-1", test_app.slug, "motdepasse-fort-1")
+
+    resp = await client.post(
+        f"/api/apps/{test_app.slug}/backup/import",
+        headers=get_auth_header(admin_token),
+        data={"password": "motdepasse-fort-1", "store_backup": "true", "restore_now": "false"},
+        files={"file": ("backup_bk-mig-1.encrypted", package, "application/octet-stream")},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["success"] is True
+    assert body["backup_stored"] is True
+    assert body["backup_id"] == "bk-mig-1"
+
+    row = (await async_session.execute(
+        select(AppBackup).where(AppBackup.backup_id == "bk-mig-1")
+    )).scalar_one_or_none()
+    assert row is not None
+    assert (ab.STORAGE_BASE_DIR / row.storage_path).exists()
+
+
+async def test_import_without_password_fails(client, admin_token, test_app, backup_storage):
+    package = ab.create_password_encrypted_package(b"x", "bk-mig-2", test_app.slug, "motdepasse-fort-1")
+    resp = await client.post(
+        f"/api/apps/{test_app.slug}/backup/import",
+        headers=get_auth_header(admin_token),
+        data={"store_backup": "true"},
+        files={"file": ("backup_bk-mig-2.encrypted", package, "application/octet-stream")},
+    )
+    assert resp.status_code == 400
+
+
+async def test_import_wrong_password_fails(client, admin_token, test_app, backup_storage):
+    package = ab.create_password_encrypted_package(b"x", "bk-mig-3", test_app.slug, "motdepasse-fort-1")
+    resp = await client.post(
+        f"/api/apps/{test_app.slug}/backup/import",
+        headers=get_auth_header(admin_token),
+        data={"password": "mauvais-mot-de-passe", "store_backup": "true"},
+        files={"file": ("backup_bk-mig-3.encrypted", package, "application/octet-stream")},
+    )
+    assert resp.status_code == 400
+    assert resp.json()["detail"] == ab.PASSWORD_DECRYPT_ERROR
