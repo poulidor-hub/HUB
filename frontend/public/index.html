@@ -3642,7 +3642,7 @@
         <div class="modal-dialog modal-dialog-centered">
             <div class="modal-content">
                 <div class="modal-header bg-primary text-white">
-                    <h5 class="modal-title"><i class="bi bi-upload me-2"></i>Importer et restaurer un backup</h5>
+                    <h5 class="modal-title"><i class="bi bi-upload me-2"></i>Importer un backup externe</h5>
                     <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
                 </div>
                 <div class="modal-body">
@@ -3651,6 +3651,22 @@
                     <div class="mb-3">
                         <label for="importRestoreFile" class="form-label">Fichier de backup (.zip ou .encrypted)</label>
                         <input class="form-control" type="file" id="importRestoreFile" accept=".zip,.encrypted" data-action="previewImportRestoreFile">
+                    </div>
+                    <div class="mb-3">
+                        <label for="importRestorePassword" class="form-label">Mot de passe du fichier (.encrypted protégé, sinon laisser vide)</label>
+                        <input type="password" class="form-control" id="importRestorePassword" autocomplete="off">
+                    </div>
+                    <div class="form-check form-switch mb-2">
+                        <input class="form-check-input" type="checkbox" id="importStoreBackup" checked>
+                        <label class="form-check-label" for="importStoreBackup">
+                            Conserver le backup déchiffré dans la liste des backups du hub
+                        </label>
+                    </div>
+                    <div class="form-check form-switch mb-2">
+                        <input class="form-check-input" type="checkbox" id="importRestoreNow">
+                        <label class="form-check-label" for="importRestoreNow">
+                            Restaurer immédiatement vers l'application
+                        </label>
                     </div>
                     
                     <!-- Aperçu du fichier -->

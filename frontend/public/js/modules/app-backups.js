@@ -1003,6 +1003,9 @@ function showImportRestoreModal() {
     document.getElementById('importRestoreSecretBundle').checked = false;
     document.getElementById('importRequireVaultwardenOffline').checked = true;
     document.getElementById('importConfirmFullRestore').checked = false;
+    document.getElementById('importRestorePassword').value = '';
+    document.getElementById('importStoreBackup').checked = true;
+    document.getElementById('importRestoreNow').checked = false;
     updateImportVaultwardenConfirmation();
     
     importRestoreModal.show();
@@ -1091,9 +1094,12 @@ async function executeImportRestore() {
         formData.append('restore_secret_bundle', document.getElementById('importRestoreSecretBundle').checked);
         formData.append('require_vaultwarden_offline', document.getElementById('importRequireVaultwardenOffline').checked);
         formData.append('confirm_full_restore', document.getElementById('importRestoreVaultwarden').checked && document.getElementById('importConfirmFullRestore').checked);
-        
+        formData.append('password', document.getElementById('importRestorePassword').value || '');
+        formData.append('store_backup', document.getElementById('importStoreBackup').checked);
+        formData.append('restore_now', document.getElementById('importRestoreNow').checked);
+
         // Envoyer la requête
-        const response = await fetch(`/api/apps/${slug}/backup/restore/upload`, {
+        const response = await fetch(`/api/apps/${slug}/backup/import`, {
             method: 'POST',
             headers: {
                 'Authorization': `Bearer ${api.token}`
@@ -1109,19 +1115,19 @@ async function executeImportRestore() {
         const result = await response.json();
         
         if (result.success) {
-            let message = `Restauration terminée : ${result.items_restored} items, ${result.preferences_restored} prefs, ${result.files_restored} fichiers`;
-            if (result.vaultwarden_snapshot_restored) {
-                message += ', snapshot Vaultwarden restauré';
-            }
-            if (result.secret_bundle_restored) {
-                message += ', secrets chiffrés restaurés';
-            }
-            if (result.requires_vaultwarden_restart) {
-                message += '\nRedémarrage Vaultwarden requis.';
+            let message = result.message || 'Backup importé';
+            if (result.restore) {
+                message += ` — ${result.restore.items_restored} items, ${result.restore.preferences_restored} prefs, ${result.restore.files_restored} fichiers`;
+                if (result.restore.vaultwarden_snapshot_restored) {
+                    message += ', snapshot Vaultwarden restauré';
+                }
+                if (result.restore.secret_bundle_restored) {
+                    message += ', secrets chiffrés restaurés';
+                }
             }
             showToast('Succès', message, 'success');
         } else {
-            showToast('Attention', result.message || 'Restauration avec erreurs', 'warning');
+            showToast('Attention', result.message || 'Import avec erreurs', 'warning');
         }
         
         // Rafraîchir la liste des backups
