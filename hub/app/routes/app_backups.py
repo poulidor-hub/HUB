@@ -2323,6 +2323,7 @@ async def restore_uploaded_backup_to_app(
     restore_secret_bundle: bool = Form(False),
     require_vaultwarden_offline: bool = Form(True),
     confirm_full_restore: bool = Form(False),
+    password: Optional[str] = Form(None),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_admin)
 ):
@@ -2405,7 +2406,7 @@ async def restore_uploaded_backup_to_app(
         # Si c'est un fichier .encrypted, le déchiffrer
         if is_encrypted:
             logger.info(f"🔓 Déchiffrement du fichier .encrypted...")
-            backup_content, header = decrypt_encrypted_package(raw_content)
+            backup_content, header = decrypt_encrypted_package(raw_content, password=password)
             # Utiliser le nom du backup original si disponible
             backup_id_from_header = header.get("backup_id", "uploaded")
             output_filename = f"backup_{backup_id_from_header}.zip"

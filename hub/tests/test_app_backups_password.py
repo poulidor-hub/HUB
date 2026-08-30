@@ -169,3 +169,33 @@ async def test_import_wrong_password_fails(client, admin_token, test_app, backup
     )
     assert resp.status_code == 400
     assert resp.json()["detail"] == ab.PASSWORD_DECRYPT_ERROR
+
+
+# ===== Endpoint POST /api/apps/{slug}/backup/restore/upload =====
+
+async def test_restore_upload_accepts_password(client, admin_token, test_app, service_account, backup_storage):
+    package = ab.create_password_encrypted_package(
+        make_small_zip(), "bk-up-1", test_app.slug, "motdepasse-fort-1"
+    )
+    resp = await client.post(
+        f"/api/apps/{test_app.slug}/backup/restore/upload",
+        headers=get_auth_header(admin_token),
+        data={"password": "motdepasse-fort-1"},
+        files={"file": ("backup_bk-up-1.encrypted", package, "application/octet-stream")},
+    )
+    # L'app cible est injoignable en test -> 502 prouve que le déchiffrement a réussi
+    assert resp.status_code == 502
+
+
+async def test_restore_upload_wrong_password(client, admin_token, test_app, service_account, backup_storage):
+    package = ab.create_password_encrypted_package(
+        make_small_zip(), "bk-up-2", test_app.slug, "motdepasse-fort-1"
+    )
+    resp = await client.post(
+        f"/api/apps/{test_app.slug}/backup/restore/upload",
+        headers=get_auth_header(admin_token),
+        data={"password": "mauvais-mot-de-passe"},
+        files={"file": ("backup_bk-up-2.encrypted", package, "application/octet-stream")},
+    )
+    assert resp.status_code == 400
+    assert resp.json()["detail"] == ab.PASSWORD_DECRYPT_ERROR
