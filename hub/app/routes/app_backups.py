@@ -2563,6 +2563,7 @@ async def import_backup_file(
 
     # Stockage comme backup de l'app
     stored_backup_id = None
+    backup_row = None
     if store_backup:
         zip_metadata = extract_metadata_from_zip(backup_content)
         app_dir = ensure_storage_dir(slug)
@@ -2607,6 +2608,7 @@ async def import_backup_file(
         await db.commit()
         await db.refresh(backup)
         stored_backup_id = backup_id
+        backup_row = backup
         logger.info(f"📥 Backup importé et stocké pour {slug}: {backup_id} ({human_readable_size(len(backup_content))})")
 
     # Restauration immédiate vers l'application
@@ -2649,13 +2651,57 @@ async def import_backup_file(
                 )
                 if response.status_code != 200:
                     error_detail = response.text[:2000] if response.text else "Pas de détails"
+                    logger.error(f"❌ Erreur restauration import: {response.status_code} - {error_detail}")
+                    await log_restore_audit(
+                        db=db,
+                        request=request,
+                        current_entity=current_user,
+                        slug=slug,
+                        backup_id=backup_id,
+                        options=options,
+                        backup=backup_row,
+                        success=False,
+                        response_status=response.status_code,
+                        message=error_detail,
+                    )
+                    await db.commit()
                     raise HTTPException(
                         status_code=status.HTTP_502_BAD_GATEWAY,
                         detail=f"L'application a retourné une erreur: {response.status_code} - {error_detail}"
                     )
                 result = response.json()
                 restore_response = build_restore_response(result, slug, backup_id)
+
+                logger.info(f"✅ Restauration après import terminée pour {slug}")
+
+                await log_restore_audit(
+                    db=db,
+                    request=request,
+                    current_entity=current_user,
+                    slug=slug,
+                    backup_id=backup_id,
+                    options=options,
+                    backup=backup_row,
+                    success=restore_response.success,
+                    response_status=200 if restore_response.success else 502,
+                    message=restore_response.message,
+                )
+                await db.commit()
         except httpx.RequestError as e:
+            logger.error(f"❌ Erreur réseau lors de la restauration: {e}")
+            await log_restore_audit(
+                db=db,
+                request=request,
+                current_entity=current_user,
+                slug=slug,
+                backup_id=backup_id,
+                options=options,
+                backup=backup_row,
+                success=False,
+                response_status=status.HTTP_502_BAD_GATEWAY,
+                message=str(e),
+            )
+            await db.commit()
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,
                 detail=f"Impossible de contacter l'application: {str(e)}"

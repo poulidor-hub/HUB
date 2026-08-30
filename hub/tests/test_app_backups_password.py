@@ -2,7 +2,6 @@
 Tests du déchiffrement des exports de backups protégés par mot de passe (format v2).
 """
 import base64
-import hashlib
 import io
 import json
 import zipfile
