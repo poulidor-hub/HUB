@@ -42,6 +42,7 @@ from sqlalchemy.orm import selectinload
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 
 from app.database import get_db
 from app.models import Application, AppBackup, ServiceAccount, User, ApprovalStatus, utcnow
@@ -65,6 +66,11 @@ SECRETS_DIR = Path("/code/secrets")
 JWT_PRIVATE_KEY_PATH = SECRETS_DIR / "jwt_private_key.pem"
 BACKUP_PRIVATE_KEY_PATH = SECRETS_DIR / "backup_private_key.pem"
 BACKUP_PUBLIC_KEY_PATH = SECRETS_DIR / "backup_public_key.pem"
+
+# Chiffrement par mot de passe (format .encrypted v2)
+PBKDF2_ITERATIONS = 600_000
+PASSWORD_MIN_LENGTH = 8
+PASSWORD_DECRYPT_ERROR = "Mot de passe incorrect ou fichier corrompu"
 
 router = APIRouter(tags=["App Backups"])
 
@@ -407,12 +413,13 @@ def create_encrypted_package(backup_data: bytes, backup_id: str, app_slug: str) 
     return header_length + header_json + encrypted_data
 
 
-def decrypt_encrypted_package(encrypted_package: bytes) -> tuple[bytes, dict]:
+def decrypt_encrypted_package(encrypted_package: bytes, password: Optional[str] = None) -> tuple[bytes, dict]:
     """
-    Déchiffre un package .encrypted créé par create_encrypted_package.
+    Déchiffre un package .encrypted (v1 RSA ou v2 password).
     
     Args:
         encrypted_package: Contenu du fichier .encrypted
+        password: Mot de passe (requis pour les packages v2 mode password)
         
     Returns:
         tuple: (données_déchiffrées, header_dict)
@@ -432,60 +439,96 @@ def decrypt_encrypted_package(encrypted_package: bytes) -> tuple[bytes, dict]:
         
         # 3. Extraire les données chiffrées
         encrypted_data = encrypted_package[4 + header_length:]
-
-        # 4. Charger la clé privée : backup key prioritaire, JWT en fallback legacy
-        key_paths = []
-        if BACKUP_PRIVATE_KEY_PATH.exists():
-            key_paths.append(("backup", BACKUP_PRIVATE_KEY_PATH))
-        if JWT_PRIVATE_KEY_PATH.exists():
-            key_paths.append(("jwt", JWT_PRIVATE_KEY_PATH))
-
-        if not key_paths:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Aucune clé de déchiffrement trouvée"
-            )
-
-        # 5. Décoder la clé AES chiffrée et le nonce depuis base64
-        encrypted_key = base64.b64decode(header["encrypted_key_b64"])
         nonce = base64.b64decode(header["nonce_b64"])
-
-        # 6. Déchiffrer la clé AES avec RSA (essayer chaque clé)
-        aes_key = None
-        last_error = None
-        for key_name, key_path in key_paths:
-            try:
-                private_key_pem = key_path.read_bytes()
-                private_key = serialization.load_pem_private_key(private_key_pem, password=None)
-                aes_key = private_key.decrypt(
-                    encrypted_key,
-                    padding.OAEP(
-                        mgf=padding.MGF1(algorithm=hashes.SHA256()),
-                        algorithm=hashes.SHA256(),
-                        label=None
-                    )
+        
+        if header.get("encryption_mode") == "password":
+            # Format v2 : clé AES dérivée du mot de passe
+            if not password:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Mot de passe requis pour déchiffrer ce fichier",
                 )
-                if key_name != key_paths[0][0]:
-                    logger.info(f"Déchiffrement via clé {key_name} (fallback)")
-                break
-            except Exception as e:
-                last_error = e
-                continue
-
-        if aes_key is None:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Échec du déchiffrement avec toutes les clés disponibles: {last_error}"
+            try:
+                salt = base64.b64decode(header["salt_b64"])
+                iterations = int(header.get("kdf_iterations", PBKDF2_ITERATIONS))
+                if not (1 <= iterations <= PBKDF2_ITERATIONS):
+                    raise ValueError("kdf_iterations hors bornes")
+            except Exception:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=PASSWORD_DECRYPT_ERROR,
+                )
+            kdf = PBKDF2HMAC(
+                algorithm=hashes.SHA256(),
+                length=32,
+                salt=salt,
+                iterations=iterations,
             )
+            aes_key = kdf.derive(password.encode())
+            aesgcm = AESGCM(aes_key)
+            try:
+                decrypted_data = aesgcm.decrypt(nonce, encrypted_data, None)
+            except Exception:
+                # Erreur générique : pas de distinction mauvais mdp / corruption
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=PASSWORD_DECRYPT_ERROR,
+                )
+        else:
+            # Format v1 (RSA) : code existant inchangé
+            # 4. Charger la clé privée : backup key prioritaire, JWT en fallback legacy
+            key_paths = []
+            if BACKUP_PRIVATE_KEY_PATH.exists():
+                key_paths.append(("backup", BACKUP_PRIVATE_KEY_PATH))
+            if JWT_PRIVATE_KEY_PATH.exists():
+                key_paths.append(("jwt", JWT_PRIVATE_KEY_PATH))
+    
+            if not key_paths:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Aucune clé de déchiffrement trouvée"
+                )
+    
+            # 5. Décoder la clé AES chiffrée depuis base64
+            encrypted_key = base64.b64decode(header["encrypted_key_b64"])
+    
+            # 6. Déchiffrer la clé AES avec RSA (essayer chaque clé)
+            aes_key = None
+            last_error = None
+            for key_name, key_path in key_paths:
+                try:
+                    private_key_pem = key_path.read_bytes()
+                    private_key = serialization.load_pem_private_key(private_key_pem, password=None)
+                    aes_key = private_key.decrypt(
+                        encrypted_key,
+                        padding.OAEP(
+                            mgf=padding.MGF1(algorithm=hashes.SHA256()),
+                            algorithm=hashes.SHA256(),
+                            label=None
+                        )
+                    )
+                    if key_name != key_paths[0][0]:
+                        logger.info(f"Déchiffrement via clé {key_name} (fallback)")
+                    break
+                except Exception as e:
+                    last_error = e
+                    continue
+    
+            if aes_key is None:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Échec du déchiffrement avec toutes les clés disponibles: {last_error}"
+                )
+            
+            # 7. Déchiffrer les données avec AES-GCM
+            aesgcm = AESGCM(aes_key)
+            decrypted_data = aesgcm.decrypt(nonce, encrypted_data, None)
         
-        # 7. Déchiffrer les données avec AES-GCM
-        aesgcm = AESGCM(aes_key)
-        decrypted_data = aesgcm.decrypt(nonce, encrypted_data, None)
-        
-        # 8. Vérifier le checksum si présent
-        if "original_checksum" in header:
+        # 8. Vérifier le checksum (v2: "checksum", v1: "original_checksum")
+        expected_checksum = header.get("checksum") or header.get("original_checksum")
+        if expected_checksum:
             computed_checksum = compute_checksum(decrypted_data)
-            if computed_checksum != header["original_checksum"]:
+            if computed_checksum != expected_checksum:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="Checksum invalide - le fichier est peut-être corrompu"
@@ -508,6 +551,65 @@ def decrypt_encrypted_package(encrypted_package: bytes) -> tuple[bytes, dict]:
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Erreur lors du déchiffrement: {str(e)}"
         )
+
+
+def create_password_encrypted_package(backup_data: bytes, backup_id: str, app_slug: str, password: str) -> bytes:
+    """
+    Crée un package .encrypted v2 chiffré par mot de passe (portable).
+    
+    Le mot de passe doit être validé au préalable via validate_export_password().
+    
+    - AES-256-GCM, clé dérivée du mot de passe via PBKDF2-HMAC-SHA256
+    - Aucune dépendance aux clés RSA du hub : déchiffrable partout avec le mot de passe
+    """
+    import base64
+    
+    salt = secrets.token_bytes(16)
+    nonce = secrets.token_bytes(12)
+    
+    kdf = PBKDF2HMAC(
+        algorithm=hashes.SHA256(),
+        length=32,
+        salt=salt,
+        iterations=PBKDF2_ITERATIONS,
+    )
+    aes_key = kdf.derive(password.encode())
+    
+    aesgcm = AESGCM(aes_key)
+    encrypted_data = aesgcm.encrypt(nonce, backup_data, None)
+    
+    header = {
+        "version": "2.0",
+        "encryption_mode": "password",
+        "kdf": "PBKDF2-HMAC-SHA256",
+        "kdf_iterations": PBKDF2_ITERATIONS,
+        "salt_b64": base64.b64encode(salt).decode(),
+        "nonce_b64": base64.b64encode(nonce).decode(),
+        "backup_id": backup_id,
+        "app_slug": app_slug,
+        "checksum": compute_checksum(backup_data),
+        "original_filename": f"backup_{backup_id}.zip",
+        "encrypted_at": utcnow().isoformat(),
+    }
+    
+    header_json = json.dumps(header).encode()
+    header_length = len(header_json).to_bytes(4, byteorder='big')
+    return header_length + header_json + encrypted_data
+
+
+def validate_export_password(password: Optional[str], password_confirm: Optional[str]) -> str:
+    """Valide le mot de passe d'export. Lève HTTPException si invalide."""
+    if not password or len(password) < PASSWORD_MIN_LENGTH:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Le mot de passe doit contenir au moins {PASSWORD_MIN_LENGTH} caractères",
+        )
+    if password != password_confirm:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Les deux mots de passe ne correspondent pas",
+        )
+    return password
 
 
 async def get_app_or_404(db: AsyncSession, slug: str) -> Application:
