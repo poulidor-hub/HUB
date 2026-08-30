@@ -5,6 +5,23 @@
 
 ---
 
+## [3.40.0] - 31 août 2026
+
+### 🔐 Import de backups externes chiffrés par mot de passe (migration)
+
+| Fonctionnalité | Description |
+|----------------|-------------|
+| Déchiffrement format v2 | `decrypt_encrypted_package(package, password=None)` reconnaît `encryption_mode: "password"` : clé AES-256 dérivée via PBKDF2-HMAC-SHA256 (600 000 itérations, sel 16 B) ; chemin v1 RSA (clé backup + fallback JWT) inchangé ; checksum v2 (`checksum`) ou v1 (`original_checksum`) |
+| Endpoint `POST /api/apps/{slug}/backup/import` | Admin-only (multipart) : déchiffre un `.encrypted` externe (v2 mot de passe ou v1 RSA) ou accepte un `.zip` brut ; `store_backup=true` enregistre le ZIP déchiffré comme backup de l'app (métadonnées extraites du ZIP, `app.last_backup_*` mis à jour) ; `restore_now=true` restaure immédiatement vers l'app (SA → token M2M → `POST {api_url}/api/admin/restore`) avec audit `log_restore_audit` ; réponse `BackupImportResponse` (`success`, `backup_stored`, `backup_id`, `decrypted_size_bytes`, `restore`) |
+| restore/upload mot de passe | `POST /api/apps/{slug}/backup/restore/upload` accepte un champ `password` optionnel pour déchiffrer un `.encrypted` v2 |
+| Garde-fous sécurité | `kdf_iterations` borné (1..600000) contre les DoS par header forgé ; mot de passe incorrect et fichier corrompu renvoient la même erreur générique `PASSWORD_DECRYPT_ERROR` (pas d'oracle) ; mot de passe jamais dans les logs, les URLs ni l'audit |
+| UI import externe | Modal d'import renommé « Importer un backup externe » : champ mot de passe + interrupteurs « Conserver le backup déchiffré » (défaut coché) et « Restaurer immédiatement vers l'application » ; message de succès enrichi depuis `result.restore` |
+| Schéma | Nouveau `BackupImportResponse` dans `schemas.py` |
+| Tests | `tests/test_app_backups_password.py` (12 tests : roundtrip v2, erreurs génériques, bornes `kdf_iterations`, checksum, import store-only, restore/upload) |
+| Usage | Migration app-par-app depuis le hub legacy : export chiffré par mot de passe sur l'ancien hub → transfert manuel du `.encrypted` → import ici avec le même mot de passe |
+
+---
+
 ## [3.39.0] - 27 août 2026
 
 ### ✨ Configurer le dépôt git d'une app depuis l'UI
