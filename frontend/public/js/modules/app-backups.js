@@ -1124,6 +1124,9 @@ async function executeImportRestore() {
                 if (result.restore.secret_bundle_restored) {
                     message += ', secrets chiffrés restaurés';
                 }
+                if (result.restore.requires_vaultwarden_restart) {
+                    message += '\nRedémarrage Vaultwarden requis.';
+                }
             }
             showToast('Succès', message, 'success');
         } else {
