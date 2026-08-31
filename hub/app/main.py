@@ -17,6 +17,7 @@ from app.auth import get_password_hash, cleanup_expired_tokens, get_current_admi
 from app.config import get_settings, build_cors_config, get_instance_id
 from app.routes import auth, users, apps, service_accounts, audit, docs, events, app_backups, profiles, apps_health, messages, account_requests, snapshots, vpn, oidc, github_catalog, hub_restore, tags, app_groups, app_deploy, workshop
 from app.routes import settings as settings_routes
+from app.routes import network as network_routes
 
 import logging
 
@@ -325,6 +326,15 @@ async def lifespan(app: FastAPI):
         raise SystemExit(str(_cfg_err))
 
     await create_default_admin()
+
+    # Restaurer l'IP du Hub décidée par l'admin (app_settings "hub_host"
+    # prime sur l'env HUB_HOST et sur l'auto-détection).
+    # NOTE: import local — async_session_maker est ré-importé localement plus
+    # bas dans le lifespan (pattern des tâches), une référence module-level
+    # ici lèverait UnboundLocalError.
+    from app.database import async_session_maker
+    async with async_session_maker() as _net_db:
+        await network_routes.apply_persisted_hub_host(_net_db)
 
     _settings = get_settings()
     if not _settings.secrets_encryption_key:
@@ -722,6 +732,7 @@ app.include_router(profiles.router)
 app.include_router(messages.router)
 app.include_router(account_requests.router)
 app.include_router(settings_routes.router)
+app.include_router(network_routes.router)
 app.include_router(vpn.router)
 app.include_router(oidc.router)
 app.include_router(github_catalog.router)
