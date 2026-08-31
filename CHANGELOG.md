@@ -5,6 +5,21 @@
 
 ---
 
+## [3.43.0] - 31 août 2026
+
+### 🔧 Gestion correcte des ports (diagnostic changement de port)
+
+| Fonctionnalité | Description |
+|----------------|-------------|
+| Injection compose | `HUB_API_PORT`, `HUB_FRONTEND_PORT`, `APP_PORT_*`, `APP_SUBNET_POOL/SIZE`, `PORT_SCAN_DOCKER_ENABLED` injectés dans hub-api — le `.env` était ignoré pour l'allocation (defaults code 9000/4200/10.50 utilisés) |
+| Settings | Nouveaux champs `hub_api_port`/`hub_frontend_port` ; `routes/apps.py` n'utilise plus de fallback/littéral `8000` (credentials M2M avec le vrai port) |
+| Identité du hub | `instance_id` (UUID persistant dans `secrets/hub_instance_id`) exposée par `/api/health` et `/api/config/hub-host` — distingue deux hubs même-version (coexistence) |
+| hub-host | Renvoie désormais `api_port` + `frontend_port` (consommé par sync-env des apps) |
+| Makefile | `docker-compose.override.yml` rechargé par `make` (`-f` explicite le désactivait) |
+| Hygiène | `.gitignore` couvre `.env.*` ; `COMPOSE_PROJECT_NAME` documenté (coexistence) |
+
+---
+
 ## [3.42.0] - 31 août 2026
 
 ### ✨ Badge de version dans la navbar
