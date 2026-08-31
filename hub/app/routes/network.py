@@ -16,6 +16,7 @@ import ipaddress
 import logging
 import os
 import re
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
@@ -23,7 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_instance_id, get_server_ip, get_settings
 from app.database import get_db
-from app.deploy_service import apply_env_values, get_apps_dir
+from app.deploy_service import _run_cmd, apply_env_values, get_apps_dir
 from app.models import AppSetting, Application, User
 from app.auth import get_current_admin
 
@@ -295,3 +296,37 @@ async def apply_propagation_plan(
         pass
 
     return {"hub_host": effective, "applied": applied}
+
+
+# ==== Détection de l'IP LAN du HOST (via docker run --network host) ====
+
+async def _detect_host_ip_via_docker() -> str:
+    """IP LAN du host via un conteneur jetable en réseau host (pattern
+    clone-db du workshop). La socket UDP du conteneur ne voit que l'IP Docker.
+    iproute2 est ajouté à la volée : le `ip route get` busybox d'alpine ne
+    renseigne pas le champ `src`. La sortie brute est parsée côté Python."""
+    cmd = [
+        "docker", "run", "--rm", "--network", "host", "alpine:3",
+        "sh", "-c",
+        "apk add --no-cache iproute2 >/dev/null 2>&1 && ip -4 route get 8.8.8.8",
+    ]
+    output = await _run_cmd(cmd, Path("/tmp"), 30)
+    match = re.search(r"src (\d+\.\d+\.\d+\.\d+)", output)
+    if not match:
+        raise RuntimeError(
+            f"IP du host non trouvée dans la sortie docker : {output[:200]}")
+    return match.group(1)
+
+
+@router.get("/detect-host-ip")
+async def detect_host_ip(
+    current_admin: User = Depends(get_current_admin),
+):
+    """Détecte l'IP LAN du serveur (l'hôte) — le conteneur du Hub lui-même ne
+    voit que son IP Docker (10.42.0.x)."""
+    try:
+        ip = await _detect_host_ip_via_docker()
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY,
+                            detail=f"Détection de l'IP du host impossible : {e}")
+    return {"ip": ip}

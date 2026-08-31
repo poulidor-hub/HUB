@@ -5,6 +5,18 @@
 
 ---
 
+## [3.44.2] - 31 août 2026
+
+### 🐛 Détection d'IP : renvoie l'IP LAN du serveur (pas l'IP Docker du conteneur)
+
+| Fonctionnalité | Description |
+|----------------|-------------|
+| Détection host | `GET /api/config/network/detect-host-ip` (admin) : conteneur jetable en `--network host` (image alpine:3, pattern clone-db du workshop) + `ip -4 route get 8.8.8.8` avec iproute2 ajouté à la volée → renvoie l'IP LAN du serveur (ex. 192.0.2.10) alors que la socket UDP du conteneur ne voit que son IP Docker (10.42.0.x) |
+| UI | Le bouton « Détecter » du modal d'IP appelle ce endpoint ; avertissement « IP Docker » retiré (obsoleted par la détection fiable) et ligne trompeuse « Auto-détectée » retirée de la carte |
+| Parse | La sortie brute de `ip route get` est parsée côté Python (le champ `src` est en 7ᵉ position selon le format — plus d'awk positionnel fragile) |
+
+---
+
 ## [3.44.1] - 31 août 2026
 
 ### 🐛 Badge de version navbar : rendu dynamique depuis VERSION
@@ -964,14 +976,13 @@ purge pas plus, mais si le JWT est expiré entre-temps, le flow OIDC redémarre)
 - **Fix** : requête directe sur UserAppRole (select + user_id + application_id), évite le lazy loading.
 
 
-### 🆕 Nouvelle version
-
-> ⚠️ Cette entrée a été créée automatiquement par `sync_version.py`.
-> Veuillez compléter les détails des modifications.
+### 🐛 Détection d'IP : renvoie l'IP LAN du serveur (pas l'IP Docker du conteneur)
 
 | Fonctionnalité | Description |
 |----------------|-------------|
-| **À compléter** | Décrivez les changements de cette version |
+| Détection host | `GET /api/config/network/detect-host-ip` (admin) : conteneur jetable en `--network host` (image alpine:3, pattern clone-db du workshop) + `ip -4 route get 8.8.8.8` avec iproute2 ajouté à la volée → renvoie l'IP LAN du serveur (ex. 192.0.2.10) alors que la socket UDP du conteneur ne voit que son IP Docker (10.42.0.x) |
+| UI | Le bouton « Détecter » du modal d'IP appelle ce endpoint ; avertissement « IP Docker » retiré (obsoleted par la détection fiable) et ligne trompeuse « Auto-détectée » retirée de la carte |
+| Parse | La sortie brute de `ip route get` est parsée côté Python (le champ `src` est en 7ᵉ position selon le format — plus d'awk positionnel fragile) |
 
 ---
 

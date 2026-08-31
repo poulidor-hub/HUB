@@ -195,3 +195,69 @@ async def test_apply_persisted_hub_host_noop_without_key(async_session):
     applied = await apply_persisted_hub_host(async_session)
     assert applied is False
     assert get_settings().hub_host == saved
+
+
+# --- Détection de l'IP LAN du HOST (via docker run --network host) ---
+
+async def test_detect_host_ip_requires_admin(client):
+    assert (await client.get(
+        "/api/config/network/detect-host-ip")).status_code == 401
+
+
+async def test_detect_host_ip_endpoint(client, admin_token, monkeypatch):
+    from app.routes import network
+
+    async def _fake_detect():
+        return "192.0.2.10"
+
+    monkeypatch.setattr(network, "_detect_host_ip_via_docker", _fake_detect)
+    r = await client.get("/api/config/network/detect-host-ip",
+                         headers=get_auth_header(admin_token))
+    assert r.status_code == 200
+    assert r.json() == {"ip": "192.0.2.10"}
+
+
+async def test_detect_host_ip_failure(client, admin_token, monkeypatch):
+    from app.routes import network
+
+    async def _fake_detect():
+        raise RuntimeError("docker: impossible de joindre le daemon")
+
+    monkeypatch.setattr(network, "_detect_host_ip_via_docker", _fake_detect)
+    r = await client.get("/api/config/network/detect-host-ip",
+                         headers=get_auth_header(admin_token))
+    assert r.status_code == 502
+    assert "host" in r.json()["detail"].lower()
+
+
+def test_detect_host_ip_parses_src_route(monkeypatch):
+    """La commande docker run --network host renvoie la route LAN du host
+    (src) — le helper extrait et valide l'IP."""
+    from app.routes import network
+    import asyncio
+
+    captured = {}
+
+    async def _fake_run_cmd(cmd, cwd, timeout, env_extra=None):
+        captured["cmd"] = cmd
+        return "8.8.8.8 via 192.168.1.1 dev eth0 src 192.0.2.10 \n"
+
+    monkeypatch.setattr(network, "_run_cmd", _fake_run_cmd)
+    ip = asyncio.run(network._detect_host_ip_via_docker())
+    assert ip == "192.0.2.10"
+    cmd = captured["cmd"]
+    assert cmd[:2] == ["docker", "run"]
+    assert "--network" in cmd and "host" in cmd
+    assert "route get" in " ".join(cmd)
+
+
+def test_detect_host_ip_no_ip_in_output(monkeypatch):
+    from app.routes import network
+    import asyncio
+
+    async def _fake_run_cmd(cmd, cwd, timeout, env_extra=None):
+        return "aucune route\n"
+
+    monkeypatch.setattr(network, "_run_cmd", _fake_run_cmd)
+    with pytest.raises(RuntimeError, match="non trouv"):
+        asyncio.run(network._detect_host_ip_via_docker())

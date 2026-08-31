@@ -1815,6 +1815,10 @@ class HubAPI {
         return this.request('/config/network/hub-host', { method: 'DELETE' });
     }
 
+    async detectHostIp() {
+        return this.request('/config/network/detect-host-ip');
+    }
+
     async getPropagationPlan() {
         return this.request('/config/network/propagation-plan');
     }

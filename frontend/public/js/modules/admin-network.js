@@ -63,7 +63,6 @@ function _sourceBadge(source) {
 function renderNetworkState(state) {
     document.getElementById('networkHubHost').textContent = state.hub_host || '—';
     document.getElementById('networkSourceBadge').innerHTML = _sourceBadge(state.source);
-    document.getElementById('networkDetected').textContent = state.detected_ip || '—';
     document.getElementById('networkEnvValue').textContent = state.env_value || '(non définie)';
     document.getElementById('networkInstanceId').textContent =
         (state.instance_id || '—').slice(0, 8) + '…';
@@ -165,21 +164,20 @@ async function showChangeHubHostModal() {
     const state = networkState || await api.getNetworkState();
     const modal = _showModal('Modifier l\'IP du Hub',
         `<div class="mb-3">
-            <label class="form-label">Nouvelle IP / hostname (IP ou hostname du Hub vu par les applications)</label>
+            <label class="form-label">Nouvelle IP / hostname (IP du serveur vue par les applications)</label>
             <div class="input-group">
                 <input type="text" class="form-control" id="networkNewHostInput"
                        value="${escapeHtml(state.db_value || state.hub_host || '')}"
                        placeholder="ex. 192.168.1.99">
                 <button class="btn btn-outline-secondary" type="button" data-action="detectHubHost">
-                    <i class="bi bi-magic me-1"></i>Détecter
+                    <i class="bi bi-magic me-1"></i>Détecter l'IP du serveur
                 </button>
             </div>
             <div class="form-text">
-                IP auto-détectée du serveur : <strong>${escapeHtml(state.detected_ip || '—')}</strong>.
-                ⚠️ Hub conteneurisé : l'auto-détection peut retourner l'IP Docker interne —
-                préférez la saisie manuelle de l'IP LAN vue par les applications.
-                La valeur est appliquée immédiatement et persistée ; la propagation
-                aux applications reste un second temps, validé par vous.
+                « Détecter » récupère l'IP LAN du serveur via Docker (conteneur
+                jetable en réseau host, quelques secondes). La valeur est
+                appliquée immédiatement et persistée ; la propagation aux
+                applications reste un second temps, validé par vous.
             </div>
         </div>
         <div class="text-end">
@@ -191,11 +189,21 @@ async function showChangeHubHostModal() {
     return modal;
 }
 
-function detectHubHost() {
-    api.getNetworkState().then(state => {
+async function detectHubHost() {
+    const btn = document.querySelector('[data-action="detectHubHost"]');
+    if (btn) { btn.disabled = true; btn.innerHTML =
+        '<span class="spinner-border spinner-border-sm me-1"></span>Détection…'; }
+    try {
+        const { ip } = await api.detectHostIp();
         const input = document.getElementById('networkNewHostInput');
-        if (input && state.detected_ip) input.value = state.detected_ip;
-    });
+        if (input && ip) input.value = ip;
+        if (!ip) showToast('Détection', 'Aucune IP trouvée — saisissez-la manuellement.', 'warning');
+    } catch (error) {
+        showToast('Détection impossible', error.message, 'error');
+    } finally {
+        if (btn) { btn.disabled = false; btn.innerHTML =
+            '<i class="bi bi-magic me-1"></i>Détecter l\'IP du serveur'; }
+    }
 }
 
 async function submitChangeHubHost() {
