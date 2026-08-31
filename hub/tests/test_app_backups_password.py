@@ -2,6 +2,7 @@
 Tests du déchiffrement des exports de backups protégés par mot de passe (format v2).
 """
 import base64
+import hashlib
 import io
 import json
 import zipfile
@@ -221,3 +222,77 @@ async def test_restore_upload_wrong_password(client, admin_token, test_app, serv
     )
     assert resp.status_code == 400
     assert resp.json()["detail"] == ab.PASSWORD_DECRYPT_ERROR
+
+
+# ===== Endpoint POST /api/apps/{slug}/backup/{backup_id}/export =====
+
+@pytest.fixture
+async def stored_backup(async_session, backup_storage, test_app):
+    from app.models import AppBackup
+
+    content = make_small_zip()
+    app_dir = backup_storage / test_app.slug
+    app_dir.mkdir(parents=True, exist_ok=True)
+    (app_dir / "backup_bk-100.zip").write_bytes(content)
+    backup = AppBackup(
+        backup_id="bk-100",
+        app_id=test_app.id,
+        app_slug=test_app.slug,
+        total_size_bytes=len(content),
+        checksum=hashlib.sha256(content).hexdigest(),
+        storage_path=f"{test_app.slug}/backup_bk-100.zip",
+        created_by="pytest",
+        created_by_type="test",
+        status="success",
+    )
+    async_session.add(backup)
+    await async_session.commit()
+    await async_session.refresh(backup)
+    return backup
+
+
+async def test_export_with_password(client, admin_token, stored_backup, test_app, async_session):
+    resp = await client.post(
+        f"/api/apps/{test_app.slug}/backup/bk-100/export",
+        headers=get_auth_header(admin_token),
+        data={"password": "motdepasse-fort-1", "password_confirm": "motdepasse-fort-1"},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["success"] is True
+
+    encrypted_file = ab.STORAGE_BASE_DIR / test_app.slug / "backup_bk-100.encrypted"
+    package = encrypted_file.read_bytes()
+    decrypted, header = ab.decrypt_encrypted_package(package, password="motdepasse-fort-1")
+    assert header["encryption_mode"] == "password"
+
+    await async_session.refresh(stored_backup)
+    assert stored_backup.is_encrypted is True
+    assert stored_backup.encrypted_path == f"{test_app.slug}/backup_bk-100.encrypted"
+
+
+async def test_export_short_password_rejected(client, admin_token, stored_backup, test_app):
+    resp = await client.post(
+        f"/api/apps/{test_app.slug}/backup/bk-100/export",
+        headers=get_auth_header(admin_token),
+        data={"password": "court", "password_confirm": "court"},
+    )
+    assert resp.status_code == 400
+
+
+async def test_export_password_mismatch_rejected(client, admin_token, stored_backup, test_app):
+    resp = await client.post(
+        f"/api/apps/{test_app.slug}/backup/bk-100/export",
+        headers=get_auth_header(admin_token),
+        data={"password": "motdepasse-fort-1", "password_confirm": "autre-motdepasse"},
+    )
+    assert resp.status_code == 400
+
+
+async def test_export_requires_admin(client, user_token, stored_backup, test_app):
+    resp = await client.post(
+        f"/api/apps/{test_app.slug}/backup/bk-100/export",
+        headers=get_auth_header(user_token),
+        data={"password": "motdepasse-fort-1", "password_confirm": "motdepasse-fort-1"},
+    )
+    assert resp.status_code == 403

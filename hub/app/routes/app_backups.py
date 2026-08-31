@@ -14,7 +14,7 @@ Endpoints:
 - GET  /api/apps/{slug}/backup/latest   : Récupérer le dernier backup
 - GET  /api/apps/{slug}/backup/{id}     : Télécharger un backup spécifique
 - DELETE /api/apps/{slug}/backup/{id}   : Supprimer un backup
-- GET  /api/apps/{slug}/backup/{id}/export : Exporter un backup chiffré
+- POST /api/apps/{slug}/backup/{id}/export : Exporter un backup chiffré par mot de passe
 - POST /api/apps/{slug}/backup/import : Importer un backup externe (.encrypted/.zip)
 - PUT  /api/apps/{slug}/backup/config   : Configurer le scheduling
 - POST /api/apps/{slug}/backup/trigger  : Déclencher un backup manuellement
@@ -1007,7 +1007,7 @@ async def download_backup(
     non chiffrés a été désactivé.
     
     Utilisez plutôt:
-    - GET /api/apps/{slug}/backup/{backup_id}/export : pour créer une version chiffrée
+    - POST /api/apps/{slug}/backup/{backup_id}/export : pour créer une version chiffrée
     - GET /api/apps/{slug}/backup/{backup_id}/export/download : pour télécharger la version chiffrée
     """
     raise HTTPException(
@@ -1016,21 +1016,19 @@ async def download_backup(
     )
 
 
-@router.get("/api/apps/{slug}/backup/{backup_id}/export", response_model=BackupExportResponse)
+@router.post("/api/apps/{slug}/backup/{backup_id}/export", response_model=BackupExportResponse)
 async def export_encrypted_backup(
     slug: str,
     backup_id: str,
+    password: str = Form(...),
+    password_confirm: str = Form(...),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_admin)
 ):
     """
-    Exporte un backup chiffré avec la clé RSA du HUB.
-    
-    Le fichier exporté est chiffré avec un schéma hybride:
-    - Les données sont chiffrées avec AES-256-GCM
-    - La clé AES est chiffrée avec la clé RSA publique du HUB
-    
-    Le fichier ne peut être déchiffré qu'avec la clé privée RSA du HUB.
+    Exporte un backup chiffré par mot de passe (format v2 portable,
+    déchiffrable sur tout hub avec ce mot de passe).
+    L'ancien mode RSA reste déchiffrable à l'import.
     """
     backup = await get_backup_or_404(db, backup_id)
     
@@ -1039,6 +1037,9 @@ async def export_encrypted_backup(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Le backup ne correspond pas à l'application"
         )
+    
+    # Valider le mot de passe avant toute lecture/écriture
+    validate_export_password(password, password_confirm)
     
     # Lire le fichier original
     file_path = get_backup_file_path_or_404(backup)
@@ -1050,14 +1051,16 @@ async def export_encrypted_backup(
     
     original_data = file_path.read_bytes()
     
-    # Chiffrer
+    # Chiffrer en mode password (portable)
     try:
-        encrypted_package = create_encrypted_package(original_data, backup_id, slug)
+        encrypted_package = create_password_encrypted_package(original_data, backup_id, slug, password)
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Erreur de chiffrement: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Erreur lors du chiffrement: {str(e)}"
+            detail="Erreur lors du chiffrement du backup"
         )
     
     # Sauvegarder le fichier chiffré
