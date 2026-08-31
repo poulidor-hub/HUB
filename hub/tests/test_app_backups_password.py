@@ -171,6 +171,28 @@ async def test_import_wrong_password_fails(client, admin_token, test_app, backup
     assert resp.json()["detail"] == ab.PASSWORD_DECRYPT_ERROR
 
 
+async def test_import_duplicate_backup_id_returns_409(client, admin_token, test_app, backup_storage):
+    """Ré-importer le même .encrypted renvoie 409, pas 500."""
+    content = make_small_zip()
+    package = ab.create_password_encrypted_package(content, "bk-dup-1", test_app.slug, "motdepasse-fort-1")
+    data = {
+        "password": "motdepasse-fort-1",
+        "store_backup": "true",
+        "restore_now": "false",
+    }
+    files = {"file": ("backup_bk-dup-1.encrypted", package, "application/octet-stream")}
+    headers = get_auth_header(admin_token)
+    url = f"/api/apps/{test_app.slug}/backup/import"
+
+    first = await client.post(url, headers=headers, data=data, files=files)
+    assert first.status_code == 200, first.text
+
+    second = await client.post(url, headers=headers, data=data, files=files)
+    assert second.status_code == 409, second.text
+    body = second.json()
+    assert "bk-dup-1" in body["detail"]
+
+
 # ===== Endpoint POST /api/apps/{slug}/backup/restore/upload =====
 
 async def test_restore_upload_accepts_password(client, admin_token, test_app, service_account, backup_storage):

@@ -38,6 +38,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File,
 from fastapi.responses import StreamingResponse, FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, delete
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 
 from cryptography.hazmat.primitives import hashes, serialization
@@ -2562,6 +2563,20 @@ async def import_backup_file(
         backup_id = str(uuid.uuid4())
         description = "Importé depuis un fichier zip externe"
 
+    # Détection early d'un backup_id déjà présent (évite un 500 IntegrityError)
+    if store_backup:
+        existing = await db.execute(
+            select(AppBackup).where(
+                AppBackup.backup_id == backup_id,
+                AppBackup.app_slug == slug,
+            )
+        )
+        if existing.scalar_one_or_none() is not None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Un backup avec l'identifiant {backup_id} existe déjà pour cette application",
+            )
+
     # Stockage comme backup de l'app
     stored_backup_id = None
     backup_row = None
@@ -2606,7 +2621,14 @@ async def import_backup_file(
         app.last_backup_at = utcnow()
         app.last_backup_id = backup_id
         app.last_backup_status = "success"
-        await db.commit()
+        try:
+            await db.commit()
+        except IntegrityError:
+            await db.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Un backup avec l'identifiant {backup_id} existe déjà pour cette application",
+            )
         await db.refresh(backup)
         stored_backup_id = backup_id
         backup_row = backup
