@@ -5,6 +5,20 @@
 
 ---
 
+## [3.41.0] - 31 août 2026
+
+### 🔐 Export de backups chiffré par mot de passe + 409 sur double-import
+
+| Fonctionnalité | Description |
+|----------------|-------------|
+| Export mot de passe (portable) | `POST /api/apps/{slug}/backup/{backup_id}/export` (remplace le GET) : chiffre l'export avec un mot de passe saisi (`password` + `password_confirm`, min. 8 caractères) au lieu de la clé RSA — format `.encrypted` v2 (AES-256-GCM + PBKDF2-HMAC-SHA256 600k) **portable** vers tout hub ; validation avant lecture fichier ; erreur 500 générique sans fuite d'interne |
+| 409 sur double-import | Ré-importer un `.encrypted` dont le `backup_id` existe déjà renvoie **409** avec message clair (détection early alignée sur la contrainte d'unicité globale + filet IntegrityError avec rollback et purge du fichier orphelin) au lieu d'un 500 |
+| UI export | Nouveau modal « Exporter chiffré par mot de passe » (mot de passe + confirmation) branché sur le POST, téléchargement du `.encrypted`, message rappelant de conserver le mot de passe |
+| Compatibilité | L'import (`/import`, `restore/upload`) continue d'accepter les `.encrypted` v1 RSA (clé backup/JWT locale) et v2 mot de passe |
+| Tests | `tests/test_app_backups_password.py` porté à 17 tests (export POST mot de passe, validations, 403 non-admin, double-import 409) |
+
+---
+
 ## [3.40.0] - 31 août 2026
 
 ### 🔐 Import de backups externes chiffrés par mot de passe (migration)
