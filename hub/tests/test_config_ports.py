@@ -37,3 +37,16 @@ def test_get_instance_id_persistent(tmp_path, monkeypatch):
     # nouveau process (cache vidé) relit le fichier
     config.get_instance_id.cache_clear()
     assert config.get_instance_id() == first
+
+
+def test_get_instance_id_survives_unwritable_file(tmp_path, monkeypatch):
+    """Chemin d'instance impossible à créer (parent est un fichier) : pas d'exception."""
+    from app import config
+    blocker = tmp_path / "blocker"
+    blocker.write_text("x")
+    monkeypatch.setattr(config, "_SECRETS_DIR", blocker / "secrets")
+    config.get_instance_id.cache_clear()
+    value = config.get_instance_id()
+    assert isinstance(value, str) and len(value) == 32
+    config.get_instance_id.cache_clear()
+    assert config.get_instance_id() == value  # stable en mémoire pour ce process

@@ -374,6 +374,8 @@ def get_settings() -> Settings:
 
 _SECRETS_DIR = None  # injectable pour les tests (défaut: résolution standard)
 
+_FALLBACK_INSTANCE_ID: str | None = None  # mémoire process si le fichier n'est pas écrivable
+
 
 def _resolve_secrets_dir() -> Path:
     """Répertoire secrets : /code/secrets en conteneur, sinon <projet>/secrets."""
@@ -391,6 +393,7 @@ def get_instance_id() -> str:
     Distingue deux hubs même-version (coexistence) : généré au premier appel,
     stocké dans secrets/hub_instance_id (chmod 600).
     """
+    global _FALLBACK_INSTANCE_ID
     path = _resolve_secrets_dir() / "hub_instance_id"
     try:
         existing = path.read_text().strip()
@@ -398,13 +401,19 @@ def get_instance_id() -> str:
             return existing
     except OSError:
         pass
+    if _FALLBACK_INSTANCE_ID:
+        return _FALLBACK_INSTANCE_ID
     value = uuid.uuid4().hex
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(value + "\n")
     try:
-        path.chmod(0o600)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(value + "\n")
+        try:
+            path.chmod(0o600)
+        except OSError:
+            pass
     except OSError:
-        pass
+        # lecture/écriture impossible (permissions): valeur en mémoire pour ce process
+        _FALLBACK_INSTANCE_ID = value
     return value
 
 
