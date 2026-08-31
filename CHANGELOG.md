@@ -5,6 +5,24 @@
 
 ---
 
+## [3.44.0] - 31 août 2026
+
+### 🌐 Changement d'IP du Hub validé par l'admin — propagation aux applications
+
+| Fonctionnalité | Description |
+|----------------|-------------|
+| État réseau | `GET /api/config/network` (admin) : IP effective, source (`admin DB` / `env HUB_HOST` / auto-détectée), IP auto-détectée, ports, `instance_id` |
+| Changement d'IP | `PUT /api/config/network/hub-host` (admin) : validation IP RFC / hostname RFC 1123, persistance `app_settings["hub_host"]`, mutation à chaud du singleton settings (effet immédiat sur `/api/config/hub-host`, credentials M2M, OIDC, deploy) ; `DELETE` = retour env / auto-détection |
+| Override boot | Le lifespan restaure la décision admin persistée — elle prime sur l'env `HUB_HOST` et sur l'auto-détection |
+| Plan de propagation | `GET /api/config/network/propagation-plan` : apps v2 enregistrées (ateliers et apps système exclus et documentés), statut `up_to_date` / `pending` / `no_env` + IP `HUB_HOST` de leur `.env` |
+| Application | `POST /api/config/network/propagation-plan/apply {slugs}` : la liste explicite EST la validation admin — réécriture `HUB_HOST` (variantes `HUB_URL`/`HUB_BASE_URL` incluses) via `apply_env_values`, reste du `.env` et `HUB_INSTANCE_ID` intacts |
+| Recréation | `POST /api/apps/{slug}/recreate` : opération tracée (moteur workshop_operations) — `docker compose -p <slug> up -d --force-recreate` + health-check sur `API_PORT` (60 s) ; gardes 401 / 404 / 400 atelier & app système / 409 opération en cours |
+| UI admin | Onglet « Réseau » : carte IP (badge source, modal Modifier avec détection et avertissement IP Docker en conteneur, retour auto-détection), plan de propagation (badges, cases, « Propager la sélection » avec confirmation modale), bouton « Recréer » par app avec polling, badge d'apps à propager |
+| Sécurité | Chemin `.env` des apps toujours construit depuis le slug en DB (aucune traversal possible) ; `HUB_INSTANCE_ID` jamais touchée par la propagation — la garde sync-env reste effective |
+| Tests | 31 nouveaux (`test_network_config`, `test_propagation_plan`, `test_app_recreate`), suite réseau complète 38 passed ; E2E live sur banc de coexistence (changement d'IP, restart, override boot, apply sélectif, recreate) |
+
+---
+
 ## [3.43.0] - 31 août 2026
 
 ### 🔧 Gestion correcte des ports (diagnostic changement de port)
