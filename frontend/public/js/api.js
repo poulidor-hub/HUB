@@ -1798,6 +1798,39 @@ class HubAPI {
             body: JSON.stringify({ value: String(value) })
         });
     }
+
+    // ===== Réseau (admin) =====
+    async getNetworkState() {
+        return this.request('/config/network');
+    }
+
+    async setHubHost(hubHost) {
+        return this.request('/config/network/hub-host', {
+            method: 'PUT',
+            body: JSON.stringify({ hub_host: hubHost })
+        });
+    }
+
+    async unsetHubHost() {
+        return this.request('/config/network/hub-host', { method: 'DELETE' });
+    }
+
+    async getPropagationPlan() {
+        return this.request('/config/network/propagation-plan');
+    }
+
+    async applyPropagationPlan(slugs) {
+        return this.request('/config/network/propagation-plan/apply', {
+            method: 'POST',
+            body: JSON.stringify({ slugs: slugs })
+        });
+    }
+
+    async recreateApp(slug) {
+        return this.request(`/apps/${encodeURIComponent(slug)}/recreate`, {
+            method: 'POST'
+        });
+    }
 }
 
 const api = new HubAPI();

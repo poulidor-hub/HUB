@@ -1037,6 +1037,12 @@
                         <i class="bi bi-github me-1"></i>Apps GitHub
                     </button>
                 </li>
+                <li class="nav-item">
+                    <button class="nav-link" id="network-tab" data-bs-toggle="tab" data-bs-target="#tabNetwork">
+                        <i class="bi bi-hdd-network me-1"></i>Réseau
+                        <span id="networkPendingBadge" class="badge bg-warning text-dark ms-1 d-none">0</span>
+                    </button>
+                </li>
             </ul>
 
             <div class="tab-content">
@@ -1144,6 +1150,69 @@
                     </div>
                 </div>
                 <!-- OIDC Clients Tab -->
+                <div class="tab-pane fade" id="tabNetwork">
+                    <div class="row g-3">
+                        <div class="col-12">
+                            <div class="card">
+                                <div class="card-body">
+                                    <div class="d-flex justify-content-between align-items-center mb-2">
+                                        <h5 class="card-title mb-0"><i class="bi bi-hdd-network me-1"></i>IP du Hub</h5>
+                                        <span id="networkSourceBadge" class="badge bg-secondary">—</span>
+                                    </div>
+                                    <p class="mb-1">
+                                        IP effective : <strong id="networkHubHost">—</strong>
+                                        <span class="text-muted ms-2" id="networkPorts"></span>
+                                    </p>
+                                    <p class="text-muted small mb-2">
+                                        Auto-détectée : <span id="networkDetected">—</span> ·
+                                        env HUB_HOST : <span id="networkEnvValue">—</span> ·
+                                        instance : <span id="networkInstanceId">—</span>
+                                    </p>
+                                    <button class="btn btn-primary btn-sm" data-action="showChangeHubHostModal">
+                                        <i class="bi bi-pencil me-1"></i>Modifier l'IP
+                                    </button>
+                                    <button class="btn btn-outline-secondary btn-sm ms-1" data-action="unsetHubHostAction">
+                                        <i class="bi bi-arrow-counterclockwise me-1"></i>Revenir à l'auto-détection
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-12">
+                            <div class="card">
+                                <div class="card-body">
+                                    <div class="d-flex justify-content-between align-items-center mb-2">
+                                        <h5 class="card-title mb-0"><i class="bi bi-arrow-left-right me-1"></i>Propagation de l'IP aux applications</h5>
+                                        <button class="btn btn-primary btn-sm" id="networkApplyBtn" data-action="applyNetworkPropagation" disabled>
+                                            <i class="bi bi-cloud-arrow-up me-1"></i>Propager la sélection (<span id="networkApplyCount">0</span>)
+                                        </button>
+                                    </div>
+                                    <p class="text-muted small mb-2">
+                                        Écrit la nouvelle IP dans le .env des apps sélectionnées. La prise
+                                        en charge par les conteneurs nécessite ensuite leur recréation
+                                        (bouton « Recréer » — interromp l'app quelques secondes).
+                                    </p>
+                                    <div id="networkPlanLoading" class="text-muted">Chargement du plan de propagation…</div>
+                                    <div id="networkPlanError" class="alert alert-danger d-none"></div>
+                                    <div id="networkPlanContent" class="d-none">
+                                        <table class="table table-sm align-middle mb-1">
+                                            <thead>
+                                                <tr>
+                                                    <th style="width:2rem"><input type="checkbox" class="form-check-input" id="networkCheckAll"></th>
+                                                    <th>Application</th>
+                                                    <th>Statut</th>
+                                                    <th>IP dans le .env</th>
+                                                    <th style="width:8rem"></th>
+                                                </tr>
+                                            </thead>
+                                            <tbody id="networkPlanBody"></tbody>
+                                        </table>
+                                        <div id="networkExcluded" class="text-muted small"></div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
                 <div class="tab-pane fade" id="tabOidcClients">
                     <div class="d-flex justify-content-between align-items-center mb-3">
                         <div>
@@ -4028,6 +4097,7 @@
     <script src="js/modules/audit-errors.js?v=3.43.0"></script>
     <script src="js/modules/apps-health.js?v=3.43.0"></script>
     <script src="js/modules/workshop-ui.js?v=3.43.0"></script>
+    <script src="js/modules/admin-network.js?v=3.43.0"></script>
     <script src="js/modules/backup-import.js?v=3.43.0"></script>
     <script src="js/modules/app-backups.js?v=3.43.0"></script>
     <script src="js/modules/admin-snapshots.js?v=3.43.0"></script>
