@@ -5,6 +5,18 @@
 
 ---
 
+## [3.42.0] - 31 août 2026
+
+### ✨ Badge de version dans la navbar
+
+| Fonctionnalité | Description |
+|----------------|-------------|
+| Badge navbar | Affichage de la version du Hub (`vX.Y.Z`) à côté de la brand dans la navbar (`<small class="navbar-version">`) |
+| Style | `.navbar-version` dans `style.css` : petit corps (0.7rem), blanc translucide, sans retour à la ligne |
+| `sync_version.py` | Le script maintient désormais le badge : nouveau pattern `NAVBAR_VERSION_RE`, mise à jour lors des `bump`/`set`, vérification `check_versions` (alerte si le badge diverge de `VERSION`), message d'avertissement si le badge est introuvable dans `index.html` |
+
+---
+
 ## [3.41.0] - 31 août 2026
 
 ### 🔐 Export de backups chiffré par mot de passe + 409 sur double-import
