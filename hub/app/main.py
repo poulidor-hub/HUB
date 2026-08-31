@@ -18,6 +18,7 @@ from app.config import get_settings, build_cors_config, get_instance_id
 from app.routes import auth, users, apps, service_accounts, audit, docs, events, app_backups, profiles, apps_health, messages, account_requests, snapshots, vpn, oidc, github_catalog, hub_restore, tags, app_groups, app_deploy, workshop
 from app.routes import settings as settings_routes
 from app.routes import network as network_routes
+from app.routes import app_recreate
 
 import logging
 
@@ -733,6 +734,7 @@ app.include_router(messages.router)
 app.include_router(account_requests.router)
 app.include_router(settings_routes.router)
 app.include_router(network_routes.router)
+app.include_router(app_recreate.router)
 app.include_router(vpn.router)
 app.include_router(oidc.router)
 app.include_router(github_catalog.router)

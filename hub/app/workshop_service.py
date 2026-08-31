@@ -394,7 +394,8 @@ async def _run_workshop_operation(op_id: int, slug: str, operation: str) -> None
         await _update_op(op_id, status="running")
         await _ws_mtime_warning(slug, op_id)
         handlers = {"create": _op_create, "update": _op_update,
-                    "ship": _op_ship, "remove": _op_remove}
+                    "ship": _op_ship, "remove": _op_remove,
+                    "recreate": _op_recreate}
         handler = handlers.get(operation)
         try:
             if handler is None:
@@ -413,6 +414,43 @@ async def _run_workshop_operation(op_id: int, slug: str, operation: str) -> None
 async def _origin_main(app_dir: Path) -> str | None:
     ok, sha = await _git_try(app_dir, "rev-parse", "origin/main")
     return sha or None
+
+
+# ── RECREATE (recréation des conteneurs d'une app — ex. après propagation IP) ──
+
+async def _op_recreate(op_id: int, slug: str) -> None:
+    """`docker compose -p <slug> up -d --force-recreate` + health-check API.
+
+    --force-recreate est indispensable : un simple up -d ne recrée pas un
+    conteneur dont seule une variable du .env (non référencée au moment du run
+    précédent) a changé."""
+    app_dir = get_apps_dir() / slug
+    compose_file = app_dir / "docker-compose.yml"
+    if not compose_file.exists():
+        raise RuntimeError(f"docker-compose.yml introuvable : {app_dir}")
+
+    env = _read_env_file(app_dir / ".env")
+    try:
+        api_port = int(env.get("API_PORT") or 0) or None
+    except ValueError:
+        api_port = None
+
+    await _step(op_id, "recreate", f"docker compose -p {slug} up -d --force-recreate")
+    await _run_cmd(
+        ["docker", "compose", "-p", slug, "-f", str(compose_file),
+         "up", "-d", "--force-recreate"],
+        app_dir, T_UP,
+    )
+
+    if api_port:
+        await _step(op_id, "health", f"Santé app (port {api_port}, {T_HEALTH} s)")
+        if not await _wait_healthy(api_port, timeout=T_HEALTH):
+            raise RuntimeError(f"App pas healthy après {T_HEALTH}s (port {api_port})")
+
+    from app.models import utcnow
+    await _update_op(op_id, status="success", current_step="done",
+                     logs=f"✓ Conteneurs de « {slug} » recréés et healthy\n",
+                     finished_at=utcnow())
 
 
 # ── CREATE ──
