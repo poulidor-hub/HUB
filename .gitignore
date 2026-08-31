@@ -76,3 +76,6 @@ storage/snapshots/
 
 # Worktrees d'isolation agents (agent-isolation-git)
 .worktrees/
+
+# Identité runtime du Hub (unique par installation — jamais committée)
+secrets/hub_instance_id

@@ -5,6 +5,16 @@
 
 ---
 
+## [3.44.3] - 31 août 2026
+
+### 🧹 Hygiène : `secrets/hub_instance_id` retiré du dépôt
+
+| Correctif | Description |
+|-----------|-------------|
+| Artefact runtime | `secrets/hub_instance_id` (UUID d'identité, unique par installation) ne doit jamais être versionné — retrait du dépôt + règle `.gitignore` dédiée. Non sensible (UUID public affiché par /api/health) mais sa présence casserait l'unicité par installation |
+
+---
+
 ## [3.44.2] - 31 août 2026
 
 ### 🐛 Détection d'IP : renvoie l'IP LAN du serveur (pas l'IP Docker du conteneur)
