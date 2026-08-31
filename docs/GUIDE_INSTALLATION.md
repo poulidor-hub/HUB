@@ -164,6 +164,50 @@ HUB_base/
 
 ---
 
+## Coexistence de deux hubs sur le même host
+
+Le Hub supporte l'installation de **deux instances indépendantes sur la même machine**
+(ex. un hub de production et un banc de test). Sans coordination, les deux instances
+entrent en collision : mêmes noms de conteneurs, mêmes plages de ports d'applications,
+mêmes sous-réseaux Docker (cf. rapport de diagnostic — coexistence sans coordination =
+allocations en collision). Pour les isoler, chaque instance doit définir dans son `.env` :
+
+1. **Un nom de projet Compose unique** (obligatoire) :
+   ```bash
+   COMPOSE_PROJECT_NAME=hub-prod   # l'autre instance : hub-banc
+   ```
+   Sans lui, le projet implicite est nommé d'après le dossier — identique pour les deux
+   instances si elles partagent un nom de dossier → conteneurs/volumes/réseaux en collision.
+
+2. **Des ports Hub disjoints** (`HUB_API_PORT`, `HUB_FRONTEND_PORT`, `HUB_HTTPS_PORT`) :
+   ex. 8000/80/443 pour l'un, 8100/4280/4243 pour l'autre.
+
+3. **Des pools de ports applicatifs disjoints** :
+   ```bash
+   # Instance 1
+   APP_PORT_API_START=9000
+   APP_PORT_API_END=9499
+   APP_PORT_FRONTEND_START=4200
+   APP_PORT_FRONTEND_END=4699
+   # Instance 2 (décalé)
+   APP_PORT_API_START=9500
+   APP_PORT_API_END=9999
+   APP_PORT_FRONTEND_START=4700
+   APP_PORT_FRONTEND_END=5199
+   ```
+
+4. **Des pools de sous-réseaux Docker disjoints** :
+   ```bash
+   APP_SUBNET_POOL=10.50.0.0/16   # l'autre instance : 10.51.0.0/16
+   APP_SUBNET_SIZE=24
+   ```
+
+À noter : un fichier `docker-compose.override.yml` présent à la racine est chargé
+automatiquement par le `Makefile` (s'il existe) et permet de surcharger la configuration
+d'une instance sans toucher au `docker-compose.yml` d'origine.
+
+---
+
 ## Résolution de problèmes
 
 ### Le Hub ne démarre pas

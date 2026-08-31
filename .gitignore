@@ -55,6 +55,8 @@ logs/
 
 #environement files
 .env
+.env.*
+!.env.example
 
 # Database
 *.db
