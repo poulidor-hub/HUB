@@ -1143,46 +1143,78 @@ async function executeImportRestore() {
 }
 
 /**
- * Exporte et télécharge un backup chiffré
+ * Ouvre le modal de mot de passe pour l'export chiffré
  */
-async function exportEncryptedBackup(slug, backupId) {
+function exportEncryptedBackup(slug, backupId) {
+    if (!window._exportPasswordModal) {
+        window._exportPasswordModal = new bootstrap.Modal(document.getElementById('exportPasswordModal'));
+    }
+    document.getElementById('exportPwdSlug').value = slug;
+    document.getElementById('exportPwdBackupId').value = backupId;
+    document.getElementById('exportPassword').value = '';
+    document.getElementById('exportPasswordConfirm').value = '';
+    window._exportPasswordModal.show();
+}
+
+/**
+ * Lance l'export chiffré avec le mot de passe saisi
+ */
+async function confirmExportPassword() {
+    const slug = document.getElementById('exportPwdSlug').value;
+    const backupId = document.getElementById('exportPwdBackupId').value;
+    const password = document.getElementById('exportPassword').value;
+    const passwordConfirm = document.getElementById('exportPasswordConfirm').value;
+
+    if (!password || password.length < 8) {
+        showToast('Erreur', 'Le mot de passe doit contenir au moins 8 caractères', 'warning');
+        return;
+    }
+    if (password !== passwordConfirm) {
+        showToast('Erreur', 'Les deux mots de passe ne correspondent pas', 'warning');
+        return;
+    }
+
+    window._exportPasswordModal.hide();
+    showToast('Chiffrement', 'Chiffrement du backup en cours...', 'info');
+
     try {
-        showToast('Chiffrement', 'Chiffrement du backup en cours...', 'info');
-        
-        // D'abord, chiffrer le backup
-        const exportResult = await api.request(`/apps/${slug}/backup/${backupId}/export`);
-        
-        if (!exportResult.success) {
-            throw new Error(exportResult.message || 'Erreur de chiffrement');
+        const formData = new FormData();
+        formData.append('password', password);
+        formData.append('password_confirm', passwordConfirm);
+
+        const exportResult = await fetch(`/api/apps/${slug}/backup/${backupId}/export`, {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${api.token}` },
+            body: formData
+        });
+        if (!exportResult.ok) {
+            const err = await exportResult.json().catch(() => ({}));
+            throw new Error(err.detail || 'Erreur de chiffrement');
         }
-        
-        // Ensuite, télécharger le fichier chiffré
+        const exportData = await exportResult.json();
+
+        // Télécharger le fichier chiffré
         const url = `/api/apps/${slug}/backup/${backupId}/export/download`;
         const response = await fetch(url, {
-            headers: {
-                'Authorization': `Bearer ${api.token}`
-            }
+            headers: { 'Authorization': `Bearer ${api.token}` }
         });
-        
         if (!response.ok) {
             throw new Error('Erreur lors du téléchargement');
         }
-        
+
         const blob = await response.blob();
         const downloadUrl = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = downloadUrl;
-        a.download = exportResult.encrypted_filename || `backup_${slug}_${backupId}.encrypted`;
+        a.download = exportData.encrypted_filename || `backup_${slug}_${backupId}.encrypted`;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
         setTimeout(() => URL.revokeObjectURL(downloadUrl), 1000);
-        
-        showToast('Succès', `Backup chiffré exporté (${exportResult.encrypted_size_human})`, 'success');
-        
-        // Rafraîchir la liste pour voir le statut is_encrypted
+
+        showToast('Succès', `Backup chiffré exporté (${exportData.encrypted_size_human}). Conservez le mot de passe : il sera demandé à l'import.`, 'success');
         showAppBackupsList(slug);
-        
+
     } catch (error) {
         console.error('Erreur export chiffré:', error);
         showToast('Erreur', error.message || 'Impossible d\'exporter le backup', 'danger');

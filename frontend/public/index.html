@@ -3743,6 +3743,39 @@
         </div>
     </div>
 
+    <!-- Modal Export chiffré par mot de passe -->
+    <div class="modal fade" id="exportPasswordModal" tabindex="-1">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header bg-success text-white">
+                    <h5 class="modal-title"><i class="bi bi-key me-2"></i>Exporter chiffré par mot de passe</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <input type="hidden" id="exportPwdSlug">
+                    <input type="hidden" id="exportPwdBackupId">
+                    <div class="alert alert-info py-2">
+                        <small><i class="bi bi-info-circle me-1"></i>Le fichier sera chiffré avec ce mot de passe (AES-256 + PBKDF2). Il sera déchiffrable sur le hub de destination en ressaisissant le même mot de passe. Aucune clé du hub n'est nécessaire.</small>
+                    </div>
+                    <div class="mb-3">
+                        <label for="exportPassword" class="form-label">Mot de passe (min. 8 caractères)</label>
+                        <input type="password" class="form-control" id="exportPassword" minlength="8" autocomplete="new-password">
+                    </div>
+                    <div class="mb-3">
+                        <label for="exportPasswordConfirm" class="form-label">Confirmer le mot de passe</label>
+                        <input type="password" class="form-control" id="exportPasswordConfirm" autocomplete="new-password">
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuler</button>
+                    <button type="button" class="btn btn-success" id="confirmExportPasswordBtn" data-action="confirmExportPassword">
+                        <i class="bi bi-lock me-1"></i>Chiffrer et télécharger
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Modal Gestion en masse des utilisateurs -->
     <div class="modal fade" id="bulkOperationsModal" tabindex="-1">
         <div class="modal-dialog modal-lg">
