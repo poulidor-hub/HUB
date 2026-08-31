@@ -29,6 +29,7 @@ def test_get_instance_id_persistent(tmp_path, monkeypatch):
     secrets_dir = tmp_path / "secrets"
     monkeypatch.setattr(config, "_SECRETS_DIR", secrets_dir)
     config.get_instance_id.cache_clear()
+    monkeypatch.setattr(config, "_FALLBACK_INSTANCE_ID", None)
     first = config.get_instance_id()
     assert first and len(first) == 32  # uuid4().hex
     assert (secrets_dir / "hub_instance_id").exists()
@@ -46,6 +47,7 @@ def test_get_instance_id_survives_unwritable_file(tmp_path, monkeypatch):
     blocker.write_text("x")
     monkeypatch.setattr(config, "_SECRETS_DIR", blocker / "secrets")
     config.get_instance_id.cache_clear()
+    monkeypatch.setattr(config, "_FALLBACK_INSTANCE_ID", None)
     value = config.get_instance_id()
     assert isinstance(value, str) and len(value) == 32
     config.get_instance_id.cache_clear()
