@@ -6,7 +6,8 @@ Script de synchronisation de version pour le Hub
 Ce script permet de :
 1. Lire la version depuis le fichier VERSION (source de vérité)
 2. Synchroniser cette version dans INTEGRATION.md, CHANGELOG.md et
-   frontend/public/index.html (cache-busting ?v= des assets JS/CSS)
+   frontend/public/index.html (cache-busting ?v= des assets JS/CSS
+   + badge de version affiché dans la navbar)
 3. Optionnellement incrémenter la version (patch, minor, major)
 
 Usage:
@@ -39,6 +40,10 @@ INDEX_HTML_FILE = ROOT_DIR / "frontend" / "public" / "index.html"
 
 # Pattern de cache-busting des assets : href/src "...?v=X.Y.Z"
 ASSET_VERSION_RE = re.compile(r"(\?v=)\d+\.\d+\.\d+")
+
+# Pattern de la version affichée dans la navbar :
+# <small class="navbar-version ...">vX.Y.Z</small>
+NAVBAR_VERSION_RE = re.compile(r'(class="navbar-version[^"]*">\s*v)\d+\.\d+\.\d+')
 
 # Format de date français
 MOIS_FR = {
@@ -124,24 +129,39 @@ def get_versions_from_index() -> set[str]:
     return set(re.findall(r"\?v=(\d+\.\d+\.\d+)", content))
 
 
+def get_version_from_navbar() -> str | None:
+    """Extrait la version affichée dans la navbar de index.html"""
+    if not INDEX_HTML_FILE.exists():
+        return None
+    content = INDEX_HTML_FILE.read_text()
+    match = re.search(r'class="navbar-version[^"]*">\s*v(\d+\.\d+\.\d+)', content)
+    return match.group(1) if match else None
+
+
 def sync_index_html(version: str) -> bool:
     """
-    Réécrit tous les paramètres de cache-busting ?v=X.Y.Z des assets
-    (JS/CSS/favicon) dans index.html pour qu'ils correspondent à la version.
+    Réécrit dans index.html :
+    - les paramètres de cache-busting ?v=X.Y.Z des assets (JS/CSS/favicon)
+    - la version affichée dans la navbar (badge à côté de la brand)
+    pour qu'ils correspondent à la version.
     """
     if not INDEX_HTML_FILE.exists():
         print(f"⚠️  {INDEX_HTML_FILE} non trouvé, ignoré")
         return False
 
     content = INDEX_HTML_FILE.read_text()
-    new_content, count = ASSET_VERSION_RE.subn(f"\\g<1>{version}", content)
+    new_content, asset_count = ASSET_VERSION_RE.subn(f"\\g<1>{version}", content)
+    new_content, navbar_count = NAVBAR_VERSION_RE.subn(f"\\g<1>{version}", new_content)
 
     if new_content != content:
         INDEX_HTML_FILE.write_text(new_content)
-        print(f"✅ index.html mis à jour: {count} asset(s) → ?v={version}")
+        print(f"✅ index.html mis à jour: {asset_count} asset(s) → ?v={version}, navbar → v{version}")
         return True
     else:
-        print(f"ℹ️  index.html déjà à jour ({count} asset(s))")
+        if navbar_count == 0:
+            print(f"⚠️  index.html: badge navbar-version introuvable (assets déjà à jour)")
+        else:
+            print(f"ℹ️  index.html déjà à jour ({asset_count} asset(s), navbar v{version})")
         return False
 
 
@@ -242,6 +262,7 @@ def check_versions() -> bool:
     integration_version = get_version_from_integration()
     changelog_version = get_version_from_changelog()
     index_versions = get_versions_from_index()
+    navbar_version = get_version_from_navbar()
 
     if not index_versions:
         index_display = "❌ Non trouvée"
@@ -255,6 +276,7 @@ def check_versions() -> bool:
     print(f"   INTEGRATION.md: {integration_version or '❌ Non trouvée'}")
     print(f"   CHANGELOG.md:   {changelog_version or '❌ Non trouvée'}")
     print(f"   index.html:     {index_display}")
+    print(f"   navbar:         {navbar_version or '❌ Non trouvée'}")
 
     all_match = True
     if integration_version and integration_version != version:
@@ -265,6 +287,9 @@ def check_versions() -> bool:
         all_match = False
     if index_versions and index_versions != {version}:
         print(f"\n⚠️  index.html ({', '.join(sorted(index_versions))}) != VERSION ({version})")
+        all_match = False
+    if navbar_version != version:
+        print(f"\n⚠️  navbar ({navbar_version or 'absente'}) != VERSION ({version})")
         all_match = False
     
     if all_match:
