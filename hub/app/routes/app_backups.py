@@ -2563,13 +2563,11 @@ async def import_backup_file(
         backup_id = str(uuid.uuid4())
         description = "Importé depuis un fichier zip externe"
 
-    # Détection early d'un backup_id déjà présent (évite un 500 IntegrityError)
+    # Détection early d'un backup_id déjà présent (évite un 500 IntegrityError).
+    # backup_id est globalement unique (contrainte DB) : pas de filtre sur app_slug.
     if store_backup:
         existing = await db.execute(
-            select(AppBackup).where(
-                AppBackup.backup_id == backup_id,
-                AppBackup.app_slug == slug,
-            )
+            select(AppBackup).where(AppBackup.backup_id == backup_id)
         )
         if existing.scalar_one_or_none() is not None:
             raise HTTPException(
@@ -2625,6 +2623,7 @@ async def import_backup_file(
             await db.commit()
         except IntegrityError:
             await db.rollback()
+            (app_dir / storage_filename).unlink(missing_ok=True)
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail=f"Un backup avec l'identifiant {backup_id} existe déjà pour cette application",
