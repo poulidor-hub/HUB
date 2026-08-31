@@ -23,7 +23,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_instance_id, get_server_ip, get_settings
 from app.database import get_db
-from app.models import AppSetting, User
+from app.deploy_service import apply_env_values, get_apps_dir
+from app.models import AppSetting, Application, User
 from app.auth import get_current_admin
 
 logger = logging.getLogger(__name__)
@@ -170,3 +171,127 @@ async def unset_hub_host(
 
     db_value = await _read_db_hub_host(db)
     return _network_state(db_value)
+
+
+# ==== Plan de propagation aux apps (validation admin) ====
+
+def _read_hub_host_from_env(env_path) -> str | None:
+    """Lit l'IP du Hub d'un .env d'app — HUB_HOST puis variantes legacy
+    (HUB_URL, HUB_BASE_URL) qui sont réécrites par apply_env_values."""
+    try:
+        lines = env_path.read_text().splitlines()
+    except OSError:
+        return None
+    values: dict[str, str] = {}
+    for line in lines:
+        line = line.strip()
+        if "=" in line and not line.startswith("#"):
+            key, _, value = line.partition("=")
+            values[key.strip()] = value.strip()
+    for key in ("HUB_HOST", "HUB_URL", "HUB_BASE_URL"):
+        if values.get(key):
+            return values[key]
+    return None
+
+
+@router.get("/propagation-plan")
+async def get_propagation_plan(
+    current_admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Plan de propagation : pour chaque app v2 enregistrée (hors ateliers et
+    apps système), l'IP HUB_HOST de son .env vs l'IP effective du Hub."""
+    settings = get_settings()
+    effective = settings.get_hub_host()
+
+    apps_result = await db.execute(
+        select(Application)
+        .where(Application.is_workshop.is_(False),
+               Application.is_system_app.is_(False))
+        .order_by(Application.slug)
+    )
+    apps = []
+    for app in apps_result.scalars():
+        env_path = get_apps_dir() / app.slug / ".env"
+        if not env_path.exists():
+            apps.append({"slug": app.slug, "current_hub_host": None,
+                         "status": "no_env", "is_active": app.is_active})
+            continue
+        current = _read_hub_host_from_env(env_path)
+        apps.append({
+            "slug": app.slug,
+            "current_hub_host": current,
+            "status": "up_to_date" if current == effective else "pending",
+            "is_active": app.is_active,
+        })
+
+    ws_result = await db.execute(
+        select(Application)
+        .where((Application.is_workshop.is_(True)) |
+               (Application.is_system_app.is_(True)))
+        .order_by(Application.slug)
+    )
+    excluded = [
+        {"slug": app.slug,
+         "reason": "atelier (copie du .env de l'app parente)" if app.is_workshop
+                   else "app système interne au Hub"}
+        for app in ws_result.scalars()
+    ]
+
+    return {"hub_host": effective, "apps": apps, "excluded": excluded}
+
+
+@router.post("/propagation-plan/apply")
+async def apply_propagation_plan(
+    payload: dict,
+    current_admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Applique l'IP effective du Hub aux .env des apps Explicitement
+    validées par l'admin (liste de slugs). Écriture seule — la recréation des
+    conteneurs est un second temps, déclenché par l'admin."""
+    slugs = payload.get("slugs") if payload else None
+    if not isinstance(slugs, list) or not slugs or \
+            not all(isinstance(s, str) and s.strip() for s in slugs):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                            detail="'slugs' doit être une liste non vide de slugs")
+
+    settings = get_settings()
+    effective = settings.get_hub_host()
+
+    applied = []
+    for slug in dict.fromkeys(s.strip() for s in slugs):  # dédoublonné, ordre préservé
+        result = await db.execute(
+            select(Application).where(Application.slug == slug)
+        )
+        app = result.scalar_one_or_none()
+        if app is None:
+            applied.append({"slug": slug, "status": "not_found"})
+            continue
+        if app.is_workshop or app.is_system_app:
+            applied.append({"slug": slug, "status": "excluded"})
+            continue
+        env_path = get_apps_dir() / app.slug / ".env"
+        if not env_path.exists():
+            applied.append({"slug": slug, "status": "no_env"})
+            continue
+
+        # Chirurgical : seules HUB_HOST et ses variantes sont réécrites
+        apply_env_values(env_path, {"HUB_HOST": effective})
+        logger.info(f"🌐 Propagation IP '{effective}' → {app.slug} (.env) par "
+                    f"{current_admin.username}")
+        applied.append({"slug": slug, "status": "written"})
+
+    written = sum(1 for a in applied if a["status"] == "written")
+    logger.info(f"🌐 Propagation IP appliquée : {written}/{len(applied)} app(s) "
+                f"par {current_admin.username}")
+
+    try:
+        from app.routes.events import broadcast_event
+        await broadcast_event("settings_updated",
+                              {"key": "hub_host_propagation", "value": effective,
+                               "applied": applied})
+    except ImportError:
+        pass
+
+    return {"hub_host": effective, "applied": applied}
