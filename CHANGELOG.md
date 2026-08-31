@@ -5,6 +5,17 @@
 
 ---
 
+## [3.44.1] - 31 août 2026
+
+### 🐛 Badge de version navbar : rendu dynamique depuis VERSION
+
+| Fonctionnalité | Description |
+|----------------|-------------|
+| Badge dynamique | La navbar affiche désormais la version servie par `/health` (fichier `VERSION`, source unique de vérité) — le texte statique de `index.html` redevient un fallback de build ; plus jamais un badge figé sur un déploiement qui ne passe pas par `sync_version.py` |
+| sync_version.py durci | `NAVBAR_VERSION_RE` et `get_version_from_navbar` tolèrent désormais des attributs entre `class` et le contenu (ex. le nouvel `id="navbarVersionBadge"`) — l'ancien pattern perdait silencieusement le badge |
+
+------
+
 ## [3.44.0] - 31 août 2026
 
 ### 🌐 Changement d'IP du Hub validé par l'admin — propagation aux applications

@@ -5,7 +5,28 @@
  * Les fonctions restent globales pour conserver la compatibilité avec les handlers HTML inline.
  */
 
+/**
+ * Met à jour le badge de version de la navbar depuis /health (VERSION fichier,
+ * source unique de vérité) — le texte statique de index.html n'est qu'un
+ * fallback de build (maintenu par sync_version.py). Échec silencieux : le
+ * badge statique reste affiché.
+ */
+async function updateHubVersionBadge() {
+    const badge = document.getElementById('navbarVersionBadge');
+    if (!badge) return;
+    try {
+        const resp = await fetch('/health', { signal: AbortSignal.timeout(3000) });
+        if (!resp.ok) return;
+        const data = await resp.json();
+        if (data.version) badge.textContent = `v${data.version}`;
+    } catch (error) {
+        console.warn('Badge de version : /health injoignable, fallback statique.', error);
+    }
+}
+
 document.addEventListener('DOMContentLoaded', () => {
+    updateHubVersionBadge();
+
     // Initialize Bootstrap components
     appFormModal = new bootstrap.Modal(document.getElementById('appFormModal'));
     userFormModal = new bootstrap.Modal(document.getElementById('userFormModal'));

@@ -43,7 +43,8 @@ ASSET_VERSION_RE = re.compile(r"(\?v=)\d+\.\d+\.\d+")
 
 # Pattern de la version affichée dans la navbar :
 # <small class="navbar-version ...">vX.Y.Z</small>
-NAVBAR_VERSION_RE = re.compile(r'(class="navbar-version[^"]*">\s*v)\d+\.\d+\.\d+')
+# Tolère tout attribut entre class et le contenu (ex: id="navbarVersionBadge")
+NAVBAR_VERSION_RE = re.compile(r'(class="navbar-version[^"]*"[^>]*>\s*v)\d+\.\d+\.\d+')
 
 # Format de date français
 MOIS_FR = {
@@ -134,7 +135,8 @@ def get_version_from_navbar() -> str | None:
     if not INDEX_HTML_FILE.exists():
         return None
     content = INDEX_HTML_FILE.read_text()
-    match = re.search(r'class="navbar-version[^"]*">\s*v(\d+\.\d+\.\d+)', content)
+    # Tolère tout attribut entre class et le contenu (ex: id="navbarVersionBadge")
+    match = re.search(r'class="navbar-version[^"]*"[^>]*>\s*v(\d+\.\d+\.\d+)', content)
     return match.group(1) if match else None
 
 
