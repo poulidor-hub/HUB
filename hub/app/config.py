@@ -4,6 +4,7 @@ from functools import lru_cache
 from pathlib import Path
 import socket
 import logging
+import uuid
 
 logger = logging.getLogger(__name__)
 
@@ -309,6 +310,11 @@ class Settings(BaseSettings):
     # Si non défini, sera détecté automatiquement
     hub_host: str = ""
 
+    # Ports d'écoute publics du Hub (API et frontend) — lus depuis HUB_API_PORT /
+    # HUB_FRONTEND_PORT. Injectés par docker-compose (defaults 8000/80).
+    hub_api_port: int = 8000
+    hub_frontend_port: int = 80
+
     # === HTTPS / PKI interne ===
     hub_https_enabled: bool = True
     hub_https_port: int = 443
@@ -354,12 +360,52 @@ class Settings(BaseSettings):
         """Liste des origines CORS, nettoyée."""
         return [o.strip() for o in self.allowed_origins.split(",") if o.strip()]
 
+    def get_hub_ports(self) -> dict[str, int]:
+        """Ports publics du Hub (API HTTP + frontend)."""
+        return {"api_port": self.hub_api_port, "frontend_port": self.hub_frontend_port}
+
     model_config = ConfigDict(env_file=".env", extra="ignore")
 
 
 @lru_cache()
 def get_settings() -> Settings:
     return Settings()
+
+
+_SECRETS_DIR = None  # injectable pour les tests (défaut: résolution standard)
+
+
+def _resolve_secrets_dir() -> Path:
+    """Répertoire secrets : /code/secrets en conteneur, sinon <projet>/secrets."""
+    if _SECRETS_DIR is not None:
+        return _SECRETS_DIR
+    if Path("/code").exists():
+        return Path("/code/secrets")
+    return Path(__file__).parent.parent.parent / "secrets"
+
+
+@lru_cache()
+def get_instance_id() -> str:
+    """Identifiant unique et persistant de cette instance de Hub.
+
+    Distingue deux hubs même-version (coexistence) : généré au premier appel,
+    stocké dans secrets/hub_instance_id (chmod 600).
+    """
+    path = _resolve_secrets_dir() / "hub_instance_id"
+    try:
+        existing = path.read_text().strip()
+        if existing:
+            return existing
+    except OSError:
+        pass
+    value = uuid.uuid4().hex
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(value + "\n")
+    try:
+        path.chmod(0o600)
+    except OSError:
+        pass
+    return value
 
 
 class ConfigValidationError(Exception):

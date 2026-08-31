@@ -1728,7 +1728,7 @@ async def register_app(
             "client_id": client_id,
             "client_secret": client_secret,
             "hub_host": settings.get_hub_host(),  # Toujours retourner le host du HUB pour la connexion
-            "hub_api_port": settings.hub_api_port if hasattr(settings, 'hub_api_port') else 8000
+            "hub_api_port": settings.hub_api_port
         },
         is_new=True,
         pending_approval=not auto_approve_workshop  # Pas d'attente si auto-approuvé
@@ -1973,7 +1973,7 @@ async def admin_auto_register_app(
             "client_id": client_id,
             "client_secret": client_secret,
             "hub_host": host,
-            "hub_api_port": settings.hub_api_port if hasattr(settings, 'hub_api_port') else 8000,
+            "hub_api_port": settings.hub_api_port,
             "secrets_file": secrets_file
         },
         is_new=True
@@ -2358,7 +2358,7 @@ async def get_app_credentials(
         client_id=sa.client_id,
         client_secret=None,
         hub_host=host,
-        hub_api_port=8000,
+        hub_api_port=settings.hub_api_port,
         message="Credentials récupérés. Le client_secret n'est pas retourné pour des raisons de sécurité."
     )
 
@@ -2460,7 +2460,7 @@ async def regenerate_app_secret(
         client_id=sa.client_id,
         client_secret=new_secret,
         hub_host=host,
-        hub_api_port=8000,
+        hub_api_port=settings.hub_api_port,
         message="NOUVEAU SECRET GÉNÉRÉ ! L'ancien secret est maintenant invalide. Stockez ce secret en mémoire, il ne sera plus affiché."
     )
 

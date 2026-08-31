@@ -14,7 +14,7 @@ from app.database import init_db, async_session_maker, apply_migrations
 from app.outbox import outbox_service
 from app.models import User, ErrorLog, utcnow
 from app.auth import get_password_hash, cleanup_expired_tokens, get_current_admin
-from app.config import get_settings, build_cors_config
+from app.config import get_settings, build_cors_config, get_instance_id
 from app.routes import auth, users, apps, service_accounts, audit, docs, events, app_backups, profiles, apps_health, messages, account_requests, snapshots, vpn, oidc, github_catalog, hub_restore, tags, app_groups, app_deploy, workshop
 from app.routes import settings as settings_routes
 
@@ -736,7 +736,7 @@ app.include_router(app_groups.router)
 @app.get("/health")
 async def health_check():
     from app.routes.docs import get_hub_version
-    return {"status": "healthy", "service": "hub-auth", "version": get_hub_version()}
+    return {"status": "healthy", "service": "hub-auth", "version": get_hub_version(), "instance_id": get_instance_id()}
 
 
 @app.get("/api/system/time")
@@ -762,7 +762,10 @@ async def get_hub_host():
     return {
         "host": settings.get_hub_host(),
         "configured": bool(settings.hub_host),
-        "message": "IP auto-détectée" if not settings.hub_host else "IP configurée"
+        "message": "IP auto-détectée" if not settings.hub_host else "IP configurée",
+        "api_port": settings.hub_api_port,
+        "frontend_port": settings.hub_frontend_port,
+        "instance_id": get_instance_id(),
     }
 
 
