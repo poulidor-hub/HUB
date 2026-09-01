@@ -5,6 +5,22 @@
 
 ---
 
+## [3.44.4] - 1 septembre 2026
+
+### 🐛 Retrait du rate-limit IP sur `/api/oidc/token` (429 « Too Many Requests » en SSO)
+
+| Correctif | Description |
+|-----------|-------------|
+| Bug utilisateur | Les utilisateurs recevaient `429 Too Many Requests` dès ~10 connexions Vikunja rapprochées : l'échange code→token est fait **server-to-server par le backend Vikunja** (une seule IP conteneur), donc le plafond de 10 req/min/IP était mutualisé par tous les utilisateurs |
+| Correctif | Suppression du limiteur `_check_oidc_token_rate_limit` dans `routes/oidc.py` (consts, dict, appel) + fixture `conftest.py` mise à jour. Le check était placé **avant** l'authentification du client : même les échecs d'auth consommaient le quota |
+| Sécurité | Inchangée : client confidentiel (`client_secret`), codes d'autorisation **one-shot** à durée courte, **PKCE**, session Hub obligatoire (accès hub-only). Le rate-limit 5/min/IP sur les endpoints de saisie de mot de passe (`/login`, `/recover/*`) est conservé |
+| Tests | `TestTokenEndpointRateLimit` (429 attendu à la 11e requête) remplacé par `TestTokenEndpointNoRateLimit` (15 requêtes → jamais de 429) |
+| Docs | `CAHIER_DES_CHARGES.md` + `.html` : section « Limitation de débit » mise à jour (principe expliqué) |
+
+**Pourquoi pas de plafond IP sur le pont OIDC** : en architecture hub-only, le trafic OIDC légitime est concentré sur l'IP du backend de chaque app consommatrice ; tout plafond par IP punit mécaniquement les connexions simultanées d'utilisateurs différents. La protection anti brute-force repose sur le secret client + codes one-shot + PKCE, pas sur le débit IP.
+
+---
+
 ## [3.44.3] - 31 août 2026
 
 ### 🧹 Hygiène : `secrets/hub_instance_id` retiré du dépôt

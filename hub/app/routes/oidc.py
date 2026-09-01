@@ -6,7 +6,6 @@ Réutilise settings.jwt_private_key, JWKS endpoint, hash_token(), get_password_h
 from datetime import timedelta
 from typing import List, Optional
 from urllib.parse import urlencode
-import time
 
 import httpx
 import jwt as pyjwt
@@ -44,28 +43,15 @@ router = APIRouter(tags=["OIDC"])
 settings = get_settings()
 
 # ============================================================================
-# RATE LIMITING /api/oidc/token (spec §8.1 : 10 req/min/IP anti brute-force)
+# /api/oidc/token : PAS de rate-limit IP volontairement.
 # ============================================================================
-_oidc_token_attempts: dict[str, list[float]] = {}
-OIDC_TOKEN_RATE_LIMIT = 10  # max requêtes par minute par IP
-_OIDC_TOKEN_WINDOW = 60  # secondes
-
-
-def _check_oidc_token_rate_limit(request: Request) -> None:
-    """Rate-limit l'endpoint token : 10 req/min/IP. Lève 429 si dépassé."""
-    ip = request.client.host if request.client else "unknown"
-    now = time.time()
-    attempts = _oidc_token_attempts.get(ip, [])
-    # Nettoyer les entrées expirées
-    attempts = [t for t in attempts if now - t < _OIDC_TOKEN_WINDOW]
-    if len(attempts) >= OIDC_TOKEN_RATE_LIMIT:
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail="Trop de requêtes sur /oidc/token, réessayez plus tard",
-            headers={"Retry-After": str(_OIDC_TOKEN_WINDOW)},
-        )
-    attempts.append(now)
-    _oidc_token_attempts[ip] = attempts
+# Ancien limiteur (10 req/min/IP, spec §8.1) retiré : en SSO hub-only, l'échange
+# code→token est effectué server-to-server par le backend de l'app consommatrice
+# (ex: conteneur Vikunja), donc tous les utilisateurs partagent la même IP source.
+# Le plafond par IP pénalisait le trafic légitime dès quelques connexions
+# rapprochées → 429 « Too Many Requests » affiché aux utilisateurs finaux.
+# La protection anti-abus repose sur : client confidentiel (client_secret),
+# codes d'autorisation one-shot à durée courte, PKCE, et session Hub obligatoire.
 
 
 @router.get("/.well-known/openid-configuration")
@@ -392,7 +378,6 @@ async def token_endpoint(
     db: AsyncSession = Depends(get_db),
 ):
     """Endpoint standard OAuth2/OIDC token : échange code ou refresh contre tokens."""
-    _check_oidc_token_rate_limit(request)
     oauth_client = await _authenticate_client(
         request, db, client_id, client_secret
     )

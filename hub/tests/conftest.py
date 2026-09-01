@@ -25,12 +25,9 @@ from app.config import get_settings
 def reset_rate_limiter():
     """Réinitialise le rate limiter entre chaque test"""
     from app.routes.auth import _login_attempts
-    from app.routes.oidc import _oidc_token_attempts
     _login_attempts.clear()
-    _oidc_token_attempts.clear()
     yield
     _login_attempts.clear()
-    _oidc_token_attempts.clear()
 
 
 # Champs OIDC mutés par certains tests ; sauvegardés puis restaurés par la fixture `settings`.

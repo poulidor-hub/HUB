@@ -204,7 +204,7 @@ peut les restaurer.
 | Authentification | Jetons JWT signés **RS256** (clé privée unique au HUB), identifiant de jeton (`jti`) révocable, **rotation des jetons de renouvellement** stockés hashés |
 | Second facteur | **TOTP** (application d'authentification) avec code QR de provisioning, codes de récupération, révocation par l'administrateur |
 | Machine-à-machine | Octroi `client_credentials`, secrets chiffrés au repos (**Fernet**), clé dédiée et obligatoire en production |
-| Limitation de débit | 5 tentatives de connexion / minute / IP, 10 requêtes / minute sur le pont OIDC, réponses 429 avec délai indicatif |
+| Limitation de débit | 5 tentatives de connexion / minute / IP sur les endpoints de saisie de mot de passe, réponses 429 avec délai indicatif. Pas de plafond IP sur `/api/oidc/token` : l'échange code→token est server-to-server (une seule IP source pour tous les utilisateurs d'une app) ; la protection repose sur le client secret, les codes one-shot et PKCE |
 | En-têtes HTTP | `X-Frame-Options`, `X-Content-Type-Options`, `Referrer-Policy`, `Permissions-Policy`, **CSP** stricte |
 | Secrets | Clés RSA hors du dépôt de code, validation de la configuration de sécurité **au démarrage** (refus de boot en production si invalide) |
 | Sauvegardes | Export chiffré hybride **RSA-OAEP + AES-256-GCM** avec clés dédiées distinctes des clés de signature |

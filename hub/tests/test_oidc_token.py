@@ -304,13 +304,19 @@ class TestTokenEndpointSecurityBranches:
         assert "access_token" in response.json()
 
 
-class TestTokenEndpointRateLimit:
+class TestTokenEndpointNoRateLimit:
     @pytest.mark.asyncio
-    async def test_rate_limit_after_10_attempts(self, client, setup_code):
-        """11e requête dans la même minute → 429 (spec §8.1 : 10 req/min/IP)."""
-        # Les 10 premières passent le rate-limit (client valide via setup_code)
-        # puis échouent sur un code inconnu → 400.
-        for i in range(10):
+    async def test_no_rate_limit_on_repeated_attempts(self, client, setup_code):
+        """Aucun 429 même après de nombreuses requêtes.
+
+        Le rate-limit IP (10 req/min) a été retiré : en SSO hub-only, l'échange
+        code→token est fait server-to-server par le backend de l'app, donc tous
+        les utilisateurs partagent la même IP source — le plafond pénalisait le
+        trafic légitime (429 « Too Many Requests » côté Vikunja). La sécurité
+        repose sur le client secret (client confidentiel), les codes one-shot,
+        PKCE et l'expiration courte des codes.
+        """
+        for i in range(15):
             response = await client.post(
                 "/api/oidc/token",
                 data={
@@ -321,17 +327,5 @@ class TestTokenEndpointRateLimit:
                     "client_secret": "vike-secret",
                 },
             )
-            # Soit 400 (code invalide) soit 401 — mais on est sous la limite
+            # Échec d'authentification attendu (client/code invalide), jamais 429
             assert response.status_code in (400, 401)
-        # 11e requête → 429
-        response = await client.post(
-            "/api/oidc/token",
-            data={
-                "grant_type": "authorization_code",
-                "code": "one-more",
-                "redirect_uri": "https://vikunja.example.com/auth/openid/auth",
-                "client_id": "vikunja",
-                "client_secret": "vike-secret",
-            },
-        )
-        assert response.status_code == 429
