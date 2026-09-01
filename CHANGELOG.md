@@ -5,6 +5,24 @@
 
 ---
 
+## [3.45.0] - 1 septembre 2026
+
+### 🛡️ Anti-abus `/api/oidc/token` : throttle sur les échecs, par client (minor)
+
+| Élément | Description |
+|---------|-------------|
+| Audit sécurité | Après le retrait du rate-limit IP (3.44.4), analyse des vecteurs résiduels : guessing client_secret/codes/refresh tokens invraisemblable (bcrypt, 384 bits, one-shot, PKCE) ; risque résiduel réel = hammering sans frein (bcrypt ~100 ms + query DB par requête, bruit logs) |
+| Correctif | Throttle **sur les échecs** (400/401) par `client_id` : 30 échecs / 60 s → 429 + `Retry-After`. Les **succès ne sont jamais comptés** et réinitialisent le compteur → le SSO légitime ne peut plus être pénalisé (garantie structurelle : un burst de connexions valides = ~0 échec) |
+| Garbage | Requêtes sans `client_id` (scans) plafonnées par IP — aucun trafic légitime n'omet le client_id (form ou Basic header) |
+| Isolation | Le throttle d'un client n'affecte pas les autres clients |
+| Observabilité | Log WARNING au déclenchement du throttle (clé + nb d'échecs) |
+| Tests | 4 nouveaux : 429 au 31e échec, reset au succès, isolation par client, throttle IP du garbage. Suite OIDC/auth : 121 passés (1 échec pré-existant `test_oidc_launch`, vérifié au stash) |
+| Docs | `CAHIER_DES_CHARGES.md` + `.html` : ligne « Limitation de débit » mise à jour |
+
+**Pourquoi pas de throttle par utilisateur** : à `/token`, la requête n'est pas authentifiée utilisateur — l'identité ne se matérialise qu'après présentation d'un code/refresh valide (donc après un succès légitime). Le « sujet » de cet endpoint est le client OAuth : c'est la bonne clé de throttle.
+
+---
+
 ## [3.44.4] - 1 septembre 2026
 
 ### 🐛 Retrait du rate-limit IP sur `/api/oidc/token` (429 « Too Many Requests » en SSO)

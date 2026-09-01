@@ -362,7 +362,7 @@ peut les restaurer.</p>
 </tr>
 <tr>
 <td>Limitation de débit</td>
-<td>5 tentatives de connexion / minute / IP sur les endpoints de saisie de mot de passe, réponses 429 avec délai indicatif. Pas de plafond IP sur <code>/api/oidc/token</code> : échange code→token server-to-server (une seule IP source pour tous les utilisateurs d'une app) ; protection par client secret, codes one-shot et PKCE</td>
+<td>5 tentatives de connexion / minute / IP sur les endpoints de saisie de mot de passe, réponses 429 avec délai indicatif. Pont OIDC <code>/api/oidc/token</code> : pas de plafond IP (échange code→token server-to-server, une seule IP source pour tous les utilisateurs d'une app) mais <strong>throttle anti-abus sur les échecs</strong> — 30 échecs / 60 s par client_id (succès jamais comptés ; garbage sans client_id plafonné par IP)</td>
 </tr>
 <tr>
 <td>En-têtes HTTP</td>

@@ -6,6 +6,8 @@ Réutilise settings.jwt_private_key, JWKS endpoint, hash_token(), get_password_h
 from datetime import timedelta
 from typing import List, Optional
 from urllib.parse import urlencode
+import logging
+import time
 
 import httpx
 import jwt as pyjwt
@@ -43,15 +45,70 @@ router = APIRouter(tags=["OIDC"])
 settings = get_settings()
 
 # ============================================================================
-# /api/oidc/token : PAS de rate-limit IP volontairement.
+# Anti-abus /api/oidc/token : throttle sur les ÉCHECS, par client (pas par IP)
 # ============================================================================
-# Ancien limiteur (10 req/min/IP, spec §8.1) retiré : en SSO hub-only, l'échange
+# L'ancien rate-limit IP (10 req/min, spec §8.1) pénalisait le SSO : l'échange
 # code→token est effectué server-to-server par le backend de l'app consommatrice
-# (ex: conteneur Vikunja), donc tous les utilisateurs partagent la même IP source.
-# Le plafond par IP pénalisait le trafic légitime dès quelques connexions
-# rapprochées → 429 « Too Many Requests » affiché aux utilisateurs finaux.
-# La protection anti-abus repose sur : client confidentiel (client_secret),
-# codes d'autorisation one-shot à durée courte, PKCE, et session Hub obligatoire.
+# (ex: conteneur Vikunja), donc tous les utilisateurs partagent la même IP source
+# → 429 « Too Many Requests » dès quelques connexions rapprochées.
+#
+# Remplacement : plafond d'ÉCHECS (401/400) par client_id. Raisons :
+#   - les SUCCÈS ne sont jamais comptés → le SSO légitime ne peut plus être
+#     pénalisé, quel que soit le nombre de connexions simultanées ;
+#   - le hammering / brute-force (client_secret, codes, refresh tokens) est
+#     freiné exactement là où il se manifeste : des échecs répétés ;
+#   - les requêtes garbage sans client_id (scans) sont plafonnées par IP —
+#     aucun trafic légitime n'omet le client_id (form ou Basic header).
+#
+# La sécurité cryptographique reste assurée par : client confidentiel (secret
+# bcrypt), codes d'autorisation one-shot 384 bits à durée courte (30s), PKCE
+# S256, refresh tokens opaques hashés avec rotation.
+logger = logging.getLogger(__name__)
+
+_token_failures: dict[str, list[float]] = {}
+TOKEN_FAILURE_LIMIT = 30  # échecs max par fenêtre glissante, par clé
+_TOKEN_FAILURE_WINDOW = 60  # secondes
+
+
+def _token_failure_key(request: Request, client_id_form: Optional[str]) -> str:
+    """Clé de throttle : client_id (form OU Basic header) si fourni, sinon IP."""
+    client_id = client_id_form
+    if not client_id:
+        cid_basic, _ = _decode_basic_auth(request)
+        client_id = cid_basic
+    if client_id:
+        return f"client:{client_id}"
+    ip = request.client.host if request.client else "unknown"
+    return f"ip:{ip}"
+
+
+def _check_token_failure_throttle(key: str) -> None:
+    """Lève 429 si la clé a atteint TOKEN_FAILURE_LIMIT échecs dans la fenêtre."""
+    now = time.time()
+    attempts = [t for t in _token_failures.get(key, []) if now - t < _TOKEN_FAILURE_WINDOW]
+    _token_failures[key] = attempts
+    if len(attempts) >= TOKEN_FAILURE_LIMIT:
+        logger.warning(
+            "Throttle anti-abus /api/oidc/token : %d échecs/60s pour %s",
+            len(attempts), key,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Trop d'échecs sur /oidc/token pour ce client, réessayez plus tard",
+            headers={"Retry-After": str(_TOKEN_FAILURE_WINDOW)},
+        )
+
+
+def _record_token_failure(key: str) -> None:
+    now = time.time()
+    attempts = [t for t in _token_failures.get(key, []) if now - t < _TOKEN_FAILURE_WINDOW]
+    attempts.append(now)
+    _token_failures[key] = attempts
+
+
+def _clear_token_failures(key: str) -> None:
+    """Succès → réinitialise le compteur d'échecs du client."""
+    _token_failures.pop(key, None)
 
 
 @router.get("/.well-known/openid-configuration")
@@ -378,20 +435,31 @@ async def token_endpoint(
     db: AsyncSession = Depends(get_db),
 ):
     """Endpoint standard OAuth2/OIDC token : échange code ou refresh contre tokens."""
-    oauth_client = await _authenticate_client(
-        request, db, client_id, client_secret
-    )
+    key = _token_failure_key(request, client_id)
+    _check_token_failure_throttle(key)
+    try:
+        oauth_client = await _authenticate_client(
+            request, db, client_id, client_secret
+        )
 
-    if grant_type == "authorization_code":
-        return await _handle_authorization_code_grant(
-            request, db, oauth_client, code, redirect_uri, code_verifier
-        )
-    elif grant_type == "refresh_token":
-        return await _handle_refresh_token_grant(
-            request, db, oauth_client, refresh_token
-        )
-    else:
-        raise HTTPException(400, f"grant_type '{grant_type}' non supporté")
+        if grant_type == "authorization_code":
+            response = await _handle_authorization_code_grant(
+                request, db, oauth_client, code, redirect_uri, code_verifier
+            )
+        elif grant_type == "refresh_token":
+            response = await _handle_refresh_token_grant(
+                request, db, oauth_client, refresh_token
+            )
+        else:
+            raise HTTPException(400, f"grant_type '{grant_type}' non supporté")
+    except HTTPException as exc:
+        # Comptabiliser uniquement les échecs (jamais les succès) : un traffic
+        # SSO légitime ne génère pas d'échecs et ne peut pas être throtté.
+        if exc.status_code in (400, 401):
+            _record_token_failure(key)
+        raise
+    _clear_token_failures(key)
+    return response
 
 
 async def _handle_authorization_code_grant(

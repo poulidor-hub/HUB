@@ -329,3 +329,96 @@ class TestTokenEndpointNoRateLimit:
             )
             # Échec d'authentification attendu (client/code invalide), jamais 429
             assert response.status_code in (400, 401)
+
+
+class TestTokenEndpointAbuseThrottle:
+    """Throttle anti-abus sur les ÉCHECS, par client (jamais par IP pour le trafic légitime).
+
+    Contexte : l'ancien rate-limit IP (10 req/min) pénalisait le SSO — l'échange
+    code→token est server-to-server, donc tous les utilisateurs d'une app partagent
+    la même IP source. Remplacement : plafond d'ÉCHECS par client_id (30/60s).
+    Les succès ne sont jamais comptés → le SSO légitime ne peut plus être pénalisé.
+    Le garbage sans client_id (scans) est plafonné par IP — aucun trafic légitime
+    n'omet le client_id.
+    """
+
+    THRESHOLD = 30
+
+    async def _fail(self, client, i, client_id="vikunja", secret="bad"):
+        return await client.post(
+            "/api/oidc/token",
+            data={
+                "grant_type": "authorization_code",
+                "code": f"invalid-{i}",
+                "redirect_uri": "https://vikunja.example.com/auth/openid/auth",
+                "client_id": client_id,
+                "client_secret": secret,
+            },
+        )
+
+    @pytest.mark.asyncio
+    async def test_throttle_after_30_failures(self, client, setup_code):
+        """30 échecs d'auth client tolérés, le 31e → 429 + Retry-After."""
+        for i in range(self.THRESHOLD):
+            response = await self._fail(client, i)
+            assert response.status_code == 401
+        response = await self._fail(client, self.THRESHOLD)
+        assert response.status_code == 429
+        assert "Retry-After" in response.headers
+
+    @pytest.mark.asyncio
+    async def test_success_resets_failure_bucket(self, client, setup_code):
+        """Un échange VALIDE réinitialise le compteur d'échecs du client.
+
+        25 échecs + 1 succès + 6 échecs : sans reset on atteindrait 31 échecs
+        (429 sur le dernier) ; avec reset, aucun 429 — le SSO légitime reste
+        prioritaire même encasé d'échecs ponctuels (ex: retry code expiré).
+        """
+        for i in range(25):
+            assert (await self._fail(client, i)).status_code == 401
+        ok = await client.post(
+            "/api/oidc/token",
+            data={
+                "grant_type": "authorization_code",
+                "code": setup_code,
+                "redirect_uri": "https://vikunja.example.com/auth/openid/auth",
+                "client_id": "vikunja",
+                "client_secret": "vike-secret",
+            },
+        )
+        assert ok.status_code == 200
+        for i in range(100, 106):
+            assert (await self._fail(client, i)).status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_throttle_isolated_per_client(self, client, setup_code, async_session):
+        """Le throttle d'un client n'affecte pas les autres clients."""
+        other = OAuthClient(
+            client_id="autre-app",
+            client_secret_hash=get_password_hash("autre-secret"),
+            name="Autre app",
+            redirect_uris=["https://autre.example.com/cb"],
+            scopes=["openid"],
+        )
+        async_session.add(other)
+        await async_session.commit()
+        # Déclencher le throttle sur "vikunja"
+        for i in range(self.THRESHOLD):
+            await self._fail(client, i)
+        assert (await self._fail(client, self.THRESHOLD)).status_code == 429
+        # "autre-app" n'est pas impacté (isolation par client)
+        response = await self._fail(client, 0, client_id="autre-app", secret="bad")
+        assert response.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_garbage_without_client_id_throttled_by_ip(self, client):
+        """Requêtes garbage sans client_id : throttle par IP (scan/DoS)."""
+        for i in range(self.THRESHOLD):
+            response = await client.post(
+                "/api/oidc/token", data={"grant_type": "authorization_code"}
+            )
+            assert response.status_code == 401
+        response = await client.post(
+            "/api/oidc/token", data={"grant_type": "authorization_code"}
+        )
+        assert response.status_code == 429

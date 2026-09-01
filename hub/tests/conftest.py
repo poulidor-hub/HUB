@@ -23,11 +23,14 @@ from app.config import get_settings
 
 @pytest.fixture(autouse=True)
 def reset_rate_limiter():
-    """Réinitialise le rate limiter entre chaque test"""
+    """Réinitialise les rate limiters entre chaque test"""
     from app.routes.auth import _login_attempts
+    from app.routes.oidc import _token_failures
     _login_attempts.clear()
+    _token_failures.clear()
     yield
     _login_attempts.clear()
+    _token_failures.clear()
 
 
 # Champs OIDC mutés par certains tests ; sauvegardés puis restaurés par la fixture `settings`.
