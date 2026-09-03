@@ -38,10 +38,20 @@
         return argsStr.split('|').map(resolve);
     }
 
+    // Champs de formulaire exclus du délégué click (comme <form>) :
+    //  - un <select> natif émet un click à l'ouverture de sa liste ; dispatcher
+    //    l'action à ce stade relancerait le handler avec la valeur inchangée,
+    //    et tout re-render du DOM refermerait la liste aussitôt (dropdown qui
+    //    « se ferme tout seul »).
+    //  - preventDefault() sur le click d'une checkbox bloquerait son toggle
+    //    natif (donc le change associé) : l'action partirait sur un état périmé.
+    // Leurs actions sont couvertes par les délégués change / input / keydown.
+    var FORM_CONTROLS = { SELECT: 1, OPTION: 1, OPTGROUP: 1, DATALIST: 1, INPUT: 1, TEXTAREA: 1 };
+
     document.addEventListener('click', function(e) {
         var target = e.target.closest('[data-action]');
         if (!target) return;
-        if (target.tagName === 'FORM') return;
+        if (target.tagName === 'FORM' || FORM_CONTROLS[target.tagName]) return;
         var fnName = target.getAttribute('data-action');
         var fn = window[fnName];
         if (typeof fn !== 'function') return;

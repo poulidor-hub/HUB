@@ -5,6 +5,20 @@
 
 ---
 
+## [3.45.1] - 3 septembre 2026
+
+### 🐛 Dropdown rôle du dashboard : fermeture immédiate + toggles checkboxes (fix)
+
+| Élément | Description |
+|---------|-------------|
+| Symptôme | Dashboard admin : la liste native du `<select>` « Mon rôle » se refermait aussitôt l'ouverture — il fallait maintenir le bouton enfoncé |
+| Cause racine | Le délégué click global (`app.js`) dispatchait l'action de tout élément `data-action`, y compris les `<select>` ; or un select natif émet un `click` à l'ouverture → `updateMyAppRole()` partait avec la valeur inchangée et `loadApps()` reconstruisait la grille (`innerHTML`), remplaçant le `<select>` pendant que sa liste était ouverte |
+| Correctif | Le délégué click ignore désormais les champs de formulaire (`SELECT`, `OPTION`, `OPTGROUP`, `DATALIST`, `INPUT`, `TEXTAREA`), comme il ignorait déjà `<form>` — leurs actions restent couvertes par les délégués `change`/`input`/`keydown` |
+| Effet secondaire corrigé | Le `preventDefault()` du délégué click bloquait le toggle natif des checkboxes `data-action` (sélection messages, select-all docker, confirmations restore…) et déclenchait leurs actions sur un état périmé ; le toggle natif + `change` sont rétablis |
+| Périmètre | ~60 champs de formulaire porteurs de `data-action` passés en revue : tous en sémantique change/input, aucun ne dépendait du dispatch click |
+
+---
+
 ## [3.45.0] - 1 septembre 2026
 
 ### 🛡️ Anti-abus `/api/oidc/token` : throttle sur les échecs, par client (minor)
