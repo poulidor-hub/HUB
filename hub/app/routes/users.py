@@ -17,7 +17,7 @@ from app.models import (
     highest_role,
 )
 from app.schemas import (
-    UserCreate, UserUpdate, UserResponse, UserAppRoleResponse, PaginatedUsersResponse,
+    UserCreate, UserUpdate, UserRenameRequest, UserResponse, UserAppRoleResponse, PaginatedUsersResponse,
     BulkUsersCreateRequest, BulkUsersCreateResponse, BulkUserCreateResult,
     BulkUsersRolesUpdateRequest, BulkUsersRolesUpdateResponse, BulkUserRoleUpdateResult,
     BulkUsersDeleteRequest, BulkUsersDeleteResponse, BulkUserDeleteResult,
@@ -28,6 +28,7 @@ from app.schemas import (
     M2MUserSearchItem, M2MUserSearchResponse
 )
 from app.auth import get_current_admin, get_current_entity, get_password_hash, revoke_all_user_tokens
+from app.routes.audit import log_action
 
 router = APIRouter(prefix="/api/users", tags=["Users"])
 
@@ -663,7 +664,95 @@ async def update_user(
     
     # Notifier les clients SSE de la modification
     notify_event("users_updated", {"action": "updated", "user_id": user.id, "username": user.username})
-    
+
+    return UserResponse.from_orm_model(user)
+
+
+@router.post("/{user_id}/rename")
+async def rename_user(
+    user_id: int,
+    payload: UserRenameRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(get_current_admin),
+):
+    """Renomme le login d'un utilisateur (opération exceptionnelle, tracée).
+
+    Effets : username normalisé (strip+lower), révocation de tous les tokens,
+    force_logout SSE (l'utilisateur doit se reconnecter), entrée audit.
+    Prérequis : exemple-app-16 à jour (matching par uid) — cf. spec §7.1.
+    """
+    new_username = payload.username.strip().lower()
+    if len(new_username) < 3:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Identifiant trop court (3 caractères minimum)",
+        )
+
+    result = await db.execute(
+        select(User)
+        .options(selectinload(User.app_roles).selectinload(UserAppRole.application))
+        .where(User.id == user_id)
+    )
+    user = result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Utilisateur non trouvé",
+        )
+
+    old_username = user.username
+    if new_username != old_username:
+        existing = await db.execute(
+            select(User).where(User.username == new_username)
+        )
+        if existing.scalar_one_or_none():
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Ce nom d'utilisateur existe déjà",
+            )
+        user.username = new_username
+    await db.commit()
+
+    # Révoquer les tokens : l'ancien JWT (sub=ancien username) ne résout plus
+    await revoke_all_user_tokens(db, user_id)
+    notify_event(
+        "force_logout",
+        {
+            "user_id": user_id,
+            "username": new_username,
+            "old_username": old_username,
+            "reason": "username_renamed",
+        },
+    )
+
+    await log_action(
+        db=db,
+        user_id=admin.id,
+        action="rename_user",
+        target=f"{old_username} -> {new_username}",
+        request=request,
+        response_status=200,
+        details=f"Renommage exceptionnel du login par {admin.username}",
+    )
+    await db.commit()
+
+    notify_event(
+        "users_updated",
+        {"action": "updated", "user_id": user.id, "username": user.username},
+    )
+    notify_stats_update()
+
+    # Recharger avec les relations pour la réponse
+    result = await db.execute(
+        select(User)
+        .options(
+            selectinload(User.app_roles).selectinload(UserAppRole.application),
+            selectinload(User.profiles).selectinload(Profile.app_roles),
+        )
+        .where(User.id == user_id)
+    )
+    user = result.scalar_one()
     return UserResponse.from_orm_model(user)
 
 

@@ -45,6 +45,11 @@ class UserUpdate(BaseModel):
     nom: Optional[str] = Field(None, max_length=100)
 
 
+class UserRenameRequest(BaseModel):
+    """Renommage exceptionnel du login (opération rare, tracée)."""
+    username: str = Field(..., min_length=3, max_length=50)
+
+
 class PasswordChangeRequest(BaseModel):
     """Requête de changement de mot de passe par l'utilisateur"""
     current_password: str = Field(..., description="Mot de passe actuel")
