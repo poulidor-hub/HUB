@@ -186,7 +186,7 @@ async def login_for_token(
             # Re-poser le cookie OIDC pour garder le SSO OIDC synchronisé avec
             # la session dashboard (sinon expiration après 8h malgré refresh 7j).
             from app.oidc_helpers import attach_oidc_session_cookie
-            attach_oidc_session_cookie(response, user.username, request, settings)
+            attach_oidc_session_cookie(response, user.oidc_sub or user.username, request, settings)
         else:
             sa = refresh_obj.service_account
             # Service accounts ont accès "service" aux apps
@@ -370,7 +370,7 @@ async def login_for_token(
     # Poser le cookie de session OIDC (permet à /oidc/authorize d'identifier
     # l'user sans re-login, pour le SSO OIDC standard type Vikunja).
     from app.oidc_helpers import attach_oidc_session_cookie
-    attach_oidc_session_cookie(response, user.username, request, settings)
+    attach_oidc_session_cookie(response, user.oidc_sub or user.username, request, settings)
 
     return Token(
         access_token=token,
@@ -981,7 +981,7 @@ async def refresh_access_token(
         # Re-poser le cookie OIDC pour garder le SSO OIDC synchronisé avec
         # la session dashboard (sinon expiration après 8h malgré refresh 7j).
         from app.oidc_helpers import attach_oidc_session_cookie
-        attach_oidc_session_cookie(response, user.username, request, settings)
+        attach_oidc_session_cookie(response, user.oidc_sub or user.username, request, settings)
     else:
         sa = refresh_obj.service_account
         # Service accounts ont accès "service" aux apps

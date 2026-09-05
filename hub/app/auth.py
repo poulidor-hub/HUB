@@ -52,6 +52,24 @@ async def generate_oidc_sub(db: AsyncSession, username: str) -> str:
     return str(_uuid.uuid4())
 
 
+async def resolve_user_by_oidc_sub(db: AsyncSession, sub: str) -> Optional[User]:
+    """Résout un user par oidc_sub ; fallback username (cookies/sessions pré-déploiement).
+
+    Le sub peut provenir du cookie hub_oidc_session (posé au login/refresh) ou
+    du payload d'un client (back-channel logout). Pour les valeurs émises avant
+    le déploiement d'oidc_sub (TTL cookie 8h), le sub contient l'ancien
+    username : le fallback le retrouve. L'ordre oidc_sub d'abord garantit
+    l'unicité en cas de recyclage de username (règle anti-collision de
+    generate_oidc_sub).
+    """
+    result = await db.execute(select(User).where(User.oidc_sub == sub))
+    user = result.scalar_one_or_none()
+    if user is None:
+        result = await db.execute(select(User).where(User.username == sub))
+        user = result.scalar_one_or_none()
+    return user
+
+
 def create_access_token(
     username: str,
     apps: dict,  # Dict {app_slug: role}

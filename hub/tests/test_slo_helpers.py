@@ -185,3 +185,80 @@ def test_lookup_translator_slug_known():
 
 def test_lookup_translator_slug_unknown():
     assert lookup_translator_slug("unknown-app") is None
+
+
+# ---------------------------------------------------------------------------
+# Task 3 (oidc_sub) : le cookie porte désormais l'oidc_sub immuable
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_no_switch_when_cookie_carries_oidc_sub_of_renamed_user(
+    client: AsyncClient, async_session: AsyncSession, settings: Settings
+):
+    """Cookie portant l'oidc_sub d'un renommé, re-login du même user → pas de SLO.
+
+    Avant Task 3, la résolution se faisait par username : le cookie disant
+    « jdupont » (oidc_sub) alors que l'user s'appelle « jmartin », le SLO
+    regardait un user « jdupont » introuvable en DB.
+    """
+    from app.models import User
+
+    renamed = User(
+        username="jmartin", email="jmartin@example.com",
+        hashed_password=get_password_hash("x"), oidc_sub="jdupont", is_active=True,
+    )
+    async_session.add(renamed)
+    await async_session.commit()
+
+    settings.oidc_slo_enabled = True
+    settings.oidc_issuer = "http://test"
+    cookie = create_oidc_session_cookie("jdupont", settings)
+
+    class FakeRequest:
+        cookies = {"hub_oidc_session": cookie}
+    result = await detect_user_switch_and_collect_logouts(
+        FakeRequest(), async_session, renamed.username, settings
+    )
+    assert result == []
+
+
+@pytest.mark.asyncio
+async def test_switch_detected_when_cookie_carries_oidc_sub_of_renamed_user(
+    client: AsyncClient, async_session: AsyncSession, vikunja_client, settings: Settings
+):
+    """Cookie portant l'oidc_sub d'un renommé A, login B → purger les apps de A."""
+    from app.models import OAuthRefreshToken, User
+
+    renamed = User(
+        username="jmartin", email="jmartin@example.com",
+        hashed_password=get_password_hash("x"), oidc_sub="jdupont", is_active=True,
+    )
+    other = User(
+        username="btemplate", email="b@example.com",
+        hashed_password=get_password_hash("x"), is_active=True,
+    )
+    async_session.add_all([renamed, other])
+    await async_session.commit()
+
+    refresh = OAuthRefreshToken(
+        token_hash="hash_test_slo_oidc_sub",
+        client_id=vikunja_client.client_id,
+        user_id=renamed.id,
+        scope="openid",
+        expires_at=None,
+        revoked_at=None,
+    )
+    async_session.add(refresh)
+    await async_session.commit()
+
+    settings.oidc_slo_enabled = True
+    settings.oidc_issuer = "http://test"
+    cookie = create_oidc_session_cookie("jdupont", settings)
+
+    class FakeRequest:
+        cookies = {"hub_oidc_session": cookie}
+    result = await detect_user_switch_and_collect_logouts(
+        FakeRequest(), async_session, other.username, settings
+    )
+    assert len(result) == 1
+    assert result[0]["slug"] == "vikunja"

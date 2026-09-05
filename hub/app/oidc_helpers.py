@@ -193,16 +193,18 @@ def build_oidc_metadata(settings) -> dict:
 # Session cookie OIDC (pour /oidc/authorize sans session navigateur)
 # ============================================================
 
-def create_oidc_session_cookie(username: str, settings) -> str:
+def create_oidc_session_cookie(sub: str, settings) -> str:
     """Génère un JWT court (8h) signé RS256 servant de cookie de session OIDC.
 
     Permet à /oidc/authorize de savoir qui est connecté sans session cookie
     dédiée au HUB (qui utilise JWT localStorage). Posé au login password.
+    `sub` est l'oidc_sub immuable de l'user (fallback username pour les
+    comptes sans oidc_sub, ex. sessions posées avant le déploiement).
     """
     now = utcnow()
     expire = now + timedelta(hours=8)
     claims = {
-        "sub": username,
+        "sub": sub,
         "iat": now,
         "exp": expire,
         "type": "oidc_session",
@@ -214,9 +216,12 @@ def create_oidc_session_cookie(username: str, settings) -> str:
 
 
 def decode_oidc_session_cookie(token: str, settings) -> Optional[str]:
-    """Décode un cookie de session OIDC. Retourne le username si valide, None sinon.
+    """Décode un cookie de session OIDC. Retourne le sub (oidc_sub) si valide, None sinon.
 
     Valide signature RS256 (clé publique HUB), type=oidc_session, expiration.
+    NB : les cookies posés avant le déploiement d'oidc_sub contiennent
+    l'username — la résolution user (resolve_user_by_oidc_sub) gère le
+    fallback. Ce helper retourne la valeur brute sans résoudre.
     """
     try:
         payload = pyjwt.decode(
@@ -235,8 +240,11 @@ def decode_oidc_session_cookie(token: str, settings) -> Optional[str]:
 
 # Aucune dépendance FastAPI au niveau module : on type le Response en duck-typing
 # (n'importe quel objet exposant .set_cookie fonctionne, notamment starlette).
-def attach_oidc_session_cookie(response, username: str, request, settings) -> None:
+def attach_oidc_session_cookie(response, sub: str, request, settings) -> None:
     """Pose le cookie hub_oidc_session sur la response donnée.
+
+    `sub` doit être l'oidc_sub immuable de l'user (les appelants passent
+    `user.oidc_sub or user.username` pour les comptes pré-déploiement).
 
     Centralise les flags du cookie OIDC (httpOnly, samesite=lax, secure selon le
     schéma réel de la requête, TTL 8h, path=/). À appeler :
@@ -251,7 +259,7 @@ def attach_oidc_session_cookie(response, username: str, request, settings) -> No
     """
     response.set_cookie(
         key="hub_oidc_session",
-        value=create_oidc_session_cookie(username, settings),
+        value=create_oidc_session_cookie(sub, settings),
         httponly=True,
         samesite="lax",
         secure=(request.url.scheme == "https"),

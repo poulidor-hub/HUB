@@ -18,7 +18,13 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth import get_current_admin, hash_token, utcnow, verify_token
+from app.auth import (
+    get_current_admin,
+    hash_token,
+    resolve_user_by_oidc_sub,
+    utcnow,
+    verify_token,
+)
 from app.config import get_settings
 from app.database import get_db
 from app.models import (
@@ -182,9 +188,8 @@ async def authorize_oidc(
             "Session HUB expirée ou invalide. Reconnectez-vous au dashboard HUB."
         )
 
-    # 6. Lookup user + vérifier accès app
-    user_result = await db.execute(select(User).where(User.username == username))
-    user = user_result.scalar_one_or_none()
+    # 6. Lookup user (par oidc_sub du cookie, fallback username pré-déploiement)
+    user = await resolve_user_by_oidc_sub(db, username)
     if not user:
         raise HTTPException(401, f"Utilisateur '{username}' introuvable")
     if not user.is_active:
@@ -337,9 +342,9 @@ async def launch_oidc(
             403, f"Accès refusé à l'app '{app_slug}' (rôle manquant)"
         )
 
-    # 5. Lookup user (pour audit)
-    user_result = await db.execute(select(User).where(User.username == username))
-    user = user_result.scalar_one_or_none()
+    # 5. Lookup user pour audit (sub du JWT HUB = username ; fallback oidc_sub
+    # couvert par le helper au cas où le sub serait l'oidc_sub d'un renommé)
+    user = await resolve_user_by_oidc_sub(db, username)
     if not user:
         raise HTTPException(401, f"Utilisateur '{username}' introuvable")
 
@@ -723,11 +728,9 @@ async def trigger_backchannel_logout(
     if not oauth_client.backchannel_logout_uri:
         raise HTTPException(400, "Client n'a pas de backchannel_logout_uri configuré")
 
-    # 2. Lookup user (par sub = username)
-    user_result = await db.execute(
-        select(User).where(User.username == payload.sub)
-    )
-    user = user_result.scalar_one_or_none()
+    # 2. Lookup user (par sub = oidc_sub émis au client, fallback username
+    # pour les clients qui stockent encore l'ancien sub pré-déploiement)
+    user = await resolve_user_by_oidc_sub(db, payload.sub)
     if not user:
         raise HTTPException(404, f"Utilisateur '{payload.sub}' introuvable")
 
@@ -744,9 +747,11 @@ async def trigger_backchannel_logout(
         rt.revoked_at = utcnow()
 
     # 4. Générer + envoyer le logout_token
+    # Le client connaît l'user sous le sub reçu dans les id_tokens (= oidc_sub
+    # depuis la migration) : lui renvoyer le même, pas le username courant.
     logout_token = generate_logout_token(
         client_id=client_id,
-        sub=user.username,
+        sub=user.oidc_sub or user.username,
         settings=settings,
     )
     try:

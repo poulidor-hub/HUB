@@ -14,9 +14,9 @@ from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.requests import Request
 
-from app.auth import utcnow
+from app.auth import resolve_user_by_oidc_sub, utcnow
 from app.config import Settings
-from app.models import Application, OAuthClient, OAuthRefreshToken, User
+from app.models import Application, OAuthClient, OAuthRefreshToken
 from app.oidc_helpers import decode_oidc_session_cookie
 
 logger = logging.getLogger(__name__)
@@ -58,16 +58,23 @@ async def detect_user_switch_and_collect_logouts(
     if not cookie_value:
         return []
 
-    old_username = decode_oidc_session_cookie(cookie_value, settings)
-    if not old_username or old_username == new_username:
+    # Le cookie porte l'oidc_sub immuable (fallback username pour les cookies
+    # posés avant le déploiement, TTL 8h).
+    old_sub = decode_oidc_session_cookie(cookie_value, settings)
+    if not old_sub:
         return []
 
-    old_user_result = await db.execute(select(User).where(User.username == old_username))
-    old_user = old_user_result.scalar_one_or_none()
+    old_user = await resolve_user_by_oidc_sub(db, old_sub)
     if not old_user:
         logger.warning(
-            "SLO: cookie précédent sub=%r mais user introuvable en DB", old_username
+            "SLO: cookie précédent sub=%r mais user introuvable en DB", old_sub
         )
+        return []
+
+    # Même user (login renouvelé) : comparaison sur le username courant de
+    # l'user résolu — pas sur la valeur brute du cookie, qui est l'oidc_sub
+    # et diffère du username pour un utilisateur renommé.
+    if old_user.username == new_username:
         return []
 
     # Clients OIDC où old_user a encore un refresh token valide (non révoqué, non expiré).
