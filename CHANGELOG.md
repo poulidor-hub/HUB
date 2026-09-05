@@ -5,6 +5,16 @@
 
 ---
 
+## [3.47.2] - 5 septembre 2026
+
+### 🔁 SLO poste partagé : revoke distant normalisé (username courant + oidc_sub) (fix)
+
+| Élément | Description |
+|---------|-------------|
+| Fix | `propagate_remote_revoke` résout l'identifiant du cookie (désormais un `oidc_sub` immuable) vers le user, et révoque par **username courant d'abord puis oidc_sub** (double appel best-effort dédupliqué) |
+| Cas | User renommé : le revoke M2M ne manque plus la session indexée sous le nouveau nom ; user classique : comportement identique (appel unique) |
+| Hygiène | Param renommé `old_identifier`, logs récap par traducteur, best-effort préservé (404/500 loggés, jamais bloquants) |
+
 ## [3.47.1] - 5 septembre 2026
 
 ### 🛡️ Backup/restore : les ancres identitaires sont exportées et restaurées (fix)
