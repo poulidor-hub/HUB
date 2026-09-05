@@ -165,6 +165,9 @@ async def login_for_token(
             sub = user.username
             beacon_token = generate_beacon_token(user.id)
             tags = user.get_tags()
+            uid = str(user.uuid) if user.uuid else None
+            prenom = user.prenom
+            nom = user.nom
             
             # Mettre à jour l'activité de la session (le refresh = activité).
             # Si la session a été fermée par une race SSE, le refresh token
@@ -190,12 +193,16 @@ async def login_for_token(
             apps = {app.slug: "service" for app in sa.applications}
             sub = sa.client_id
             tags = None  # Service accounts n'ont pas de tags utilisateur
-        
+            uid = prenom = nom = None
+
         token, expire, jti = create_access_token(
             username=sub,
             apps=apps,
             is_service_account=refresh_obj.service_account_id is not None,
             tags=tags,
+            uid=uid,
+            prenom=prenom,
+            nom=nom,
         )
         
         await db.commit()
@@ -303,6 +310,9 @@ async def login_for_token(
         username=user.username,
         apps=apps,
         tags=user.get_tags(),
+        uid=str(user.uuid) if user.uuid else None,
+        prenom=user.prenom,
+        nom=user.nom,
     )
     
     # Créer un refresh token
@@ -411,6 +421,9 @@ async def login_with_redirect(
         username=user.username,
         apps=apps,
         tags=user.get_tags(),
+        uid=str(user.uuid) if user.uuid else None,
+        prenom=user.prenom,
+        nom=user.nom,
     )
     
     # Créer un refresh token
@@ -961,6 +974,9 @@ async def refresh_access_token(
         is_sa = False
         beacon_token = generate_beacon_token(user.id)
         tags = user.get_tags()
+        uid = str(user.uuid) if user.uuid else None
+        prenom = user.prenom
+        nom = user.nom
 
         # Re-poser le cookie OIDC pour garder le SSO OIDC synchronisé avec
         # la session dashboard (sinon expiration après 8h malgré refresh 7j).
@@ -973,12 +989,16 @@ async def refresh_access_token(
         sub = sa.client_id
         is_sa = True
         tags = None  # Service accounts n'ont pas de tags utilisateur
-    
+        uid = prenom = nom = None
+
     token, expire, jti = create_access_token(
         username=sub,
         apps=apps,
         is_service_account=is_sa,
         tags=tags,
+        uid=uid,
+        prenom=prenom,
+        nom=nom,
     )
     
     return Token(
@@ -1048,6 +1068,9 @@ async def create_app_launch_token(
         username=current_username,
         apps=apps,
         tags=current_user.get_tags(),
+        uid=str(current_user.uuid) if current_user.uuid else None,
+        prenom=current_user.prenom,
+        nom=current_user.nom,
     )
 
     from app.routes.audit import update_session_activity
@@ -1156,6 +1179,9 @@ async def sso_login(
         username=user.username,
         apps=apps,
         tags=user.get_tags(),
+        uid=str(user.uuid) if user.uuid else None,
+        prenom=user.prenom,
+        nom=user.nom,
     )
     
     # 5. Log

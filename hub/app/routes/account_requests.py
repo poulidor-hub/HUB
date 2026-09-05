@@ -223,6 +223,9 @@ async def auto_login_with_token(
         username=user.username,
         apps=apps,
         tags=user.get_tags(),
+        uid=str(user.uuid) if user.uuid else None,
+        prenom=user.prenom,
+        nom=user.nom,
     )
 
     ip = request.client.host if request.client else None

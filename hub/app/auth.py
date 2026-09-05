@@ -45,6 +45,9 @@ def create_access_token(
     is_service_account: bool = False,
     is_workshop: bool = False,
     tags: Optional[dict[str, list[str]]] = None,
+    uid: Optional[str] = None,
+    prenom: Optional[str] = None,
+    nom: Optional[str] = None,
 ) -> tuple[str, datetime, str]:
     """Crée un token JWT signé avec la clé privée RSA
     
@@ -77,6 +80,14 @@ def create_access_token(
 
     if tags:
         payload["tags"] = tags
+
+    # Claims identité (optionnels — uuid stable + état civil pour les apps)
+    if uid:
+        payload["uid"] = uid
+    if prenom:
+        payload["prenom"] = prenom
+    if nom:
+        payload["nom"] = nom
     
     # Header avec kid pour identifier la clé de signature
     headers = {
