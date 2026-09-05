@@ -87,3 +87,29 @@ async def test_rename_revokes_old_token_and_notifies(client, admin_user, test_us
 
     logout_events = [e for e in events if e[0] == "force_logout"]
     assert logout_events and logout_events[0][1]["reason"] == "username_renamed"
+
+
+@pytest.mark.asyncio
+async def test_rename_writes_audit_entry(client, admin_user, test_user):
+    """Opération EXCEPTIONNELLE et TRACÉE : une entrée audit rename_user est écrite."""
+    old = test_user.username  # capturer avant le rename (attribut fixture ensuite stale)
+
+    token, _, _ = create_access_token(username=admin_user.username, apps={})
+
+    response = await client.post(
+        f"/api/users/{test_user.id}/rename",
+        json={"username": "jmartin"},
+        headers=get_auth_header(token),
+    )
+    assert response.status_code == 200
+
+    from app.database import async_session_maker
+    from app.models import AuditLog
+
+    async with async_session_maker() as session:
+        result = await session.execute(
+            select(AuditLog).where(AuditLog.action == "rename_user")
+        )
+        entry = result.scalar_one()
+        assert entry.target == f"{old} -> jmartin"
+        assert entry.response_status == 200
