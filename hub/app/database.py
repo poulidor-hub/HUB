@@ -51,6 +51,53 @@ async def init_db():
         await conn.run_sync(Base.metadata.create_all)
 
 
+async def _ensure_user_identity_columns() -> None:
+    """Ajoute les colonnes identité User (uuid, prenom, nom) si absentes.
+
+    Idempotent — safe sur base vierge (create_all les a déjà créées) comme
+    sur base existante. Évite le piège ALTER TABLE du runner migrations/*.sql
+    sur installation fraîche (colonne déjà présente).
+    """
+    from sqlalchemy import inspect, text
+
+    def _existing_columns(sync_conn):
+        return {col["name"] for col in inspect(sync_conn).get_columns("users")}
+
+    async with engine.begin() as conn:
+        existing = await conn.run_sync(_existing_columns)
+        for col, ddl in (
+            ("uuid", "VARCHAR(36)"),
+            ("prenom", "VARCHAR(100)"),
+            ("nom", "VARCHAR(100)"),
+        ):
+            if col not in existing:
+                await conn.execute(text(f"ALTER TABLE users ADD COLUMN {col} {ddl}"))
+                logger.info("Colonne users.%s ajoutée", col)
+        # Index unique sur uuid (CREATE INDEX est sûr sur SQLite et Postgres)
+        await conn.execute(
+            text("CREATE UNIQUE INDEX IF NOT EXISTS ix_users_uuid ON users (uuid)")
+        )
+
+
+async def _backfill_user_uuids() -> None:
+    """Assigne un uuid à chaque utilisateur existant qui n'en a pas."""
+    from sqlalchemy import select
+
+    from app.models import User  # import local : évite la circularité models<->database
+
+    async with async_session_maker() as session:
+        result = await session.execute(select(User).where(User.uuid.is_(None)))
+        users = result.scalars().all()
+        if not users:
+            return
+        import uuid as _uuid
+
+        for user in users:
+            user.uuid = str(_uuid.uuid4())
+        await session.commit()
+        logger.info("Backfill users.uuid : %d utilisateur(s) migré(s)", len(users))
+
+
 def _strip_sql_comments(sql_block: str) -> str:
     """Retire les lignes de commentaires SQL (--) d'un bloc et renvoie le SQL nettoyé."""
     lines = [line for line in sql_block.splitlines() if not line.strip().startswith('--')]

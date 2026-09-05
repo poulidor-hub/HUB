@@ -10,7 +10,13 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import select
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from app.database import init_db, async_session_maker, apply_migrations
+from app.database import (
+    init_db,
+    async_session_maker,
+    apply_migrations,
+    _ensure_user_identity_columns,
+    _backfill_user_uuids,
+)
 from app.outbox import outbox_service
 from app.models import User, ErrorLog, utcnow
 from app.auth import get_password_hash, cleanup_expired_tokens, get_current_admin
@@ -315,6 +321,8 @@ async def lifespan(app: FastAPI):
     logger.info("🚀 Démarrage du Hub d'Authentification...")
     await init_db()
     await apply_migrations()  # Appliquer les migrations SQL si nécessaires
+    await _ensure_user_identity_columns()  # Colonnes identité (uuid/prenom/nom)
+    await _backfill_user_uuids()  # Backfill uuid des utilisateurs existants
 
     # Vérifier la configuration des secrets et de sécurité AVANT l'admin bootstrap
     # (un mdp admin/DB faible ou des secrets manquants bloquent en production)

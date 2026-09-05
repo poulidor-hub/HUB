@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from typing import Optional
 import secrets
 import enum
+import uuid as _uuid
 from app.database import Base
 
 
@@ -189,6 +190,10 @@ class User(Base):
     
     id = Column(Integer, primary_key=True, index=True)
     username = Column(String(50), unique=True, index=True, nullable=False)
+    uuid = Column(String(36), unique=True, index=True, nullable=True,
+                  default=lambda: str(_uuid.uuid4()))  # Identifiant stable immuable
+    prenom = Column(String(100), nullable=True)  # Prénom état civil (éditable par admin)
+    nom = Column(String(100), nullable=True)  # Nom état civil (éditable par admin)
     email = Column(String(100), unique=True, index=True)
     hashed_password = Column(String(255), nullable=False)
     is_active = Column(Boolean, default=True)
