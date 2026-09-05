@@ -5,6 +5,19 @@
 
 ---
 
+## [3.47.0] - 5 septembre 2026
+
+### 🔗 OIDC : `sub` immuable (`oidc_sub`) — rattachement automatique des clients après renommage (minor)
+
+| Élément | Description |
+|---------|-------------|
+| Nouveau | `users.oidc_sub` : identifiant OIDC immuable (backfill = username — liaisons clients existantes intactes) |
+| Émission | `id_token`/`access_token`/`userinfo` émettent `sub = oidc_sub` ; email synthétique figé `{oidc_sub}@hub.internal` |
+| Rename | Ne touche jamais `oidc_sub` — Vikunja & co conservent la liaison sans intervention |
+| Compat | Cookie session OIDC et back-channel logout résolus par `oidc_sub` avec fallback `username` (sessions pré-déploiement) ; migration additive automatique |
+
+---
+
 ## [3.46.0] - 5 septembre 2026
 
 ### 🆔 Identité utilisateur : UUID stable, prénom/nom éditables, renommage du login (minor)
