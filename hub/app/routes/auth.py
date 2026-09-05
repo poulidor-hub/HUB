@@ -360,12 +360,12 @@ async def login_for_token(
     # de l'ancien user (best-effort, ne bloque pas le login).
     if remote_logout:
         from app.slo_orchestrator import propagate_remote_revoke
-        # Extraire l'ancien username depuis le cookie décodé
+        # Extraire l'identifiant (oidc_sub ou username) depuis le cookie décodé
         from app.oidc_helpers import decode_oidc_session_cookie
         old_cookie = request.cookies.get("hub_oidc_session", "")
-        old_username = decode_oidc_session_cookie(old_cookie, settings) or ""
-        if old_username:
-            await propagate_remote_revoke(db, old_username, remote_logout, settings)
+        old_identifier = decode_oidc_session_cookie(old_cookie, settings) or ""
+        if old_identifier:
+            await propagate_remote_revoke(db, old_identifier, remote_logout, settings)
 
     # Poser le cookie de session OIDC (permet à /oidc/authorize d'identifier
     # l'user sans re-login, pour le SSO OIDC standard type Vikunja).
