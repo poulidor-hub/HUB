@@ -5,6 +5,23 @@
 
 ---
 
+## [3.47.1] - 5 septembre 2026
+
+### 🛡️ Backup/restore : les ancres identitaires sont exportées et restaurées (fix)
+
+| Élément | Description |
+|---------|-------------|
+| Export | `UserExport` porte désormais `uuid`, `oidc_sub`, `prenom`, `nom` |
+| Restore | Création : ancres exportées respectées si présentes ; fallback génération sinon (backups legacy rétrocompatibles) |
+| Restore | Mise à jour (match username) : inchangée — jamais d'écrasement des ancres existantes |
+| Impact | Un disaster recovery ne casse plus les liaisons exemple-app-16 (`user_uuid`) ni les liaisons OIDC des renommés ; prénom/nom préservés |
+
+| Fonctionnalité | Description |
+|----------------|-------------|
+| **À compléter** | Décrivez les changements de cette version |
+
+---
+
 ## [3.47.0] - 5 septembre 2026
 
 ### 🔗 OIDC : `sub` immuable (`oidc_sub`) — rattachement automatique des clients après renommage (minor)
