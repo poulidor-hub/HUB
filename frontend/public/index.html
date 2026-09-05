@@ -2627,6 +2627,14 @@
                                 <label class="form-label">Email</label>
                                 <input type="email" class="form-control" id="userEmail">
                             </div>
+                            <div class="col-md-6">
+                                <label for="userPrenom" class="form-label">Prénom</label>
+                                <input type="text" class="form-control" id="userPrenom" maxlength="100" placeholder="Julie">
+                            </div>
+                            <div class="col-md-6">
+                                <label for="userNom" class="form-label">Nom</label>
+                                <input type="text" class="form-control" id="userNom" maxlength="100" placeholder="Martin">
+                            </div>
                             <div class="col-12">
                                 <label class="form-label" id="passwordLabel">Mot de passe *</label>
                                 <input type="password" class="form-control" id="userPassword">
@@ -2683,12 +2691,46 @@
                         </div>
                     </div>
                     <div class="modal-footer">
+                        <button type="button" class="btn btn-outline-danger" id="openRenameBtn" style="display:none;">Renommer l'identifiant</button>
                         <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuler</button>
                         <button type="submit" class="btn btn-primary">
                             <i class="bi bi-check-lg me-1"></i>Enregistrer
                         </button>
                     </div>
                 </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- Rename Username Modal -->
+    <div class="modal fade" id="renameUsernameModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">Renommer l'identifiant</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Fermer"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="alert alert-warning small">
+                        Opération <strong>exceptionnelle et tracée</strong> : l'ancien identifiant cesse
+                        de fonctionner immédiatement (déconnexion forcée de l'utilisateur).
+                        À n'effectuer qu'après déploiement de la dernière version de exemple-app
+                        (matching par identifiant stable).
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Utilisateur</label>
+                        <input type="text" class="form-control" id="renameUserId" disabled>
+                    </div>
+                    <div class="mb-3">
+                        <label for="renameNewUsername" class="form-label">Nouvel identifiant (pnom)</label>
+                        <input type="text" class="form-control" id="renameNewUsername"
+                               required minlength="3" maxlength="50" placeholder="jmartin">
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuler</button>
+                    <button type="button" class="btn btn-danger" id="renameConfirmBtn">Renommer</button>
+                </div>
             </div>
         </div>
     </div>

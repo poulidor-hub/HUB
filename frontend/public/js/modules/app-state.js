@@ -37,7 +37,7 @@ let errorsLastAcknowledgedAt = localStorage.getItem('errorsLastAcknowledgedAt') 
 
 // ===== Bootstrap modals & toast (instanciés au DOMContentLoaded) =====
 let appFormModal, userFormModal, serviceAccountFormModal, saCredentialsModal, toast;
-let oidcClientFormModal, oidcClientCredentialsModal;
+let oidcClientFormModal, oidcClientCredentialsModal, renameUsernameModal;
 
 // ===== SSE: état de connexion et debounces =====
 let eventSource = null;

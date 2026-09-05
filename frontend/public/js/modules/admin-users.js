@@ -13,6 +13,7 @@ function showAddUserForm() {
     document.getElementById('userForm').reset();
     document.getElementById('userId').value = '';
     document.getElementById('userUsername').disabled = false;
+    document.getElementById('openRenameBtn').style.display = 'none';
     document.getElementById('userPassword').required = true;
     document.getElementById('passwordHint').classList.add('d-none');
     document.getElementById('userActive').checked = true;
@@ -38,12 +39,19 @@ async function editUser(id) {
     document.getElementById('userUsername').value = user.username;
     document.getElementById('userUsername').disabled = true;
     document.getElementById('userEmail').value = user.email || '';
+    document.getElementById('userPrenom').value = user.prenom || '';
+    document.getElementById('userNom').value = user.nom || '';
     document.getElementById('userPassword').value = '';
     document.getElementById('userPassword').required = false;
     document.getElementById('passwordHint').classList.remove('d-none');
     document.getElementById('userActive').checked = user.is_active;
     document.getElementById('userAdmin').checked = user.is_admin;
-    
+
+    // Renommage d'identifiant : disponible uniquement en édition
+    const renameBtn = document.getElementById('openRenameBtn');
+    renameBtn.style.display = '';
+    renameBtn.onclick = openRenameModal;
+
     // Charger must_change_password
     const mustChangePwdEl = document.getElementById('userMustChangePassword');
     if (mustChangePwdEl) {
@@ -199,6 +207,8 @@ function setUserFormOriginalState(user) {
     if (!form) return;
     form.dataset.originalUserState = JSON.stringify({
         email: user.email || null,
+        prenom: user.prenom || null,
+        nom: user.nom || null,
         is_admin: Boolean(user.is_admin),
         is_active: Boolean(user.is_active),
         must_change_password: Boolean(user.must_change_password),
@@ -228,6 +238,13 @@ function buildChangedUserUpdateData(data, selectedProfileIds, password) {
         updateData.email = normalizedEmail;
     }
 
+    if (!originalState || data.prenom !== originalState.prenom) {
+        updateData.prenom = data.prenom;
+    }
+    if (!originalState || data.nom !== originalState.nom) {
+        updateData.nom = data.nom;
+    }
+
     ['is_admin', 'is_active', 'must_change_password', 'can_change_password'].forEach(field => {
         if (!originalState || data[field] !== originalState[field]) {
             updateData[field] = data[field];
@@ -254,6 +271,8 @@ async function handleSaveUser(event) {
     const data = {
         username: document.getElementById('userUsername').value,
         email: document.getElementById('userEmail').value || null,
+        prenom: document.getElementById('userPrenom').value || null,
+        nom: document.getElementById('userNom').value || null,
         is_admin: document.getElementById('userAdmin').checked,
         must_change_password: document.getElementById('userMustChangePassword')?.checked || false,
         can_change_password: document.getElementById('userCanChangePassword')?.checked ?? true
@@ -338,11 +357,48 @@ async function handleSaveUser(event) {
 
 async function deleteUser(id, username) {
     if (!confirm(`Supprimer l'utilisateur "${username}" ?`)) return;
-    
+
     try {
         await api.deleteUser(id);
         showToast('Succès', 'Utilisateur supprimé', 'success');
         await loadAdminData();
+    } catch (error) {
+        showToast('Erreur', error.message, 'danger');
+    }
+}
+
+// ===== Renommage d'identifiant (opération exceptionnelle, tracée) =====
+
+function openRenameModal() {
+    const id = document.getElementById('userId').value;
+    const username = document.getElementById('userUsername').value;
+    document.getElementById('renameUserId').value = `${username} (#${id})`;
+
+    // Suggestion pnom depuis prénom/nom si renseignés
+    const prenom = document.getElementById('userPrenom').value.trim();
+    const nom = document.getElementById('userNom').value.trim();
+    const suggestion = nom
+        ? `${(prenom.charAt(0) || '').toLowerCase()}${nom.toLowerCase().replace(/\s+/g, '')}`
+        : '';
+    document.getElementById('renameNewUsername').value = suggestion;
+    renameUsernameModal.show();
+}
+
+async function confirmRename() {
+    const id = document.getElementById('userId').value;
+    const newUsername = document.getElementById('renameNewUsername').value.trim().toLowerCase();
+    if (newUsername.length < 3) {
+        showToast('Erreur', 'Identifiant trop court (3 caractères minimum)', 'danger');
+        return;
+    }
+    try {
+        await api.renameUser(id, newUsername);
+        showToast('Succès', 'Identifiant renommé — l\'utilisateur doit se reconnecter', 'success');
+        renameUsernameModal.hide();
+        userFormModal.hide();
+        if (currentPage === 'users') {
+            await loadUsersPageData();
+        }
     } catch (error) {
         showToast('Erreur', error.message, 'danger');
     }

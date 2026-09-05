@@ -616,6 +616,13 @@ class HubAPI {
         });
     }
 
+    async renameUser(id, username) {
+        return this.request(`/users/${id}/rename`, {
+            method: 'POST',
+            body: JSON.stringify({ username })
+        });
+    }
+
     async deleteUser(id) {
         return this.request(`/users/${id}`, {
             method: 'DELETE'

@@ -34,7 +34,14 @@ document.addEventListener('DOMContentLoaded', () => {
     saCredentialsModal = new bootstrap.Modal(document.getElementById('saCredentialsModal'));
     oidcClientFormModal = new bootstrap.Modal(document.getElementById('oidcClientFormModal'));
     oidcClientCredentialsModal = new bootstrap.Modal(document.getElementById('oidcClientCredentialsModal'));
+    renameUsernameModal = new bootstrap.Modal(document.getElementById('renameUsernameModal'));
     toast = new bootstrap.Toast(document.getElementById('toast'));
+
+    // Renommage d'identifiant utilisateur (confirmation)
+    const renameConfirmBtn = document.getElementById('renameConfirmBtn');
+    if (renameConfirmBtn) {
+        renameConfirmBtn.addEventListener('click', confirmRename);
+    }
 
     // Mettre à jour le preview quand la couleur change
     const appColorInput = document.getElementById('appColor');

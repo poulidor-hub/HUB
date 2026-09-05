@@ -791,6 +791,7 @@ function showAddUserFormPage() {
     document.getElementById('userForm').reset();
     document.getElementById('userId').value = '';
     document.getElementById('userUsername').disabled = false;
+    document.getElementById('openRenameBtn').style.display = 'none';
     document.getElementById('userPassword').required = true;
     document.getElementById('passwordHint').classList.add('d-none');
     document.getElementById('userActive').checked = true;
@@ -824,12 +825,19 @@ async function editUserPage(id) {
     document.getElementById('userUsername').value = user.username;
     document.getElementById('userUsername').disabled = true;
     document.getElementById('userEmail').value = user.email || '';
+    document.getElementById('userPrenom').value = user.prenom || '';
+    document.getElementById('userNom').value = user.nom || '';
     document.getElementById('userPassword').value = '';
     document.getElementById('userPassword').required = false;
     document.getElementById('passwordHint').classList.remove('d-none');
     document.getElementById('userActive').checked = user.is_active;
     document.getElementById('userAdmin').checked = user.is_admin;
-    
+
+    // Renommage d'identifiant : disponible uniquement en édition
+    const renameBtn = document.getElementById('openRenameBtn');
+    renameBtn.style.display = '';
+    renameBtn.onclick = openRenameModal;
+
     // Charger must_change_password
     const mustChangePwdEl = document.getElementById('userMustChangePassword');
     if (mustChangePwdEl) {
