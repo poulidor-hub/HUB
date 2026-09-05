@@ -61,7 +61,7 @@ async def _import_users(db: AsyncSession, data: BackupImport, result: ImportResu
                     select(User).where(User.username == user_export.username)
                 )).scalar_one_or_none()
                 if existing is None:
-                    db.add(User(
+                    user_kwargs = dict(
                         username=user_export.username,
                         email=user_export.email,
                         hashed_password=user_export.hashed_password,
@@ -69,10 +69,17 @@ async def _import_users(db: AsyncSession, data: BackupImport, result: ImportResu
                         is_admin=user_export.is_admin,
                         must_change_password=user_export.must_change_password,
                         can_change_password=user_export.can_change_password,
+                        prenom=user_export.prenom,
+                        nom=user_export.nom,
                         # Autoflush : les users déjà ajoutés dans le batch sont
                         # visibles au helper, la règle anti-collision s'applique.
                         oidc_sub=await generate_oidc_sub(db, user_export.username),
-                    ))
+                    )
+                    if user_export.uuid:
+                        user_kwargs["uuid"] = user_export.uuid  # ancre inter-apps
+                    if user_export.oidc_sub:
+                        user_kwargs["oidc_sub"] = user_export.oidc_sub  # ancre OIDC (écrase le fallback)
+                    db.add(User(**user_kwargs))
                     created = True
                 else:
                     existing.email = user_export.email

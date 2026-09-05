@@ -9,7 +9,7 @@ import io
 from datetime import datetime
 
 from httpx import AsyncClient, ASGITransport
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import selectinload
 
 from app.main import app
@@ -79,6 +79,131 @@ async def test_import_users_update(async_session, admin_user):
     await async_session.refresh(admin_user)
     assert admin_user.email == "new-admin-email@test.com"
     assert admin_user.is_admin is False
+
+
+@pytest.mark.asyncio
+async def test_export_import_preserves_identity_anchors(async_session):
+    """Test money : export → import sur hub vide préserve uuid/oidc_sub/prenom/nom.
+
+    Sans ces ancres, un restore sur hub vide casserait les liaisons
+    exemple-app-16 (user_uuid) et OIDC des users renommés.
+    """
+    from app.hub_self_backup import _do_export, _build_zip_archive
+
+    renamed = User(
+        username="jmartin", email="jmartin@test.com",
+        hashed_password=get_password_hash("p"),
+        uuid="11111111-1111-4111-8111-111111111111",
+        oidc_sub="jdupont",  # renommé : jdupont → jmartin, sub conservé
+        prenom="Jean", nom="Martin",
+    )
+    plain = User(
+        username="mariecurie", email="marie@test.com",
+        hashed_password=get_password_hash("p"),
+        uuid="22222222-2222-4222-8222-222222222222",
+        oidc_sub="mariecurie",
+        prenom="Marie", nom="Curie",
+    )
+    async_session.add_all([renamed, plain])
+    await async_session.commit()
+
+    # Export via la voie réelle : _do_export → ZIP → BackupImport (round-trip JSON)
+    class _Actor:
+        username = "admin"
+
+    export = await _do_export(async_session, _Actor(), False, False, False)
+    zip_bytes = _build_zip_archive(export).getvalue()
+    import_data = build_backup_import_from_zip_bytes(zip_bytes)
+
+    # Hub vide : purge des users (simule la restauration sur un hub neuf)
+    await async_session.execute(delete(User))
+    await async_session.commit()
+
+    result = await import_environment(async_session, import_data)
+    assert result.errors == []
+    assert result.users_created == 2
+
+    db_jmartin = (await async_session.execute(
+        select(User).where(User.username == "jmartin")
+    )).scalar_one()
+    assert db_jmartin.uuid == "11111111-1111-4111-8111-111111111111"
+    assert db_jmartin.oidc_sub == "jdupont"  # ancre OIDC du renommé préservée
+    assert db_jmartin.prenom == "Jean"
+    assert db_jmartin.nom == "Martin"
+
+    db_marie = (await async_session.execute(
+        select(User).where(User.username == "mariecurie")
+    )).scalar_one()
+    assert db_marie.uuid == "22222222-2222-4222-8222-222222222222"
+    assert db_marie.oidc_sub == "mariecurie"
+    assert db_marie.prenom == "Marie"
+    assert db_marie.nom == "Curie"
+
+
+@pytest.mark.asyncio
+async def test_import_legacy_backup_generates_identity(async_session):
+    """Backup legacy (UserExport sans les champs identitaires) : restore OK,
+    oidc_sub généré par le helper (== username si libre), uuid non-NULL."""
+    import_data = BackupImport(
+        users=[UserExport(
+            username="legacyuser",
+            email="legacy@test.com",
+            hashed_password=get_password_hash("pass123"),
+            is_active=True,
+            is_admin=False,
+        )],
+    )
+    result = await import_environment(async_session, import_data)
+    assert result.errors == []
+    assert result.users_created == 1
+    db_user = (await async_session.execute(
+        select(User).where(User.username == "legacyuser")
+    )).scalar_one()
+    assert db_user.oidc_sub == "legacyuser"  # helper : username si libre
+    assert db_user.uuid is not None  # défaut colonne
+    assert db_user.prenom is None
+    assert db_user.nom is None
+
+
+@pytest.mark.asyncio
+async def test_import_update_keeps_existing_identity_anchors(async_session):
+    """Update branch : username existant → uuid/oidc_sub/prenom/nom existants
+    non écrasés par les données (potentiellement anciennes) du backup."""
+    existing = User(
+        username="alice", email="alice@old.com",
+        hashed_password=get_password_hash("oldpass123"),
+        uuid="aaaaaaaa-1111-4111-8111-111111111111",
+        oidc_sub="alice",
+        prenom="Alice", nom="Origin",
+    )
+    async_session.add(existing)
+    await async_session.commit()
+
+    import_data = BackupImport(
+        users=[UserExport(
+            username="alice",
+            email="alice@new.com",
+            hashed_password=get_password_hash("newpass123"),
+            is_active=True,
+            is_admin=True,
+            # Valeurs d'ancres différentes : ne doivent PAS être appliquées
+            uuid="bbbbbbbb-2222-4222-8222-222222222222",
+            oidc_sub="alice_backup",
+            prenom="Autre",
+            nom="Backup",
+        )],
+    )
+    result = await import_environment(async_session, import_data)
+    assert result.users_updated == 1
+    assert result.users_created == 0
+    await async_session.refresh(existing)
+    assert existing.uuid == "aaaaaaaa-1111-4111-8111-111111111111"
+    assert existing.oidc_sub == "alice"
+    assert existing.prenom == "Alice"
+    assert existing.nom == "Origin"
+    # L'update reste effectif sur email/hash/flags
+    assert existing.email == "alice@new.com"
+    assert existing.is_admin is True
 
 
 @pytest.mark.asyncio

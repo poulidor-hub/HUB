@@ -65,6 +65,10 @@ async def _do_export(
             must_change_password=user.must_change_password or False,
             can_change_password=user.can_change_password if user.can_change_password is not None else True,
             created_at=user.created_at,
+            uuid=user.uuid,
+            oidc_sub=user.oidc_sub,
+            prenom=user.prenom,
+            nom=user.nom,
         )
         for user in users
     ]

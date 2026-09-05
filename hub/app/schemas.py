@@ -753,6 +753,10 @@ class UserExport(BaseModel):
     must_change_password: bool = False
     can_change_password: bool = True
     created_at: Optional[datetime] = None
+    uuid: Optional[str] = None  # Identifiant stable inter-apps (exemple-app-16 user_uuid)
+    oidc_sub: Optional[str] = None  # Identifiant OIDC immuable
+    prenom: Optional[str] = None
+    nom: Optional[str] = None
 
 
 class AppExport(BaseModel):
