@@ -41,6 +41,8 @@ class UserUpdate(BaseModel):
     must_change_password: Optional[bool] = None
     can_change_password: Optional[bool] = None
     profile_ids: Optional[List[int]] = None  # Liste des IDs de profils à assigner
+    prenom: Optional[str] = Field(None, max_length=100)
+    nom: Optional[str] = Field(None, max_length=100)
 
 
 class PasswordChangeRequest(BaseModel):
@@ -175,6 +177,9 @@ class UserAppRoleResponse(BaseModel):
 
 class UserResponse(UserBase):
     id: int
+    uuid: Optional[str] = None
+    prenom: Optional[str] = None
+    nom: Optional[str] = None
     is_active: bool
     is_admin: bool
     must_change_password: bool = False
@@ -220,6 +225,9 @@ class UserResponse(UserBase):
             pass  # profiles non chargés
         return cls(
             id=user.id,
+            uuid=getattr(user, "uuid", None),
+            prenom=getattr(user, "prenom", None),
+            nom=getattr(user, "nom", None),
             username=user.username,
             email=user.email,
             is_active=user.is_active,

@@ -295,6 +295,36 @@ class TestUsersEndpoints:
         # Le endpoint peut ne pas exister, donc on vérifie juste le code
         assert response.status_code in [200, 404]  # 404 si endpoint non implémenté
 
+    @pytest.mark.asyncio
+    async def test_update_user_prenom_nom(self, client: AsyncClient, admin_user: User, test_user: User):
+        """Admin peut modifier prénom/nom ; la réponse les expose."""
+        token, _, _ = create_access_token(username=admin_user.username, apps={})
+
+        response = await client.patch(
+            f"/api/users/{test_user.id}",
+            json={"prenom": "Julie", "nom": "Martin"},
+            headers=get_auth_header(token),
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["prenom"] == "Julie"
+        assert data["nom"] == "Martin"
+        assert data["uuid"] is not None
+
+    @pytest.mark.asyncio
+    async def test_update_user_prenom_nom_ignored_for_non_admin(self, client: AsyncClient, test_user: User):
+        """Un non-admin ne peut pas modifier prénom/nom."""
+        token, _, _ = create_access_token(username=test_user.username, apps={})
+
+        response = await client.patch(
+            f"/api/users/{test_user.id}",
+            json={"prenom": "Hacker"},
+            headers=get_auth_header(token),
+        )
+
+        assert response.status_code == 403
+
 
 class TestM2MBulkUserRoles:
     """Tests pour l'endpoint M2M de récupération bulk des rôles utilisateurs"""
