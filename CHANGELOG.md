@@ -5,6 +5,20 @@
 
 ---
 
+## [3.46.0] - 5 septembre 2026
+
+### 🆔 Identité utilisateur : UUID stable, prénom/nom éditables, renommage du login (minor)
+
+| Élément | Description |
+|---------|-------------|
+| Nouveau | `users.uuid` (identifiant stable immuable, backfillé au démarrage), `users.prenom`, `users.nom` |
+| JWT/OIDC | Claims `uid`, `prenom`, `nom` ajoutés aux tokens utilisateur (`sub` inchangé) ; claim OIDC `name` = « Prénom Nom » |
+| API | `PATCH /api/users/{id}` accepte `prenom`/`nom` ; nouveau `POST /api/users/{id}/rename` (admin, unicité 409, révocation tokens, audit, force_logout) |
+| UI | Champs Prénom/Nom dans la modale admin + bouton « Renommer l'identifiant » avec suggestion pnom et confirmation |
+| Compat | Migration additive automatique au démarrage (aucune action manuelle) ; `sub` = username inchangé |
+
+---
+
 ## [3.45.1] - 3 septembre 2026
 
 ### 🐛 Dropdown rôle du dashboard : fermeture immédiate + toggles checkboxes (fix)
