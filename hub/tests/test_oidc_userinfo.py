@@ -12,7 +12,7 @@ class TestUserInfo:
     ):
         settings = get_settings()
         access_token = create_access_token_jwt(
-            username=test_user.username,
+            sub=test_user.username,
             client_id="vikunja",
             scope="openid profile email",
             settings=settings,
@@ -49,7 +49,7 @@ class TestUserInfo:
         settings = get_settings()
         # Scope sans "email" : claim email ne doit pas être retourné
         access_token = create_access_token_jwt(
-            username=test_user.username,
+            sub=test_user.username,
             client_id="vikunja",
             scope="openid profile",
             settings=settings,

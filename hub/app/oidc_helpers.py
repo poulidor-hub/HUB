@@ -15,9 +15,9 @@ import jwt as pyjwt
 from app.models import utcnow  # réutilise le utcnow existant (naïf UTC)
 
 
-def compute_email_claim(username: str, settings) -> str:
+def compute_email_claim(oidc_sub: str, settings) -> str:
     """Calcule l'email synthétique selon le template OIDC_EMAIL_TEMPLATE."""
-    return settings.oidc_email_template.format(username=username)
+    return settings.oidc_email_template.format(username=oidc_sub)
 
 
 def compute_display_name(prenom: str | None, nom: str | None, username: str) -> str:
@@ -61,7 +61,7 @@ def _add_claim_if_scope(claims: dict, scope: str, claim_name: str, value):
         claims[claim_name] = value
 
 
-def create_id_token(username: str, client_id: str, nonce: Optional[str],
+def create_id_token(sub: str, username: str, client_id: str, nonce: Optional[str],
                     scope: str, settings,
                     uid: Optional[str] = None,
                     prenom: Optional[str] = None,
@@ -69,16 +69,16 @@ def create_id_token(username: str, client_id: str, nonce: Optional[str],
     """Génère un id_token OIDC JWT signé RS256 avec la clé privée du HUB.
 
     Claims selon les scopes :
-      - openid (toujours) : sub, iss, aud, exp, iat, uid (si uuid connu)
-      - profile : preferred_username, name (« Prénom Nom » si renseigné)
-      - email : email, email_verified
+      - openid (toujours) : sub (= oidc_sub, immuable), iss, aud, exp, iat, uid (si uuid connu)
+      - profile : preferred_username (= username courant), name (« Prénom Nom » si renseigné)
+      - email : email (figé sur oidc_sub), email_verified
     """
     now = utcnow()
     expire = now + timedelta(minutes=settings.oidc_id_token_ttl_minutes)
 
     claims = {
         "iss": settings.oidc_issuer,
-        "sub": username,
+        "sub": sub,
         "aud": client_id,
         "exp": expire,
         "iat": now,
@@ -91,7 +91,7 @@ def create_id_token(username: str, client_id: str, nonce: Optional[str],
         claims["uid"] = uid
     _add_claim_if_scope(claims, scope, "preferred_username", username)
     _add_claim_if_scope(claims, scope, "name", compute_display_name(prenom, nom, username))
-    _add_claim_if_scope(claims, scope, "email", compute_email_claim(username, settings))
+    _add_claim_if_scope(claims, scope, "email", compute_email_claim(sub, settings))
     _add_claim_if_scope(claims, scope, "email_verified", True)
 
     headers = {"kid": "hub-jwt-key-1"}  # même kid que JWKS existant
@@ -104,7 +104,7 @@ def create_id_token(username: str, client_id: str, nonce: Optional[str],
     )
 
 
-def create_access_token_jwt(username: str, client_id: str, scope: str,
+def create_access_token_jwt(sub: str, client_id: str, scope: str,
                             settings) -> str:
     """Génère un access_token JWT signé RS256 (court TTL, stateless).
 
@@ -115,7 +115,7 @@ def create_access_token_jwt(username: str, client_id: str, scope: str,
 
     claims = {
         "iss": settings.oidc_issuer,
-        "sub": username,
+        "sub": sub,
         "aud": client_id,
         "scope": scope,
         "exp": expire,

@@ -14,6 +14,7 @@ def test_compute_display_name():
 def test_id_token_contains_uid_and_display_name():
     settings = get_settings()
     token = create_id_token(
+        sub="jdupont",
         username="jdupont",
         client_id="client-1",
         nonce=None,
@@ -33,6 +34,7 @@ def test_id_token_contains_uid_and_display_name():
 def test_id_token_name_falls_back_to_username():
     settings = get_settings()
     token = create_id_token(
+        sub="jdupont",
         username="jdupont",
         client_id="client-1",
         nonce=None,

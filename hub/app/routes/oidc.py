@@ -503,6 +503,7 @@ async def _handle_authorization_code_grant(
 
     # 5. Générer tokens
     id_token = create_id_token(
+        sub=user.oidc_sub or user.username,  # défensif : backfill pas encore passé
         username=user.username,
         client_id=oauth_client.client_id,
         nonce=auth_code.nonce,
@@ -513,7 +514,7 @@ async def _handle_authorization_code_grant(
         nom=user.nom,
     )
     access_token = create_access_token_jwt(
-        username=user.username,
+        sub=user.oidc_sub or user.username,
         client_id=oauth_client.client_id,
         scope=auth_code.scope,
         settings=settings,
@@ -587,6 +588,7 @@ async def _handle_refresh_token_grant(
 
     # Nouveaux access + id tokens
     id_token = create_id_token(
+        sub=user.oidc_sub or user.username,  # défensif : backfill pas encore passé
         username=user.username,
         client_id=oauth_client.client_id,
         nonce=None,  # pas de nonce au refresh
@@ -597,7 +599,7 @@ async def _handle_refresh_token_grant(
         nom=user.nom,
     )
     access_token = create_access_token_jwt(
-        username=user.username,
+        sub=user.oidc_sub or user.username,
         client_id=oauth_client.client_id,
         scope=rt.scope,
         settings=settings,
@@ -659,28 +661,30 @@ async def userinfo_endpoint(
         raise HTTPException(401, "Authorization Bearer requis")
     payload = await _decode_oidc_access_token(credentials)
 
-    username = payload.get("sub")
+    token_sub = payload.get("sub")
     scope_str = payload.get("scope", "")
     scopes = set(scope_str.split())
 
     from app.oidc_helpers import compute_display_name, compute_email_claim
 
-    # Lookup DB pour identité stable + état civil (user None si token pré-rename)
-    result = await db.execute(select(User).where(User.username == username))
+    # Lookup DB par oidc_sub (le sub du token est l'identifiant immuable)
+    # → le username courant reste résoluble même après rename
+    # (user None si token pré-migration ou user supprimé)
+    result = await db.execute(select(User).where(User.oidc_sub == token_sub))
     user = result.scalar_one_or_none()
 
-    claims = {"sub": username}
+    claims = {"sub": token_sub}
     if user and user.uuid:
         claims["uid"] = user.uuid
     if "profile" in scopes:
-        claims["preferred_username"] = username
+        claims["preferred_username"] = user.username if user else token_sub
         claims["name"] = compute_display_name(
             user.prenom if user else None,
             user.nom if user else None,
-            username,
+            user.username if user else token_sub,
         )
     if "email" in scopes:
-        claims["email"] = compute_email_claim(username, settings)
+        claims["email"] = compute_email_claim(token_sub, settings)
         claims["email_verified"] = True
     return claims
 

@@ -52,6 +52,7 @@ class TestCreateIdToken:
         settings.oidc_issuer = "https://hub.example.com"
         settings.oidc_id_token_ttl_minutes = 10
         token = create_id_token(
+            sub="alice",
             username="alice",
             client_id="vikunja",
             nonce="nonce-123",
@@ -73,14 +74,14 @@ class TestCreateIdToken:
 
     def test_id_token_has_correct_header_kid(self, settings):
         settings.oidc_issuer = "https://hub.example.com"
-        token = create_id_token("bob", "client", None, "openid", settings)
+        token = create_id_token("bob", "bob", "client", None, "openid", settings)
         unverified_header = pyjwt.get_unverified_header(token)
         assert unverified_header["kid"] == "hub-jwt-key-1"
         assert unverified_header["alg"] == "RS256"
 
     def test_id_token_signature_validates_with_public_key(self, settings):
         settings.oidc_issuer = "https://hub.example.com"
-        token = create_id_token("bob", "client", None, "openid", settings)
+        token = create_id_token("bob", "bob", "client", None, "openid", settings)
         claims = pyjwt.decode(
             token,
             settings.jwt_public_key,
