@@ -20,6 +20,12 @@ def compute_email_claim(username: str, settings) -> str:
     return settings.oidc_email_template.format(username=username)
 
 
+def compute_display_name(prenom: str | None, nom: str | None, username: str) -> str:
+    """« Prénom Nom » si renseigné, sinon fallback sur le username."""
+    full = " ".join(p for p in (prenom, nom) if p)
+    return full if full else username
+
+
 def validate_pkce(code_verifier: Optional[str], code_challenge: Optional[str],
                   code_challenge_method: Optional[str]) -> bool:
     """Valide un verifier PKCE contre le challenge stocké. Méthode S256 obligatoire."""
@@ -56,12 +62,15 @@ def _add_claim_if_scope(claims: dict, scope: str, claim_name: str, value):
 
 
 def create_id_token(username: str, client_id: str, nonce: Optional[str],
-                    scope: str, settings) -> str:
+                    scope: str, settings,
+                    uid: Optional[str] = None,
+                    prenom: Optional[str] = None,
+                    nom: Optional[str] = None) -> str:
     """Génère un id_token OIDC JWT signé RS256 avec la clé privée du HUB.
 
     Claims selon les scopes :
-      - openid (toujours) : sub, iss, aud, exp, iat
-      - profile : preferred_username, name
+      - openid (toujours) : sub, iss, aud, exp, iat, uid (si uuid connu)
+      - profile : preferred_username, name (« Prénom Nom » si renseigné)
       - email : email, email_verified
     """
     now = utcnow()
@@ -78,8 +87,10 @@ def create_id_token(username: str, client_id: str, nonce: Optional[str],
         claims["nonce"] = nonce
 
     # Claims conditionnels selon scopes
+    if uid:
+        claims["uid"] = uid
     _add_claim_if_scope(claims, scope, "preferred_username", username)
-    _add_claim_if_scope(claims, scope, "name", username)
+    _add_claim_if_scope(claims, scope, "name", compute_display_name(prenom, nom, username))
     _add_claim_if_scope(claims, scope, "email", compute_email_claim(username, settings))
     _add_claim_if_scope(claims, scope, "email_verified", True)
 

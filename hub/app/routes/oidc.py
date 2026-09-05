@@ -508,6 +508,9 @@ async def _handle_authorization_code_grant(
         nonce=auth_code.nonce,
         scope=auth_code.scope,
         settings=settings,
+        uid=user.uuid,
+        prenom=user.prenom,
+        nom=user.nom,
     )
     access_token = create_access_token_jwt(
         username=user.username,
@@ -589,6 +592,9 @@ async def _handle_refresh_token_grant(
         nonce=None,  # pas de nonce au refresh
         scope=rt.scope,
         settings=settings,
+        uid=user.uuid,
+        prenom=user.prenom,
+        nom=user.nom,
     )
     access_token = create_access_token_jwt(
         username=user.username,
@@ -646,6 +652,7 @@ async def _decode_oidc_access_token(
 @router.post("/api/oidc/userinfo")
 async def userinfo_endpoint(
     credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme),
+    db: AsyncSession = Depends(get_db),
 ):
     """OIDC UserInfo : retourne les claims de l'utilisateur selon le scope du token."""
     if not credentials:
@@ -656,11 +663,22 @@ async def userinfo_endpoint(
     scope_str = payload.get("scope", "")
     scopes = set(scope_str.split())
 
-    from app.oidc_helpers import compute_email_claim
+    from app.oidc_helpers import compute_display_name, compute_email_claim
+
+    # Lookup DB pour identité stable + état civil (user None si token pré-rename)
+    result = await db.execute(select(User).where(User.username == username))
+    user = result.scalar_one_or_none()
+
     claims = {"sub": username}
+    if user and user.uuid:
+        claims["uid"] = user.uuid
     if "profile" in scopes:
         claims["preferred_username"] = username
-        claims["name"] = username
+        claims["name"] = compute_display_name(
+            user.prenom if user else None,
+            user.nom if user else None,
+            username,
+        )
     if "email" in scopes:
         claims["email"] = compute_email_claim(username, settings)
         claims["email_verified"] = True
