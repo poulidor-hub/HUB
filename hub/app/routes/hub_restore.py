@@ -29,7 +29,7 @@ from app.schemas import (
     ServiceAccountExport,
     UserAppRoleExport,
 )
-from app.auth import get_current_entity, get_password_hash
+from app.auth import get_current_entity, get_password_hash, generate_oidc_sub
 from app.routes.service_accounts import save_service_account_credentials
 
 logger = logging.getLogger(__name__)
@@ -69,6 +69,9 @@ async def _import_users(db: AsyncSession, data: BackupImport, result: ImportResu
                         is_admin=user_export.is_admin,
                         must_change_password=user_export.must_change_password,
                         can_change_password=user_export.can_change_password,
+                        # Autoflush : les users déjà ajoutés dans le batch sont
+                        # visibles au helper, la règle anti-collision s'applique.
+                        oidc_sub=await generate_oidc_sub(db, user_export.username),
                     ))
                     created = True
                 else:

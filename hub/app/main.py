@@ -16,10 +16,11 @@ from app.database import (
     apply_migrations,
     _ensure_user_identity_columns,
     _backfill_user_uuids,
+    _backfill_user_oidc_subs,
 )
 from app.outbox import outbox_service
 from app.models import User, ErrorLog, utcnow
-from app.auth import get_password_hash, cleanup_expired_tokens, get_current_admin
+from app.auth import get_password_hash, cleanup_expired_tokens, get_current_admin, generate_oidc_sub
 from app.config import get_settings, build_cors_config, get_instance_id
 from app.routes import auth, users, apps, service_accounts, audit, docs, events, app_backups, profiles, apps_health, messages, account_requests, snapshots, vpn, oidc, github_catalog, hub_restore, tags, app_groups, app_deploy, workshop
 from app.routes import settings as settings_routes
@@ -84,7 +85,10 @@ async def create_default_admin():
                 email=settings.admin_email,
                 hashed_password=get_password_hash(settings.admin_password),
                 is_admin=True,
-                must_change_password=True
+                must_change_password=True,
+                # Le backfill lifespan court AVANT ce bootstrap : sans sub explicite,
+                # l'admin resterait le seul user à oidc_sub NULL jusqu'au prochain boot.
+                oidc_sub=await generate_oidc_sub(db, settings.admin_username)
             )
             db.add(admin)
             await db.commit()
@@ -323,6 +327,7 @@ async def lifespan(app: FastAPI):
     await apply_migrations()  # Appliquer les migrations SQL si nécessaires
     await _ensure_user_identity_columns()  # Colonnes identité (uuid/prenom/nom)
     await _backfill_user_uuids()  # Backfill uuid des utilisateurs existants
+    await _backfill_user_oidc_subs()  # Backfill oidc_sub des utilisateurs existants
 
     # Vérifier la configuration des secrets et de sécurité AVANT l'admin bootstrap
     # (un mdp admin/DB faible ou des secrets manquants bloquent en production)

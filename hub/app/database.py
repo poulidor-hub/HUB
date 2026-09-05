@@ -67,6 +67,7 @@ async def _ensure_user_identity_columns() -> None:
         existing = await conn.run_sync(_existing_columns)
         for col, ddl in (
             ("uuid", "VARCHAR(36)"),
+            ("oidc_sub", "VARCHAR(50)"),
             ("prenom", "VARCHAR(100)"),
             ("nom", "VARCHAR(100)"),
         ):
@@ -76,6 +77,9 @@ async def _ensure_user_identity_columns() -> None:
         # Index unique sur uuid (CREATE INDEX est sûr sur SQLite et Postgres)
         await conn.execute(
             text("CREATE UNIQUE INDEX IF NOT EXISTS ix_users_uuid ON users (uuid)")
+        )
+        await conn.execute(
+            text("CREATE UNIQUE INDEX IF NOT EXISTS ix_users_oidc_sub ON users (oidc_sub)")
         )
 
 
@@ -96,6 +100,31 @@ async def _backfill_user_uuids() -> None:
             user.uuid = str(_uuid.uuid4())
         await session.commit()
         logger.info("Backfill users.uuid : %d utilisateur(s) migré(s)", len(users))
+
+
+async def _backfill_user_oidc_subs() -> None:
+    """Assigne oidc_sub = username aux lignes legacy ; fallback uuid si collision
+    (username recyclé après rename, déjà détenu comme oidc_sub d'un autre)."""
+    from sqlalchemy import select
+
+    from app.models import User
+
+    async with async_session_maker() as session:
+        result = await session.execute(select(User).where(User.oidc_sub.is_(None)))
+        users = result.scalars().all()
+        if not users:
+            return
+        import uuid as _uuid
+
+        for user in users:
+            taken = await session.execute(
+                select(User.id).where(User.oidc_sub == user.username, User.id != user.id)
+            )
+            user.oidc_sub = (
+                user.username if taken.scalar_one_or_none() is None else str(_uuid.uuid4())
+            )
+        await session.commit()
+        logger.info("Backfill users.oidc_sub : %d utilisateur(s) migré(s)", len(users))
 
 
 def _strip_sql_comments(sql_block: str) -> str:

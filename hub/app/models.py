@@ -192,6 +192,8 @@ class User(Base):
     username = Column(String(50), unique=True, index=True, nullable=False)
     uuid = Column(String(36), unique=True, index=True, nullable=True,
                   default=lambda: str(_uuid.uuid4()))  # Identifiant stable immuable
+    oidc_sub = Column(String(50), unique=True, index=True, nullable=True,
+                      comment="Identifiant OIDC immuable (sub émis aux clients) — jamais renommé")
     prenom = Column(String(100), nullable=True)  # Prénom état civil (éditable par admin)
     nom = Column(String(100), nullable=True)  # Nom état civil (éditable par admin)
     email = Column(String(100), unique=True, index=True)

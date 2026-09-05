@@ -28,7 +28,7 @@ from app.schemas import (
     M2MObservedUsersRolesRequest, M2MObservedAppRole, M2MObservedUserData,
     M2MUserSearchItem, M2MUserSearchResponse
 )
-from app.auth import get_current_admin, get_current_entity, get_password_hash, revoke_all_user_tokens
+from app.auth import get_current_admin, get_current_entity, get_password_hash, revoke_all_user_tokens, generate_oidc_sub
 from app.routes.audit import log_action
 
 router = APIRouter(prefix="/api/users", tags=["Users"])
@@ -335,7 +335,8 @@ async def create_user(
         hashed_password=get_password_hash(user_data.password),
         is_admin=user_data.is_admin,
         must_change_password=user_data.must_change_password,
-        can_change_password=user_data.can_change_password
+        can_change_password=user_data.can_change_password,
+        oidc_sub=await generate_oidc_sub(db, user_data.username)
     )
     db.add(user)
     await db.commit()
@@ -1201,7 +1202,10 @@ async def bulk_create_users(
                 ),
                 can_change_password=(
                     user_data.can_change_password
-                )
+                ),
+                # Helper appelé par ligne : volumes CSV faibles, on privilégie
+                # la cohérence de la règle anti-collision (username recyclé).
+                oidc_sub=await generate_oidc_sub(db, user_data.username)
             )
             db.add(user)
             await db.flush()  # Pour obtenir l'ID

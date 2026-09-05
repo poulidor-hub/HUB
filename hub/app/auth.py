@@ -38,6 +38,20 @@ def generate_jti() -> str:
     return secrets.token_hex(16)
 
 
+async def generate_oidc_sub(db: AsyncSession, username: str) -> str:
+    """oidc_sub d'un nouveau compte : username si libre, sinon uuid4.
+
+    Collision possible uniquement si le username a été recyclé après le
+    renommage d'un autre utilisateur (qui conserve l'ancien comme oidc_sub).
+    """
+    result = await db.execute(select(User).where(User.oidc_sub == username))
+    if result.scalar_one_or_none() is None:
+        return username
+    import uuid as _uuid
+
+    return str(_uuid.uuid4())
+
+
 def create_access_token(
     username: str,
     apps: dict,  # Dict {app_slug: role}

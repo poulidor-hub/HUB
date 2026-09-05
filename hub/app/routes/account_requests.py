@@ -26,7 +26,7 @@ from app.models import (
     User, UserAppRole, UserTag, AccountRequest, AppSetting, UserMessage,
     user_profiles, utcnow,
 )
-from app.auth import get_password_hash, get_current_admin
+from app.auth import get_password_hash, get_current_admin, generate_oidc_sub
 from app.schemas import (
     AccountRequestCreate, AccountRequestResponse,
     AccountRequestStatusResponse, AccountRequestReview,
@@ -520,6 +520,7 @@ async def approve_account_request(
         is_admin=False,
         must_change_password=False,
         can_change_password=True,
+        oidc_sub=await generate_oidc_sub(db, final_username),
     )
     db.add(user)
     await db.flush()
