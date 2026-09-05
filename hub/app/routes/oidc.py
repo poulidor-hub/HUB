@@ -342,9 +342,12 @@ async def launch_oidc(
             403, f"Accès refusé à l'app '{app_slug}' (rôle manquant)"
         )
 
-    # 5. Lookup user pour audit (sub du JWT HUB = username ; fallback oidc_sub
-    # couvert par le helper au cas où le sub serait l'oidc_sub d'un renommé)
-    user = await resolve_user_by_oidc_sub(db, username)
+    # 5. Lookup user pour audit — Le sub du JWT applicatif EST le username
+    # (jamais renommé côté applicatif) — lookup par username, PAS par oidc_sub
+    # (le fallback oidc_sub du helper résoudrait vers l'ancien porteur du
+    # username en cas de recyclage, et attribuerait audit/présence au mauvais user).
+    result = await db.execute(select(User).where(User.username == username))
+    user = result.scalar_one_or_none()
     if not user:
         raise HTTPException(401, f"Utilisateur '{username}' introuvable")
 

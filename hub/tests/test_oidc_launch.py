@@ -5,9 +5,12 @@ puis redirige vers le frontend_url de l'app HUB liée (page de login OIDC du
 client externe, ex: Vikunja /auth/openid/auth). SANS access_token dans l'URL
 finale (sinon l'app externe l'interprète comme un retour de flow OIDC).
 """
+import uuid
+
 import pytest
 from httpx import AsyncClient
-from app.models import Application, OAuthClient
+from sqlalchemy import select
+from app.models import Application, AuditLog, OAuthClient, User, UserSession
 from app.auth import create_access_token, get_password_hash
 from tests.conftest import get_auth_header
 
@@ -149,3 +152,61 @@ class TestLaunchRedirector:
             follow_redirects=False,
         )
         assert response.status_code == 403
+
+    @pytest.mark.asyncio
+    async def test_launch_recycled_username_resolves_by_pure_username(
+        self, client: AsyncClient, async_session, vikunja_app_and_client
+    ):
+        """Username recyclé : le lancement attribue audit + présence à B, pas A.
+
+        Le sub du JWT applicatif EST le username (jamais renommé côté
+        applicatif) : le lookup ici est par username PUR, PAS par oidc_sub.
+        Scénario : A renommé jdupont→jmartin (garde oidc_sub=jdupont) ;
+        B créé avec username=jdupont (oidc_sub=uuid). Le fallback oidc_sub
+        du helper résoudrait vers A (mauvais user pour audit/présence).
+        """
+        user_a = User(
+            username="jmartin", email="a@example.com",
+            hashed_password=get_password_hash("x"),
+            oidc_sub="jdupont", is_active=True,
+        )
+        user_b = User(
+            username="jdupont", email="b@example.com",
+            hashed_password=get_password_hash("x"),
+            oidc_sub=str(uuid.uuid4()), is_active=True,
+        )
+        async_session.add_all([user_a, user_b])
+        await async_session.commit()
+        await async_session.refresh(user_a)
+        await async_session.refresh(user_b)
+
+        token, _, _ = create_access_token(
+            username=user_b.username, apps={"vikunja": "user"}
+        )
+        response = await client.get(
+            "/api/oidc/launch/vikunja",
+            params={"access_token": token},
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+
+        # Audit attribué à B (porteur actuel du username), pas à A (renommé)
+        result = await async_session.execute(
+            select(AuditLog).where(
+                AuditLog.action == "oidc_launch", AuditLog.target == "vikunja"
+            )
+        )
+        audit = result.scalar_one_or_none()
+        assert audit is not None
+        assert audit.user_id == user_b.id
+        assert audit.user_id != user_a.id
+
+        # Présence de session créée pour B, aucune pour A
+        result = await async_session.execute(
+            select(UserSession).where(UserSession.user_id == user_b.id)
+        )
+        assert result.scalar_one_or_none() is not None
+        result = await async_session.execute(
+            select(UserSession).where(UserSession.user_id == user_a.id)
+        )
+        assert result.scalar_one_or_none() is None
