@@ -1,6 +1,7 @@
 """Renommage exceptionnel du login : tracé, révocatoire, unique."""
 import pytest
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 
 from app.auth import create_access_token
 from app.models import User
@@ -113,3 +114,67 @@ async def test_rename_writes_audit_entry(client, admin_user, test_user):
         entry = result.scalar_one()
         assert entry.target == f"{old} -> jmartin"
         assert entry.response_status == 200
+
+
+@pytest.mark.asyncio
+async def test_rename_revokes_oidc_refresh_tokens(client, admin_user, test_user, async_session):
+    """Le rename révoque aussi les refresh tokens OIDC (sessions SSO tierces : Vikunja…)."""
+    from app.models import OAuthClient, OAuthRefreshToken
+
+    oauth_client = OAuthClient(client_id="oc_test", client_secret_hash="x", name="Vikunja")
+    async_session.add(oauth_client)
+    await async_session.flush()
+
+    rt = OAuthRefreshToken(
+        token_hash="rt-hash-test-1",
+        client_id="oc_test",
+        user_id=test_user.id,
+        scope="openid profile",
+        expires_at=None,
+    )
+    async_session.add(rt)
+    await async_session.commit()
+    assert rt.revoked_at is None
+
+    token, _, _ = create_access_token(username=admin_user.username, apps={})
+
+    response = await client.post(
+        f"/api/users/{test_user.id}/rename",
+        json={"username": "jmartin"},
+        headers=get_auth_header(token),
+    )
+    assert response.status_code == 200
+
+    await async_session.refresh(rt)
+    assert rt.revoked_at is not None
+
+
+@pytest.mark.asyncio
+async def test_rename_race_returns_409(client, admin_user, test_user, async_session, monkeypatch):
+    """Deux renames concurrents : le second lève IntegrityError (contrainte UNIQUE) → 409, pas 500."""
+    original_commit = async_session.commit
+    calls = {"n": 0}
+
+    async def flaky_commit(*args, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise IntegrityError(
+                "UPDATE users SET username=:username",
+                {},
+                Exception("UNIQUE constraint failed: users.username"),
+            )
+        return await original_commit(*args, **kwargs)
+
+    monkeypatch.setattr(async_session, "commit", flaky_commit)
+
+    token, _, _ = create_access_token(username=admin_user.username, apps={})
+
+    response = await client.post(
+        f"/api/users/{test_user.id}/rename",
+        json={"username": "jmartin"},
+        headers=get_auth_header(token),
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "Ce nom d'utilisateur existe déjà"
+    assert calls["n"] == 1

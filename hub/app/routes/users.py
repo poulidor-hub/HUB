@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, Query, UploadFile
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, delete, func, or_
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 from typing import List, Optional, Dict, Union
 from pydantic import BaseModel
@@ -14,7 +15,7 @@ from app.routes.events import notify_event, notify_stats_update
 from app.models import (
     User, Application, UserAppRole, ServiceAccount,
     AppRole, DEFAULT_ROLES, Profile, ProfileAppRole, user_profiles, AuditLog,
-    highest_role,
+    highest_role, OAuthRefreshToken, utcnow,
 )
 from app.schemas import (
     UserCreate, UserUpdate, UserRenameRequest, UserResponse, UserAppRoleResponse, PaginatedUsersResponse,
@@ -614,7 +615,12 @@ async def update_user(
         )
     
     update_data = user_data.model_dump(exclude_unset=True)
-    
+
+    # Normaliser prenom/nom : trim, et une valeur blanche équivaut à None
+    for _f in ("prenom", "nom"):
+        if _f in update_data and update_data[_f] is not None:
+            update_data[_f] = update_data[_f].strip() or None
+
     # Extraire profile_ids pour traitement séparé
     profile_ids = update_data.pop("profile_ids", None)
     
@@ -712,10 +718,29 @@ async def rename_user(
                 detail="Ce nom d'utilisateur existe déjà",
             )
         user.username = new_username
-    await db.commit()
+    try:
+        await db.commit()
+    except IntegrityError:
+        # Course TOCTOU : un rename concurrent a pris l'identifiant entre-temps
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Ce nom d'utilisateur existe déjà",
+        )
 
     # Révoquer les tokens : l'ancien JWT (sub=ancien username) ne résout plus
     await revoke_all_user_tokens(db, user_id)
+
+    # Révoquer aussi les refresh tokens OIDC (sessions SSO tierces : Vikunja…)
+    result = await db.execute(
+        select(OAuthRefreshToken).where(
+            OAuthRefreshToken.user_id == user_id,
+            OAuthRefreshToken.revoked_at.is_(None),
+        )
+    )
+    for rt in result.scalars():
+        rt.revoked_at = utcnow()
+
     notify_event(
         "force_logout",
         {

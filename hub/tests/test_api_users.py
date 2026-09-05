@@ -313,6 +313,30 @@ class TestUsersEndpoints:
         assert data["uuid"] is not None
 
     @pytest.mark.asyncio
+    async def test_update_user_trims_prenom_nom(
+        self, client: AsyncClient, admin_user: User, test_user: User, async_session
+    ):
+        """prenom/nom sont trimés serveur ; une valeur blanche devient None."""
+        token, _, _ = create_access_token(username=admin_user.username, apps={})
+
+        response = await client.patch(
+            f"/api/users/{test_user.id}",
+            json={"prenom": "  Julie  ", "nom": " "},
+            headers=get_auth_header(token),
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["prenom"] == "Julie"
+        assert data["nom"] is None
+
+        from sqlalchemy import select
+        result = await async_session.execute(select(User).where(User.id == test_user.id))
+        db_user = result.scalar_one()
+        assert db_user.prenom == "Julie"
+        assert db_user.nom is None
+
+    @pytest.mark.asyncio
     async def test_update_user_prenom_nom_ignored_for_non_admin(self, client: AsyncClient, test_user: User):
         """Un non-admin ne peut pas modifier prénom/nom."""
         token, _, _ = create_access_token(username=test_user.username, apps={})
