@@ -5,6 +5,18 @@
 
 ---
 
+## [3.47.5] - 6 septembre 2026
+
+### 🐛 Snapshots : la propre ligne du snapshot n'embarque plus dans le dump
+
+| Élément | Description |
+|---------|-------------|
+| Fix auto-référence | `run_pg_dump` ajoute `--exclude-table=hub_snapshots` : la ligne du snapshot en cours (statut `running` au moment du dump) n'est plus capturée dans l'archive. Auparavant, au restore, le kill-switch la requalifiait `failed` (« Snapshot interrompu ») — cosmétique mais trompeur dans la liste des snapshots du hub restauré. |
+| Effet bord assumé | L'historique des snapshots ne transite plus par l'archive (les fichiers `.enc` de `storage/snapshots` n'y transitaient de toute façon pas). Sur restore bare-metal, la ligne insérée manuellement par le runbook **survit** désormais au `pg_restore --clean` (table hors dump). |
+| Tests | `test_pg_dump_excludes_own_snapshots_table` : assertion du flag dans la commande pg_dump (4/4 collecteurs). |
+
+---
+
 ## [3.47.4] - 6 septembre 2026
 
 ### 🛡️ Imports de backups > 1 Mo (413) + restore robuste des snapshots legacy

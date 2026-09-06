@@ -1,10 +1,11 @@
 """Tests du collector apps_code (capture du code APPS/ pour le PRA)."""
 import tarfile
+from pathlib import Path
 
 import pytest
 
 from app import snapshot_collectors
-from app.snapshot_collectors import run_apps_code_tar
+from app.snapshot_collectors import run_apps_code_tar, run_pg_dump
 
 
 def _make_app_tree(base):
@@ -78,3 +79,31 @@ async def test_apps_code_tar_tolerates_exit_1_file_changed(tmp_path, monkeypatch
 
     assert stats["size_bytes"] == 300
     assert stats["apps_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_pg_dump_excludes_own_snapshots_table(tmp_path, monkeypatch):
+    """Le dump ne doit PAS embarquer la table hub_snapshots : la propre ligne du
+    snapshot y serait capturee au statut 'running' et, au restore, requalifiee
+    'failed' par le kill-switch (quirk auto-reference)."""
+    captured = {}
+
+    class _FakeProc:
+        returncode = 0
+        async def communicate(self):
+            return b"", b""
+
+    async def _fake_exec(*cmd, **kwargs):
+        captured["cmd"] = list(cmd)
+        # Creer le fichier de sortie attendu par run_pg_dump
+        out = Path(cmd[cmd.index("--file") + 1])
+        out.write_bytes(b"PGDMP" * 10)
+        return _FakeProc()
+
+    import asyncio as _asyncio
+    monkeypatch.setattr(_asyncio, "create_subprocess_exec", _fake_exec)
+
+    stats = await run_pg_dump(tmp_path, "postgresql+asyncpg://hub:pw@db:5432/hub_auth")
+
+    assert "--exclude-table=hub_snapshots" in captured["cmd"]
+    assert stats["size_bytes"] > 0

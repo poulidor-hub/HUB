@@ -54,6 +54,10 @@ async def run_pg_dump(temp_dir: Path, db_url: str) -> dict:
         "--format=custom",
         "--no-owner",
         "--no-acl",
+        # La propre ligne du snapshot (status 'running' au moment du dump)
+        # ne doit pas voyager dans l'archive : au restore, le kill-switch la
+        # requalifierait 'failed'. La table est recreee par migrations/init_db.
+        "--exclude-table=hub_snapshots",
         "--file", str(output_path),
     ]
 
