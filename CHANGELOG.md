@@ -5,6 +5,21 @@
 
 ---
 
+## [3.48.0] - 6 septembre 2026
+
+### 🏭 Atelier : accès par utilisateur — socle données (lot 1)
+
+| Élément | Description |
+|---------|-------------|
+| Migration 058 | Table `user_workshop_access` (user_id × app_id, UNIQUE, FK `ON DELETE CASCADE`, 2 index) — l'activation référence **toujours l'app de base** (jamais la `-ws`) : elle survit à la suppression/recréation de l'atelier. Idempotente (`IF NOT EXISTS`). |
+| Modèle + helpers | Relation SQLAlchemy `UserWorkshopAccess` (+102 l. models) ; helpers `workshop_role_for_app()` et `get_apps_with_roles_and_workshops()` pour la visibilité des apps `-ws` par utilisateur. |
+| Spec | Design validé : `docs/superpowers/specs/2026-09-06-atelier-user-access-design.md` (API `workshop_access` en tableau, full-sync) — lots suivants : endpoints + UI. |
+| Tests | `test_workshop_access.py` : 9 tests (socle données/helpers). |
+
+> Merge de la branche `feat/atelier-user-access` (rebasée sur 3.47.5) — travaux parallèles validés : 27 tests de l'état fusionné passants.
+
+---
+
 ## [3.47.5] - 6 septembre 2026
 
 ### 🐛 Snapshots : la propre ligne du snapshot n'embarque plus dans le dump
