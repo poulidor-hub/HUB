@@ -1,9 +1,25 @@
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, model_validator
 from typing import Optional, List, Dict, Any
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 
 from app.models import highest_role
+
+
+def to_naive_utc(value: Optional[datetime]) -> Optional[datetime]:
+    """Normalise un datetime en naive UTC.
+
+    Convention du parc : les colonnes DateTime sont des TIMESTAMP WITHOUT TIME ZONE
+    et le code applicatif manipule des datetimes naive UTC (cf. app.models.utcnow).
+    asyncpg refuse d'encoder un datetime aware vers ces colonnes
+    ("can't subtract offset-naive and offset-aware datetimes").
+
+    Si la valeur est timezone-aware, on convertit d'abord en UTC (vrai décalage)
+    puis on retire le tzinfo ; une valeur naive passe inchangée.
+    """
+    if value is not None and value.tzinfo is not None:
+        return value.astimezone(timezone.utc).replace(tzinfo=None)
+    return value
 
 
 class GrantType(str, Enum):
@@ -1630,6 +1646,13 @@ class MessageCreate(BaseModel):
     scheduled_at: Optional[datetime] = None  # Envoi differe
     template_id: Optional[int] = None  # Template pre-remplissage
 
+    @field_validator("expires_at", "scheduled_at", mode="after")
+    @classmethod
+    def _naive_utc_datetimes(cls, v: Optional[datetime]) -> Optional[datetime]:
+        # Une ISO 8601 avec "Z"/offset produit un datetime aware que asyncpg
+        # refuse pour les colonnes TIMESTAMP WITHOUT TIME ZONE → naive UTC.
+        return to_naive_utc(v)
+
 
 class MessageM2MCreate(BaseModel):
     """Création d'un message par une application (M2M)"""
@@ -1643,6 +1666,11 @@ class MessageM2MCreate(BaseModel):
     # Champs de renvoi (optionnels, rétro-compatible)
     is_resend: Optional[bool] = False
     original_hub_message_id: Optional[int] = None
+
+    @field_validator("expires_at", mode="after")
+    @classmethod
+    def _naive_utc_expires_at(cls, v: Optional[datetime]) -> Optional[datetime]:
+        return to_naive_utc(v)
 
 
 class MessageBrief(BaseModel):
