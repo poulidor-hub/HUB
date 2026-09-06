@@ -5,6 +5,18 @@
 
 ---
 
+## [3.47.4] - 6 septembre 2026
+
+### 🛡️ Imports de backups > 1 Mo (413) + restore robuste des snapshots legacy
+
+| Élément | Description |
+|---------|-------------|
+| Fix 413 nginx | Aucun `client_max_body_size` n'était défini dans les server blocks du hub (`nginx.conf` :80, `nginx-ssl.conf` :80/:443) → défaut nginx 1 Mio : tout import de backup chiffré > 1 Mo était rejeté en 413 par le reverse proxy avant d'atteindre l'API. Fix : `client_max_body_size 50M` (cohérent avec `nginx-philia-ng.conf`). Rebuild image `hub-frontend` requis. |
+| Réconciliation snapshots legacy | Nouvelle étape dans `restore_snapshot.py` (après `pg_restore`, avant le boot) : `_reconcile_forked_migrations()` détecte les migrations homonymes divergentes entre dépôts (fourche 027 : `add_port_allocations` ici vs normalisation de données sur un hub legacy) via l'absence de la table attendue, et purge la ligne de `schema_migrations` → le boot rejoue notre 027 idempotente. **No-op sur restore normal** (tables présentes), extensibles via `FORKED_MIGRATIONS`. Nécessaire au scénario de migration legacy → hub neuf. |
+| Tests | 3 nouveaux tests SQLite (`test_restore_snapshot.py`) : purge si table absente, no-op si table présente, tolérance DB sans `schema_migrations` (6/6). |
+
+---
+
 ## [3.47.3] - 6 septembre 2026
 
 ### ⚡ Atelier : fuite d'env hub vers les apps + fiches -ws fantômes (fix)
