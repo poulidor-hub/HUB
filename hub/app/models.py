@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, BigInteger, String, Boolean, DateTime, ForeignKey, Text, Table, Enum as SQLEnum, JSON, UniqueConstraint, Index, func
+from sqlalchemy import Column, Integer, BigInteger, String, Boolean, DateTime, ForeignKey, Text, Table, Enum as SQLEnum, JSON, UniqueConstraint, Index, func, select
 from sqlalchemy.orm import relationship
 from datetime import datetime, timezone
 from typing import Optional
@@ -221,6 +221,9 @@ class User(Base):
     seen_tag_categories = relationship(
         "UserTagSeen", back_populates="user", cascade="all, delete-orphan", lazy="raise"
     )
+    workshop_access_links = relationship(
+        "UserWorkshopAccess", back_populates="user", cascade="all, delete-orphan"
+    )
     
     @property
     def applications(self):
@@ -323,6 +326,10 @@ class Application(Base):
     
     # Relations (lazy='raise' pour forcer selectinload explicite en async)
     user_roles = relationship("UserAppRole", back_populates="application", cascade="all, delete-orphan", lazy="raise")
+    workshop_access = relationship(
+        "UserWorkshopAccess", back_populates="application",
+        cascade="all, delete-orphan", lazy="raise",
+    )
     approved_by = relationship("User", foreign_keys=[approved_by_id], lazy="raise")
     available_roles = relationship("AppRole", back_populates="application", cascade="all, delete-orphan", lazy="raise")
     service_accounts = relationship("ServiceAccount", secondary=service_account_app_access, back_populates="applications", lazy="raise")
@@ -1066,3 +1073,27 @@ class GithubRepoCache(Base):
     private = Column(Boolean, default=False, nullable=False)
     updated_at_github = Column(DateTime, nullable=True)
     fetched_at = Column(DateTime, server_default=func.now(), nullable=False)
+
+
+class UserWorkshopAccess(Base):
+    """Accès atelier par utilisateur : (user, app de base) -> voit {slug}-ws.
+
+    L'activation référence TOUJOURS l'app de base (jamais la -ws) : elle
+    survit à la suppression/recréation de l'atelier. Évaluée à la lecture
+    (get_apps_with_roles_and_workshops) — aucune matérialisation vers l'app -ws.
+    """
+    __tablename__ = "user_workshop_access"
+    __table_args__ = (
+        UniqueConstraint("user_id", "app_id", name="uq_user_workshop_access_user_app"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
+    app_id = Column(Integer, ForeignKey('applications.id', ondelete='CASCADE'), nullable=False)
+    created_at = Column(DateTime, default=utcnow)
+
+    user = relationship("User", back_populates="workshop_access_links")
+    application = relationship("Application", back_populates="workshop_access")
+
+    def __repr__(self):
+        return f"<UserWorkshopAccess user={self.user_id} app={self.app_id}>"
