@@ -1,5 +1,6 @@
 from sqlalchemy import Column, Integer, BigInteger, String, Boolean, DateTime, ForeignKey, Text, Table, Enum as SQLEnum, JSON, UniqueConstraint, Index, func, select
 from sqlalchemy.orm import relationship
+from sqlalchemy.ext.asyncio import AsyncSession
 from datetime import datetime, timezone
 from typing import Optional
 import secrets
@@ -248,9 +249,75 @@ class User(Base):
             if ut.category.is_active:
                 result.setdefault(ut.category.slug, []).append(ut.value)
         return result
-    
+
     def __repr__(self):
         return f"<User {self.username}>"
+
+
+async def workshop_role_for_app(db: AsyncSession, user_id: int,
+                                app_slug: str) -> Optional[str]:
+    """Rôle de l'utilisateur sur l'atelier app_slug via user_workshop_access.
+
+    'user' si l'utilisateur a une activation sur l'app de base de app_slug ET
+    que l'atelier existe (is_workshop=True, is_active=True) ; sinon None.
+    """
+    if not app_slug.endswith("-ws"):
+        return None
+    link = await db.execute(
+        select(Application.id)
+        .join(UserWorkshopAccess, UserWorkshopAccess.app_id == Application.id)
+        .where(
+            UserWorkshopAccess.user_id == user_id,
+            Application.slug == app_slug[:-3],
+        )
+    )
+    if link.scalar_one_or_none() is None:
+        return None
+    ws = await db.execute(
+        select(Application.id).where(
+            Application.slug == app_slug,
+            Application.is_workshop.is_(True),
+            Application.is_active.is_(True),
+        )
+    )
+    return "user" if ws.scalar_one_or_none() is not None else None
+
+
+async def get_apps_with_roles_and_workshops(user: "User",
+                                            db: AsyncSession) -> dict:
+    """Map {app_slug: rôle} de l'utilisateur + ses ateliers autorisés.
+
+    Étend get_apps_with_roles() : pour chaque activation user_workshop_access
+    pointant une app de base X, ajoute {X.slug}-ws: 'user' si l'atelier existe
+    et est actif. setdefault : une attribution explicite existante gagne.
+
+    Autonome : requête directe sur user_app_roles (pas de prérequis
+    selectinload — les relations User sont lazy='raise').
+    """
+    roles_result = await db.execute(
+        select(Application.slug, UserAppRole.role)
+        .join(UserAppRole, UserAppRole.app_id == Application.id)
+        .where(UserAppRole.user_id == user.id)
+    )
+    apps = {slug: role for slug, role in roles_result.all()}
+    links = await db.execute(
+        select(Application.slug)
+        .join(UserWorkshopAccess, UserWorkshopAccess.app_id == Application.id)
+        .where(UserWorkshopAccess.user_id == user.id)
+    )
+    base_slugs = [row[0] for row in links.all()]
+    if not base_slugs:
+        return apps
+    ws_apps = await db.execute(
+        select(Application).where(
+            Application.slug.in_([s + "-ws" for s in base_slugs]),
+            Application.is_workshop.is_(True),
+            Application.is_active.is_(True),
+        )
+    )
+    for ws_app in ws_apps.scalars().all():
+        apps.setdefault(ws_app.slug, "user")
+    return apps
 
 
 class VpnPeer(Base):
