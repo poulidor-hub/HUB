@@ -5,6 +5,21 @@
 
 ---
 
+## [3.47.3] - 6 septembre 2026
+
+### ⚡ Atelier : fuite d'env hub vers les apps + fiches -ws fantômes (fix)
+
+| Élément | Description |
+|---------|-------------|
+| Fix env | `_ws_compose_env` ne transmet plus l'env du conteneur hub-api au `docker compose` atelier : allowlist `_COMPOSE_ENV_ALLOWLIST` (PATH/HOME/locales + DOCKER_*) via le nouveau paramètre `env_base` de `_run_cmd` (défaut `os.environ`, rétrocompatible). Cause : collision de nom `HUB_HTTPS_ENABLED` (hub = « le hub sert du HTTPS » ≠ app = « joindre l'API hub en HTTPS ») → app atelier en HTTPS sur le port HTTP du hub (`SSL WRONG_VERSION_NUMBER`), enregistrement + JWKS en échec, atelier invisible (« Mode dégradé ») |
+| Périmètre env | Couvre create/update/remove/ship (compose atelier, make prod et rollback) ET `_op_recreate` (même classe de fuite vers les apps prod recréées depuis l'UI) |
+| Fix fantômes | Suppression d'atelier (remove et ship) : la fiche `Application {slug}-ws` enregistrée par l'app est désormais supprimée (`_delete_workshop_app_row`, garde `is_workshop=True`, réutilise `delete_app_cascade` : SA owner, ports, cascades), appel best-effort non bloquant. Sans cela, les lignes fantômes pointaient sur des ports réattribués à un autre atelier → mauvaise app ouverte depuis le hub |
+| Tests | 10 nouveaux (allowlist, non-fuite create/ship/recreate, suppression fiche nominale/garde prod/absente/échec non bloquant) — 43/43 workshop, suite complète verte |
+| Remédiation prod | Atelier exemple-app-ws recréé avec env sain (enregistrement OK) ; 4 fiches fantômes nettoyées en DB (exemple-app-ws, canari-ws, exemple-app-api-v3-ws, test-template-ws) |
+| Limites | hubctl (CLI hôte) garde `{**os.environ, ...}` : sans risque sauf si le shell hôte exporte des clés en collision ; parité à prévoir (sous-module hubctl_src) |
+
+---
+
 ## [3.47.2] - 5 septembre 2026
 
 ### 🔁 SLO poste partagé : revoke distant normalisé (username courant + oidc_sub) (fix)
