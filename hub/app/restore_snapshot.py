@@ -13,8 +13,9 @@ from urllib.parse import urlparse
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
+from sqlalchemy.inspection import inspect as sa_inspect
 
 import zstandard as zstd
 from cryptography.hazmat.primitives import hashes, serialization
@@ -52,6 +53,51 @@ def _extract_apps_code(extract_dir: Path) -> bool:
     shutil.unpack_archive(str(apps_code_tar), str(APPS_SOURCE_DIR), filter="data")
     logger.info(f"Code apps restaure vers {APPS_SOURCE_DIR}")
     return True
+
+
+# Migrations dont le contenu diverge entre ce repo et les hubs legacy derives
+# (ex. hub-legacy) : même numero, SQL différent. La 027 du hub neuf cree
+# port_allocations ; celle d'un hub legacy est une normalisation de données.
+FORKED_MIGRATIONS = (
+    # (version, table attendue par notre 027)
+    ("027", "port_allocations"),
+)
+
+
+async def _reconcile_forked_migrations(engine) -> list:
+    """Apres un pg_restore venu d'un hub legacy, purge les lignes schema_migrations
+    dont le contenu a diverge, pour que le boot rejoue NOS migrations idempotentes.
+
+    Detection : la version est marquee appliquee mais la table qu'elle cree ici
+    n'existe pas → c'est la migration homonyme d'un autre repo qui a tourne.
+    No-op sur un restore normal (tables presentes). Retourne les versions purgees.
+    """
+    reconciled = []
+    try:
+        async with engine.begin() as conn:
+            rows = (await conn.execute(text("SELECT version FROM schema_migrations"))).fetchall()
+        applied = {r[0] for r in rows}
+    except Exception as e:
+        logger.warning(f"schema_migrations illisible, reconciliation ignoree: {e}")
+        return reconciled
+
+    for version, table in FORKED_MIGRATIONS:
+        if version not in applied:
+            continue
+        async with engine.connect() as conn:
+            has_table = await conn.run_sync(lambda c: sa_inspect(c).has_table(table))
+        if has_table:
+            continue
+        async with engine.begin() as conn:
+            await conn.execute(
+                text("DELETE FROM schema_migrations WHERE version = :v"), {"v": version}
+            )
+        reconciled.append(version)
+        logger.warning(
+            f"Migration {version} divergee (hub legacy) purgee de schema_migrations : "
+            f"table '{table}' absente → elle sera rejouee au boot."
+        )
+    return reconciled
 
 
 async def run_restore(snapshot_id: str):
@@ -169,6 +215,14 @@ async def run_restore(snapshot_id: str):
             if proc.returncode == 1:
                 logger.warning(f"pg_restore warnings: {stderr.decode()[:500]}")
             logger.info("pg_restore OK")
+
+            # Le dump peut venir d'un hub legacy avec des migrations homonymes
+            # divergentes → réconcilier AVANT le boot (apply_migrations).
+            engine_reco = create_async_engine(DATABASE_URL, echo=False)
+            try:
+                await _reconcile_forked_migrations(engine_reco)
+            finally:
+                await engine_reco.dispose()
 
         files_dir = extract_dir / "files"
         if (files_dir / "secrets.tar").exists():
