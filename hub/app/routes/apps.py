@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, Request, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 from typing import List, Optional, Union, Dict
 from datetime import datetime, timezone
@@ -776,6 +777,12 @@ async def update_my_role(
     
     if role:
         # Définir/modifier le rôle
+        # Ids + nom capturés AVANT le try : après un rollback/commit,
+        # current_user/app sont expirés et tout accès attribut déclencherait
+        # un lazy load interdit (MissingGreenlet).
+        user_id_val = current_user.id
+        app_id_val = app.id
+        app_name_val = app.name
         if existing_role:
             existing_role.role = role
         else:
@@ -785,23 +792,43 @@ async def update_my_role(
                 role=role
             )
             db.add(new_role)
+
+        try:
+            await db.commit()
+        except IntegrityError:
+            # Course check-then-insert : la ligne a été créée par une requête
+            # concurrente entre notre SELECT et notre commit (ex. double-fire
+            # du sélecteur « Mon rôle »). Idempotent : rollback, reprise de la
+            # ligne existante, mise à jour du rôle, 200.
+            await db.rollback()
+            role_result = await db.execute(
+                select(UserAppRole).where(
+                    UserAppRole.user_id == user_id_val,
+                    UserAppRole.app_id == app_id_val
+                )
+            )
+            existing_role = role_result.scalar_one_or_none()
+            if existing_role is None:
+                raise
+            existing_role.role = role
+            await db.commit()
         
         await log_action(
             db=db,
-            user_id=current_user.id,
+            user_id=user_id_val,
             action="update_my_role",
             target=app_slug,
             ip_address=request.client.host if request and request.client else None,
             user_agent=request.headers.get("user-agent", "") if request else "",
-            details=f"Rôle défini à '{role}' sur {app.name}"
+            details=f"Rôle défini à '{role}' sur {app_name_val}"
         )
         
         await db.commit()
         
         return {
-            "message": f"Rôle '{role}' défini sur {app.name}",
+            "message": f"Rôle '{role}' défini sur {app_name_val}",
             "app_slug": app_slug,
-            "app_name": app.name,
+            "app_name": app_name_val,
             "my_role": role
         }
     else:
