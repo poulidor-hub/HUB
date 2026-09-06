@@ -274,15 +274,69 @@ def _alloc_subnet() -> str | None:
 
 # ── Env compose atelier ──
 
+# Clés transmises aux sous-processus docker compose / make (accès docker +
+# locales). JAMAIS l'env complet du hub-api : certaines clés du hub partagent
+# leur nom avec des clés des apps mais avec un AUTRE sens — ex. HUB_HTTPS_ENABLED
+# (hub : « le hub sert du HTTPS » ≠ app : « joindre l'API hub en HTTPS »). En
+# passant l'env hub au compose, l'interpolation ${VAR:-défaut} du
+# docker-compose.yml de l'app écrasait le .env de l'app → app atelier en HTTPS
+# sur le port HTTP du hub (SSL WRONG_VERSION_NUMBER) : enregistrement + JWKS en
+# échec, atelier invisible (« Mode dégradé »). Le compose lit lui-même
+# APPS/X/.env (source canonique) : l'OS ne doit rien lui imposer.
+_COMPOSE_ENV_ALLOWLIST = (
+    "PATH", "HOME", "TZ", "LANG", "LC_ALL",
+    "DOCKER_HOST", "DOCKER_CONTEXT", "DOCKER_CONFIG", "DOCKER_API_VERSION",
+    "DOCKER_TLS_VERIFY", "DOCKER_CERT_PATH",
+)
+
+
+def _compose_base_env() -> dict[str, str]:
+    """Env minimal (allowlist) pour tout sous-processus compose/make du hub."""
+    return {k: os.environ[k] for k in _COMPOSE_ENV_ALLOWLIST if k in os.environ}
+
+
 def _ws_compose_env(slug: str) -> dict[str, str]:
-    """os.environ + .workshop.env + APP_VERSION du tree (parité hubctl)."""
-    env = {**os.environ, **_read_env_file(_ws_env_path(slug))}
+    """Allowlist + .workshop.env + APP_VERSION du tree (parité hubctl).
+
+    L'environnement du hub-api n'est volontairement PAS transmis (cf.
+    _COMPOSE_ENV_ALLOWLIST)."""
+    env = _compose_base_env()
+    env.update(_read_env_file(_ws_env_path(slug)))
     version_file = get_apps_dir() / slug / "VERSION"
     if version_file.exists():
         v = version_file.read_text().strip()
         if v:
             env["APP_VERSION"] = v
     return env
+
+
+async def _delete_workshop_app_row(ws_slug: str) -> bool:
+    """Supprime la fiche Hub de l'app atelier ({slug}-ws).
+
+    Sans cela, la ligne Application auto-enregistrée par l'app -ws reste en DB
+    après suppression de l'atelier (ligne « fantôme ») : ses URLs pointent alors
+    sur des ports réattribués à un autre atelier → la menu hub ouvre la
+    mauvaise app. Garde-fou : seules les fiches is_workshop=True sont visées.
+    True si supprimée, False si absente (l'appelant traite les erreurs)."""
+    from sqlalchemy.orm import selectinload
+
+    from app.database import async_session_maker
+    from app.models import Application
+    from app.routes.apps import delete_app_cascade
+
+    async with async_session_maker() as db:
+        result = await db.execute(
+            select(Application)
+            .options(selectinload(Application.service_accounts))
+            .where(Application.slug == ws_slug,
+                   Application.is_workshop.is_(True)))
+        app = result.scalar_one_or_none()
+        if app is None:
+            return False
+        await delete_app_cascade(db, app)
+        await db.commit()
+        logger.info(f"🗑 Fiche app atelier « {ws_slug} » supprimée du Hub")
+        return True
 
 
 # ── État exposé à l'UI / sérialisation ──
@@ -439,7 +493,7 @@ async def _op_recreate(op_id: int, slug: str) -> None:
     await _run_cmd(
         ["docker", "compose", "-p", slug, "-f", str(compose_file),
          "up", "-d", "--force-recreate"],
-        app_dir, T_UP,
+        app_dir, T_UP, env_base=_compose_base_env(),
     )
 
     if api_port:
@@ -496,11 +550,11 @@ async def _op_create(op_id: int, slug: str) -> None:
 
         await _step(op_id, "build", f"docker compose -p {ws_slug} build")
         await _run_cmd(["docker", "compose", "-p", ws_slug, "-f", str(compose_file), "build"],
-                       app_dir, T_BUILD, env_extra=compose_env)
+                       app_dir, T_BUILD, env_base=compose_env)
 
         await _step(op_id, "up", f"docker compose -p {ws_slug} up -d")
         await _run_cmd(["docker", "compose", "-p", ws_slug, "-f", str(compose_file), "up", "-d"],
-                       app_dir, T_UP, env_extra=compose_env)
+                       app_dir, T_UP, env_base=compose_env)
 
         await _step(op_id, "health", f"Santé atelier (port {ws_api}, 60 s)")
         if not await _wait_healthy(ws_api, timeout=T_HEALTH):
@@ -509,7 +563,7 @@ async def _op_create(op_id: int, slug: str) -> None:
         # Rollback création : down + config + volume cloné
         try:
             await _run_cmd(["docker", "compose", "-p", ws_slug, "-f", str(compose_file), "down"],
-                           app_dir, T_UP, env_extra=compose_env)
+                           app_dir, T_UP, env_base=compose_env)
         except Exception:
             pass
         try:
@@ -572,11 +626,11 @@ async def _op_update(op_id: int, slug: str) -> None:
 
         await _step(op_id, "build", f"docker compose -p {ws_slug} build")
         await _run_cmd(["docker", "compose", "-p", ws_slug, "-f", str(compose_file), "build"],
-                       app_dir, T_BUILD, env_extra=compose_env)
+                       app_dir, T_BUILD, env_base=compose_env)
 
         await _step(op_id, "up", f"docker compose -p {ws_slug} up -d")
         await _run_cmd(["docker", "compose", "-p", ws_slug, "-f", str(compose_file), "up", "-d"],
-                       app_dir, T_UP, env_extra=compose_env)
+                       app_dir, T_UP, env_base=compose_env)
 
         await _step(op_id, "health", f"Santé atelier (port {env.get('API_PORT')}, 60 s)")
         if not await _wait_healthy(int(env.get("API_PORT", "10000")), timeout=T_HEALTH):
@@ -590,9 +644,9 @@ async def _op_update(op_id: int, slug: str) -> None:
         try:
             compose_env = _ws_compose_env(slug)
             await _run_cmd(["docker", "compose", "-p", ws_slug, "-f", str(compose_file), "build"],
-                           app_dir, T_BUILD, env_extra=compose_env)
+                           app_dir, T_BUILD, env_base=compose_env)
             await _run_cmd(["docker", "compose", "-p", ws_slug, "-f", str(compose_file), "up", "-d"],
-                           app_dir, T_UP, env_extra=compose_env)
+                           app_dir, T_UP, env_base=compose_env)
         except Exception as e2:
             logger.warning(f"rebuild rollback partiel {ws_slug}: {e2}")
         raise RuntimeError(
@@ -662,10 +716,10 @@ async def _op_ship(op_id: int, slug: str) -> None:
                 f"main {(target or 'n/a')[:8]}) — relancez la mise à jour puis revalidez.")
 
         await _step(op_id, "build", "Build prod (main @ " + ws_commit[:8] + ")")
-        await _run_cmd(build_cmd, app_dir, T_BUILD)
+        await _run_cmd(build_cmd, app_dir, T_BUILD, env_base=_compose_base_env())
 
         await _step(op_id, "up", "Démarrage prod")
-        await _run_cmd(up_cmd, app_dir, T_UP)
+        await _run_cmd(up_cmd, app_dir, T_UP, env_base=_compose_base_env())
 
         await _step(op_id, "health", "Santé prod (60 s)")
         prod_api = int(_read_env_file(app_dir / ".env").get("API_PORT", "9000"))
@@ -675,8 +729,8 @@ async def _op_ship(op_id: int, slug: str) -> None:
         await _step(op_id, "rollback", "Rollback prod — atelier conservé")
         await _restore_git(app_dir, prev_branch, prev_commit)
         try:
-            await _run_cmd(build_cmd, app_dir, T_BUILD)
-            await _run_cmd(up_cmd, app_dir, T_UP)
+            await _run_cmd(build_cmd, app_dir, T_BUILD, env_base=_compose_base_env())
+            await _run_cmd(up_cmd, app_dir, T_UP, env_base=_compose_base_env())
             await _wait_healthy(int(_read_env_file(app_dir / ".env").get("API_PORT", "9000")),
                                 timeout=T_HEALTH)
         except Exception as e2:
@@ -691,10 +745,18 @@ async def _op_ship(op_id: int, slug: str) -> None:
     compose_env = _ws_compose_env(slug)
     try:
         await _run_cmd(["docker", "compose", "-p", ws_slug, "-f", str(compose_file),
-                        "down", "-v"], app_dir, T_UP, env_extra=compose_env)
+                        "down", "-v"], app_dir, T_UP, env_base=compose_env)
     except Exception as e:
         logger.warning(f"down -v atelier échoué ({e}) — .workshop.env supprimé quand même")
     _ws_env_path(slug).unlink(missing_ok=True)
+
+    # Suppression de la fiche Hub {slug}-ws (sinon ligne « fantôme » pointant
+    # sur des ports réattribués). Non bloquant : l'atelier est déjà supprimé.
+    await _step(op_id, "cleanup", "Suppression fiche Hub de l'atelier")
+    try:
+        await _delete_workshop_app_row(ws_slug)
+    except Exception as e:
+        logger.warning(f"Suppression fiche app atelier {ws_slug} échouée : {e}")
 
     from app.models import utcnow
     version_file = app_dir / "VERSION"
@@ -720,12 +782,20 @@ async def _op_remove(op_id: int, slug: str) -> None:
     compose_env = _ws_compose_env(slug)
     try:
         await _run_cmd(["docker", "compose", "-p", ws_slug, "-f", str(compose_file),
-                        "down", "-v"], app_dir, T_UP, env_extra=compose_env)
+                        "down", "-v"], app_dir, T_UP, env_base=compose_env)
     except Exception as e:
         logger.warning(f"down -v atelier échoué ({e}) — poursuite du cleanup")
 
     await _step(op_id, "cleanup", "Suppression .workshop.env")
     _ws_env_path(slug).unlink(missing_ok=True)
+
+    # Suppression de la fiche Hub {slug}-ws (sinon ligne « fantôme » pointant
+    # sur des ports réattribués). Non bloquant : l'atelier est déjà supprimé.
+    await _step(op_id, "cleanup", "Suppression fiche Hub de l'atelier")
+    try:
+        await _delete_workshop_app_row(ws_slug)
+    except Exception as e:
+        logger.warning(f"Suppression fiche app atelier {ws_slug} échouée : {e}")
 
     from app.models import utcnow
     await _update_op(op_id, status="success", current_step="done",

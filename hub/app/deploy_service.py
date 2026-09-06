@@ -188,8 +188,13 @@ async def _get_github_token(db: AsyncSession) -> str | None:
 
 
 async def _run_cmd(cmd: list[str], cwd: Path, timeout: int,
-                   env_extra: dict[str, str] | None = None) -> str:
-    env = {**os.environ, **(env_extra or {})}
+                   env_extra: dict[str, str] | None = None,
+                   env_base: dict[str, str] | None = None) -> str:
+    """Exécute cmd. env_extra surcharge l'env hérité ; env_base REMPLACE cet
+    env hérité (défaut : os.environ) — utilisé pour ne pas fuiter l'env du
+    conteneur hub dans les apps (cf. workshop_service._COMPOSE_ENV_ALLOWLIST)."""
+    base = os.environ if env_base is None else env_base
+    env = {**base, **(env_extra or {})}
     proc = await asyncio.create_subprocess_exec(
         *cmd, cwd=str(cwd), env=env,
         stdout=asyncio.subprocess.PIPE,

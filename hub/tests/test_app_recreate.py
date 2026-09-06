@@ -100,7 +100,7 @@ async def test_op_recreate_runs_force_recreate_and_health(
 
     calls: list[tuple[list, str | None]] = []
 
-    async def _fake_run_cmd(cmd, cwd, timeout, env_extra=None):
+    async def _fake_run_cmd(cmd, cwd, timeout, env_extra=None, env_base=None):
         calls.append((cmd, str(cwd)))
         return 0
 
@@ -133,7 +133,7 @@ async def test_op_recreate_fails_when_unhealthy(async_session, monkeypatch,
     (app_dir / "docker-compose.yml").write_text("services: {}\n")
     (app_dir / ".env").write_text("API_PORT=19001\n")
 
-    async def _fake_run_cmd(cmd, cwd, timeout, env_extra=None):
+    async def _fake_run_cmd(cmd, cwd, timeout, env_extra=None, env_base=None):
         return 0
 
     async def _fake_wait_healthy(port, timeout):

@@ -489,6 +489,214 @@ async def test_purge_workshop_operations(async_session):
     assert len(remaining) == 1 and remaining[0].id == recent.id
 
 
+# ── Fuite d'env hub → apps + fiches atelier fantômes (incident 2026-09) ──
+
+
+def test_ws_compose_env_ne_fuit_pas_env_hub(tmp_path, monkeypatch):
+    """L'env du conteneur hub-api ne doit JAMAIS fuiter vers le compose atelier.
+
+    Incident : HUB_HTTPS_ENABLED=true (sens HUB : « le hub sert du HTTPS »)
+    écrasait le false du .env de l'app (sens APP : « joindre l'API hub en
+    HTTPS ») via l'interpolation ${VAR:-défaut} du compose — l'app atelier
+    contactait l'API hub en HTTPS sur son port HTTP (SSL WRONG_VERSION_NUMBER) :
+    enregistrement + JWKS en échec → « Mode dégradé », atelier invisible."""
+    _mk_app(tmp_path, monkeypatch, with_ws=True)
+    monkeypatch.setenv("HUB_HTTPS_ENABLED", "true")
+    monkeypatch.setenv("DATABASE_URL", "postgresql://hub:secret@db/hub")
+    monkeypatch.setenv("ADMIN_PASSWORD", "secret")
+    monkeypatch.setenv("PATH", "/usr/bin:/bin")
+    monkeypatch.setenv("DOCKER_HOST", "unix:///var/run/docker.sock")
+    env = ws._ws_compose_env("wstest")
+    assert "HUB_HTTPS_ENABLED" not in env
+    assert "DATABASE_URL" not in env
+    assert "ADMIN_PASSWORD" not in env
+    # L'allowlist (accès docker) et le contrat .workshop.env restent intacts
+    assert env["PATH"] == "/usr/bin:/bin"
+    assert env["DOCKER_HOST"] == "unix:///var/run/docker.sock"
+    assert env["APP_SLUG"] == "wstest-ws"
+    assert env["APP_VERSION"] == "0.8.3"
+
+
+async def test_op_create_env_compose_sans_fuite_hub(tmp_path, monkeypatch, async_session):
+    _mk_app(tmp_path, monkeypatch)
+    op = await _mk_op(async_session, op="create")
+    monkeypatch.setattr(ws, "_git_state",
+                        lambda d: asyncio.sleep(0, result={"ok": True, "branch": "main", "head": "abc000"}))
+    monkeypatch.setattr(ws, "_alloc_ports", lambda used=None: (10002, 5202))
+    monkeypatch.setattr(ws, "_alloc_subnet", lambda: "10.210.3.0/24")
+    monkeypatch.setenv("HUB_HTTPS_ENABLED", "true")
+
+    async def _fake_healthy(port, timeout=60):
+        return True
+
+    monkeypatch.setattr(ws, "_wait_healthy", _fake_healthy)
+    calls = _install_exec(monkeypatch, [(0, b"") for _ in range(10)])
+    await ws._run_workshop_operation(op.id, "wstest", "create")
+    build_calls = [c for c in calls
+                   if list(c["cmd"][:2]) == ["docker", "compose"] and "build" in c["cmd"]]
+    assert build_calls, calls
+    assert "HUB_HTTPS_ENABLED" not in build_calls[0]["env"]
+    assert build_calls[0]["env"].get("APP_SLUG") == "wstest-ws"
+
+
+async def test_op_ship_make_prod_sans_fuite_hub(tmp_path, monkeypatch, async_session):
+    """Le build/up PROD du ship passe par make sans env_extra → il héritait de
+    l'env hub-api : la prod recréée pouvait hériter des mêmes clés fautives."""
+    app = _mk_app(tmp_path, monkeypatch, with_ws=True)
+    op = await _mk_op(async_session, op="ship")
+    monkeypatch.setattr(ws, "_git_state",
+                        lambda d: asyncio.sleep(0, result={"ok": True, "branch": "main", "head": "prev123"}))
+    monkeypatch.setattr(ws, "_worktree_clean", lambda d: asyncio.sleep(0, result=True))
+    monkeypatch.setenv("HUB_HTTPS_ENABLED", "true")
+    _no_github_token(monkeypatch)
+
+    async def _healthy(port, timeout=60):
+        return True
+
+    monkeypatch.setattr(ws, "_wait_healthy", _healthy)
+    calls = []
+
+    def _exec(cmd, **kw):
+        calls.append({"cmd": cmd, "env": kw.get("env") or {}})
+        if "origin/main" in " ".join(cmd):
+            return _FakeProc(0, b"prev123\n")
+        return _FakeProc(0, b"")
+
+    async def _fake_exec(*cmd, cwd=None, env=None, stdout=None, stderr=None):
+        return _exec(cmd, env=env)
+
+    monkeypatch.setattr(ds.asyncio, "create_subprocess_exec", _fake_exec)
+    await ws._run_workshop_operation(op.id, "wstest", "ship")
+    done = await async_session.get(WorkshopOperation, op.id)
+    assert done.status == "success"
+    make_calls = [c for c in calls if c["cmd"][0] == "make"]
+    assert make_calls, calls
+    assert all("HUB_HTTPS_ENABLED" not in c["env"] for c in make_calls)
+    assert not (app / ".workshop.env").exists()
+
+
+async def test_op_recreate_env_sans_fuite_hub(tmp_path, monkeypatch, async_session):
+    """« Recréer » une app prod depuis l'UI : le compose up ne doit pas hériter
+    de l'env hub-api (même classe de fuite que les ateliers)."""
+    _mk_app(tmp_path, monkeypatch)
+    op = await _mk_op(async_session, op="recreate")
+    monkeypatch.setenv("HUB_HTTPS_ENABLED", "true")
+
+    async def _fake_healthy(port, timeout=60):
+        return True
+
+    monkeypatch.setattr(ws, "_wait_healthy", _fake_healthy)
+    calls = _install_exec(monkeypatch, [(0, b"")])
+    await ws._run_workshop_operation(op.id, "wstest", "recreate")
+    up_calls = [c for c in calls if list(c["cmd"][:1]) == ["docker"] and "up" in c["cmd"]]
+    assert up_calls, calls
+    assert "HUB_HTTPS_ENABLED" not in up_calls[0]["env"]
+
+
+async def _mk_ws_app_row(async_session, slug="wstest-ws", is_workshop=True):
+    from app.models import Application
+    row = Application(name=slug, slug=slug, api_url="http://192.0.2.10:10000",
+                      frontend_url="http://192.0.2.10:5200",
+                      is_workshop=is_workshop, is_active=True)
+    async_session.add(row)
+    await async_session.commit()
+    await async_session.refresh(row)
+    async_session.expunge(row)
+    return row
+
+
+async def _ws_row_exists(async_session, slug="wstest-ws"):
+    from app.models import Application
+    result = await async_session.execute(
+        select(Application).where(Application.slug == slug))
+    return result.scalars().first() is not None
+
+
+async def test_delete_workshop_app_row_nominal(async_session):
+    from app.models import Application
+    await _mk_ws_app_row(async_session)
+    assert await ws._delete_workshop_app_row("wstest-ws") is True
+    assert await _ws_row_exists(async_session) is False
+
+
+async def test_delete_workshop_app_row_garde_prod(async_session):
+    """Garde-fou : une fiche {slug}-ws non atelier (is_workshop=False) n'est
+    JAMAIS supprimée par le cycle atelier."""
+    await _mk_ws_app_row(async_session, is_workshop=False)
+    assert await ws._delete_workshop_app_row("wstest-ws") is False
+    assert await _ws_row_exists(async_session) is True
+
+
+async def test_delete_workshop_app_row_absente(async_session):
+    assert await ws._delete_workshop_app_row("wstest-ws") is False
+
+
+async def test_op_remove_supprime_fiche_app(tmp_path, monkeypatch, async_session):
+    """Une fiche « fantôme » {slug}-ws doit disparaître avec l'atelier : sinon
+    ses URLs pointent sur des ports réattribués à un autre atelier (mauvaise
+    app ouverte depuis le menu hub)."""
+    app = _mk_app(tmp_path, monkeypatch, with_ws=True)
+    await _mk_ws_app_row(async_session)
+    op = await _mk_op(async_session, op="remove")
+    calls = _install_exec(monkeypatch, [(0, b"") for _ in range(4)])
+    await ws._run_workshop_operation(op.id, "wstest", "remove")
+    done = await async_session.get(WorkshopOperation, op.id)
+    assert done.status == "success"
+    flat = [" ".join(c["cmd"]) for c in calls]
+    assert any("down" in f and "-v" in f for f in flat)
+    assert not (app / ".workshop.env").exists()
+    assert await _ws_row_exists(async_session) is False
+
+
+async def test_op_ship_supprime_fiche_app(tmp_path, monkeypatch, async_session):
+    """Le ship supprime l'atelier → la fiche {slug}-ws doit partir aussi."""
+    _mk_app(tmp_path, monkeypatch, with_ws=True)
+    await _mk_ws_app_row(async_session)
+    op = await _mk_op(async_session, op="ship")
+    monkeypatch.setattr(ws, "_git_state",
+                        lambda d: asyncio.sleep(0, result={"ok": True, "branch": "main", "head": "prev123"}))
+    monkeypatch.setattr(ws, "_worktree_clean", lambda d: asyncio.sleep(0, result=True))
+    _no_github_token(monkeypatch)
+
+    async def _healthy(port, timeout=60):
+        return True
+
+    monkeypatch.setattr(ws, "_wait_healthy", _healthy)
+    calls = []
+
+    def _exec(cmd, **kw):
+        calls.append({"cmd": cmd})
+        if "origin/main" in " ".join(cmd):
+            return _FakeProc(0, b"prev123\n")
+        return _FakeProc(0, b"")
+
+    async def _fake_exec(*cmd, cwd=None, env=None, stdout=None, stderr=None):
+        return _exec(cmd)
+
+    monkeypatch.setattr(ds.asyncio, "create_subprocess_exec", _fake_exec)
+    await ws._run_workshop_operation(op.id, "wstest", "ship")
+    done = await async_session.get(WorkshopOperation, op.id)
+    assert done.status == "success"
+    assert await _ws_row_exists(async_session) is False
+
+
+async def test_op_remove_fiche_delete_echec_non_bloquant(tmp_path, monkeypatch, async_session):
+    """Si la suppression de fiche échoue, l'atelier reste supprimé et
+    l'opération reste un succès (warning dans les logs seulement)."""
+    app = _mk_app(tmp_path, monkeypatch, with_ws=True)
+    op = await _mk_op(async_session, op="remove")
+    calls = _install_exec(monkeypatch, [(0, b"") for _ in range(4)])
+
+    async def _boom(ws_slug):
+        raise RuntimeError("db down")
+
+    monkeypatch.setattr(ws, "_delete_workshop_app_row", _boom)
+    await ws._run_workshop_operation(op.id, "wstest", "remove")
+    done = await async_session.get(WorkshopOperation, op.id)
+    assert done.status == "success"
+    assert not (app / ".workshop.env").exists()
+
+
 # ── git-config : remote local + auth PAT + test connexion ──
 
 import subprocess as _sp
