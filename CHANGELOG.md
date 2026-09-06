@@ -5,6 +5,19 @@
 
 ---
 
+## [3.48.1] - 7 septembre 2026
+
+### 🐛 Messages : `expires_at`/`scheduled_at` avec timezone faisaient échouer l'envoi
+
+| Élément | Description |
+|---------|-------------|
+| Fix tz-aware | `POST /api/messages/send` (admin) et `/api/messages/m2m/send` (apps) échouaient en `asyncpg DataError: can't subtract offset-naive and offset-aware datetimes` quand `expires_at` (ou `scheduled_at`) était envoyé en ISO 8601 avec suffixe `Z`/offset : Pydantic v2 produit un datetime aware (`tzinfo=TzInfo(0)`) que asyncpg refuse d'encoder pour les colonnes `TIMESTAMP WITHOUT TIME ZONE` (convention parc : datetimes naive UTC en DB). Tout broadcast/ciblage admin avec expiration — et tout message M2M avec `expires_at` — était rejeté (500, message non créé). |
+| Normalisation à la source | Helper `to_naive_utc()` dans `schemas.py` + `field_validator` sur `MessageCreate` (`expires_at`, `scheduled_at`) et `MessageM2MCreate` (`expires_at`) : vrai décalage `astimezone(utc)` puis retrait du tzinfo (un `+02:00` est converti, pas tronqué) ; valeurs naive et `None` inchangées. Couvre les 3 sites d'INSERT (broadcast admin, ciblé admin, M2M) sans modification des routes. |
+| Pourquoi invisible en tests | Suite de tests sur SQLite in-memory : l'encodage strict asyncpg (PostgreSQL) n'intervient jamais. Aucun test ne passait par le parsing Pydantic de ces champs. |
+| Tests | `test_message_schemas_tz.py` : 7 tests (suffixe `Z`, offset `+02:00`, objet datetime aware, naive inchangé, `None` — admin + M2M). Repro : 4 failed avant fix → 7 passed après. Non-régression : 62 tests messages/M2M passants. |
+
+---
+
 ## [3.48.0] - 6 septembre 2026
 
 ### 🏭 Atelier : accès par utilisateur — socle données (lot 1)
