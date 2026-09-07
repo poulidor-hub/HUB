@@ -545,6 +545,10 @@ class RefreshToken(Base):
     expires_at = Column(DateTime, nullable=False)
     created_at = Column(DateTime, default=utcnow)
     revoked_at = Column(DateTime, nullable=True)
+    # Période de grâce : valeur du token remplaçant (re-délivrance si
+    # re-présentation de l'ancien token < 60 s après rotation ; course
+    # inter-onglets). Nullifié par cleanup_expired_tokens après la grâce.
+    replaced_by_token = Column(String(255), nullable=True)
     ip_address = Column(String(45))
     user_agent = Column(String(255))
     

@@ -185,8 +185,9 @@ def ensure_backup_keys_exist() -> tuple[str, str]:
 class Settings(BaseSettings):
     database_url: str = "postgresql+asyncpg://hubadmin:CHANGEZ_MOI_DB_PASSWORD@db:5432/hub_auth"
     jwt_algorithm: str = "RS256"
-    access_token_expire_minutes: int = 30  # TTL access token (doit matcher docker-compose/.env)
+    access_token_expire_minutes: int = 480  # TTL access token (aligné cookie OIDC 8h ; déploiement local LAN — doit matcher docker-compose/.env)
     refresh_token_expire_days: int = 7  # 7 jours pour le refresh token
+    refresh_token_grace_seconds: int = 60  # Fenêtre de re-délivrance d'un refresh token récemment rotaté (course inter-onglets)
     session_timeout_minutes: int = 20  # Seuil pour considérer une session comme terminée (sans logout explicite)
     admin_username: str = "admin"
     admin_password: str = ""  # Doit être défini via ADMIN_PASSWORD

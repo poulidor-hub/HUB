@@ -248,7 +248,7 @@ docker compose exec db pg_dump -U hubadmin hub_auth > backup_$(date +%Y%m%d).sql
 - [ ] `SECRETS_ENCRYPTION_KEY` définie (clé Fernet unique)
 - [ ] `ALLOWED_ORIGINS` restreint aux domaines connus
 - [ ] `APP_WHITELIST_NETWORKS` limité aux CIDR Docker + LAN/VPN
-- [ ] `ACCESS_TOKEN_EXPIRE_MINUTES=30` (pas plus)
+- [ ] `ACCESS_TOKEN_EXPIRE_MINUTES=480` (8h, aligné cookie OIDC — valable uniquement en LAN ; si exposition externe, revenir à 30)
 - [ ] Clés JWT présentes dans `secrets/jwt_private_key.pem` (+ `.env` en `chmod 600`)
 - [ ] `.env` non versionné (pas dans Git)
 - [ ] Ports non exposés sur Internet (LAN/VPN seulement)

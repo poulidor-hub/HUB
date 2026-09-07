@@ -5,6 +5,22 @@
 
 ---
 
+## [3.50.0] - 7 septembre 2026
+
+### ⚡ Sync tokens : fin des fermetures d'onglets (401 refresh) — grâce 60 s + access token 8 h
+
+| Élément | Description |
+|---------|-------------|
+| Incident | Les onglets des apps se déconnectaient (401 « Refresh token invalide ou expiré » → `logout()` → fermeture d'onglet) : deux onglets d'une même app partagent le refresh token (localStorage) ; l'onglet A rotate, l'onglet B re-présente l'ancien token déjà révoqué → 401. Déclencheur fréquent : l'événement SSE `user_permissions_changed` atteint tous les onglets simultanément |
+| Grâce rotation | `rotate_refresh_token` mémorise désormais le remplaçant (`refresh_tokens.replaced_by_token`, migration 059 idempotente `ADD COLUMN IF NOT EXISTS`) : si l'ancien token est re-présenté < 60 s (`refresh_token_grace_seconds`, nouveau réglage), le Hub **re-délivre le même remplaçant** au lieu de renvoyer 401 (pattern OAuth BCP). Au-delà de 60 s, la réutilisation reste un 401 (détection de vol préservée). `cleanup_expired_tokens` nullifie `replaced_by_token` après la fenêtre |
+| Endpoints | La grâce s'applique aux deux endpoints : `POST /api/auth/token` (grant `refresh_token`) et `POST /api/auth/token/refresh` (JSON). Path de re-délivrance en lecture seule : idempotent sous concurrence ; un `revoke_all_user_tokens` coupe la grâce (logout everywhere inchangé) |
+| Config | `ACCESS_TOKEN_EXPIRE_MINUTES` 30 → **480** (8 h, aligné cookie OIDC) sur les 4 sources (code, docker-compose, install.sh, .env.example) — valable **uniquement en déploiement LAN** ; revert à 30 si exposition externe (note de décision dans `SECURITY_AUDIT.md` §9, checklist `GUIDE_ADMIN.md` mise à jour) |
+| Sécurité | `replaced_by_token` stocké en clair en DB mais nullifié après 60 s par le cleanup ; lecture DB = compromis total de toute façon (chiffrement Fernet en backlog) |
+| Tests | 4 tests unitaires (`test_auth.py::TestRefreshTokenGrace` : stockage remplaçant, re-délivrance idempotente, 401 après grâce, cleanup) + 2 tests API (`test_api_auth.py::TestRefreshGraceAPI` : double refresh 200/200 même token sur les 2 endpoints) ; suite complète 998 passed, 11 échecs préexistants sur main (snapshots/health, non liés) |
+| Terrain | Hub déployé localement depuis cette branche : TTL émis vérifié 28800 s ; double refresh simultané réel → 200/200 sans déconnexion ; post-grâce −61 s → 401 |
+
+---
+
 ## [3.49.2] - 7 septembre 2026
 
 ### ✨ Modale droits : layout compact une ligne (variante B — companion validé)

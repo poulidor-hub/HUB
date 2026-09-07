@@ -328,3 +328,93 @@ def test_verify_token_still_accepts_user_access_token():
     payload = verify_token(token)
     assert payload["sub"] == "alice"
     assert payload.get("scope") is None
+
+
+class TestRefreshTokenGrace:
+    """Période de grâce sur la rotation (course inter-onglets).
+
+    Scénario : 2 onglets partagent le refresh token (localStorage). L'onglet A
+    rotate → ancien révoqué. L'onglet B re-présente l'ancien → sans grâce :
+    401 → logout → onglet fermé. Avec grâce : re-délivrance du remplaçant.
+    """
+
+    @pytest.mark.asyncio
+    async def test_rotate_stores_replaced_by_token(self, async_session, test_user):
+        from sqlalchemy import select
+
+        from app.auth import rotate_refresh_token
+
+        old = await create_refresh_token(async_session, user_id=test_user.id)
+        result = await rotate_refresh_token(async_session, old)
+        assert result is not None
+        new_token, _new_refresh = result
+
+        res = await async_session.execute(
+            select(RefreshToken).where(RefreshToken.token_hash == hash_token(old))
+        )
+        old_row = res.scalar_one()
+        assert old_row.revoked_at is not None
+        assert old_row.replaced_by_token == new_token
+        # Fenêtre de grâce : le token reste éligible à la re-délivrance
+        assert old_row.revoked_at > utcnow() - timedelta(
+            seconds=settings.refresh_token_grace_seconds + 1
+        )
+
+    @pytest.mark.asyncio
+    async def test_reuse_within_grace_redelivers_same_token(self, async_session, test_user):
+        from app.auth import rotate_refresh_token
+
+        old = await create_refresh_token(async_session, user_id=test_user.id)
+        first = await rotate_refresh_token(async_session, old)
+        assert first is not None
+
+        # Onglet B : re-présente l'ancien token pendant la grâce
+        second = await rotate_refresh_token(async_session, old)
+        assert second is not None
+        # Re-délivrance idempotente : le MÊME refresh token que la 1re rotation
+        assert second[0] == first[0]
+
+    @pytest.mark.asyncio
+    async def test_reuse_after_grace_returns_none(self, async_session, test_user):
+        from sqlalchemy import select
+
+        from app.auth import rotate_refresh_token
+
+        old = await create_refresh_token(async_session, user_id=test_user.id)
+        assert await rotate_refresh_token(async_session, old) is not None
+
+        # Simuler une réutilisation tardive (> grâce)
+        res = await async_session.execute(
+            select(RefreshToken).where(RefreshToken.token_hash == hash_token(old))
+        )
+        old_row = res.scalar_one()
+        old_row.revoked_at = utcnow() - timedelta(
+            seconds=settings.refresh_token_grace_seconds + 5
+        )
+        await async_session.commit()
+
+        assert await rotate_refresh_token(async_session, old) is None
+
+    @pytest.mark.asyncio
+    async def test_cleanup_nullifies_replaced_by_token(self, async_session, test_user):
+        from sqlalchemy import select
+
+        from app.auth import rotate_refresh_token
+
+        old = await create_refresh_token(async_session, user_id=test_user.id)
+        assert await rotate_refresh_token(async_session, old) is not None
+
+        # Faire vieillir la révocation au-delà de la grâce
+        res = await async_session.execute(
+            select(RefreshToken).where(RefreshToken.token_hash == hash_token(old))
+        )
+        old_row = res.scalar_one()
+        old_row.revoked_at = utcnow() - timedelta(
+            seconds=settings.refresh_token_grace_seconds + 5
+        )
+        await async_session.commit()
+
+        await cleanup_expired_tokens(async_session)
+
+        await async_session.refresh(old_row)
+        assert old_row.replaced_by_token is None
