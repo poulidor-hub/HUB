@@ -49,17 +49,29 @@ document.addEventListener('DOMContentLoaded', () => {
         appColorInput.addEventListener('input', updateAppFormPreview);
     }
 
-    // Gérer le changement d'onglet dans la page admin
+    // Gérer le changement d'onglet dans la page admin (2 niveaux)
+    const ADMIN_SUBTAB_TARGETS = ['#tabAppGroups', '#tabServiceAccounts', '#tabOidcClients', '#tabGithubApps', '#tabNetwork'];
+    const ADMIN_SUBTAB_STORAGE_KEY = 'hub.admin.subtab';
+
     const adminPageTabsEl = document.getElementById('adminPageTabs');
     if (adminPageTabsEl) {
+        const configTabBtn = document.getElementById('adminConfigTabBtn');
+
         adminPageTabsEl.addEventListener('shown.bs.tab', (event) => {
             const targetId = event.target.getAttribute('data-bs-target');
+            const isSubtab = ADMIN_SUBTAB_TARGETS.includes(targetId);
+            // Rangée 2 visible uniquement quand un sous-onglet est actif
+            adminPageTabsEl.classList.toggle('show-subtabs', isSubtab);
+            configTabBtn?.classList.toggle('config-active', isSubtab);
+            if (isSubtab) {
+                try { localStorage.setItem(ADMIN_SUBTAB_STORAGE_KEY, targetId); } catch (e) { /* stockage indisponible */ }
+            }
             if (targetId === '#tabApps') {
                 currentPage = 'apps-admin';
                 refreshAppsStatus();
                 startConnectivityRefresh();
             } else {
-                // Autre onglet (Sauvegardes, Service Accounts)
+                // Autre onglet (Sauvegardes, Service Accounts, OIDC, backups…)
                 stopConnectivityRefresh();
                 if (targetId === '#tabServiceAccounts') {
                     currentPage = 'service-accounts';
@@ -71,6 +83,15 @@ document.addEventListener('DOMContentLoaded', () => {
                     loadOidcClients();
                 }
             }
+        });
+
+        // Clic sur « Configuration » → rouvrir le dernier sous-onglet utilisé (défaut : Groupes)
+        configTabBtn?.addEventListener('click', () => {
+            let targetId = null;
+            try { targetId = localStorage.getItem(ADMIN_SUBTAB_STORAGE_KEY); } catch (e) { /* ignore */ }
+            if (!ADMIN_SUBTAB_TARGETS.includes(targetId)) targetId = ADMIN_SUBTAB_TARGETS[0];
+            const subtabBtn = adminPageTabsEl.querySelector(`[data-bs-target="${targetId}"]`);
+            bootstrap.Tab.getOrCreateInstance(subtabBtn).show();
         });
     }
 
