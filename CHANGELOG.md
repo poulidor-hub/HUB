@@ -5,6 +5,17 @@
 
 ---
 
+## [3.49.0] - 7 septembre 2026
+
+### ✨ Admin — onglets à 2 niveaux (lisibilité)
+
+| Élément | Description |
+|---------|-------------|
+| Ajouté | Page Administration : 4 onglets principaux (Applications, Sauvegardes, VPN, Configuration) + 5 sous-onglets en pilules derrière « Configuration » (Groupes, Service Accounts, Clients OIDC, Apps GitHub, Réseau). Le dernier sous-onglet utilisé est mémorisé (localStorage `hub.admin.subtab`) |
+| Conservé | Panes, lazy-load, `currentPage`, badges (`pendingAppsBadge`, `networkPendingBadge`), listener VPN et workspace Sauvegardes inchangés — aucune modification des modules métier |
+
+---
+
 ## [3.48.3] - 7 septembre 2026
 
 ### ✨ Accès atelier par utilisateur (`user_workshop_access`) — visibilité dynamique des ateliers
