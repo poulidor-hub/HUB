@@ -7,6 +7,9 @@
 
 ## [3.50.1] - 7 septembre 2026
 
+### 📣 Pour les utilisateurs
+- **Corrigé** : le numéro de version affiché en haut à gauche du Hub (à côté du logo) est de nouveau fiable — il reste correct même après une mise à jour du Hub, sans avoir à recharger plusieurs fois la page.
+
 ### 🐛 Badge de version navbar : lit enfin la source de vérité (/api/health)
 
 | Élément | Description |
