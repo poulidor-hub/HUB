@@ -7,7 +7,7 @@ from passlib.context import CryptContext
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, delete
+from sqlalchemy import select, delete, update
 from sqlalchemy.orm import selectinload
 
 from app.config import get_settings
@@ -232,14 +232,23 @@ async def rotate_refresh_token(
     ip_address: Optional[str] = None,
     user_agent: Optional[str] = None
 ) -> Optional[tuple[str, RefreshToken]]:
-    """Rotation du refresh token : invalide l'ancien et crée un nouveau"""
+    """Rotation du refresh token : invalide l'ancien et crée un nouveau.
+
+    Période de grâce : si un token révoqué depuis moins de
+    REFRESH_TOKEN_GRACE_SECONDS est re-présenté (course inter-onglets sur le
+    localStorage partagé), on re-délivre le remplaçant déjà émis au lieu de
+    renvoyer 401. Au-delà de la grâce, la réutilisation reste un 401
+    (détection de vol préservée).
+    """
     old_refresh = await verify_refresh_token(db, old_token)
-    if not old_refresh:
-        return None
-    
+
+    if old_refresh is None:
+        # Token absent, expiré ou déjà révoqué : tenter la période de grâce.
+        return await _redeem_replaced_token(db, old_token)
+
     # Révoquer l'ancien token
     old_refresh.revoked_at = utcnow()
-    
+
     # Créer un nouveau token
     new_token = await create_refresh_token(
         db,
@@ -248,12 +257,43 @@ async def rotate_refresh_token(
         ip_address=ip_address,
         user_agent=user_agent
     )
-    
+
+    # Mémoriser le remplaçant pour la période de grâce
+    old_refresh.replaced_by_token = new_token
+
     # Récupérer le nouveau token object
     new_refresh = await verify_refresh_token(db, new_token)
-    
+
     await db.commit()
     return new_token, new_refresh
+
+
+async def _redeem_replaced_token(
+    db: AsyncSession,
+    old_token: str
+) -> Optional[tuple[str, RefreshToken]]:
+    """Grâce : re-délivre le remplaçant d'un token révoqué récemment.
+
+    Retourne (replaced_by_token, RefreshToken du remplaçant) si l'ancien
+    token a été révoqué il y a moins de refresh_token_grace_seconds et que
+    son remplaçant est encore valide. Sinon None.
+    """
+    grace_start = utcnow() - timedelta(seconds=settings.refresh_token_grace_seconds)
+    result = await db.execute(
+        select(RefreshToken).where(
+            RefreshToken.token_hash == hash_token(old_token),
+            RefreshToken.revoked_at.is_not(None),
+            RefreshToken.revoked_at >= grace_start,
+            RefreshToken.replaced_by_token.is_not(None),
+        )
+    )
+    replaced = result.scalar_one_or_none()
+    if not replaced:
+        return None
+    new_refresh = await verify_refresh_token(db, replaced.replaced_by_token)
+    if not new_refresh:
+        return None
+    return replaced.replaced_by_token, new_refresh
 
 
 async def revoke_token(
@@ -294,8 +334,20 @@ async def cleanup_expired_tokens(db: AsyncSession) -> int:
         delete(RevokedToken).where(RevokedToken.expires_at < now)
     )
     
+    # Nullifier les remplaçants dont la fenêtre de grâce est écoulée
+    grace_cutoff = now - timedelta(seconds=settings.refresh_token_grace_seconds)
+    result3 = await db.execute(
+        update(RefreshToken)
+        .where(
+            RefreshToken.revoked_at.is_not(None),
+            RefreshToken.revoked_at < grace_cutoff,
+            RefreshToken.replaced_by_token.is_not(None),
+        )
+        .values(replaced_by_token=None)
+    )
+    
     await db.commit()
-    return result1.rowcount + result2.rowcount
+    return result1.rowcount + result2.rowcount + result3.rowcount
 
 
 async def revoke_all_user_tokens(db: AsyncSession, user_id: int) -> None:
