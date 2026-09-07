@@ -5,6 +5,21 @@
 
 ---
 
+## [3.48.3] - 7 septembre 2026
+
+### ✨ Accès atelier par utilisateur (`user_workshop_access`) — visibilité dynamique des ateliers
+
+| Élément | Description |
+|---------|-------------|
+| Ajouté | Un admin peut activer, par utilisateur et par app de base, la visibilité de l'atelier `{slug}-ws` — indépendamment du rôle sur la prod (un testeur peut avoir l'atelier sans la prod). Migration 058 (socle 3.48.0), règles à la lecture : dès que l'atelier est créé il apparaît (SSE `apps_updated`), s'il est supprimé il disparaît, l'activation persiste |
+| Backend | `list_apps` non-admin : les ateliers autorisés sont listés (`my_role="user"`, badge ATELIER). Les 7 sites d'émission de JWT (login, refresh, launch, sso, auto-login…) portent `{slug}-ws: "user"`. Gardes `/api/auth/apps/{slug}/launch` et `/api/auth/sso` étendus (403 → 200 avec activation via `workshop_role_for_app`) |
+| API admin | `POST /api/users/{id}/apps` : `workshop_access: [app_id…]` autoritaire (full-sync, ids d'ateliers ignorés, absent = inchangé) ; `GET` renvoie le tableau. SSE `user_permissions_changed` enrichi (`workshop_access_count`) |
+| Frontend | Modale des droits : checkbox « Atelier » indépendante du rôle (tooltip), état initial depuis `GET /users/{id}/apps`, envoi via `api.setUserApps` étendu ; `api.getUserApps` |
+| Sécurité | Opérations atelier (créer/maj/supprimer/déployer) toujours admin uniquement ; isolation M2M inchangée ; atelier invisible si inactif/absent |
+| Tests | 17 tests dédiés (`test_workshop_access.py`) + suite intégrale : 1000 passed (2 échecs préexistants liés au `.env` de prod, reproduits sur main) |
+
+---
+
 ## [3.48.2] - 7 septembre 2026
 
 ### ⚡ « Mon rôle » : 500 sous concurrence — endpoint idempotent (fix)
