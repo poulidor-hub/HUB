@@ -5,6 +5,19 @@
 
 ---
 
+## [3.48.2] - 7 septembre 2026
+
+### ⚡ « Mon rôle » : 500 sous concurrence — endpoint idempotent (fix)
+
+| Élément | Description |
+|---------|-------------|
+| Incident | Double-émission du sélecteur « Mon rôle » → deux `PUT /api/apps/me/role/{slug}` quasi simultanés ; le second SELECT s'exécute avant le commit du premier → INSERT → `UniqueViolationError` sur `uq_user_app_roles_user_app` → 500 |
+| Fix | `update_my_role` : `try/except IntegrityError` autour du commit → rollback → reprise de la ligne créée par la requête concurrente → mise à jour du rôle → **200** (idempotent). Ligne introuvable après rollback (cas anormal) → erreur relancée |
+| Subtilité async | Ids/nom capturés avant le `try` : après rollback, `current_user`/`app` sont expirés — tout accès attribut lève `MissingGreenlet` dans le chemin d'exception |
+| Tests | Course réelle reproduite (2 connexions sqlite même fichier, INSERT concurrent pendant la fenêtre) — rouge sur l'ancien code, vert avec le fix ; idempotence séquentielle (2× PUT → 200/200) ; relance si ligne absente. 140 tests role/apps/users passés |
+
+---
+
 ## [3.48.1] - 7 septembre 2026
 
 ### 🐛 Messages : `expires_at`/`scheduled_at` avec timezone faisaient échouer l'envoi
