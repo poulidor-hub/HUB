@@ -113,3 +113,47 @@ async def test_map_jwt_setdefault(async_session):
     await async_session.commit()
     apps = await get_apps_with_roles_and_workshops(user, async_session)
     assert apps["canari-ws"] == "manager"  # rôle explicite gagne sur "user"
+
+
+# ── list_apps non-admin : ateliers autorisés (Task 3) ──
+
+from tests.conftest import get_auth_header
+
+
+async def test_list_apps_user_voit_son_atelier(async_session, client, test_user):
+    base = Application(name="Canari", slug="canari", api_url="http://x:1")
+    ws = Application(name="Canari ws", slug="canari-ws", api_url="http://x:2", is_workshop=True)
+    async_session.add_all([base, ws])
+    await async_session.commit()
+    async_session.add(UserWorkshopAccess(user_id=test_user.id, app_id=base.id))
+    await async_session.commit()
+    token, _, _ = create_access_token(username=test_user.username, apps={})
+    r = await client.get("/api/apps/", headers=get_auth_header(token))
+    assert r.status_code == 200
+    entries = {a["slug"]: a for a in r.json()}
+    assert "canari-ws" in entries
+    assert entries["canari-ws"]["my_role"] == "user"
+    assert entries["canari-ws"]["is_workshop"] is True
+    assert "canari" not in entries  # pas de rôle sur la prod → prod invisible
+
+
+async def test_list_apps_sans_acces_pas_datelier(async_session, client, test_user):
+    ws = Application(name="Canari ws", slug="canari-ws", api_url="http://x:2", is_workshop=True)
+    async_session.add(ws)
+    await async_session.commit()
+    token, _, _ = create_access_token(username=test_user.username, apps={})
+    r = await client.get("/api/apps/", headers=get_auth_header(token))
+    assert "canari-ws" not in [a["slug"] for a in r.json()]
+
+
+async def test_list_apps_atelier_inactif_invisible(async_session, client, test_user):
+    base = Application(name="Canari", slug="canari", api_url="http://x:1")
+    ws = Application(name="Canari ws", slug="canari-ws", api_url="http://x:2",
+                     is_workshop=True, is_active=False)
+    async_session.add_all([base, ws])
+    await async_session.commit()
+    async_session.add(UserWorkshopAccess(user_id=test_user.id, app_id=base.id))
+    await async_session.commit()
+    token, _, _ = create_access_token(username=test_user.username, apps={})
+    r = await client.get("/api/apps/", headers=get_auth_header(token))
+    assert "canari-ws" not in [a["slug"] for a in r.json()]

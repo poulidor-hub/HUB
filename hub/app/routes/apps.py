@@ -19,7 +19,7 @@ from app.routes.events import notify_event, notify_stats_update
 from app.routes.app_backups import reassociate_orphan_backups
 
 from app.database import get_db
-from app.models import Application, User, ServiceAccount, UserAppRole, ApprovalStatus, service_account_app_access, DEFAULT_ROLES, UserFavorite, utcnow, AppDependency, AppGroup, AppDeployment
+from app.models import Application, User, ServiceAccount, UserAppRole, ApprovalStatus, service_account_app_access, DEFAULT_ROLES, UserFavorite, utcnow, AppDependency, AppGroup, AppDeployment, UserWorkshopAccess
 from app.routes.app_groups import group_to_brief
 from app.schemas import (
     AppCreate, AppCreateSimplified, AppUpdate, AppResponse, AppWithUsers, AppWithUsersAndDocker,
@@ -652,15 +652,15 @@ async def list_apps(
         ]
     else:
         # Retourne uniquement les apps de l'utilisateur via app_roles
-        # Les utilisateurs non-admin ne voient jamais les ateliers
         apps_count = len(user.app_roles)
         logger.debug(f"User {current_user.username}: {apps_count} applications accessibles")
         visible_roles = [ar for ar in user.app_roles if not getattr(ar.application, "is_system_app", False)]
-        # Toujours exclure les ateliers pour les non-admins
+        # Les ateliers hors user_app_roles restent exclus ; les ateliers
+        # autorisés (user_workshop_access) sont ajoutés ensuite avec my_role="user"
         visible_roles = [ar for ar in visible_roles
                          if not getattr(ar.application, "is_workshop", False)]
         sorted_roles = sorted(visible_roles, key=lambda ar: ar.application.name.lower())
-        return [
+        items = [
             AppResponseWithMyRole.from_app_with_role(
                 ar.application,
                 ar.role,
@@ -671,6 +671,36 @@ async def list_apps(
             )
             for ar in sorted_roles
         ]
+
+        # Ateliers autorisés (règle à la lecture — spec 2026-09-06) :
+        # activations user_workshop_access -> apps {slug}-ws actives
+        links = await db.execute(
+            select(Application.slug)
+            .join(UserWorkshopAccess, UserWorkshopAccess.app_id == Application.id)
+            .where(UserWorkshopAccess.user_id == current_user.id)
+        )
+        base_slugs = [row[0] for row in links.all()]
+        if base_slugs:
+            ws_result = await db.execute(
+                select(Application).where(
+                    Application.slug.in_([s + "-ws" for s in base_slugs]),
+                    Application.is_workshop.is_(True),
+                    Application.is_active.is_(True),
+                )
+            )
+            ws_apps = sorted(ws_result.scalars().all(), key=lambda a: a.name.lower())
+            items += [
+                AppResponseWithMyRole.from_app_with_role(
+                    ws_app,
+                    "user",
+                    app_version=ws_app.version,
+                    is_favorite=ws_app.id in favorite_app_ids,
+                    group=_group_brief(ws_app),
+                    last_deployment=last_deployments.get(ws_app.slug)
+                )
+                for ws_app in ws_apps
+            ]
+        return items
 
 
 @router.post("/access/{app_slug}")
