@@ -184,3 +184,60 @@ async def test_launch_atelier_sans_acces_refuse(async_session, client, test_user
     token, _, _ = create_access_token(username=test_user.username, apps={})
     r = await client.post("/api/auth/apps/canari-ws/launch", headers=get_auth_header(token))
     assert r.status_code == 403
+
+
+# ── API admin workshop_access (Task 5) ──
+
+
+async def test_set_user_apps_workshop_access_fullsync(async_session, client, admin_token, test_user, test_app):
+    # Grant
+    r = await client.post(
+        f"/api/users/{test_user.id}/apps",
+        json={"assignments": [], "workshop_access": [test_app.id]},
+        headers=get_auth_header(admin_token),
+    )
+    assert r.status_code == 200, r.text
+    rows = (await async_session.execute(select(UserWorkshopAccess))).scalars().all()
+    assert len(rows) == 1 and rows[0].app_id == test_app.id
+
+    # GET expose le tableau
+    r2 = await client.get(f"/api/users/{test_user.id}/apps", headers=get_auth_header(admin_token))
+    assert r2.status_code == 200
+    assert r2.json()["workshop_access"] == [test_app.id]
+
+    # Full-sync : retrait
+    r3 = await client.post(
+        f"/api/users/{test_user.id}/apps",
+        json={"assignments": [], "workshop_access": []},
+        headers=get_auth_header(admin_token),
+    )
+    assert r3.status_code == 200
+    rows = (await async_session.execute(select(UserWorkshopAccess))).scalars().all()
+    assert rows == []
+
+
+async def test_set_user_apps_sans_champ_ne_rien_change(async_session, client, admin_token, test_user, test_app):
+    async_session.add(UserWorkshopAccess(user_id=test_user.id, app_id=test_app.id))
+    await async_session.commit()
+    r = await client.post(
+        f"/api/users/{test_user.id}/apps",
+        json={"assignments": []},  # workshop_access ABSENT
+        headers=get_auth_header(admin_token),
+    )
+    assert r.status_code == 200
+    rows = (await async_session.execute(select(UserWorkshopAccess))).scalars().all()
+    assert len(rows) == 1  # préservé
+
+
+async def test_set_user_apps_ignore_les_ateliers(async_session, client, admin_token, test_user, test_app):
+    ws = Application(name="Canari ws", slug="canari-ws", api_url="http://x:2", is_workshop=True)
+    async_session.add(ws)
+    await async_session.commit()
+    r = await client.post(
+        f"/api/users/{test_user.id}/apps",
+        json={"assignments": [], "workshop_access": [test_app.id, ws.id]},
+        headers=get_auth_header(admin_token),
+    )
+    assert r.status_code == 200
+    rows = (await async_session.execute(select(UserWorkshopAccess))).scalars().all()
+    assert [row.app_id for row in rows] == [test_app.id]  # ws.id ignoré

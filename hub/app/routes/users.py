@@ -15,7 +15,7 @@ from app.routes.events import notify_event, notify_stats_update
 from app.models import (
     User, Application, UserAppRole, ServiceAccount,
     AppRole, DEFAULT_ROLES, Profile, ProfileAppRole, user_profiles, AuditLog,
-    highest_role, OAuthRefreshToken, utcnow,
+    highest_role, OAuthRefreshToken, utcnow, UserWorkshopAccess,
 )
 from app.schemas import (
     UserCreate, UserUpdate, UserRenameRequest, UserResponse, UserAppRoleResponse, PaginatedUsersResponse,
@@ -44,6 +44,9 @@ class UserAppRoleAssignment(BaseModel):
 class UserAppsUpdate(BaseModel):
     """Liste des applications avec rôles pour un utilisateur"""
     assignments: List[UserAppRoleAssignment]
+    # Accès atelier : tableau autoritaire d'app_id (apps de base).
+    # Absent = aucun changement (compat) ; transmis = full-sync de la table.
+    workshop_access: Optional[List[int]] = None
 
 
 @router.post("/m2m/app-roles/bulk", response_model=Dict[str, M2MObservedUserData])
@@ -994,6 +997,26 @@ async def set_user_apps(
         db, request, current_admin, user, updates.assignments, apps_by_id
     )
 
+    # Accès atelier (workshop_access) : le tableau transmis est autoritaire
+    workshop_changed: Optional[int] = None
+    if updates.workshop_access is not None:
+        ws_ids = list(dict.fromkeys(updates.workshop_access))  # dédoublonne
+        valid_ids: List[int] = []
+        if ws_ids:
+            ws_apps_result = await db.execute(
+                select(Application).where(Application.id.in_(ws_ids))
+            )
+            # La table référence l'app de base : les ids d'ateliers sont ignorés
+            valid_ids = [a.id for a in ws_apps_result.scalars().all()
+                         if not a.is_workshop]
+        await db.execute(
+            delete(UserWorkshopAccess).where(
+                UserWorkshopAccess.user_id == user.id)
+        )
+        for app_id in valid_ids:
+            db.add(UserWorkshopAccess(user_id=user.id, app_id=app_id))
+        workshop_changed = len(valid_ids)
+
     await db.commit()
 
     # Notifier SSE que les droits de l'utilisateur ont changé
@@ -1001,7 +1024,9 @@ async def set_user_apps(
     notify_event("user_permissions_changed", {
         "user_id": user_id,
         "username": user.username,
-        "apps_count": len(result_assignments)
+        "apps_count": len(result_assignments),
+        **({"workshop_access_count": workshop_changed}
+           if workshop_changed is not None else {})
     })
 
     return {
@@ -1048,7 +1073,16 @@ async def get_user_apps(
         "apps": [
             UserAppRoleResponse.from_orm_model(ar, profile_roles_by_app).model_dump()
             for ar in user.app_roles
-        ]
+        ],
+        # Accès atelier par app de base (indépendant des rôles — spec 2026-09-06)
+        "workshop_access": [
+            row[0] for row in (
+                await db.execute(
+                    select(UserWorkshopAccess.app_id).where(
+                        UserWorkshopAccess.user_id == user_id)
+                )
+            ).all()
+        ],
     }
 
 
