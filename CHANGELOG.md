@@ -5,6 +5,20 @@
 
 ---
 
+## [3.50.1] - 7 septembre 2026
+
+### 🐛 Badge de version navbar : lit enfin la source de vérité (/api/health)
+
+| Élément | Description |
+|---------|-------------|
+| Incident | Le badge de version de la navbar affichait une version périmée après un bump de `VERSION` + restart API : le badge n'était mis à jour que par le fallback statique baked dans l'image frontend au build |
+| Cause racine | `updateHubVersionBadge()` (init.js) fetchait `/health` ; nginx ne proxifie que `/api/*` → le fallback SPA servait `index.html` en 200 `text/html` → `resp.json()` levait une SyntaxError → catch silencieux → fallback statique |
+| Fix badge | `init.js` fetch désormais `/api/health` (même handler FastAPI, proxifié par nginx, convention `/api/*` du codebase) : le badge reflète le `VERSION` monté dans l'API, sans rebuild de l'image frontend |
+| Fix collatéral | `admin-snapshots.js` (polling post-restore) avait le même fetch `/health` : nginx répondait 200 sur du HTML même API down → « Hub opérationnel » affiché immédiatement, à tort. Même correction `/api/health` : 502 pendant l'arrêt API → le polling attend désormais le vrai retour |
+| Déploiement | Rebuild `hub-frontend` requis (fichiers statiques baked) ; vérifié en prod locale : `/api/health` 200 JSON, badge `v3.50.1` servi dans index.html |
+
+---
+
 ## [3.50.0] - 7 septembre 2026
 
 ### ⚡ Sync tokens : fin des fermetures d'onglets (401 refresh) — grâce 60 s + access token 8 h
