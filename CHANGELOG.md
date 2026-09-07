@@ -5,6 +5,18 @@
 
 ---
 
+## [3.49.1] - 7 septembre 2026
+
+### 🐛 Modale droits : ligne app/rôle/Atelier ne s'écrase plus (fix UI)
+
+| Élément | Description |
+|---------|-------------|
+| Incident | La colonne « Atelier » (3.48.3) faisait déborder `.app-role-row` dans la modale (~500 px) : nom + rôle + Atelier + « Profil : … » + badge « Modifié » se compressaient, texte en wrap vertical |
+| Fix | `.app-role-row` en flex-wrap avec gaps ; nom d'app shrinkable (`flex: 1 1 170px`, min 150 px), rôle et Atelier en `flex: 0 0 auto` + nowrap ; indice profil + badge « Modifié » + reset regroupés dans `.role-row-badges` (`flex-basis: 100%`) = 2e ligne dédiée quand présents |
+| Compat | Handlers `data-override-badge` / `resetAppRoleToProfile` : sélecteurs globaux, insensibles à la nouvelle hiérarchie DOM |
+
+---
+
 ## [3.49.0] - 7 septembre 2026
 
 ### ✨ Admin — onglets à 2 niveaux (lisibilité)
