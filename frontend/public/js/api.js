@@ -635,11 +635,19 @@ class HubAPI {
         });
     }
 
-    async setUserApps(userId, assignments) {
+    async getUserApps(userId) {
+        return this.request(`/users/${userId}/apps`);
+    }
+
+    async setUserApps(userId, assignments, workshopAccess) {
         // assignments = [{ app_id: 1, role: "admin" }, ...]
+        // workshopAccess = [app_id, ...] des apps dont l'utilisateur verra l'atelier
+        //   (tableau autoritaire ; undefined = aucun changement)
+        const body = { assignments: assignments };
+        if (workshopAccess !== undefined) body.workshop_access = workshopAccess;
         return this.request(`/users/${userId}/apps`, {
             method: 'POST',
-            body: JSON.stringify({ assignments: assignments })
+            body: JSON.stringify(body)
         });
     }
 

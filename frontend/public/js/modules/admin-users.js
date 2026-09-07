@@ -69,9 +69,16 @@ async function editUser(id) {
     });
     updateUserProfileDropdownLabel(userProfileIds);
     
-    // Charger les apps avec leurs rôles
+    // Charger les apps avec leurs rôles + accès atelier
     const userAppRoles = user.app_roles || [];
-    loadUserAppsWithRoles(userAppRoles);
+    let workshopAccess = [];
+    try {
+        const userApps = await api.getUserApps(id);
+        workshopAccess = userApps.workshop_access || [];
+    } catch (e) {
+        console.warn('Chargement des accès atelier impossible', e);
+    }
+    loadUserAppsWithRoles(userAppRoles, workshopAccess);
     setUserFormOriginalState(user);
     
     userFormModal.show();
@@ -80,7 +87,7 @@ async function editUser(id) {
 // Rôles disponibles
 const AVAILABLE_ROLES = ['admin', 'manager', 'user', 'viewer'];
 
-function loadUserAppsWithRoles(userAppRoles) {
+function loadUserAppsWithRoles(userAppRoles, workshopAccess = []) {
     const container = document.getElementById('userAppsCheckboxes');
 
     if (allApps.length === 0) {
@@ -97,6 +104,10 @@ function loadUserAppsWithRoles(userAppRoles) {
         sourceByAppId[ar.app_id] = ar.source || 'manual';
         if (ar.profile_role) profileRoleByAppId[ar.app_id] = ar.profile_role;
     });
+
+    // Accès atelier par app_id (indépendant des rôles)
+    const workshopByAppId = {};
+    (workshopAccess || []).forEach(appId => { workshopByAppId[appId] = true; });
 
     container.innerHTML = allApps.map(app => {
         const currentRole = rolesByAppId[app.id] || '';
@@ -131,6 +142,12 @@ function loadUserAppsWithRoles(userAppRoles) {
                         </option>
                     `).join('')}
                 </select>
+                <div class="form-check ms-2" 
+                    title="L'utilisateur verra l'atelier de cette app dès qu'il existera (badge ATELIER dans son menu)">
+                    <input class="form-check-input ws-checkbox" type="checkbox" 
+                        id="userAppWs${app.id}" ${workshopByAppId[app.id] ? 'checked' : ''}>
+                    <label class="form-check-label small" for="userAppWs${app.id}">Atelier</label>
+                </div>
                 ${profileRole !== null ? `<small class="text-info ms-2"><i class="bi bi-person-badge"></i> Profil : ${profileRole}</small>` : ''}
                 ${isOverridden ? `
                     <span class="badge bg-warning text-dark ms-2" data-override-badge="${app.id}">
@@ -320,6 +337,11 @@ async function handleSaveUser(event) {
         }
     });
 
+    // Accès atelier : tableau autoritaire (état des checkboxes « Atelier »)
+    const workshopAccess = allApps
+        .filter(app => document.getElementById(`userAppWs${app.id}`)?.checked)
+        .map(app => app.id);
+
     try {
         let userId = id;
         if (id) {
@@ -338,8 +360,9 @@ async function handleSaveUser(event) {
             }
         }
         
-        // Mettre à jour les accès et rôles
-        await api.setUserApps(userId, assignments);
+        // Mettre à jour les accès et rôles (+ accès atelier si l'UI est présente)
+        const hasWsUi = !!document.getElementById('userAppsCheckboxes')?.children.length;
+        await api.setUserApps(userId, assignments, hasWsUi ? workshopAccess : undefined);
         
         showToast('Succès', id ? 'Utilisateur modifié' : 'Utilisateur créé', 'success');
         userFormModal.hide();
