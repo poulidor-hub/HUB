@@ -24,7 +24,7 @@ import json
 from app.database import get_db
 from app.models import (
     User, UserAppRole, UserTag, AccountRequest, AppSetting, UserMessage,
-    user_profiles, utcnow,
+    user_profiles, utcnow, get_apps_with_roles_and_workshops,
 )
 from app.auth import get_password_hash, get_current_admin, generate_oidc_sub
 from app.schemas import (
@@ -218,7 +218,7 @@ async def auto_login_with_token(
             detail="Compte introuvable ou désactivé"
         )
 
-    apps = user.get_apps_with_roles()
+    apps = await get_apps_with_roles_and_workshops(user, db)
     token, expire, jti = create_access_token(
         username=user.username,
         apps=apps,

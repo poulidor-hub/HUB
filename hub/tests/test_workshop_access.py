@@ -52,7 +52,7 @@ async def test_link_cascade_on_app_delete(async_session):
 
 async def test_workshop_role_for_app_nominal(async_session):
     user, base = await _mk_user_app(async_session)
-    ws = Application(name="Canari ws", slug="canari-ws", api_url="http://x:2", is_workshop=True)
+    ws = Application(name="Canari ws", slug="canari-ws", api_url="http://x:2", frontend_url="http://x:5200", is_workshop=True)
     async_session.add(ws)
     await async_session.commit()
     async_session.add(UserWorkshopAccess(user_id=user.id, app_id=base.id))
@@ -62,7 +62,7 @@ async def test_workshop_role_for_app_nominal(async_session):
 
 async def test_workshop_role_for_app_sans_acces(async_session):
     user, base = await _mk_user_app(async_session)
-    ws = Application(name="Canari ws", slug="canari-ws", api_url="http://x:2", is_workshop=True)
+    ws = Application(name="Canari ws", slug="canari-ws", api_url="http://x:2", frontend_url="http://x:5200", is_workshop=True)
     async_session.add(ws)
     await async_session.commit()
     assert await workshop_role_for_app(async_session, user.id, "canari-ws") is None
@@ -87,7 +87,7 @@ async def test_workshop_role_for_app_slug_non_ws(async_session):
 
 async def test_map_jwt_avec_ateliers(async_session):
     user, base = await _mk_user_app(async_session)
-    ws = Application(name="Canari ws", slug="canari-ws", api_url="http://x:2", is_workshop=True)
+    ws = Application(name="Canari ws", slug="canari-ws", api_url="http://x:2", frontend_url="http://x:5200", is_workshop=True)
     ghost = Application(name="Ghost ws", slug="ghost-ws", api_url="http://x:3",
                         is_workshop=True, is_active=False)
     async_session.add_all([ws, ghost])
@@ -104,7 +104,7 @@ async def test_map_jwt_setdefault(async_session):
     from app.models import UserAppRole
 
     user, base = await _mk_user_app(async_session)
-    ws = Application(name="Canari ws", slug="canari-ws", api_url="http://x:2", is_workshop=True)
+    ws = Application(name="Canari ws", slug="canari-ws", api_url="http://x:2", frontend_url="http://x:5200", is_workshop=True)
     async_session.add_all([user, ws])
     await async_session.commit()
     await async_session.refresh(user)
@@ -122,7 +122,7 @@ from tests.conftest import get_auth_header
 
 async def test_list_apps_user_voit_son_atelier(async_session, client, test_user):
     base = Application(name="Canari", slug="canari", api_url="http://x:1")
-    ws = Application(name="Canari ws", slug="canari-ws", api_url="http://x:2", is_workshop=True)
+    ws = Application(name="Canari ws", slug="canari-ws", api_url="http://x:2", frontend_url="http://x:5200", is_workshop=True)
     async_session.add_all([base, ws])
     await async_session.commit()
     async_session.add(UserWorkshopAccess(user_id=test_user.id, app_id=base.id))
@@ -138,7 +138,7 @@ async def test_list_apps_user_voit_son_atelier(async_session, client, test_user)
 
 
 async def test_list_apps_sans_acces_pas_datelier(async_session, client, test_user):
-    ws = Application(name="Canari ws", slug="canari-ws", api_url="http://x:2", is_workshop=True)
+    ws = Application(name="Canari ws", slug="canari-ws", api_url="http://x:2", frontend_url="http://x:5200", is_workshop=True)
     async_session.add(ws)
     await async_session.commit()
     token, _, _ = create_access_token(username=test_user.username, apps={})
@@ -157,3 +157,30 @@ async def test_list_apps_atelier_inactif_invisible(async_session, client, test_u
     token, _, _ = create_access_token(username=test_user.username, apps={})
     r = await client.get("/api/apps/", headers=get_auth_header(token))
     assert "canari-ws" not in [a["slug"] for a in r.json()]
+
+
+# ── Gardes /launch et tokens (Task 4) ──
+
+
+async def test_launch_atelier_avec_acces(async_session, client, test_user):
+    base = Application(name="Canari", slug="canari", api_url="http://x:1")
+    ws = Application(name="Canari ws", slug="canari-ws", api_url="http://x:2", frontend_url="http://x:5200", is_workshop=True)
+    async_session.add_all([base, ws])
+    await async_session.commit()
+    async_session.add(UserWorkshopAccess(user_id=test_user.id, app_id=base.id))
+    await async_session.commit()
+    token, _, _ = create_access_token(username=test_user.username, apps={})
+    r = await client.post("/api/auth/apps/canari-ws/launch", headers=get_auth_header(token))
+    assert r.status_code == 200, r.text
+    data = r.json()
+    assert data.get("role") == "user"
+    assert data.get("app_slug") == "canari-ws"
+
+
+async def test_launch_atelier_sans_acces_refuse(async_session, client, test_user):
+    ws = Application(name="Canari ws", slug="canari-ws", api_url="http://x:2", frontend_url="http://x:5200", is_workshop=True)
+    async_session.add(ws)
+    await async_session.commit()
+    token, _, _ = create_access_token(username=test_user.username, apps={})
+    r = await client.post("/api/auth/apps/canari-ws/launch", headers=get_auth_header(token))
+    assert r.status_code == 403

@@ -11,7 +11,7 @@ import secrets
 import logging
 
 from app.database import get_db
-from app.models import User, AuditLog, ServiceAccount, UserAppRole, UserSession, Application, UserTag, utcnow
+from app.models import User, AuditLog, ServiceAccount, UserAppRole, UserSession, Application, UserTag, utcnow, get_apps_with_roles_and_workshops, workshop_role_for_app
 from app.schemas import (
     Token, LoginRequest, TokenIntrospection, RefreshTokenRequest, LogoutRequest,
     PasswordChangeRequest, AppLaunchResponse,
@@ -161,7 +161,7 @@ async def login_for_token(
         beacon_token = None
         if refresh_obj.user:
             user = refresh_obj.user
-            apps = user.get_apps_with_roles()  # Dict {app_slug: role}
+            apps = await get_apps_with_roles_and_workshops(user, db)  # + ateliers autorisés
             sub = user.username
             beacon_token = generate_beacon_token(user.id)
             tags = user.get_tags()
@@ -304,7 +304,8 @@ async def login_for_token(
         )
     
     # Construire les apps avec rôles
-    apps = user.get_apps_with_roles()  # Dict {app_slug: role}
+    # Construire les apps avec rôles (+ ateliers autorisés)
+    apps = await get_apps_with_roles_and_workshops(user, db)
     
     token, expire, jti = create_access_token(
         username=user.username,
@@ -415,7 +416,7 @@ async def login_with_redirect(
             detail="Compte désactivé"
         )
     
-    apps = user.get_apps_with_roles()  # Dict {app_slug: role}
+    apps = await get_apps_with_roles_and_workshops(user, db)
     
     token, expire, jti = create_access_token(
         username=user.username,
@@ -969,7 +970,7 @@ async def refresh_access_token(
     beacon_token = None
     if refresh_obj.user:
         user = refresh_obj.user
-        apps = user.get_apps_with_roles()  # Dict {app_slug: role}
+        apps = await get_apps_with_roles_and_workshops(user, db)
         sub = user.username
         is_sa = False
         beacon_token = generate_beacon_token(user.id)
@@ -1051,12 +1052,15 @@ async def create_app_launch_token(
 
     user_role = current_user.get_role_for_app(app_slug)
     if not current_user.is_admin and not user_role:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"Accès refusé à l'application {app_slug}"
-        )
+        # Accès atelier : {slug}-ws autorisé si activation sur l'app de base
+        user_role = await workshop_role_for_app(db, current_user.id, app_slug)
+        if not user_role:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Accès refusé à l'application {app_slug}"
+            )
 
-    apps = current_user.get_apps_with_roles()
+    apps = await get_apps_with_roles_and_workshops(current_user, db)
     role = user_role
     if current_user.is_admin and app_slug not in apps:
         apps[app_slug] = "admin"
@@ -1163,13 +1167,16 @@ async def sso_login(
     if not user.is_admin:
         user_role = user.get_role_for_app(app_slug)
         if not user_role:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Accès refusé à l'application {app_slug}"
-            )
+            # Accès atelier : {slug}-ws autorisé si activation sur l'app de base
+            user_role = await workshop_role_for_app(db, user.id, app_slug)
+            if not user_role:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail=f"Accès refusé à l'application {app_slug}"
+                )
     
     # 4. Créer le token avec accès à l'app
-    apps = user.get_apps_with_roles()
+    apps = await get_apps_with_roles_and_workshops(user, db)
     
     # S'assurer que l'app demandée est dans les apps (admin a toujours accès)
     if user.is_admin and app_slug not in apps:
