@@ -588,3 +588,51 @@ class TestSSOFlow:
         )
         
         assert response.status_code == 403
+
+
+class TestRefreshGraceAPI:
+    """Grâce exposée via l'API : 2 onglets rivaux → le 2e refresh avec
+    l'ancien token ne doit PAS renvoyer 401 pendant la grâce."""
+
+    @pytest.mark.asyncio
+    async def test_double_refresh_grant_returns_same_token(self, client: AsyncClient, test_user: User):
+        login = await client.post(
+            "/api/auth/token",
+            data={"grant_type": "password", "username": "testuser", "password": "testpass123"},
+        )
+        assert login.status_code == 200
+        old = login.json()["refresh_token"]
+
+        first = await client.post(
+            "/api/auth/token",
+            data={"grant_type": "refresh_token", "refresh_token": old},
+        )
+        assert first.status_code == 200
+
+        # Onglet B, quelques ms après : même ancien token
+        second = await client.post(
+            "/api/auth/token",
+            data={"grant_type": "refresh_token", "refresh_token": old},
+        )
+        assert second.status_code == 200, (
+            "La course inter-onglets pendant la grâce ne doit pas produire de 401"
+        )
+        assert second.json()["refresh_token"] == first.json()["refresh_token"]
+
+    @pytest.mark.asyncio
+    async def test_double_refresh_json_endpoint_returns_same_token(self, client: AsyncClient, test_user: User):
+        login = await client.post(
+            "/api/auth/token",
+            data={"grant_type": "password", "username": "testuser", "password": "testpass123"},
+        )
+        assert login.status_code == 200
+        old = login.json()["refresh_token"]
+
+        first = await client.post("/api/auth/token/refresh", json={"refresh_token": old})
+        assert first.status_code == 200
+
+        second = await client.post("/api/auth/token/refresh", json={"refresh_token": old})
+        assert second.status_code == 200, (
+            "/api/auth/token/refresh doit aussi bénéficier de la période de grâce"
+        )
+        assert second.json()["refresh_token"] == first.json()["refresh_token"]
