@@ -5,7 +5,7 @@
 
 ---
 
-## [3.49.0] - 7 septembre 2026
+## [3.50.0] - 7 septembre 2026
 
 ### ⚡ Sync tokens : fin des fermetures d'onglets (401 refresh) — grâce 60 s + access token 8 h
 
