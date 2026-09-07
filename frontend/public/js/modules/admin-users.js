@@ -119,7 +119,7 @@ function loadUserAppsWithRoles(userAppRoles, workshopAccess = []) {
 
         return `
             <div class="d-flex align-items-center mb-2 app-role-row">
-                <div class="form-check me-3" style="min-width: 200px;">
+                <div class="form-check me-2" style="flex: 1 1 170px; min-width: 150px;">
                     <input class="form-check-input app-checkbox" type="checkbox" value="${app.id}" 
                         id="userApp${app.id}" ${isChecked ? 'checked' : ''}
                         ${profileRole !== null ? 'disabled' : ''}
@@ -133,7 +133,7 @@ function loadUserAppsWithRoles(userAppRoles, workshopAccess = []) {
                     </label>
                 </div>
                 <select class="form-select form-select-sm role-select" id="userAppRole${app.id}" 
-                    style="width: 120px;" ${isChecked ? '' : 'disabled'}
+                    style="width: 120px; flex: 0 0 auto;" ${isChecked ? '' : 'disabled'}
                     data-source="${source}" data-profile-role="${profileRole || ''}">
                     <option value="">-- Rôle --</option>
                     ${AVAILABLE_ROLES.map(role => `
@@ -142,22 +142,25 @@ function loadUserAppsWithRoles(userAppRoles, workshopAccess = []) {
                         </option>
                     `).join('')}
                 </select>
-                <div class="form-check ms-2" 
+                <div class="form-check" style="flex: 0 0 auto; white-space: nowrap;" 
                     title="L'utilisateur verra l'atelier de cette app dès qu'il existera (badge ATELIER dans son menu)">
                     <input class="form-check-input ws-checkbox" type="checkbox" 
                         id="userAppWs${app.id}" ${workshopByAppId[app.id] ? 'checked' : ''}>
                     <label class="form-check-label small" for="userAppWs${app.id}">Atelier</label>
                 </div>
-                ${profileRole !== null ? `<small class="text-info ms-2"><i class="bi bi-person-badge"></i> Profil : ${profileRole}</small>` : ''}
-                ${isOverridden ? `
-                    <span class="badge bg-warning text-dark ms-2" data-override-badge="${app.id}">
-                        <i class="bi bi-pencil-fill"></i> Modifié
-                    </span>
-                    <button type="button" class="btn btn-sm btn-outline-secondary ms-1" 
-                        data-action="resetAppRoleToProfile" data-arg1="${app.id}" title="Réinitialiser selon profil">
-                        <i class="bi bi-arrow-counterclockwise"></i>
-                    </button>
-                ` : ''}
+                ${(profileRole !== null || isOverridden) ? `
+                <div class="d-flex align-items-center ms-4 role-row-badges">
+                    ${profileRole !== null ? `<small class="text-info"><i class="bi bi-person-badge"></i> Profil : ${profileRole}</small>` : ''}
+                    ${isOverridden ? `
+                        <span class="badge bg-warning text-dark" data-override-badge="${app.id}">
+                            <i class="bi bi-pencil-fill"></i> Modifié
+                        </span>
+                        <button type="button" class="btn btn-sm btn-outline-secondary" 
+                            data-action="resetAppRoleToProfile" data-arg1="${app.id}" title="Réinitialiser selon profil">
+                            <i class="bi bi-arrow-counterclockwise"></i>
+                        </button>
+                    ` : ''}
+                </div>` : ''}
             </div>
         `;
     }).join('');

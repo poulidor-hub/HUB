@@ -828,9 +828,20 @@ body {
 .app-role-row {
     padding: 0.25rem 0;
     border-bottom: 1px solid #f8f9fa;
+    flex-wrap: wrap;            /* les badges profil/override passent en 2e ligne */
+    column-gap: 0.5rem;
+    row-gap: 0.15rem;
 }
 .app-role-row:last-child {
     border-bottom: none;
+}
+/* Ligne secondaire : indice profil + badge override + reset */
+.role-row-badges {
+    flex-basis: 100%;           /* force la ligne dédiée, jamais à l'étroit */
+    gap: 0.5rem;
+}
+.role-row-badges small {
+    white-space: nowrap;
 }
 
 /* ===== Dashboard: search, filters, favorites ===== */
