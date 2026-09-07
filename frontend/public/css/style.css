@@ -828,20 +828,40 @@ body {
 .app-role-row {
     padding: 0.25rem 0;
     border-bottom: 1px solid #f8f9fa;
-    flex-wrap: wrap;            /* les badges profil/override passent en 2e ligne */
-    column-gap: 0.5rem;
-    row-gap: 0.15rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
 }
 .app-role-row:last-child {
     border-bottom: none;
 }
-/* Ligne secondaire : indice profil + badge override + reset */
-.role-row-badges {
-    flex-basis: 100%;           /* force la ligne dédiée, jamais à l'étroit */
-    gap: 0.5rem;
-}
-.role-row-badges small {
+/* Layout compact une ligne (variante B) : badges mini-icônes à côté du nom */
+.app-role-row .app-name {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
     white-space: nowrap;
+    text-overflow: ellipsis;
+    cursor: pointer;
+}
+.app-role-row .app-name .app-name-text {
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.app-role-row .role-select {
+    width: 110px;
+    flex: 0 0 auto;
+}
+.app-role-row .ws-box {
+    flex: 0 0 auto;
+    white-space: nowrap;
+    margin: 0;
+}
+.app-role-row .badge-override {
+    font-size: 0.6rem;
 }
 
 /* ===== Dashboard: search, filters, favorites ===== */
