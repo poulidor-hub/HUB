@@ -5,6 +5,17 @@
 
 ---
 
+## [3.49.2] - 7 septembre 2026
+
+### ✨ Modale droits : layout compact une ligne (variante B — companion validé)
+
+| Élément | Description |
+|---------|-------------|
+| Changement | Chaque ligne : checkbox + nom (ellipsis ; mini-badges profil/override en icônes avec infobulles) + bouton reset si override + rôle (110 px) + « Atelier » — tout tient sur une ligne, aligné, même avec profil + override |
+| Détails | `app-name` shrinkable (nowrap + ellipsis) ; badge override conserve `data-override-badge` (reset) ; bouton reset hors du label (pas de toggle parasite) ; choix validé par l'utilisateur via companion visuel |
+
+---
+
 ## [3.49.1] - 7 septembre 2026
 
 ### 🐛 Modale droits : ligne app/rôle/Atelier ne s'écrase plus (fix UI)
