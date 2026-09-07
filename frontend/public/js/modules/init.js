@@ -15,7 +15,7 @@ async function updateHubVersionBadge() {
     const badge = document.getElementById('navbarVersionBadge');
     if (!badge) return;
     try {
-        const resp = await fetch('/health', { signal: AbortSignal.timeout(3000) });
+        const resp = await fetch('/api/health', { signal: AbortSignal.timeout(3000) });
         if (!resp.ok) return;
         const data = await resp.json();
         if (data.version) badge.textContent = `v${data.version}`;

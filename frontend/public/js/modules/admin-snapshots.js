@@ -362,7 +362,7 @@ function confirmRestoreSnapshot(snapshotId) {
         const MAX_WAIT = 300000; // 5 minutes
         const poll = setInterval(async () => {
             try {
-                const resp = await fetch('/health', { signal: AbortSignal.timeout(3000) });
+                const resp = await fetch('/api/health', { signal: AbortSignal.timeout(3000) });
                 if (resp.ok) {
                     clearInterval(poll);
                     progressEl.querySelector('.modal-body').innerHTML = `
