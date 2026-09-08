@@ -5,6 +5,21 @@
 
 ---
 
+## [3.50.2] - 8 septembre 2026
+
+### 🐛 Allocation de sous-réseaux : les réseaux Docker épinglés manuellement sont désormais exclus
+
+| Élément | Description |
+|---------|-------------|
+| Incident | `POST /api/apps/allocate-ports` a attribué `10.50.5.0/24` à une app alors que `exemple-app-network` l'occupait déjà (épinglage manuel hors Hub) → `docker compose up` échouait avec « invalid pool request: Pool overlaps with other one on this address space » |
+| Cause racine | Les **ports** étaient filtrés par un scan Docker du réel (`get_used_host_ports`), mais les **sous-réseaux** n'étaient consultés que dans la table `port_allocations` : tout réseau Docker créé manuellement (ou par un stack tiers) était invisible de l'allocateur |
+| Fix scanner | `DockerScanner.get_used_network_subnets()` : scan best-effort des sous-réseaux (IPAM) de tous les réseaux Docker existants, symétrique de `get_used_host_ports` — ne lève jamais, `set()` si Docker indisponible |
+| Fix allocateur | `docker_occupied_subnets()` (flag `subnet_scan_docker_enabled`, host local uniquement, exécution en thread) fusionné dans `allocate_ports_for_app` : nouvelle allocation **et** backfill paresseux des allocations antérieures sans subnet |
+| Tests | 6 nouveaux tests (exclusion, host distant ignoré, flag désactivé, fallback échec scan, backfill) ; suite port_allocation 26/26 verte |
+| Déploiement | Rebuild `hub-api` ; vérifié en réel : allocation exemple-app renvoie désormais `10.50.8.0/24` en sautant 10.50.5/.6/.7 épinglés manuellement |
+
+---
+
 ## [3.50.1] - 7 septembre 2026
 
 ### 📣 Pour les utilisateurs
