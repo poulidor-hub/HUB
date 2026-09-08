@@ -293,6 +293,11 @@ class Settings(BaseSettings):
     # conteneurs Docker (scan best-effort via le socket Docker, à l'allocation).
     port_scan_docker_enabled: bool = True
 
+    # Exclure de l'attribution les sous-réseaux déjà présents sur l'hôte local
+    # (réseaux Docker existants, y compris épinglés manuellement hors Hub).
+    # Scan best-effort via le socket Docker, à l'allocation.
+    subnet_scan_docker_enabled: bool = True
+
     # === Pool d'allocation des sous-réseaux Docker des apps ===
     # Attribué par POST /api/apps/allocate-ports (champ `subnet`) : un /N par app.
     # Doit rester DISJOINT des réseaux existants (172.16/12 Docker, 10.42 Hub,

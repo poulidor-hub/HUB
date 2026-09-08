@@ -44,6 +44,29 @@ async def docker_occupied_ports(settings, host: str) -> set[int]:
         return set()
 
 
+async def docker_occupied_subnets(settings, host: str) -> set[str]:
+    """Sous-réseaux réellement présents sur l'hôte LOCAL (best-effort).
+
+    Symétrique de `docker_occupied_ports` : capte les épinglages manuels
+    (réseaux Docker créés hors allocation Hub) pour ne jamais ré-attribuer
+    un sous-réseau occupé (« Pool overlaps with other one »).
+
+    - Désactivé si `subnet_scan_docker_enabled` est faux.
+    - Le scan ne reflète que l'hôte du Hub : ignoré (set()) pour un host distant.
+    - Le scan Docker étant bloquant, il est exécuté dans un thread.
+    - Ne lève jamais : renvoie set() en cas d'échec (fallback gracieux).
+    """
+    if not getattr(settings, "subnet_scan_docker_enabled", True):
+        return set()
+    if host != settings.get_hub_host():
+        return set()
+    try:
+        return await asyncio.to_thread(docker_scanner.get_used_network_subnets)
+    except Exception as e:
+        logger.warning("Scan Docker des sous-réseaux occupés échoué (host=%s): %s", host, e)
+        return set()
+
+
 def pick_free_ports(
     used_api: set[int],
     used_frontend: set[int],
@@ -196,6 +219,7 @@ async def allocate_ports_for_app(
             # Allocation antérieure à l'introduction du pool : remplir
             # paresseusement le sous-réseau (idempotent à partir d'ici).
             used_subnets = await _used_subnets_for_host(db, host)
+            used_subnets |= await docker_occupied_subnets(settings, host)
             existing.subnet = pick_free_subnet(
                 used_subnets,
                 pool=settings.app_subnet_pool,
@@ -218,6 +242,7 @@ async def allocate_ports_for_app(
         frontend_range=(settings.app_port_frontend_start, settings.app_port_frontend_end),
     )
     used_subnets = await _used_subnets_for_host(db, host)
+    used_subnets |= await docker_occupied_subnets(settings, host)
     subnet = pick_free_subnet(
         used_subnets,
         pool=settings.app_subnet_pool,

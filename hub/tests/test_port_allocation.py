@@ -199,6 +199,84 @@ async def test_ports_status_exposes_host_occupied_ports(client: AsyncClient, adm
     assert 22 not in body["host_occupied_ports"]   # hors plages -> ignoré
 
 
+# ===== Exclusion des sous-réseaux Docker occupés (scan hôte local) =====
+# Bug constaté : le Hub n'allouait que selon sa table port_allocations et a
+# proposé 10.50.5.0/24 alors que exemple-app-network l'occupe déjà (épinglage
+# manuel). Les sous-réseaux Docker réellement présents doivent être exclus,
+# comme les ports le sont via get_used_host_ports.
+
+
+def test_get_used_network_subnets_empty_when_unavailable():
+    """get_used_network_subnets est best-effort : set() si Docker indisponible."""
+    s = DockerScanner()
+    s._available = False
+    s._client = False
+    assert s.get_used_network_subnets() == set()
+
+
+@pytest.mark.asyncio
+async def test_allocate_ports_excludes_docker_occupied_subnets(async_session):
+    """Un sous-réseau Docker réellement occupé est exclu de l'attribution."""
+    hub_host = settings.get_hub_host()
+    with patch('app.port_allocator.docker_scanner.get_used_network_subnets',
+               return_value={"10.50.0.0/24", "172.17.0.0/16"}):
+        alloc, reused = await allocate_ports_for_app(async_session, "subnet-app", hub_host, settings)
+    assert reused is False
+    assert alloc.subnet == "10.50.1.0/24"   # 10.50.0.0/24 occupé par Docker -> sauté
+
+
+@pytest.mark.asyncio
+async def test_allocate_ports_subnet_scan_not_applied_for_remote_host(async_session):
+    """Le scan ne reflète que l'hôte local : ignoré pour un host distant."""
+    remote = "10.20.30.40"
+    assert remote != settings.get_hub_host()
+    with patch('app.port_allocator.docker_scanner.get_used_network_subnets',
+               return_value={"10.50.0.0/24"}) as mocked:
+        alloc, _ = await allocate_ports_for_app(async_session, "subnet-remote-app", remote, settings)
+    assert alloc.subnet == "10.50.0.0/24"
+    mocked.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_allocate_ports_subnet_scan_disabled_by_flag(async_session, monkeypatch):
+    """Feature flag désactivé : aucun scan de sous-réseaux n'est déclenché."""
+    hub_host = settings.get_hub_host()
+    monkeypatch.setattr(settings, "subnet_scan_docker_enabled", False, raising=False)
+    with patch('app.port_allocator.docker_scanner.get_used_network_subnets',
+               return_value={"10.50.0.0/24"}) as mocked:
+        alloc, _ = await allocate_ports_for_app(async_session, "subnet-flag-app", hub_host, settings)
+    assert alloc.subnet == "10.50.0.0/24"
+    mocked.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_allocate_ports_subnet_scan_failure_falls_back(async_session):
+    """Échec du scan : on retombe sur le comportement DB seul (gracieux)."""
+    hub_host = settings.get_hub_host()
+    with patch('app.port_allocator.docker_scanner.get_used_network_subnets',
+               side_effect=RuntimeError("docker down")):
+        alloc, _ = await allocate_ports_for_app(async_session, "subnet-fail-app", hub_host, settings)
+    assert alloc.subnet == "10.50.0.0/24"
+
+
+@pytest.mark.asyncio
+async def test_backfill_subnet_excludes_docker_occupied_subnets(async_session):
+    """Le remplissage paresseux d'une allocation ancienne (sans subnet) évite
+    aussi les sous-réseaux Docker occupés."""
+    hub_host = settings.get_hub_host()
+    async_session.add(PortAllocation(
+        app_slug="legacy-app", host=hub_host,
+        api_port=9000, frontend_port=4200, frontend_https_port=4201,
+    ))
+    await async_session.commit()
+
+    with patch('app.port_allocator.docker_scanner.get_used_network_subnets',
+               return_value={"10.50.0.0/24"}):
+        alloc, reused = await allocate_ports_for_app(async_session, "legacy-app", hub_host, settings)
+    assert reused is True
+    assert alloc.subnet == "10.50.1.0/24"
+
+
 # ===== Libération des allocations (apps supprimées / nettoyage) =====
 
 from app.port_allocator import release_ports_for_app

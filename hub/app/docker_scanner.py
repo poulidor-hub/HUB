@@ -519,6 +519,31 @@ class DockerScanner:
             return set()
         return used
 
+    def get_used_network_subnets(self) -> set:
+        """Retourne les sous-réseaux (CIDR) des réseaux Docker existants.
+
+        Best-effort, symétrique de get_used_host_ports : capte les épinglages
+        manuels (apps épinglées à la main, stacks tiers) invisibles de la table
+        port_allocations du Hub. Ne lève jamais : renvoie set() en cas d'erreur
+        ou si Docker est indisponible.
+        """
+        if not self.is_available:
+            logger.warning("Docker indisponible : scan des sous-réseaux ignoré")
+            return set()
+
+        used: set = set()
+        try:
+            for net in self.client.networks.list():
+                ipam = (net.attrs or {}).get("IPAM") or {}
+                for cfg in ipam.get("Config") or []:
+                    subnet = cfg.get("Subnet")
+                    if subnet:
+                        used.add(subnet)
+        except Exception as e:
+            logger.warning(f"Scan des sous-réseaux Docker échoué: {e}")
+            return set()
+        return used
+
     def get_docker_info(self) -> Dict[str, Any]:
         """Retourne des informations sur l'environnement Docker"""
         if not self.is_available:
