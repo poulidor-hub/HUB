@@ -453,16 +453,43 @@ class TestAppsCodeEngine:
     async def test_create_snapshot_apps_code_only(
         self, async_session: AsyncSession, tmp_path, monkeypatch,
     ):
+        """Snapshot « code apps uniquement » de bout en bout, portable hors container.
+
+        Les chemins /code/* n'existent que dans le conteneur hub-api : on les
+        redirige vers tmp_path (clé RSA de test générée à la volée) pour que
+        le test tourne aussi sur un poste de dev.
+        """
         from pathlib import Path as _P
+        from cryptography.hazmat.primitives import serialization
+        from cryptography.hazmat.primitives.asymmetric import rsa
         from app import snapshot_collectors
+        from app import snapshot_engine
         from app.snapshot_engine import create_snapshot
 
+        # Collecteur : source des apps isolée dans tmp_path
         src = tmp_path / "apps_source"
         (src / "monapp").mkdir(parents=True)
         (src / "monapp" / "main.py").write_text("print('x')")
         (src / "monapp" / ".git").mkdir()
         (src / "monapp" / ".git" / "HEAD").write_text("ref: refs/heads/main\n")
         monkeypatch.setattr(snapshot_collectors, "APPS_SOURCE_DIR", src)
+
+        # Secrets : paire RSA jetable (le snapshot est chiffré avec la clé publique JWT)
+        secrets_dir = tmp_path / "secrets"
+        secrets_dir.mkdir()
+        key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        (secrets_dir / "jwt_private_key.pem").write_bytes(
+            key.private_bytes(
+                encoding=serialization.Encoding.PEM,
+                format=serialization.PrivateFormat.PKCS8,
+                encryption_algorithm=serialization.NoEncryption(),
+            )
+        )
+        monkeypatch.setattr(snapshot_engine, "SECRETS_DIR", secrets_dir)
+
+        # Stockage local : volume /code/storage hors container → tmp_path
+        storage_dir = tmp_path / "storage" / "snapshots"
+        monkeypatch.setattr(snapshot_engine, "SNAPSHOT_STORAGE_DIR", storage_dir)
 
         snap = HubSnapshot(
             snapshot_id="test-appscode-001", status="pending", created_by="test",
@@ -485,8 +512,10 @@ class TestAppsCodeEngine:
         assert snap.checksum_sha256
         assert snap.manifest["collectors"]["apps_code"]["apps_count"] == 1
         assert snap.manifest["collectors"]["apps_code"]["size_bytes"] > 0
+        # L'archive chiffrée est bien écrite dans le répertoire de stockage patché
+        assert str(storage_dir) in snap.local_path
 
-        # Nettoyage : fichier local écrit sur le volume monté + ligne DB
+        # Nettoyage : fichier local écrit + ligne DB
         local = _P(snap.local_path)
         if local.exists():
             local.unlink()

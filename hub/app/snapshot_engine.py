@@ -34,6 +34,7 @@ from app.config import get_settings
 logger = logging.getLogger(__name__)
 
 SECRETS_DIR = Path("/code/secrets")
+SNAPSHOT_STORAGE_DIR = Path("/code/storage/snapshots")  # monkeypatchable en test
 SETTINGS = get_settings()
 
 
@@ -191,7 +192,7 @@ async def create_snapshot(
         checksum = hashlib.sha256(encrypted_path.read_bytes()).hexdigest()
 
         # Sauvegarde locale
-        storage_dir = Path("/code/storage/snapshots")
+        storage_dir = SNAPSHOT_STORAGE_DIR
         storage_dir.mkdir(parents=True, exist_ok=True)
         local_dest = storage_dir / f"snapshot_{snapshot_id}.tar.zst.enc"
         shutil.copy2(encrypted_path, local_dest)

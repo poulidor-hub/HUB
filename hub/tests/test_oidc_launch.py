@@ -1,8 +1,11 @@
 """Tests pour /api/oidc/launch/{client_id} (redirecteur vers page login app externe).
 
 Le launch shortcut valide le JWT HUB du dashboard, vérifie l'accès user,
-puis redirige vers le frontend_url de l'app HUB liée (page de login OIDC du
-client externe, ex: Vikunja /auth/openid/auth). SANS access_token dans l'URL
+puis redirige vers la page /logout de l'app externe (frontend_url) avec
+?provider=hub : la session éventuellement résiduelle de l'app est purgée
+AVANT que l'utilisateur ne lance un flux OIDC frais (cf. commit ff8d2a4 :
+le cookie de session Vikunja persistait entre deux users HUB et exposait
+les données de l'utilisateur précédent). SANS access_token dans l'URL
 finale (sinon l'app externe l'interprète comme un retour de flow OIDC).
 """
 import uuid
@@ -17,12 +20,13 @@ from tests.conftest import get_auth_header
 
 @pytest.fixture
 async def vikunja_app_and_client(async_session, test_user):
-    """Crée une app HUB 'vikunja' (avec frontend_url) + un client OIDC lié."""
+    """Crée une app HUB 'vikunja' (frontend_url = racine de l'app, comme la
+    config réelle de Vikunja au Hub) + un client OIDC lié."""
     app = Application(
         name="Vikunja",
         slug="vikunja",
         api_url="http://192.0.2.10:3457",
-        frontend_url="http://192.0.2.10:3457/auth/openid/auth",
+        frontend_url="http://192.0.2.10:3457",
         callback_url="http://192.0.2.10:8000/api/oidc/launch/vikunja",
         is_active=True,
         requires_auth=True,
@@ -49,7 +53,11 @@ class TestLaunchRedirector:
     async def test_launch_redirects_to_frontend_url(
         self, client: AsyncClient, vikunja_app_and_client, test_user
     ):
-        """JWT valide + client lié à app → 302 vers frontend_url (sans access_token)."""
+        """JWT valide + client lié à app → 302 vers {frontend_url}/logout?provider=hub.
+
+        La purge de session (logout) précède le login OIDC frais (ff8d2a4),
+        et l'access_token ne doit PAS apparaître dans l'URL finale.
+        """
         token, _, _ = create_access_token(
             username=test_user.username, apps={"vikunja": "user"}
         )
@@ -60,7 +68,7 @@ class TestLaunchRedirector:
         )
         assert response.status_code == 302
         location = response.headers["location"]
-        assert location == "http://192.0.2.10:3457/auth/openid/auth"
+        assert location == "http://192.0.2.10:3457/logout?provider=hub"
         # L'access_token ne doit PAS être dans l'URL finale
         assert "access_token" not in location
 
