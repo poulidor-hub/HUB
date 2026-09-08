@@ -5,6 +5,20 @@
 
 ---
 
+## [3.50.3] - 8 septembre 2026
+
+### 🧪 Suite de tests : 11 échecs résiduels corrigés — 1015/1015 verte
+
+| Élément | Description |
+|---------|-------------|
+| `croniter` (8 tests) | Déclaré dans `requirements.txt` mais absent de l'env Python locale de dev → `ModuleNotFoundError` sur tout `TestSnapshotCronDue`. Installé (`pip --user`) : aucun changement code, l'env locale est réalignée sur la source de vérité |
+| Snapshots (1 test) | `test_create_snapshot_apps_code_only` dépendait des chemins container `/code/*` : `SECRETS_DIR` (constante module, monkeypatchable) et `/code/storage/snapshots` en dur dans `create_snapshot` → extraction en constante module `SNAPSHOT_STORAGE_DIR` (comportement inchangé) ; le test génère désormais une clé RSA jetable dans `tmp_path` et redirige les deux chemins → portable hors container |
+| OIDC launch (1 test) | Test obsolète face à `ff8d2a4` (redirection forcée `{frontend_url}/logout?provider=hub` pour purger la session Vikunja résiduelle) : fixture aligné sur la config réelle (frontend_url = racine) + assertion mise à jour |
+| hub-host (1 test) | `configured: bool(settings.hub_host)` ne peut être True que si `HUB_HOST` est injecté (docker-compose en prod) → le test simule `HUB_HOST` sur le singleton Settings (déterministe hors container) |
+| Validation | Suite complète : **1015 passed, 0 failed** (avant : 1004 passed, 11 failed) |
+
+---
+
 ## [3.50.2] - 8 septembre 2026
 
 ### 🐛 Allocation de sous-réseaux : les réseaux Docker épinglés manuellement sont désormais exclus
