@@ -5,6 +5,20 @@
 
 ---
 
+## [3.50.4] - 9 septembre 2026
+
+### ⚡ Fix : self-restauration du Hub — « Aucun service account trouvé »
+
+| Élément | Description |
+|---------|-------------|
+| Cause racine | L'app système `hub` créée par `ensure_hub_system_application` n'avait aucun `ServiceAccount` associé, et la fonction faisait un `return` anticipé dans la branche de création. Le flux de restauration self-backup (POST `/{slug}/backups/{id}/restore`, restore upload, import+restore) exige un SA de l'app cible pour générer son token M2M → échec systématique « Aucun service account trouvé pour cette application » sur toute instance où le SA n'avait pas été créé manuellement |
+| Fix | `ensure_hub_system_application` garantit désormais app **+ SA actif associé** : suppression du `return` anticipé, auto-création d'un « SA - Hub » (client_id `sa_<hex>`, secret aléatoire hashé, idempotent — aucun doublon si un SA est déjà associé). Le hub signe ses propres tokens M2M (`is_service_account=True`), le secret n'a pas besoin d'être partagé |
+| Fichiers | `hub/app/routes/app_backups.py` (`ensure_hub_system_application`, import `get_password_hash`) ; `hub/tests/test_hub_restore.py` (+2 tests de régression : création du SA, non-duplication) |
+| Tests | `test_hub_restore.py` 19/19 ; non-régression backups/snapshots/network/propagation 83/83 |
+| Migration | Aucune. Au premier accès à la page sauvegardes (ou tout appel à `get_app_or_404("hub")`), le SA manquant est auto-créé — correctif effectif sans intervention sur les instances existantes |
+
+---
+
 ## [3.50.3] - 8 septembre 2026
 
 ### 🧪 Suite de tests : 11 échecs résiduels corrigés — 1015/1015 verte
