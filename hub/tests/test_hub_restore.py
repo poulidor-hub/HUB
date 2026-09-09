@@ -82,6 +82,56 @@ async def test_import_users_update(async_session, admin_user):
 
 
 @pytest.mark.asyncio
+async def test_ensure_hub_system_application_creates_service_account(async_session):
+    """Régression : l'app hub auto-créée n'avait aucun ServiceAccount associé,
+    donc tout restore du hub échouait avec « Aucun service account trouvé ».
+    ensure_hub_system_application doit garantir app + SA actif associé."""
+    from app.routes.app_backups import ensure_hub_system_application
+
+    hub_app = await ensure_hub_system_application(async_session)
+    assert hub_app.slug == "hub"
+
+    sa = (await async_session.execute(
+        select(ServiceAccount)
+        .join(ServiceAccount.applications)
+        .where(Application.slug == "hub")
+        .limit(1)
+    )).scalar_one_or_none()
+    assert sa is not None, "Aucun SA associé à l'app hub après ensure_hub_system_application"
+    assert sa.is_active is True
+
+
+@pytest.mark.asyncio
+async def test_ensure_hub_system_application_reuses_existing_sa(async_session):
+    """Si un SA est déjà associé à l'app hub, ensure ne crée pas de doublon."""
+    from app.routes.app_backups import ensure_hub_system_application
+
+    hub_app = Application(
+        name="Hub", slug="hub", api_url="http://hub-api:8000",
+        frontend_url="/", is_active=True, is_system_app=True,
+    )
+    async_session.add(hub_app)
+    sa_hub = ServiceAccount(
+        name="SA - Hub manuel", client_id="sa_hub_manual_test",
+        client_secret_hash=get_password_hash("hubsecret"),
+        is_active=True,
+    )
+    sa_hub.applications = [hub_app]
+    async_session.add(sa_hub)
+    await async_session.commit()
+
+    await ensure_hub_system_application(async_session)
+
+    sas = (await async_session.execute(
+        select(ServiceAccount)
+        .join(ServiceAccount.applications)
+        .where(Application.slug == "hub")
+    )).scalars().all()
+    assert len(sas) == 1
+    assert sas[0].client_id == "sa_hub_manual_test"
+
+
+@pytest.mark.asyncio
 async def test_export_import_preserves_identity_anchors(async_session):
     """Test money : export → import sur hub vide préserve uuid/oidc_sub/prenom/nom.
 

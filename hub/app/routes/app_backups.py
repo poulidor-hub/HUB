@@ -48,7 +48,7 @@ from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 
 from app.database import get_db
 from app.models import Application, AppBackup, ServiceAccount, User, ApprovalStatus, utcnow
-from app.auth import get_current_admin, get_current_entity
+from app.auth import get_current_admin, get_current_entity, get_password_hash
 from app.config import get_settings
 from app.routes.audit import log_action
 from app.schemas import (
@@ -658,7 +658,6 @@ async def ensure_hub_system_application(db: AsyncSession) -> Application:
         db.add(app)
         await db.commit()
         await db.refresh(app)
-        return app
 
     changed = False
     if not getattr(app, "is_system_app", False):
@@ -679,6 +678,29 @@ async def ensure_hub_system_application(db: AsyncSession) -> Application:
     if changed:
         await db.commit()
         await db.refresh(app)
+
+    # Garantir un ServiceAccount associé à l'app hub : le flux de restauration
+    # self-backup génère son token M2M via un SA de l'app (le hub signe ses
+    # propres tokens, le secret n'a pas besoin d'être partagé). Sans SA, le
+    # restore échoue avec « Aucun service account trouvé pour cette application ».
+    sa_result = await db.execute(
+        select(ServiceAccount)
+        .join(ServiceAccount.applications)
+        .where(Application.slug == "hub")
+        .limit(1)
+    )
+    if sa_result.scalar_one_or_none() is None:
+        sa = ServiceAccount(
+            name="SA - Hub",
+            description="Service Account HUB (auto-restauration + M2M)",
+            client_id=ServiceAccount.generate_client_id(),
+            client_secret_hash=get_password_hash(secrets.token_urlsafe(32)),
+            is_active=True,
+        )
+        sa.applications = [app]
+        db.add(sa)
+        await db.commit()
+
     return app
 
 
