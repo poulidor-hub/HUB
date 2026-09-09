@@ -5,6 +5,19 @@
 
 ---
 
+## [3.50.5] - 9 septembre 2026
+
+### ⚡ Fix : import des Service Accounts existants lors de la self-restauration
+
+| Élément | Description |
+|---------|-------------|
+| Cause racine | `_import_service_accounts` (branche update) assignait `existing.applications = apps` sans précharger la relation → `lazy='raise'` (`InvalidRequestError`) → **chaque SA existant du backup était skippé** à la restauration (32 erreurs observées sur un restore hub réel). La branche création n'était pas affectée — trou de test : seule la création était couverte |
+| Fix | `selectinload(ServiceAccount.applications)` sur la requête du SA existant dans `hub_restore.py` ; test de régression `test_import_sa_update` avec `expire_all()` pour simuler le cas prod (SA venu d'une requête sans préchargement) |
+| Tests | `test_hub_restore.py` 20/20 ; non-régression backups/snapshots/network/propagation 84/84 |
+| Impact | La self-restauration du hub met désormais à jour correctement les SA existants (secret, nom, is_active, applications) au lieu de les ignorer silencieusement. Suites : 3.50.4 (auto-création du SA - Hub) |
+
+---
+
 ## [3.50.4] - 9 septembre 2026
 
 ### ⚡ Fix : self-restauration du Hub — « Aucun service account trouvé »
