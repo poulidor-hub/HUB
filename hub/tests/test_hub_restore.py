@@ -328,6 +328,48 @@ async def test_import_sa_with_secret(async_session, test_app, monkeypatch, tmp_p
 
 
 @pytest.mark.asyncio
+async def test_import_sa_update(async_session, test_app):
+    """SA existant → mis à jour (nom, secret, applications).
+
+    Régression : la branche update assignait existing.applications sans
+    précharger la relation → lazy='raise' → tout SA existant était skippé
+    à la restauration (32 erreurs sur un restore hub réel).
+    """
+    from app.schemas import ServiceAccountExport
+    import app.routes.hub_restore as mod
+
+    existing = ServiceAccount(
+        name="SA - Before", client_id="sa_update_test",
+        client_secret_hash=get_password_hash("old"),
+        is_active=True,
+    )
+    existing.applications = [test_app]
+    async_session.add(existing)
+    await async_session.commit()
+    # Simule un SA venu d'une requête sans préchargement (cas prod) :
+    # la collection applications n'est plus chargée en mémoire.
+    async_session.expire_all()
+
+    import_data = BackupImport(
+        service_accounts=[ServiceAccountExport(
+            name="SA - After",
+            client_id="sa_update_test",
+            client_secret_hash="dummy_hash",
+            client_secret_plain="new-secret-456",
+            is_active=True,
+            app_slugs=["test-app"],
+        )],
+    )
+    result = await import_environment(async_session, import_data)
+    assert result.service_accounts_updated == 1, result.errors
+    assert result.service_accounts_created == 0
+    assert result.errors == []
+    await async_session.refresh(existing)
+    assert existing.name == "SA - After"
+    assert existing.is_active is True
+
+
+@pytest.mark.asyncio
 async def test_import_sa_without_secret(async_session, test_app):
     """SA sans client_secret_plain → skip + warning."""
     from app.schemas import ServiceAccountExport

@@ -165,9 +165,9 @@ async def _import_service_accounts(
         try:
             async with db.begin_nested():
                 existing = (await db.execute(
-                    select(ServiceAccount).where(
-                        ServiceAccount.client_id == sa_export.client_id
-                    )
+                    select(ServiceAccount)
+                    .options(selectinload(ServiceAccount.applications))
+                    .where(ServiceAccount.client_id == sa_export.client_id)
                 )).scalar_one_or_none()
 
                 app_slugs = sa_export.app_slugs or []
