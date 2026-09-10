@@ -5,6 +5,23 @@
 
 ---
 
+## [3.50.6] - 10 septembre 2026
+
+### 🌿 Branches → atelier + refonte de la vue Santé des applications
+
+| Élément | Description |
+|---------|-------------|
+| Lookup des branches | `GET /api/apps/{slug}/branches` (admin) : liste les branches du dépôt GitHub de l'app, branche par défaut en tête, cache mémoire 30 s (convention anti-spam GitHub du parc), erreurs typées (token, rate limit, dépôt introuvable, non-GitHub) |
+| Branche → atelier | `{ref}` optionnel sur `POST /{slug}/workshop` et `/workshop/update` : `validate_ws_ref` (format sûr, jamais en shell), checkout `origin/{ref}` dans `_op_create` (avant écriture `WS_REF`/`WS_COMMIT`) et `_op_update` (idempotence + rollback inchangés). **Garde-fou intact** : le ship reste verrouillé sur `origin/main` — une branche atteint la prod uniquement après merge (release-on-main) |
+| Cartes « ops console » | Refonte validée en maquette : bandeau d'en-tête teinté selon le statut, badge uppercase, métriques en valeurs fortes (Latence/Uptime/Services), barre d'actions unifiée (▶ ■ ⟳ 📋 🌿), suppression des emojis |
+| Slots fixes | Layout invariant : grille 3 métriques toujours rendue (« — » si absent), version `v—`, `Hub —`, statut `…` (checking), min-height carte — aucun déplacement visuel si des valeurs manquent |
+| Panneau branches 🌿 | Chargé à la demande (cache client 30 s, spinner, refresh ↻) — zéro fetch au rendu de la page. Bouton « Déployer ▸ » : envoie la branche choisie en atelier (création ou maj selon l'état) avec suivi via le modal d'opération existant. App sans dépôt → bouton « Configurer le dépôt git » |
+| Loading non bloquant | `loadAppsHealth` rend immédiatement les cartes depuis `/apps/all` (état « vérification… », carte HUB injectée) puis complète avec le sondage santé en arrière-plan ; compteur de séquence anti-course. Fin de l'écran vide « stun locked » pendant les timeouts |
+| Filtres client | Barre instantanée (aucun appel API) : recherche nom/slug, chips statut Tous/Online/Degraded/Offline, switch « atelier actif » (attribut `data-ws` tenu à jour par `loadWorkshopStates`) |
+| Tests | +11 tests routes (`ref` threading, refs invalides → 400 avant gardes d'état, parse branches, cache 30 s, fallback sans dépôt) ; suites workshop/github 117/117, globale 800/801 (échec pré-existant `test_slo_defaults` hors périmètre, prouvé par stash) |
+
+---
+
 ## [3.50.5] - 9 septembre 2026
 
 ### ⚡ Fix : import des Service Accounts existants lors de la self-restauration
