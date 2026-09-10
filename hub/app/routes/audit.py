@@ -786,10 +786,17 @@ async def get_overview_alerts(
     days: int = Query(7, ge=1, le=365),
     limit: int = Query(5, ge=1, le=20),
     auth_threshold: int = Query(5, ge=1, le=100),
+    loop_window_minutes: int = Query(15, ge=1, le=1440),
+    loop_threshold: int = Query(10, ge=2, le=10000),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Alertes calculées à la volée depuis les erreurs HTTP et les échecs d'auth."""
+    """Alertes calculées à la volée depuis les erreurs HTTP et les échecs d'auth.
+
+    `error_loop` : N+ requêtes identiques (méthode+chemin+code+IP) dans la
+    fenêtre glissante `loop_window_minutes` — signale une boucle de retries
+    d'un client (ex. une app qui retente son enregistrement toutes les 15 s).
+    """
     if not current_user.is_admin:
         raise HTTPException(status_code=403, detail="Accès admin requis")
 
@@ -845,6 +852,38 @@ async def get_overview_alerts(
             "last_seen": last_seen.isoformat() if last_seen else None,
             "ip_address": ip,
             "deeplink": {"tab": "logs", "filters": {"ip": ip}},
+        })
+
+    # Boucles de requêtes répétées : même méthode+chemin+code+IP, fenêtre courte
+    loop_since = utcnow() - timedelta(minutes=loop_window_minutes)
+    loop_rows = (await db.execute(
+        select(
+            ErrorLog.request_method,
+            ErrorLog.request_path,
+            ErrorLog.error_code,
+            ErrorLog.ip_address,
+            func.count(ErrorLog.id).label("occ"),
+            func.max(ErrorLog.created_at).label("last_seen"),
+        )
+        .where(ErrorLog.created_at >= loop_since)
+        .group_by(ErrorLog.request_method, ErrorLog.request_path,
+                  ErrorLog.error_code, ErrorLog.ip_address)
+        .having(func.count(ErrorLog.id) >= loop_threshold)
+        .order_by(desc("occ"))
+        .limit(limit)
+    )).all()
+    for method, path, code, ip, occ, last_seen in loop_rows:
+        alerts.append({
+            "type": "error_loop",
+            "severity": "danger",
+            "occurrences": occ,
+            "last_seen": last_seen.isoformat() if last_seen else None,
+            "request_method": method,
+            "request_path": path,
+            "error_code": code,
+            "ip_address": ip,
+            "deeplink": {"tab": "errors",
+                         "filters": {"path": path, "code": str(code)}},
         })
 
     return {"alerts": alerts}

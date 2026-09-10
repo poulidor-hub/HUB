@@ -5,6 +5,21 @@
 
 ---
 
+## [3.50.9] - 11 septembre 2026
+
+### 🔔 Alerte audit : détection automatique des boucles de requêtes répétées
+
+| Élément | Description |
+|---------|-------------|
+| Comportement | Nouveau type d'alerte `error_loop` dans `GET /api/audit/overview/alerts` : signale N+ requêtes **identiques** (méthode + chemin + code HTTP + IP) dans une fenêtre glissante courte — détecte automatiquement le scénario des 422 en boucle (une app qui retente son enregistrement toutes les 15 s, 5 810 erreurs avant intervention humaine) |
+| Paramétrage | `loop_window_minutes` (défaut 15) et `loop_threshold` (défaut 10), en query params comme `auth_threshold` |
+| Affichage | Carte danger dans l'aperçu Audit (icône ↻, méthode+chemin+code, IP, occurrences) ; bouton « Détails » → onglet Erreurs préfiltré (chemin + code HTTP) |
+| Validé en prod | Sur les données historiques : la boucle register/422 détectée à 5 664 occurrences (fenêtre 24 h) ; silencieuse en fenêtre 15 min depuis la résolution — pas de faux positif persistant |
+| Tests | `test_overview_alerts_error_loop` (seuil atteint → 1 alerte, bruit sous seuil ignoré, deeplink path+code), `test_error_loop_window_excludes_old_occurrences` (fenêtre courte exclut les occurrences vieilles) |
+| Fichiers | `hub/app/routes/audit.py` (`get_overview_alerts`), `frontend/public/js/modules/audit-page.js` (`renderAuditAlerts`, `auditAlertDetails`), `hub/tests/test_api_audit_alerts.py` |
+
+---
+
 ## [3.50.8] - 10 septembre 2026
 
 ### 🎯 Exclusion des ateliers de l'uptime utilisateur

@@ -132,14 +132,21 @@ function renderAuditAlerts(alerts) {
         return;
     }
     c.innerHTML = alerts.map(a => {
-        const isErr = a.type === 'http_error';
-        const tile = isErr ? '#fde8e8' : '#fff1e6';
-        const col = isErr ? '#dc3545' : '#fd7e14';
-        const icon = isErr ? 'bi-exclamation-triangle' : 'bi-shield-exclamation';
-        const title = isErr
-            ? `Erreur ${a.request_path}`
-            : `Multiples échecs de connexion (IP : ${a.ip_address})`;
-        const src = a.source_app_slug ? `<span class="badge text-bg-light border">${escapeHtml(a.source_app_slug)}</span>` : '';
+        let tile, col, icon, title;
+        if (a.type === 'error_loop') {
+            tile = '#fde8e8'; col = '#dc3545'; icon = 'bi-arrow-repeat';
+            title = `Boucle d'erreurs : ${a.request_method || ''} ${a.request_path || ''} (${a.error_code || '?'})`;
+        } else if (a.type === 'http_error') {
+            tile = '#fde8e8'; col = '#dc3545'; icon = 'bi-exclamation-triangle';
+            title = `Erreur ${a.request_path}`;
+        } else {
+            tile = '#fff1e6'; col = '#fd7e14'; icon = 'bi-shield-exclamation';
+            title = `Multiples échecs de connexion (IP : ${a.ip_address})`;
+        }
+        const src = a.source_app_slug
+            ? `<span class="badge text-bg-light border">${escapeHtml(a.source_app_slug)}</span>`
+            : (a.ip_address && a.type === 'error_loop'
+                ? `<span class="badge text-bg-light border">IP ${escapeHtml(a.ip_address)}</span>` : '');
         return `
         <div class="audit-alert-row">
             <div class="audit-alert-ic" style="background:${tile};color:${col};"><i class="bi ${icon}"></i></div>
@@ -157,8 +164,13 @@ function renderAuditAlerts(alerts) {
 
 function auditAlertDetails(deeplink) {
     if (deeplink.tab === 'errors') {
-        const el = document.getElementById('errorsFilterPath');
-        if (el) el.value = deeplink.filters.path || '';
+        const f = deeplink.filters || {};
+        const pathEl = document.getElementById('errorsFilterPath');
+        if (pathEl) pathEl.value = f.path || '';
+        const codeEl = document.getElementById('errorsFilterCode');
+        if (codeEl && f.code && codeEl.querySelector(`option[value="${f.code}"]`)) {
+            codeEl.value = f.code;
+        }
         openAuditTab('errors');
         loadAuditPageErrors();
     } else {
