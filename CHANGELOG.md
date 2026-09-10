@@ -5,6 +5,27 @@
 
 ---
 
+## [3.50.7] - 10 septembre 2026
+
+### 🐛 Fix : graphique « Répartition du temps par application » (uptime utilisateur)
+
+| Élément | Description |
+|---------|-------------|
+| Symptôme | Les noms à gauche du graphique ne correspondaient pas aux barres (ex. label « Philia Proxy » mais tooltip « Annuaire Téléphonie ») et les durées semblaient incohérentes avec l'activité du jour |
+| Cause racine | Le rendu utilisait **une série bar par app** (valeurs null partout sauf à sa position). Avec N séries bar sur un axe catégorie, ECharts place les N barres **côte à côte dans un cluster** par bande de 30 px : dès 2-3 apps, les barres (18 px) débordent de leur bande et atterrissent visuellement à côté du mauvais label. Les données backend étaient correctes (vérifié en prod : totaux = somme exacte des segments) — c'était purement le rendu |
+| Fix | **Une seule série** : chaque data item porte sa valeur, sa couleur et son `decal` (motif différenciant les couleurs dupliquées, via `itemStyle` de l'item — ECharts 5.5) ; tooltip par `dataIndex`. Chaque barre est désormais centrée exactement sur son label |
+| Fichiers | `frontend/public/js/modules/audit-charts.js` (`renderUserDayBreakdown`) |
+
+### 🧪 Fix : test `test_slo_defaults` échouait sur les machines au .env activé
+
+| Élément | Description |
+|---------|-------------|
+| Cause racine | Le test instanciait `Settings()` qui lit aussi le `.env` local — or l'activation d'`OIDC_SLO_ENABLED=true` après validation e2e est le mécanisme prévu : le test vérifiait la config de la machine au lieu du défaut du code (échec sur tout serveur au .env activé, y compris la prod) |
+| Fix | Isolation : `Settings(_env_file=None)` + `delenv` des deux vars → le test vérifie le défaut DU CODE ; les tests d'activation/désactivation via env existent déjà (`test_slo_enabled_via_env` / `test_slo_disabled_via_env`) |
+| Fichiers | `hub/tests/test_slo_config.py` |
+
+---
+
 ## [3.50.6] - 10 septembre 2026
 
 ### 🌿 Branches → atelier + refonte de la vue Santé des applications
