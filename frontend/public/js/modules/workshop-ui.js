@@ -19,6 +19,12 @@ async function loadWorkshopStates(slugs) {
         block.innerHTML = pair[1] ? renderWorkshopBlockInner(pair[0], pair[1]) : '';
         // Pas d'atelier → bloc masqué (sinon ~16px d'espace mort sur la carte)
         block.style.display = block.innerHTML ? '' : 'none';
+        // Filtre « atelier actif » : tenir l'attribut data-ws de la carte à jour
+        var col = document.querySelector('#appsHealthGrid > [data-slug="' + pair[0] + '"]');
+        if (col) {
+            col.setAttribute('data-ws', (pair[1] && pair[1].exists) ? '1' : '0');
+            if (typeof _applyHealthFilters === 'function' && _healthFilterWs) _applyHealthFilters();
+        }
     });
 }
 
@@ -91,11 +97,11 @@ async function removeWorkshopUI(slug) {
     await _triggerWorkshopOp(slug, 'remove');
 }
 
-async function _triggerWorkshopOp(slug, operation) {
+async function _triggerWorkshopOp(slug, operation, ref) {
     try {
         var result;
-        if (operation === 'create') result = await api.createWorkshop(slug);
-        else if (operation === 'update') result = await api.updateWorkshop(slug);
+        if (operation === 'create') result = await api.createWorkshop(slug, ref);
+        else if (operation === 'update') result = await api.updateWorkshop(slug, ref);
         else if (operation === 'ship') result = await api.shipWorkshop(slug);
         else result = await api.removeWorkshop(slug);
         openWorkshopModal(slug, operation, result.operation_id);

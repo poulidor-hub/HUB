@@ -26,24 +26,65 @@ async function refreshGithubCache() {
 
 // ─── Chargement principal ─────────────────────────────────────────────
 
+var _healthRenderSeq = 0;      // anti-course : le dernier loadAppsHealth gagne
+
 async function loadAppsHealth() {
     const btn = document.getElementById('appsHealthRefreshBtn');
     btn.disabled = true;
-    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>…';
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Sondage…';
+    const seq = ++_healthRenderSeq;
 
+    // 1) Rendu IMMÉDIAT : liste des apps (lecture DB, rapide) en état
+    //    « vérification… » — plus d'écran vide pendant le sondage du parc.
+    try {
+        const listing = await api.getAllApps('false');
+        const raw = Array.isArray(listing) ? listing : (listing.apps || []);
+        const apps = raw.map(function (a) {
+            return { name: a.name, slug: a.slug, icon: a.icon, color: a.color,
+                     is_system_app: a.is_system_app, version: a.version || a.app_version || '' };
+        });
+        // La liste rapide exclut les apps système — on rend la carte HUB aussi.
+        if (!apps.some(function (a) { return a.slug === 'hub'; })) {
+            apps.unshift({ name: 'Hub', slug: 'hub', icon: 'bi-grid-3x3-gap-fill',
+                           color: '#495057', is_system_app: true, version: '' });
+        }
+        if (seq === _healthRenderSeq) renderAppsHealthPending(apps);
+    } catch (e) {
+        // Non bloquant : le sondage complet rendra les cartes de toute façon.
+    }
+
+    // 2) Sondage santé complet (long — timeouts des apps offline) → re-render.
     try {
         const result = await api.getAppsHealth();
-        await renderAppsHealth(result);
+        if (seq === _healthRenderSeq) await renderAppsHealth(result);
     } catch (error) {
         console.error('Erreur chargement health:', error);
-        showToast('Erreur', 'Impossible de sonder les applications', 'danger');
+        if (seq === _healthRenderSeq) {
+            showToast('Erreur', 'Impossible de sonder les applications', 'danger');
+        }
     } finally {
         btn.disabled = false;
         btn.innerHTML = '<i class="bi bi-arrow-clockwise me-1"></i>Rafraichir';
     }
 }
 
-// ─── Rendu ────────────────────────────────────────────────────────────
+// ─── Rendu intermédiaire (liste rapide, avant le sondage) ─────────────
+
+function renderAppsHealthPending(apps) {
+    const sumEl = document.getElementById('appsHealthSummary');
+    sumEl.innerHTML = '<span class="spinner-border spinner-border-sm me-1" style="width:11px;height:11px;"></span> Vérification de '
+        + apps.length + ' apps en cours…';
+
+    const grid = document.getElementById('appsHealthGrid');
+    grid.innerHTML = apps.map(function (a) {
+        return renderAppCard({
+            name: a.name, slug: a.slug, icon: a.icon, color: a.color,
+            is_system_app: a.is_system_app, status: 'checking',
+        });
+    }).join('');
+    updateAppsHealthTimestamps();
+    _applyHealthFilters();
+}
 
 async function renderAppsHealth(data) {
     const summary = data.summary;
@@ -89,114 +130,209 @@ function formatUptime(seconds) {
 function renderAppCard(app) {
     var isSystemApp = app.is_system_app === true || app.slug === 'hub';
 
+    // Direction « Ops console » : bandeau teinté selon le statut + badge plein.
+    // Slots FIXES : les emplacements (statut, 3 métriques, hub) existent toujours
+    // avec des placeholders (« … », « — ») — le layout ne bouge jamais.
     var statusStyle = {
-        online:   { bg: '#16a34a', text: 'Online', cardBg: '#fff', border: '#e2e8f0' },
-        offline:  { bg: '#dc2626', text: 'Offline', cardBg: '#fef2f2', border: '#fecaca' },
-        degraded: { bg: '#f59e0b', text: 'Degraded', cardBg: '#fffbeb', border: '#fcd34d' },
-    }[app.status] || { bg: '#9ca3af', text: app.status, cardBg: '#fff', border: '#e2e8f0' };
+        checking: { grad: 'linear-gradient(90deg,#f8fafc,#ffffff)', badge: '#9ca3af', text: '…' },
+        online:   { grad: 'linear-gradient(90deg,#f0fdf4,#ffffff)', badge: '#16a34a', text: 'Online' },
+        offline:  { grad: 'linear-gradient(90deg,#fef2f2,#ffffff)', badge: '#dc2626', text: 'Offline' },
+        degraded: { grad: 'linear-gradient(90deg,#fffbeb,#ffffff)', badge: '#f59e0b', text: 'Degraded' },
+    }[app.status] || { grad: 'linear-gradient(90deg,#f8fafc,#ffffff)', badge: '#9ca3af', text: (app.status || 'Unknown') };
 
     var icon = escapeHtml(app.icon || 'bi-app');
     var color = escapeHtml(app.color || '#6c757d');
     var name = escapeHtml(app.name);
     var slug = escapeHtml(app.slug);
-    var latency = app.latency_ms ? app.latency_ms + 'ms' : '';
+    var latency = app.latency_ms ? app.latency_ms + ' ms' : '';
     var version = app.version || '';
     var uptime = formatUptime(app.uptime_seconds);
     var error = app.error
-        ? '<div style="font-size:11px;color:#dc2626;margin-top:4px;">' + escapeHtml(app.error.substring(0, 100)) + '</div>'
+        ? '<div style="margin:0 14px 10px;font-size:11.5px;color:#b91c1c;background:#fef2f2;border-radius:6px;padding:6px 8px;">' + escapeHtml(app.error.substring(0, 100)) + '</div>'
         : '';
 
-    // Badge "Systeme" pour les apps systeme (HUB)
+    // Badge « Système » pour les apps système (HUB)
     var systemBadge = isSystemApp
-        ? '<span style="background:#e0e7ff;color:#4338ca;font-size:11px;padding:2px 8px;border-radius:10px;font-weight:600;">Système</span>'
+        ? ' <span style="background:#e0e7ff;color:#4338ca;font-size:10px;padding:1px 6px;border-radius:8px;font-weight:600;vertical-align:1px;">SYSTÈME</span>'
         : '';
 
-    // Ligne metriques : latence, version, uptime
-    var metrics = [];
-    if (latency) metrics.push('📡 ' + latency);
-    if (version) metrics.push('🏷 ' + escapeHtml(version));
-    if (uptime) metrics.push('⏱ ' + uptime);
-    var metricsRow = metrics.length
-        ? '<div style="display:flex;gap:20px;flex-wrap:wrap;font-size:12px;color:#64748b;border-top:1px solid #f1f5f9;padding-top:10px;">' +
-          metrics.map(function (m) { return '<span>' + m + '</span>'; }).join('') + '</div>'
-        : '';
+    // Métriques en valeurs fortes — grille FIXE 3 cellules, placeholder « — »
+    var stats = [
+        [latency || '—', 'Latence'],
+        [uptime || '—', 'Uptime'],
+        [app.services_count != null ? String(app.services_count) : '—', 'Services'],
+    ];
+    var statsRow =
+        '<div style="display:grid;grid-template-columns:repeat(3,1fr);border-bottom:1px solid #e5e7eb;">'
+        + stats.map(function (s) {
+            return '<div style="padding:9px 6px;text-align:center;">'
+                + '<div style="font-size:17px;font-weight:700;color:#0f172a;">' + escapeHtml(s[0]) + '</div>'
+                + '<div style="font-size:9.5px;color:#94a3b8;text-transform:uppercase;letter-spacing:.6px;">' + s[1] + '</div>'
+                + '</div>';
+        }).join('<div style="border-left:1px solid #f1f5f9;"></div>')
+        + '</div>';
 
-    // Ligne integration : statut connexion Hub + services decouverts
-    var integrationBadges = [];
-    if (app.hub_connected === true) {
-        integrationBadges.push('<span style="background:#dcfce7;color:#16a34a;font-size:11px;padding:2px 8px;border-radius:10px;font-weight:500;">✓ Hub connecté</span>');
-    } else if (app.hub_connected === false) {
-        integrationBadges.push('<span style="background:#fee2e2;color:#dc2626;font-size:11px;padding:2px 8px;border-radius:10px;font-weight:500;">✗ Hub déconnecté</span>');
-    }
-    if (app.services_count != null) {
-        integrationBadges.push('<span style="background:#eff6ff;color:#2563eb;font-size:11px;padding:2px 8px;border-radius:10px;font-weight:500;">🔌 ' + app.services_count + ' service' + (app.services_count > 1 ? 's' : '') + '</span>');
-    }
-    var integrationRow = integrationBadges.length
-        ? '<div style="display:flex;gap:6px;flex-wrap:wrap;">' + integrationBadges.join('') + '</div>'
-        : '';
+    var hubLabel = app.hub_connected === true ? 'Hub ✓'
+        : (app.hub_connected === false ? 'Hub ✗' : 'Hub —');
 
-    // L'app est joignable mais sans aucune donnee sante (ni version, ni uptime,
-    // ni integration Hub, ni erreur) → vraiment aucun endpoint /health exploitable.
-    // Ne s'applique PAS aux apps systeme (le HUB se sonde lui-meme).
-    var noHealth = (!isSystemApp && app.status === 'online' && !version && !uptime && !integrationBadges.length && !error);
+    // L'app est joignable mais sans aucune donnée santé (ni version, ni uptime,
+    // ni intégration Hub, ni erreur) → vraiment aucun endpoint /health exploitable.
+    // Ne s'applique PAS aux apps système (le HUB se sonde lui-même).
+    var noHealth = (!isSystemApp && app.status === 'online' && !version && !uptime && !latency
+        && app.hub_connected !== true && app.hub_connected !== false && !error);
     var healthNote = noHealth
-        ? '<div style="font-size:11px;color:#94a3b8;margin-top:4px;"><i class="bi bi-info-circle me-1"></i>Serveur joignable — pas d\'endpoint /health standard</div>'
+        ? '<div style="padding:0 14px 8px;font-size:11px;color:#94a3b8;"><i class="bi bi-info-circle me-1"></i>Serveur joignable — pas d\'endpoint /health standard</div>'
         : '';
 
     var degradedInfo = '';
     if (app.status === 'degraded' && app.error) {
-        degradedInfo = ' <i class="bi bi-info-circle" title="' + escapeHtml(app.error) + '" style="cursor:help;font-size:11px;"></i>';
+        degradedInfo = ' <i class="bi bi-info-circle" title="' + escapeHtml(app.error) + '" style="cursor:help;font-size:11px;color:#92400e;"></i>';
     }
 
-    // Boutons d'action (masques pour les apps systeme)
+    // Barre d'actions unifiée (boutons collés) — masquée pour les apps système
     var actionButtons = '';
     if (!isSystemApp) {
+        var btnCss = 'border:none;border-right:1px solid #e2e8f0;border-radius:0;color:#334155;background:#fff;padding:3px 9px;font-size:12px;cursor:pointer;';
         actionButtons =
-            '<div style="display:flex;gap:4px;">' +
-                '<button data-action="startApp" data-arg1="' + slug + '" class="btn btn-sm btn-outline-success py-0 px-2" style="font-size:11px;" title="Demarrer">▶</button>' +
-                '<button data-action="stopApp" data-arg1="' + slug + '" class="btn btn-sm btn-outline-danger py-0 px-2" style="font-size:11px;" title="Arreter">■</button>' +
-                '<button data-action="restartApp" data-arg1="' + slug + '" class="btn btn-sm btn-outline-secondary py-0 px-2" style="font-size:11px;" id="restartBtn_' + slug + '" title="Redemarrer">⟳</button>' +
-                '<button data-action="showLogs" data-arg1="' + slug + '" class="btn btn-sm btn-outline-secondary py-0 px-2" style="font-size:11px;" title="Logs">📋</button>' +
+            '<div style="display:flex;border:1px solid #cbd5e1;border-radius:6px;overflow:hidden;">' +
+                '<button data-action="startApp" data-arg1="' + slug + '" style="' + btnCss + 'color:#16a34a;" title="Demarrer">▶</button>' +
+                '<button data-action="stopApp" data-arg1="' + slug + '" style="' + btnCss + 'color:#dc2626;" title="Arreter">■</button>' +
+                '<button data-action="restartApp" data-arg1="' + slug + '" id="restartBtn_' + slug + '" style="' + btnCss + '" title="Redemarrer">⟳</button>' +
+                '<button data-action="showLogs" data-arg1="' + slug + '" style="' + btnCss + '" title="Logs">📋</button>' +
+                '<button data-action="toggleBranches" data-arg1="' + slug + '" id="branchBtn_' + slug + '" style="' + btnCss.replace('border-right:1px solid #e2e8f0;', '') + 'color:#7c3aed;background:#f5f3ff;" title="Déployer une branche (via l\'atelier)">🌿</button>' +
             '</div>';
     }
+
+    // Panneau branches — chargé à la demande par toggleBranches (jamais au rendu)
+    var branchPanel = isSystemApp ? ''
+        : '<div id="branch-panel-' + slug + '" style="display:none;"></div>';
 
     // Bloc atelier (workshop) — placeholder rempli par loadWorkshopStates (workshop-ui.js)
     var workshopBlock = (!isSystemApp && typeof renderWorkshopBlock === 'function')
         ? renderWorkshopBlock(slug) : '';
 
-    // Couleur de fond speciale pour le HUB (leger fond bleute)
-    var cardBg = isSystemApp ? '#f8faff' : statusStyle.cardBg;
-
     return (
-        '<div class="col-12 col-md-6 col-lg-4">' +
-        '<div style="background:' + cardBg + ';border:1px solid ' + statusStyle.border + ';border-radius:8px;padding:16px;display:flex;flex-direction:column;gap:10px;height:100%;">' +
-            '<div style="display:flex;align-items:center;gap:10px;">' +
-                '<div style="width:40px;height:40px;border-radius:8px;background:' + color + ';display:flex;align-items:center;justify-content:center;color:white;font-size:18px;flex-shrink:0;">' +
+        '<div class="col-12 col-md-6 col-lg-4" data-slug="' + slug + '"' +
+        ' data-status="' + escapeHtml(app.status || 'checking') + '"' +
+        ' data-ws="0"' +
+        ' data-search="' + escapeHtml((app.name + ' ' + app.slug).toLowerCase()) + '">' +
+        '<div style="background:#fff;border:1px solid #cbd5e1;border-radius:8px;box-shadow:0 1px 3px rgba(0,0,0,.07);display:flex;flex-direction:column;height:100%;min-height:150px;overflow:hidden;">' +
+            '<div style="background:' + statusStyle.grad + ';border-bottom:1px solid #e5e7eb;padding:11px 14px;display:flex;align-items:center;gap:10px;">' +
+                '<div style="width:36px;height:36px;border-radius:8px;background:' + color + ';display:flex;align-items:center;justify-content:center;color:white;font-size:16px;flex-shrink:0;">' +
                     '<i class="bi ' + icon + '"></i>' +
                 '</div>' +
                 '<div style="flex:1;min-width:0;">' +
-                    '<div style="font-weight:600;font-size:14px;color:#1e293b;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + name +
-                    (systemBadge ? ' ' + systemBadge : '') +
+                    '<div style="font-weight:700;font-size:14px;color:#0f172a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + name +
+                    (systemBadge ? systemBadge : '') +
                     '</div>' +
-                    '<div style="font-size:12px;color:#94a3b8;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + slug + '</div>' +
+                    '<div style="font-size:11px;color:#64748b;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + slug + ' · v' + (version ? escapeHtml(version) : '—') + '</div>' +
                 '</div>' +
-                '<span style="background:' + statusStyle.bg + ';color:white;font-size:11px;padding:3px 8px;border-radius:12px;font-weight:500;flex-shrink:0;">' + statusStyle.text + degradedInfo + '</span>' +
+                '<span style="background:' + statusStyle.badge + ';color:#fff;font-size:10px;padding:3px 8px;border-radius:5px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;flex-shrink:0;">' + statusStyle.text + degradedInfo + '</span>' +
             '</div>' +
-            metricsRow +
-            integrationRow +
+            statsRow +
             '<div id="update-badge-' + slug + '" style="display:none;"></div>' +
             healthNote +
             error +
             workshopBlock +
-            '<div style="display:flex;justify-content:space-between;align-items:center;border-top:1px solid ' + statusStyle.border + ';padding-top:8px;margin-top:auto;">' +
-                '<span style="font-size:11px;color:#94a3b8;">' +
-                    'Verifie il y a <span class="apps-health-timestamp" data-ts="' + (app.checked_at || '') + '">…</span>' +
+            branchPanel +
+            '<div style="margin-top:auto;padding:8px 14px;display:flex;justify-content:space-between;align-items:center;border-top:1px solid #f1f5f9;">' +
+                '<span style="font-size:10.5px;color:#94a3b8;">' +
+                    'Vérifié il y a <span class="apps-health-timestamp" data-ts="' + (app.checked_at || '') + '">…</span>' +
+                    ' · ' + hubLabel +
                 '</span>' +
                 actionButtons +
             '</div>' +
         '</div>' +
         '</div>'
     );
+}
+
+// ─── Branches (lookup à la demande → atelier) ─────────────────────────
+
+var _branchesCache = {};      // slug -> { ts, data } (cache client 30 s)
+var _BRANCHES_TTL_MS = 30000;
+
+async function toggleBranches(slug) {
+    var panel = document.getElementById('branch-panel-' + slug);
+    if (!panel) return;
+    if (panel.style.display !== 'none') { panel.style.display = 'none'; return; }
+    panel.style.display = '';
+    var cached = _branchesCache[slug];
+    if (cached && Date.now() - cached.ts < _BRANCHES_TTL_MS) {
+        _renderBranchPanel(slug, cached.data, true);
+        return;
+    }
+    await refreshBranches(slug);
+}
+
+async function refreshBranches(slug) {
+    var panel = document.getElementById('branch-panel-' + slug);
+    if (!panel) return;
+    panel.innerHTML = '<div style="margin:10px 14px 0;padding:8px 10px;background:#f8fafc;border:1px dashed #cbd5e1;border-radius:6px;font-size:11.5px;color:#64748b;display:flex;align-items:center;gap:8px;">'
+        + '<span class="spinner-border spinner-border-sm" style="width:12px;height:12px;color:#7c3aed;"></span>'
+        + 'Chargement des branches…</div>';
+    try {
+        var data = await api.getAppBranches(slug);
+        _branchesCache[slug] = { ts: Date.now(), data: data };
+        _renderBranchPanel(slug, data, false);
+    } catch (e) {
+        panel.innerHTML = '<div style="margin:10px 14px 0;font-size:11.5px;color:#b91c1c;background:#fef2f2;border-radius:6px;padding:6px 8px;">'
+            + escapeHtml(e.message || 'Erreur inconnue') + '</div>';
+    }
+}
+
+function _renderBranchPanel(slug, data, fromCache) {
+    var panel = document.getElementById('branch-panel-' + slug);
+    if (!panel) return;
+    if (!data.ok) {
+        var hint = data.repo_configured ? ''
+            : ' <button data-action="showGitConfigModal" data-arg1="' + escapeHtml(slug) + '"'
+              + ' class="btn btn-sm btn-outline-secondary py-0 px-2" style="font-size:10px;">Configurer le dépôt git</button>';
+        panel.innerHTML = '<div style="margin:10px 14px 0;font-size:11.5px;color:#92400e;background:#fffbeb;border:1px solid #fcd34d;border-radius:6px;padding:6px 8px;">'
+            + escapeHtml(data.error || 'Branches indisponibles.') + hint + '</div>';
+        return;
+    }
+    var options = data.branches.map(function (b) {
+        var label = b.name + (b.name === data.default_branch ? '  (défaut)' : '');
+        return '<option value="' + escapeHtml(b.name) + '">' + escapeHtml(label) + '</option>';
+    }).join('');
+    var cachedNote = fromCache ? ' · cache' : '';
+    panel.innerHTML =
+        '<div style="margin:10px 14px 0;padding:9px 10px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;">'
+        + '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">'
+            + '<span style="font-size:10px;font-weight:700;color:#7c3aed;text-transform:uppercase;letter-spacing:.6px;">🌿 Branche → atelier</span>'
+            + '<span data-action="refreshBranches" data-arg1="' + escapeHtml(slug) + '" role="button" title="Rafraîchir les branches" style="font-size:11px;color:#94a3b8;cursor:pointer;">↻' + cachedNote + '</span>'
+        + '</div>'
+        + '<div style="display:flex;gap:6px;">'
+            + '<select id="branch-select-' + escapeHtml(slug) + '" class="form-select form-select-sm" style="font-size:12px;">' + options + '</select>'
+            + '<button data-action="deployBranch" data-arg1="' + escapeHtml(slug) + '"'
+            + ' class="btn btn-sm" style="background:#16a34a;border-color:#16a34a;color:#fff;font-weight:600;padding:3px 10px;font-size:11px;white-space:nowrap;"'
+            + ' title="Envoyer cette branche dans l\'atelier (clone de DB, la prod n\'est pas touchée)">Déployer ▸</button>'
+        + '</div>'
+        + '<div style="font-size:10px;color:#94a3b8;margin-top:5px;">La branche part en atelier pour validation — la prod ne reçoit que du main (ship).</div>'
+        + '</div>';
+}
+
+async function deployBranch(slug) {
+    var sel = document.getElementById('branch-select-' + slug);
+    var ref = sel ? sel.value : '';
+    if (!ref) return;
+    var st = window._workshopStates[slug];
+    if (!st) {
+        try { st = await api.getWorkshopState(slug); window._workshopStates[slug] = st; }
+        catch (e) { st = { exists: false }; }
+    }
+    var operation = st.exists ? 'update' : 'create';
+    try {
+        var result = (operation === 'update')
+            ? await api.updateWorkshop(slug, ref)
+            : await api.createWorkshop(slug, ref);
+        var panel = document.getElementById('branch-panel-' + slug);
+        if (panel) panel.style.display = 'none';
+        openWorkshopModal(slug, operation, result.operation_id);
+    } catch (e) {
+        showToast('Atelier', e.message, 'danger');
+    }
 }
 
 // ─── Restart ──────────────────────────────────────────────────────────
@@ -582,3 +718,40 @@ function updateAppsHealthTimestamps() {
 }
 
 setInterval(updateAppsHealthTimestamps, 30000);
+
+// ─── Filtres (client-side, instantanés) ───────────────────────────────
+
+var _healthFilterText = '';
+var _healthFilterStatus = 'all';
+var _healthFilterWs = false;
+
+function filterAppsHealth(input) {
+    _healthFilterText = (input.value || '').trim().toLowerCase();
+    _applyHealthFilters();
+}
+
+function filterAppsHealthStatus(status, el) {
+    _healthFilterStatus = status;
+    var group = document.getElementById('appsHealthStatusGroup');
+    if (group) {
+        Array.prototype.forEach.call(group.querySelectorAll('button'), function (b) {
+            b.classList.toggle('active', b === el);
+        });
+    }
+    _applyHealthFilters();
+}
+
+function filterAppsHealthWs(el) {
+    _healthFilterWs = !!el.checked;
+    _applyHealthFilters();
+}
+
+function _applyHealthFilters() {
+    var cols = document.querySelectorAll('#appsHealthGrid > [data-slug]');
+    Array.prototype.forEach.call(cols, function (col) {
+        var okStatus = (_healthFilterStatus === 'all' || col.getAttribute('data-status') === _healthFilterStatus);
+        var okWs = (!_healthFilterWs || col.getAttribute('data-ws') === '1');
+        var okText = (!_healthFilterText || (col.getAttribute('data-search') || '').indexOf(_healthFilterText) !== -1);
+        col.style.display = (okStatus && okWs && okText) ? '' : 'none';
+    });
+}

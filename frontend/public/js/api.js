@@ -1774,12 +1774,22 @@ class HubAPI {
         return this.request(`/apps/${encodeURIComponent(slug)}/workshop`);
     }
 
-    async createWorkshop(slug) {
-        return this.request(`/apps/${encodeURIComponent(slug)}/workshop`, { method: 'POST' });
+    async createWorkshop(slug, ref) {
+        return this.request(`/apps/${encodeURIComponent(slug)}/workshop`, {
+            method: 'POST',
+            body: JSON.stringify(ref ? { ref } : {})
+        });
     }
 
-    async updateWorkshop(slug) {
-        return this.request(`/apps/${encodeURIComponent(slug)}/workshop/update`, { method: 'POST' });
+    async updateWorkshop(slug, ref) {
+        return this.request(`/apps/${encodeURIComponent(slug)}/workshop/update`, {
+            method: 'POST',
+            body: JSON.stringify(ref ? { ref } : {})
+        });
+    }
+
+    async getAppBranches(slug) {
+        return this.request(`/apps/${encodeURIComponent(slug)}/branches`);
     }
 
     async shipWorkshop(slug) {

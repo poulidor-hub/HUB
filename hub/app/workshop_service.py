@@ -12,6 +12,7 @@ import asyncio
 import inspect
 import logging
 import os
+import re
 import time
 from pathlib import Path
 
@@ -31,6 +32,22 @@ from app.deploy_service import (
 from app.models import WorkshopOperation
 
 logger = logging.getLogger("hub.workshop")
+
+# Ref atelier (branche/tag) : sûr à passer en argv git (jamais de shell).
+# Interdits : préfixe '-' (flag git), '..', blancs, ~^:?*[\, >120 chars.
+_WS_REF_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,119}$")
+
+
+def validate_ws_ref(ref: str | None) -> str | None:
+    """Normalise et valide une ref atelier. None/'' → None. Lève ValueError."""
+    if ref is None:
+        return None
+    ref = ref.strip()
+    if not ref:
+        return None
+    if not _WS_REF_RE.fullmatch(ref) or ".." in ref or ref.endswith(".lock"):
+        raise ValueError(f"Ref git invalide : {ref!r}")
+    return ref
 
 # ── Contrat .workshop.env (hubctl v0.6.1) ──
 WS_ENV_KEYS = [
@@ -414,8 +431,13 @@ def cancel_all_workshop_operations() -> None:
 
 
 async def start_workshop_operation(slug: str, operation: str,
-                                   triggered_by: str | None) -> int:
-    """Crée la ligne d'opération et lance la tâche de fond (non-bloquant)."""
+                                   triggered_by: str | None,
+                                   ref: str | None = None) -> int:
+    """Crée la ligne d'opération et lance la tâche de fond (non-bloquant).
+
+    `ref` (create/update uniquement) : branche/tag à tester en atelier.
+    None → comportement historique (create = branche courante, update = main).
+    """
     from app.database import async_session_maker
     async with async_session_maker() as db:
         op = WorkshopOperation(app_slug=slug, operation=operation,
@@ -424,7 +446,7 @@ async def start_workshop_operation(slug: str, operation: str,
         await db.commit()
         await db.refresh(op)
         op_id = op.id
-    task = asyncio.create_task(_run_workshop_operation(op_id, slug, operation))
+    task = asyncio.create_task(_run_workshop_operation(op_id, slug, operation, ref))
     _workshop_tasks.add(task)
     task.add_done_callback(_workshop_tasks.discard)
     return op_id
@@ -442,7 +464,8 @@ async def _ws_mtime_warning(slug: str, op_id: int) -> None:
         pass
 
 
-async def _run_workshop_operation(op_id: int, slug: str, operation: str) -> None:
+async def _run_workshop_operation(op_id: int, slug: str, operation: str,
+                                  ref: str | None = None) -> None:
     """Dispatch sous lock global — une opération atelier à la fois."""
     async with _workshop_lock:
         await _update_op(op_id, status="running")
@@ -454,7 +477,10 @@ async def _run_workshop_operation(op_id: int, slug: str, operation: str) -> None
         try:
             if handler is None:
                 raise RuntimeError(f"Opération inconnue : {operation}")
-            await handler(op_id, slug)
+            if operation in ("create", "update"):
+                await handler(op_id, slug, ref)
+            else:
+                await handler(op_id, slug)
         except asyncio.CancelledError:
             from app.models import utcnow
             await _update_op(op_id, status="failed", current_step="annulé",
@@ -509,7 +535,7 @@ async def _op_recreate(op_id: int, slug: str) -> None:
 
 # ── CREATE ──
 
-async def _op_create(op_id: int, slug: str) -> None:
+async def _op_create(op_id: int, slug: str, ref: str | None = None) -> None:
     app_dir = get_apps_dir() / slug
     ws_slug = f"{slug}-ws"
     compose_file = app_dir / "docker-compose.yml"
@@ -528,12 +554,27 @@ async def _op_create(op_id: int, slug: str) -> None:
     if subnet is None:
         raise RuntimeError("Pool de subnets atelier épuisé (10.210.0.0/24 ×64)")
 
-    state = await _git_state(app_dir)
+    # Ref demandée (branches → atelier) : checkout AVANT l'écriture du
+    # .workshop.env, pour tracer exactement le code buildé (WS_REF/WS_COMMIT).
+    if ref:
+        await _step(op_id, "checkout", f"checkout origin/{ref}")
+        auth = _git_auth_args(await _github_token())
+        await _git(app_dir, "fetch", "--quiet", "origin", "--tags", auth_args=auth)
+        sha = await _git_try(app_dir, "rev-parse", f"origin/{ref}")
+        if not sha:
+            raise RuntimeError(f"Ref « {ref} » introuvable sur origin après fetch")
+        await _git(app_dir, "checkout", "--quiet", sha)
+        ws_ref, ws_commit = ref, sha
+    else:
+        state = await _git_state(app_dir)
+        ws_ref = (state["branch"] or "n/a") if state["ok"] else "n/a"
+        ws_commit = (state["head"] or "n/a") if state["ok"] else "n/a"
+
     config = {
         "APP_SLUG": ws_slug, "API_PORT": str(ws_api), "FRONTEND_PORT": str(ws_fe),
         "FRONTEND_HTTPS_PORT": str(ws_fe + 1),
-        "WS_REF": (state["branch"] or "n/a") if state["ok"] else "n/a",
-        "WS_COMMIT": (state["head"] or "n/a") if state["ok"] else "n/a",
+        "WS_REF": ws_ref,
+        "WS_COMMIT": ws_commit,
         "APP_SUBNET": subnet,
     }
     _write_ws_env_full(_ws_env_path(slug), config)
@@ -585,7 +626,9 @@ async def _op_create(op_id: int, slug: str) -> None:
 
 # ── UPDATE (toujours origin/main — décision spec) ──
 
-async def _op_update(op_id: int, slug: str) -> None:
+async def _op_update(op_id: int, slug: str, ref: str | None = None) -> None:
+    """Mise à jour de l'atelier : checkout detached de origin/main (défaut)
+    ou de origin/{ref} (branches → atelier). Idempotent, rollback sur échec."""
     app_dir = get_apps_dir() / slug
     ws_slug = f"{slug}-ws"
     compose_file = app_dir / "docker-compose.yml"
@@ -593,6 +636,7 @@ async def _op_update(op_id: int, slug: str) -> None:
     if not env:
         raise RuntimeError(f"Atelier « {ws_slug} » inexistant (.workshop.env manquant)")
 
+    target_ref = ref or "main"
     state = await _git_state(app_dir)
     if not state["ok"]:
         raise RuntimeError(f"{app_dir} n'est pas un repo git avec remote origin")
@@ -604,23 +648,26 @@ async def _op_update(op_id: int, slug: str) -> None:
 
     prev_branch, prev_commit = state["branch"], state["head"]
 
-    await _step(op_id, "fetch", "git fetch origin")
+    await _step(op_id, "fetch", f"git fetch origin (cible : origin/{target_ref})")
     auth = _git_auth_args(await _github_token())
     await _git(app_dir, "fetch", "--quiet", "origin", "--tags", auth_args=auth)
-    target = await _origin_main(app_dir)
+    if target_ref == "main":
+        target = await _origin_main(app_dir)
+    else:
+        target = await _git_try(app_dir, "rev-parse", f"origin/{target_ref}")
     if not target:
-        raise RuntimeError("origin/main introuvable après fetch")
+        raise RuntimeError(f"origin/{target_ref} introuvable après fetch")
 
     # Idempotence (parité hubctl)
-    if env.get("WS_REF") == "main" and env.get("WS_COMMIT") == target:
+    if env.get("WS_REF") == target_ref and env.get("WS_COMMIT") == target:
         from app.models import utcnow
         await _update_op(op_id, status="success", current_step="done",
-                         logs=f"✓ Atelier déjà à jour sur main @ {target[:8]}\n",
+                         logs=(f"✓ Atelier déjà à jour sur {target_ref} @ {target[:8]}\n"),
                          finished_at=utcnow())
         return
 
     try:
-        await _step(op_id, "checkout", f"checkout {target[:8]} (detached)")
+        await _step(op_id, "checkout", f"checkout {target[:8]} ({target_ref}, detached)")
         await _git(app_dir, "checkout", "--quiet", target)
         compose_env = _ws_compose_env(slug)
 
@@ -637,7 +684,7 @@ async def _op_update(op_id: int, slug: str) -> None:
             raise RuntimeError("Atelier pas healthy après mise à jour")
 
         apply_env_values(_ws_env_path(slug),
-                         {"WS_REF": "main", "WS_COMMIT": target})
+                         {"WS_REF": target_ref, "WS_COMMIT": target})
     except Exception as e:
         await _step(op_id, "rollback", "Restauration git + rebuild ancien commit")
         await _restore_git(app_dir, prev_branch, prev_commit)
@@ -656,7 +703,7 @@ async def _op_update(op_id: int, slug: str) -> None:
 
     from app.models import utcnow
     await _update_op(op_id, status="success", current_step="done",
-                     logs=f"✓ Atelier « {ws_slug} » à jour : main @ {target[:8]}\n",
+                     logs=f"✓ Atelier « {ws_slug} » à jour : {target_ref} @ {target[:8]}\n",
                      finished_at=utcnow())
 
 

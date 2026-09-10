@@ -91,8 +91,9 @@ async def test_create_ok(client, async_session, admin_token, tmp_path, monkeypat
                         _async_ret({"ok": True, "branch": "main", "head": "a"}))
     monkeypatch.setattr(route_mod, "has_active_workshop_operation", _async_ret(False))
     started = {"called": False}
-    async def _fake_start(slug, operation, triggered_by):
+    async def _fake_start(slug, operation, triggered_by, ref=None):
         started["called"] = True
+        started["ref"] = ref
         assert operation == "create"
         return 42
     monkeypatch.setattr(route_mod, "start_workshop_operation", _fake_start)
@@ -100,6 +101,7 @@ async def test_create_ok(client, async_session, admin_token, tmp_path, monkeypat
                           headers=get_auth_header(admin_token))
     assert r.status_code == 201
     assert r.json()["operation_id"] == 42 and started["called"]
+    assert started["ref"] is None          # pas de body → ref None (comportement historique)
 
 
 async def test_status_shape(client, async_session, admin_token):
@@ -226,3 +228,111 @@ async def test_patch_git_repo_url_syncs_remote_best_effort(client, async_session
                             headers=get_auth_header(admin_token))
     assert r2.status_code == 200          # best-effort : jamais bloquant
     assert str(r2.json().get("git_sync", "")).startswith("warning:")
+
+
+# ─── Ref param (branches → atelier) ────────────────────────────────────
+
+async def test_create_with_valid_ref_passes_ref(client, async_session, admin_token,
+                                                tmp_path, monkeypatch):
+    """POST /workshop {ref} → start_workshop_operation appelé avec ce ref."""
+    await _mk_app(async_session)
+    monkeypatch.setattr(ws, "get_apps_dir", lambda: tmp_path)
+    async def _git_ok(d): return {"ok": True, "branch": "main", "head": "abc"}
+    monkeypatch.setattr(route_mod, "_git_state", _git_ok)
+    calls = {}
+
+    async def _fake_start(slug, operation, triggered_by, ref=None):
+        calls.update(slug=slug, operation=operation, ref=ref)
+        return 42
+
+    monkeypatch.setattr(route_mod, "start_workshop_operation", _fake_start)
+    r = await client.post("/api/apps/wstest/workshop", json={"ref": "feat/xyz"},
+                          headers=get_auth_header(admin_token))
+    assert r.status_code == 201
+    assert calls["operation"] == "create" and calls["ref"] == "feat/xyz"
+
+
+async def test_update_with_valid_ref_passes_ref(client, async_session, admin_token,
+                                                tmp_path, monkeypatch):
+    await _mk_app(async_session)
+    monkeypatch.setattr(ws, "get_apps_dir", lambda: tmp_path)
+    ws._write_ws_env_full(tmp_path / "wstest" / ".workshop.env", {
+        "APP_SLUG": "wstest-ws", "API_PORT": "10000", "FRONTEND_PORT": "5200",
+        "FRONTEND_HTTPS_PORT": "5201", "WS_REF": "main", "WS_COMMIT": "x",
+        "APP_SUBNET": "10.210.0.0/24"})
+    async def _git_ok(d): return {"ok": True, "branch": "main", "head": "abc"}
+    monkeypatch.setattr(route_mod, "_git_state", _git_ok)
+    calls = {}
+
+    async def _fake_start(slug, operation, triggered_by, ref=None):
+        calls.update(operation=operation, ref=ref)
+        return 43
+
+    monkeypatch.setattr(route_mod, "start_workshop_operation", _fake_start)
+    r = await client.post("/api/apps/wstest/workshop/update",
+                          json={"ref": "fix/health"},
+                          headers=get_auth_header(admin_token))
+    assert r.status_code == 201
+    assert calls["operation"] == "update" and calls["ref"] == "fix/health"
+
+
+@pytest.mark.parametrize("bad", ["-flag", "a..b", "es pace", "a~b", "a^b", "x" * 200])
+async def test_invalid_ref_rejected_400(client, async_session, admin_token,
+                                        tmp_path, monkeypatch, bad):
+    await _mk_app(async_session)
+    monkeypatch.setattr(ws, "get_apps_dir", lambda: tmp_path)
+    r = await client.post("/api/apps/wstest/workshop/update", json={"ref": bad},
+                          headers=get_auth_header(admin_token))
+    assert r.status_code == 400
+
+
+async def test_branches_parses_github(client, async_session, admin_token, monkeypatch):
+    """GET /{slug}/branches parse la réponse GitHub (défaut en tête)."""
+    from app.routes import github_catalog  # noqa: F401  (s'assure que le module est chargé)
+    import app.routes.workshop as wmod
+    await _mk_app(async_session, repo="https://github.com/test-org/test-repo.git")
+
+    async def _fake_fetch(url, db):
+        if url.endswith("/repos/test-org/test-repo"):
+            return ({"default_branch": "main"}, 200)
+        return ([{"name": "feat/xyz", "commit": {"sha": "aaa111"}},
+                 {"name": "main", "commit": {"sha": "bbb222"}}], 200)
+
+    monkeypatch.setattr(wmod, "fetch_github_json", _fake_fetch)
+    r = await client.get("/api/apps/wstest/branches",
+                         headers=get_auth_header(admin_token))
+    assert r.status_code == 200
+    data = r.json()
+    assert data["ok"] is True and data["default_branch"] == "main"
+    assert data["branches"][0]["name"] == "main"          # défaut en tête
+    assert data["branches"][1]["name"] == "feat/xyz"
+
+
+async def test_branches_without_repo_configured(client, async_session, admin_token):
+    await _mk_app(async_session, repo=None)
+    r = await client.get("/api/apps/wstest/branches",
+                         headers=get_auth_header(admin_token))
+    assert r.status_code == 200
+    data = r.json()
+    assert data["ok"] is False and data["repo_configured"] is False
+
+
+async def test_branches_cached_30s(client, async_session, admin_token, monkeypatch):
+    """Deux appels rapprochés → un seul passage réseau (cache 30 s)."""
+    import app.routes.workshop as wmod
+    await _mk_app(async_session, repo="https://github.com/test-org/test-repo.git")
+    wmod._branches_cache.clear()
+    n = {"count": 0}
+
+    async def _fake_fetch(url, db):
+        n["count"] += 1
+        if url.endswith("/repos/test-org/test-repo"):
+            return ({"default_branch": "main"}, 200)
+        return ([{"name": "main", "commit": {"sha": "bbb222"}}], 200)
+
+    monkeypatch.setattr(wmod, "fetch_github_json", _fake_fetch)
+    r1 = await client.get("/api/apps/wstest/branches", headers=get_auth_header(admin_token))
+    r2 = await client.get("/api/apps/wstest/branches", headers=get_auth_header(admin_token))
+    assert r1.status_code == 200 and r2.status_code == 200
+    assert n["count"] == 2                 # 1 repos + 1 branches, pas 2×2
+    assert r2.json()["cached"] is True
