@@ -236,33 +236,40 @@ function renderUserDayBreakdown(containerId, data) {
     const neededHeight = Math.max(110, 24 + data.totals.length * 30 + 16);
     if (el && el.clientHeight < neededHeight) el.style.height = `${neededHeight}px`;
 
-    // Une série par app (le decal ECharts est porté par la série, pas l'item) :
-    // chaque série ne porte qu'une valeur, à sa position sur l'axe catégorie.
-    const series = data.totals.map((app, i) => {
-        const v = variants.get(app.app_slug) || {};
-        return {
-            name: app.app_name,
-            type: 'bar',
-            barWidth: 18,
-            itemStyle: { color: app.color },
-            decal: v.decal || undefined,
-            label: {
-                show: true, position: 'right', color: axis.labelColor,
-                formatter: (p) => fmtH(p.value)
-            },
-            data: data.totals.map((_, j) => (j === i ? app.total_seconds : null)),
-            tooltip: {
-                formatter: (p) => {
-                    const total = data.day_total_seconds || 0;
-                    const pct = total > 0 ? Math.round(app.total_seconds / total * 100) : 0;
-                    const pctDay = Math.round(app.total_seconds / 86400 * 100);
-                    return `${escapeHtml(app.app_name)} — ${fmtH(app.total_seconds)}`
-                        + `<br/>${pct}% du temps total`
-                        + `<br/>${pctDay}% de la journée`;
-                }
+    // UNE SEULE série (ex-« une série par app ») : avec N séries bar sur un
+    // axe catégorie, ECharts place les N barres CÔTE À CÔTE dans un cluster
+    // par bande — dès 2-3 apps, les barres débordent de leur bande de 30px
+    // et atterrissent visuellement à côté du mauvais label (tooltip ≠ nom
+    // à gauche). En série unique, chaque barre est centrée sur sa bande ;
+    // le decal (motif différenciant les couleurs dupliquées) est porté par
+    // itemStyle du data item (ECharts ≥ 5), pas par la série.
+    const series = [{
+        name: 'Temps par application',
+        type: 'bar',
+        barWidth: 18,
+        data: data.totals.map((app) => {
+            const v = variants.get(app.app_slug) || {};
+            return {
+                value: app.total_seconds,
+                itemStyle: { color: app.color, decal: v.decal || undefined },
+            };
+        }),
+        label: {
+            show: true, position: 'right', color: axis.labelColor,
+            formatter: (p) => fmtH(p.value)
+        },
+        tooltip: {
+            formatter: (p) => {
+                const app = data.totals[p.dataIndex] || {};
+                const total = data.day_total_seconds || 0;
+                const pct = total > 0 ? Math.round(app.total_seconds / total * 100) : 0;
+                const pctDay = Math.round(app.total_seconds / 86400 * 100);
+                return `${escapeHtml(app.app_name)} — ${fmtH(app.total_seconds)}`
+                    + `<br/>${pct}% du temps total`
+                    + `<br/>${pctDay}% de la journée`;
             }
-        };
-    });
+        }
+    }];
 
     chart.setOption({
         tooltip: { trigger: 'item' },

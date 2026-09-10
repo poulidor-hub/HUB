@@ -2,10 +2,17 @@
 from app.config import Settings
 
 
-def test_slo_defaults():
+def test_slo_defaults(monkeypatch):
     """Kill-switch OFF par défaut — doit être activé explicitement via .env
-    après validation e2e atelier (cf. spec SLO §10 Phase 4)."""
-    s = Settings()
+    après validation e2e atelier (cf. spec SLO §10 Phase 4).
+
+    Isolation : on neutralise .env ET les env vars du shell — ce test
+    vérifie le défaut DU CODE, pas la config de la machine qui l'exécute
+    (un .env local avec OIDC_SLO_ENABLED=true est légitime et ne doit pas
+    faire échouer la suite)."""
+    monkeypatch.delenv("OIDC_SLO_ENABLED", raising=False)
+    monkeypatch.delenv("OIDC_SLO_IFRAME_TIMEOUT_MS", raising=False)
+    s = Settings(_env_file=None)
     assert s.oidc_slo_enabled is False
     assert s.oidc_slo_iframe_timeout_ms == 1500
 
