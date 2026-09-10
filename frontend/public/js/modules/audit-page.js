@@ -1148,11 +1148,19 @@ document.addEventListener('DOMContentLoaded', () => {
             if (target === '#auditPageOverview') usageChartsDispose(['auditHeatmapChart']);
         });
         btn.addEventListener('shown.bs.tab', (e) => {
-            if (e.target.getAttribute('data-bs-target') === '#auditPageUptime') {
+            const target = e.target.getAttribute('data-bs-target');
+            if (target === '#auditPageUptime') {
                 if (uptimePollTimer) clearInterval(uptimePollTimer);
                 // Secours si le SSE audit_updated est down : rafraîchissement minute
                 uptimePollTimer = setInterval(loadAuditPageUptime, 60000);
             }
+            // Re-render à l'affichage : les graphiques de ces onglets sont
+            // disposés au hidden ; un re-render effectué pendant l'onglet
+            // caché (SSE audit_updated) produit un canvas à largeur ~0
+            // (graphique « écrasé »). En re-rendant ICI, le conteneur est
+            // visible → dimensions correctes.
+            if (target === '#auditPageOverview') loadAuditPageOverview();
+            if (target === '#auditPageApps') loadAuditPageApps();
         });
     });
 });
