@@ -5,6 +5,20 @@
 
 ---
 
+## [3.50.10] - 11 septembre 2026
+
+### 🖼️ Fix : heatmap « écrasé » au retour sur la vue d'ensemble de l'Audit
+
+| Élément | Description |
+|---------|-------------|
+| Symptôme | Après consultation d'un autre onglet de l'Audit, le retour sur « Vue d'ensemble » affichait le heatmap « Activité du parc » réduit à quelques pixels de large |
+| Cause racine | Deux défauts combinés : (1) le heatmap est **disposé** quand on quitte l'onglet (anti-fuite), (2) un re-render déclenché pendant l'onglet caché (SSE `audit_updated`) initialisait ECharts dans un conteneur `display:none` → canvas à largeur ~0. Le listener `shown.bs.tab` ne gérait que l'onglet Uptime : aucun rattrapage au retour |
+| Fix | `shown.bs.tab` re-rend `loadAuditPageOverview()` (Vue d'ensemble) et `loadAuditPageApps()` (Par Application — même maladie) : le rendu se fait dans un conteneur visible → dimensions correctes + données fraîches. L'état « écrasé » ne peut plus persister |
+| Validé | Reproduction manuelle (Audit → autre onglet → retour Vue d'ensemble) : heatmap pleine largeur |
+| Fichiers | `frontend/public/js/modules/audit-page.js` |
+
+---
+
 ## [3.50.9] - 11 septembre 2026
 
 ### 🔔 Alerte audit : détection automatique des boucles de requêtes répétées
