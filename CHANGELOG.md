@@ -5,6 +5,19 @@
 
 ---
 
+## [3.50.8] - 10 septembre 2026
+
+### 🎯 Exclusion des ateliers de l'uptime utilisateur
+
+| Élément | Description |
+|---------|-------------|
+| Comportement | `GET /api/audit/usage/user/{id}` exclut désormais les segments dont le slug se termine par « -ws » (ateliers) : timeline, « Répartition du temps par application » et temps total ne comptent que l'usage **production**. Avant, une session atelier apparaissait comme une app séparée (ex. 2 lignes « exemple-app-7 » = prod + atelier) |
+| Implémentation | Filtre SQL `~AppUsageSegment.app_slug.endswith("-ws")` dans `get_user_usage_day` (la convention `{slug}-ws` est réservée aux ateliers : hubctl + workshop_service) |
+| Tests | `test_usage_user_excludes_workshop_segments` (régression : segments prod + atelier → seul le prod compte dans segments/totals/day_total) ; suites usage/SLO 18/18 |
+| Fichiers | `hub/app/routes/audit.py`, `hub/tests/test_api_usage_endpoints.py` |
+
+---
+
 ## [3.50.7] - 10 septembre 2026
 
 ### 🐛 Fix : graphique « Répartition du temps par application » (uptime utilisateur)

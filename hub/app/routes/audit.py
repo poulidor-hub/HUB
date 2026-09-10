@@ -1834,7 +1834,9 @@ async def get_user_usage_day(
     day_start = day
     day_end = day + timedelta(days=1)
 
-    # Segments chevauchant le jour, avec la session pour clamp des segments ouverts
+    # Segments chevauchant le jour, avec la session pour clamp des segments ouverts.
+    # Exclusion des ateliers (slug finissant par « -ws ») : l'uptime utilisateur
+    # ne mesure que l'usage production — la sandbox atelier n'est pas une app.
     result = await db.execute(
         select(AppUsageSegment, UserSession)
         .join(UserSession, AppUsageSegment.session_id == UserSession.id)
@@ -1844,6 +1846,7 @@ async def get_user_usage_day(
                 AppUsageSegment.started_at < day_end,
                 or_(AppUsageSegment.ended_at == None,
                     AppUsageSegment.ended_at > day_start),  # noqa: E711
+                ~AppUsageSegment.app_slug.endswith("-ws"),
             )
         )
     )

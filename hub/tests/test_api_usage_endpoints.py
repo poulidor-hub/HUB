@@ -148,3 +148,31 @@ async def test_usage_user_open_segment_visible(client, async_session, admin_toke
     assert len(segs) == 1
     assert segs[0]["duration_seconds"] > 0
     assert segs[0]["duration_seconds"] <= settings.session_timeout_minutes * 60 + 5
+
+
+@pytest.mark.asyncio
+async def test_usage_user_excludes_workshop_segments(client, async_session, admin_token, test_user):
+    """Les segments atelier (slug finissant par -ws) sont exclus de l'uptime
+    utilisateur : cette vue ne mesure que l'usage production."""
+    s = await _make_session(async_session, test_user)
+    await touch_app_presence(async_session, s, "test-app")
+    await touch_app_presence(async_session, s, "test-app-ws")
+    segs = (await async_session.execute(select(AppUsageSegment))).scalars().all()
+    assert len(segs) == 2
+    for seg in segs:
+        seg.ended_at = seg.started_at + timedelta(minutes=10)
+        seg.end_reason = "switch"
+    await async_session.commit()
+
+    today = utcnow().strftime("%Y-%m-%d")
+    resp = await client.get(
+        f"/api/audit/usage/user/{test_user.id}?date={today}",
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    slugs = [seg["app_slug"] for seg in body["segments"]]
+    assert "test-app-ws" not in slugs
+    assert "test-app" in slugs
+    assert all(t["app_slug"] != "test-app-ws" for t in body["totals"])
+    assert body["day_total_seconds"] == 600  # 10 min de prod uniquement
