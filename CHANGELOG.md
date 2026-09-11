@@ -5,6 +5,26 @@
 
 ---
 
+## [3.51.0] - 11 septembre 2026
+
+### 🛡️ Page admin « Droits Philia » — gestion des droits PhiliaNG depuis le Hub (phase 1)
+
+Nouvel onglet Admin > « Droits Philia » : un administrateur consulte les
+périmètres PhiliaNG d'un utilisateur (habilitations `mo` + droits d'agence
+avec leurs groupes) et supprime un droit (groupe sur une agence), l'action
+étant exécutée dans le SI source via l'app `philia-proxy`. Phase 2 (ajout de
+droits) à venir.
+
+| Fonctionnalité | Description |
+|----------------|-------------|
+| **Proxy `/api/philia-rights/*`** (admin) | Le Hub appelle l'app `philia-proxy` (résolue par slug, `api_url`) avec un **token de service signé** TTL 90 s (`apps={philia-proxy: admin}`, cache 60 s) — aucun endpoint ouvert, contrairement au pattern découverte `tags.py`. Erreurs mappées : app absente → 404, injoignable/5xx → 502, 4xx app forwardé |
+| **Audit systématique** | Chaque suppression est tracée dans l'audit Hub (`philia_right_removed` : username admin + `user_ng/agence/groupe`) ; l'app audite de son côté |
+| **UI — onglet admin** | `admin-philia-rights.js` + section `index.html` (onglet persistant `#tabPhiliaRights`) : sélection d'un utilisateur connu (sessions proxy avec id PhiliaNG) ou saisie manuelle d'un id NG, carte identité, blocs « Habilitations (mo) » et « Agences » (table + recherche client-side), confirmation forte avant suppression (modale), toast résultat, re-fetch ciblé du bloc agences |
+| **Client API** | `api.getPhiliaRightsUsers()`, `api.getPhiliaPerimeters()`, `api.removePhiliaRight()` |
+| **Tests** | 8 nouveaux (`hub/tests/test_philia_rights_proxy.py`, `httpx.MockTransport` — zéro réseau) : claims du token service, mapping d'erreurs, audit écrit ; suite complète 1040 tests verts |
+
+---
+
 ## [3.50.10] - 11 septembre 2026
 
 ### 🖼️ Fix : heatmap « écrasé » au retour sur la vue d'ensemble de l'Audit
