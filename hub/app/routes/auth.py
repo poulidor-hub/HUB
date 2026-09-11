@@ -11,7 +11,8 @@ import secrets
 import logging
 
 from app.database import get_db
-from app.models import User, AuditLog, ServiceAccount, UserAppRole, UserSession, Application, UserTag, utcnow, get_apps_with_roles_and_workshops, workshop_role_for_app
+from app.models import User, AuditLog, ServiceAccount, UserAppRole, UserSession, Application, UserTag, utcnow, get_apps_with_roles_and_workshops, workshop_role_for_app, ApprovalStatus
+from app.m2m_scope import sa_apps_claim, sa_claim_is_workshop
 from app.schemas import (
     Token, LoginRequest, TokenIntrospection, RefreshTokenRequest, LogoutRequest,
     PasswordChangeRequest, AppLaunchResponse,
@@ -190,7 +191,8 @@ async def login_for_token(
         else:
             sa = refresh_obj.service_account
             # Service accounts ont accès "service" aux apps
-            apps = {app.slug: "service" for app in sa.applications}
+            # AN-2 : claim filtré (apps actives + approuvées uniquement)
+            apps = sa_apps_claim(sa)
             sub = sa.client_id
             tags = None  # Service accounts n'ont pas de tags utilisateur
             uid = prenom = nom = None
@@ -245,9 +247,9 @@ async def login_for_token(
         service_account.last_used_at = utcnow()
         
         # Service accounts ont accès "service" aux apps (accès M2M)
-        apps = {app.slug: "service" for app in service_account.applications}
-        # Déterminer si ce SA est un SA d'atelier (toutes ses apps sont -ws)
-        is_workshop = all(getattr(app, 'is_workshop', False) for app in service_account.applications) if service_account.applications else False
+        # AN-2 : claim filtré (apps actives + approuvées + même contexte atelier)
+        apps = sa_apps_claim(service_account)
+        is_workshop = sa_claim_is_workshop(service_account)
         
         token, expire, jti = create_access_token(
             username=client_id,
@@ -986,7 +988,8 @@ async def refresh_access_token(
     else:
         sa = refresh_obj.service_account
         # Service accounts ont accès "service" aux apps
-        apps = {app.slug: "service" for app in sa.applications}
+        # AN-2 : claim filtré (apps actives + approuvées uniquement)
+        apps = sa_apps_claim(sa)
         sub = sa.client_id
         is_sa = True
         tags = None  # Service accounts n'ont pas de tags utilisateur

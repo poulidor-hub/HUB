@@ -20,6 +20,7 @@ from app.routes.app_backups import reassociate_orphan_backups
 
 from app.database import get_db
 from app.models import Application, User, ServiceAccount, UserAppRole, ApprovalStatus, service_account_app_access, DEFAULT_ROLES, UserFavorite, utcnow, AppDependency, AppGroup, AppDeployment, UserWorkshopAccess
+from app.m2m_scope import grant_shared_apps_to_sa
 from app.routes.app_groups import group_to_brief
 from app.schemas import (
     AppCreate, AppCreateSimplified, AppUpdate, AppResponse, AppWithUsers, AppWithUsersAndDocker,
@@ -195,6 +196,30 @@ def _get_owner_service_account_for_app(app: Application) -> Optional[ServiceAcco
     if owner_sa:
         return owner_sa
     return next(iter(app.service_accounts), None)
+
+
+def _resolve_sa_owner_app(sa: ServiceAccount) -> Optional[Application]:
+    """Résout l'app d'identité d'un service account, de façon déterministe.
+
+    AN-1 (banc 2026-09-10) : `sa.applications[0]` sur une relation N-N non
+    ordonnée livre une app arbitraire pour tout SA multi-apps. L'app
+    retournée est donc :
+    1. celle dont le SA est propriétaire (convention de nommage
+       `_is_owner_service_account`) ;
+    2. sinon son unique app liée (déterministe, pas d'ambiguïté) ;
+    3. sinon None (multi-apps sans propriétaire identifiable → l'appelant
+       doit refuser plutôt que livrer une app arbitraire).
+    """
+    apps = list(sa.applications or [])
+    if not apps:
+        return None
+    owner_app = next(
+        (app for app in apps if _is_owner_service_account(app, sa)),
+        None,
+    )
+    if owner_app:
+        return owner_app
+    return apps[0] if len(apps) == 1 else None
 
 
 # ===== IP Whitelist pour auto-enregistrement =====
@@ -1028,18 +1053,10 @@ async def create_app(
         )
         service_account = result.scalar_one()
         service_account.applications.append(app)
-        
-        # Ajouter automatiquement les applications partagées (is_shared_service=True)
-        shared_result = await db.execute(
-            select(Application).where(Application.is_shared_service == True)
-        )
-        shared_apps = shared_result.scalars().all()
-        shared_slugs = []
-        for shared_app in shared_apps:
-            if shared_app not in service_account.applications:
-                service_account.applications.append(shared_app)
-                shared_slugs.append(shared_app.slug)
-        
+
+        # AN-2 : services partagés avec parité de contexte atelier (helper central)
+        shared_slugs = await grant_shared_apps_to_sa(db, service_account)
+
         # Sauvegarder les credentials automatiquement
         all_app_slugs = [app_data.slug] + shared_slugs
         secrets_file = save_service_account_credentials(
@@ -1534,16 +1551,9 @@ async def register_app(
                 db.add(sa)
                 sa.applications.append(existing_app)
 
-                # Associer les shared services (même logique/isolation que
-                # create_service_account : parité de contexte atelier)
-                sa_is_workshop = bool(getattr(existing_app, "is_workshop", False))
-                shared_result = await db.execute(
-                    select(Application).where(Application.is_shared_service == True)
-                )
-                for shared_app in shared_result.scalars().all():
-                    if shared_app not in sa.applications:
-                        if bool(getattr(shared_app, "is_workshop", False)) == sa_is_workshop:
-                            sa.applications.append(shared_app)
+                # Associer les shared services (AN-2 : helper central, parité
+                # de contexte atelier)
+                await grant_shared_apps_to_sa(db, sa)
 
                 await db.commit()
 
@@ -1976,16 +1986,8 @@ async def admin_auto_register_app(
     service_account = result.scalar_one()
     service_account.applications.append(app)
     
-    # Ajouter automatiquement les applications partagées (is_shared_service=True)
-    shared_result = await db.execute(
-        select(Application).where(Application.is_shared_service == True)
-    )
-    shared_apps = shared_result.scalars().all()
-    shared_slugs = []
-    for shared_app in shared_apps:
-        if shared_app not in service_account.applications:
-            service_account.applications.append(shared_app)
-            shared_slugs.append(shared_app.slug)
+    # AN-2 : services partagés avec parité de contexte atelier (helper central)
+    shared_slugs = await grant_shared_apps_to_sa(db, service_account)
     
     await db.commit()
     await db.refresh(app)
@@ -2162,16 +2164,8 @@ async def batch_import_apps(
             service_account = sa_result.scalar_one()
             service_account.applications.append(app)
             
-            # Ajouter les services partagés au SA
-            shared_result = await db.execute(
-                select(Application).where(Application.is_shared_service == True)
-            )
-            shared_apps = shared_result.scalars().all()
-            shared_slugs = []
-            for shared_app in shared_apps:
-                if shared_app not in service_account.applications:
-                    service_account.applications.append(shared_app)
-                    shared_slugs.append(shared_app.slug)
+            # AN-2 : services partagés avec parité de contexte atelier (helper central)
+            shared_slugs = await grant_shared_apps_to_sa(db, service_account)
             
             await db.commit()
             await db.refresh(app)
@@ -2330,7 +2324,6 @@ async def get_app_credentials(
                 .where(ServiceAccount.client_id == client_id_from_token)
             )
             sa = result.scalar_one_or_none()
-            app = sa.applications[0] if sa and sa.applications else None
         except HTTPException:
             raise
         except Exception as e:
@@ -2338,6 +2331,28 @@ async def get_app_credentials(
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Token M2M invalide ou expiré"
+            )
+
+        # AN-1 : résolution déterministe par le client_id du token (jamais
+        # `applications[0]`, arbitraire sur une relation N-N non ordonnée)
+        app = _resolve_sa_owner_app(sa) if sa else None
+        if sa and app is None and sa.applications:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    "Service account lié à plusieurs applications sans propriétaire "
+                    "identifiable ; impossible de déterminer les credentials à livrer"
+                ),
+            )
+        if not sa:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Service account non trouvé"
+            )
+        if not app:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Aucune application associée à ce service account"
             )
     else:
         if not is_docker_network_ip(client_ip):
@@ -2365,7 +2380,8 @@ async def get_app_credentials(
                 .where(ServiceAccount.client_id == client_id)
             )
             sa = result.scalar_one_or_none()
-            app = sa.applications[0] if sa and sa.applications else None
+            # AN-1 : même contrat que le path token (jamais `applications[0]`)
+            app = _resolve_sa_owner_app(sa) if sa else None
         else:
             result = await db.execute(
                 select(Application)
@@ -2390,12 +2406,17 @@ async def get_app_credentials(
             )
 
         if not app:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Aucune application associée à ce service account"
-            )
-
-        if client_id and not sa.applications:
+            if sa.applications:
+                # SA multi-apps sans propriétaire identifiable : refus plutôt
+                # que livraison d'une app arbitraire (AN-1)
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=(
+                        "Service account lié à plusieurs applications sans "
+                        "propriétaire identifiable ; impossible de déterminer "
+                        "les credentials à livrer"
+                    ),
+                )
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Aucune application associée à ce service account"
@@ -2484,15 +2505,8 @@ async def regenerate_app_secret(
     new_secret = ServiceAccount.generate_client_secret()
     sa.client_secret_hash = get_password_hash(new_secret)
 
-    shared_result = await db.execute(
-        select(Application).where(Application.is_shared_service == True)
-    )
-    shared_apps = shared_result.scalars().all()
-    synced_slugs = []
-    for shared_app in shared_apps:
-        if shared_app not in sa.applications:
-            sa.applications.append(shared_app)
-            synced_slugs.append(shared_app.slug)
+    # AN-2 : resync des services partagés avec parité de contexte atelier
+    synced_slugs = await grant_shared_apps_to_sa(db, sa)
 
     await db.commit()
 
@@ -2979,16 +2993,7 @@ async def approve_or_reject_app(
         for sa in app.service_accounts:
             sa.is_active = True
             sa.description = sa.description.replace(" (en attente d'approbation)", "") if sa.description else None
-            
-            # Ajouter les services partagés existants au SA de cette app
-            shared_result = await db.execute(
-                select(Application)
-                .where(Application.is_shared_service == True)
-                .where(Application.approval_status == ApprovalStatus.approved)
-                .where(Application.id != app.id)
-            )
-            shared_apps = shared_result.scalars().all()
-            
+
             # Charger les applications du SA
             sa_result = await db.execute(
                 select(ServiceAccount)
@@ -2996,11 +3001,13 @@ async def approve_or_reject_app(
                 .where(ServiceAccount.id == sa.id)
             )
             sa_loaded = sa_result.scalar_one()
-            
-            for shared_app in shared_apps:
-                if shared_app not in sa_loaded.applications:
-                    sa_loaded.applications.append(shared_app)
-                    logger.info(f"🔗 Service partagé '{shared_app.slug}' ajouté au SA de '{app.slug}'")
+
+            # AN-2 : services partagés avec parité de contexte atelier
+            # (helper central — l'ancienne copie sans filtre était la source
+            # du banc : un SA prod héritait d'ateliers partagés)
+            added_slugs = await grant_shared_apps_to_sa(db, sa_loaded)
+            for slug_added in added_slugs:
+                logger.info(f"🔗 Service partagé '{slug_added}' ajouté au SA de '{app.slug}'")
         
         # Si l'app est un service partagé, l'ajouter à tous les SA existants
         shared_added_count = 0

@@ -5,6 +5,29 @@
 
 ---
 
+## [3.52.0] - 11 septembre 2026
+
+### 📣 Pour les utilisateurs
+- **Corrigé** : une application pouvait recevoir, via le Hub, les informations d'identification d'une **autre application** (cas des applications ayant accès à plusieurs services). Chaque application reçoit désormais **les siennes**, sans exception.
+- **Sécurité** : les clés d'appel machine-à-machine d'une application ne donnent **plus accès aux ateliers** (environnements de test) ni aux applications désactivées. Chaque atelier est cloisonné : une fuite de clé ne peut plus exposer le reste du parc.
+- **Nettoyage** : les accès croisés hérités du passé (13 constatés sur l'instance) ont été retirés automatiquement.
+
+### 🔐 Sécurité M2M : identité d'app fiable (`/me/credentials`) + périmètre minimal des service accounts (AN-1/AN-2, banc 2026-09-10)
+
+Traitement des 2 tickets 🔴 critiques issus de la campagne de banc du socle
+2.23.1 (apps controle-socle / exemple-app vs Hub .68).
+
+| Élément | Description |
+|---------|-------------|
+| **AN-1 — `/api/apps/me/credentials`** | L'endpoint résolvait l'app par `sa.applications[0]` (relation N-N **non ordonnée**) : tout SA multi-apps recevait les credentials d'une app arbitraire (observé : SA de `controle-socle` → `exemple-app-ws`). Désormais : app propriétaire du SA (convention de nommage existante), sinon unique app liée, sinon **409** (jamais d'app arbitraire). Appliqué au path token M2M **et** au path déprécié `X-Client-ID` |
+| **AN-2 — périmètre M2M (Option B validée)** | Nouveau module `app/m2m_scope.py` : (1) `grant_shared_apps_to_sa` — les services partagés (`is_shared_service`, approuvés) sont accordés aux SA avec **parité de contexte atelier** (SA prod → services prod, SA atelier → ateliers) ; (2) `sa_apps_claim` — le claim JWT `apps` n'émet plus que les apps **actives + approuvées + du contexte du SA** (défense en profondeur) |
+| **Harmonisation des 6 sites de copie** | Approbation (source du banc), création admin, auto-register, batch-import, regenerate-secret : parité atelier systématique via le helper central ; self-healing T1 et création SA manuelle factorisés sur le même code |
+| **Purge one-shot** | `scripts/purge_workshop_m2m_leaks.py` (dry-run par défaut, `--apply`) : retire les liens N-N croisés atelier↔prod ; SA ambigus intacts et signalés. Exécutée sur la prod : **13 liens retirés** (SA Contrôle Socle/exemple-app −`exemple-app-ws` ; SA atelier `exemple-app-ws` −11 apps prod). Le SA de `exemple-app` **prod** (id 53) est intact |
+| **Impact parc / écosystème** | ⚠️ Les SA d'ateliers n'ont **plus** d'accès M2M aux apps prod (et inversement) : toute app atelier qui testait du cross-apps vers des prods doit passer par une élévation explicite. Les apps prod continuent de découvrir les services prod partagés (M2M discovery préservé). Les tokens déjà émis gardent leur claim jusqu'à expiration (≤8 h) ; le garde runtime `m2m_authorization` bloquait déjà le cross-workshop |
+| **Tests** | TDD : 15 nouveaux tests (`test_me_credentials_owner_resolution.py`, `test_m2m_scope_parity.py` — repro banc exact, parité sur 6 points d'entrée, claim JWT, purge, helper). Suite complète **1055 pass**. Validé en réel sur hub-api : repro banc AN-1 corrigé (`controle-socle` retourné) ; claim M2M de controle-socle passé de 13 apps (1 atelier) à 12 apps (0 atelier) |
+
+---
+
 ## [3.51.0] - 11 septembre 2026
 
 ### 🛡️ Page admin « Droits Philia » — gestion des droits PhiliaNG depuis le Hub (phase 1)
