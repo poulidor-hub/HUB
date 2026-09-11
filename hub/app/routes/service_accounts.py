@@ -13,6 +13,7 @@ import base64
 
 from app.database import get_db
 from app.routes.events import notify_event, notify_stats_update
+from app.m2m_scope import grant_shared_apps_to_sa
 from app.models import ServiceAccount, Application, utcnow
 from app.schemas import (
     ServiceAccountCreate,
@@ -338,19 +339,8 @@ async def create_service_account(
         sa.applications = list(apps)
         app_slugs = [app.slug for app in apps]
     
-    # Ajouter automatiquement les applications partagées (is_shared_service=True)
-    # Isolation atelier : ne propager que les shared services du même contexte
-    sa_is_workshop = any(getattr(app, 'is_workshop', False) for app in sa.applications) if sa.applications else False
-    shared_result = await db.execute(
-        select(Application).where(Application.is_shared_service == True)
-    )
-    shared_apps = shared_result.scalars().all()
-    for shared_app in shared_apps:
-        if shared_app not in sa.applications:
-            shared_is_workshop = bool(getattr(shared_app, 'is_workshop', False))
-            if sa_is_workshop == shared_is_workshop:
-                sa.applications.append(shared_app)
-                app_slugs.append(shared_app.slug)
+    # AN-2 : services partagés avec parité de contexte atelier (helper central)
+    app_slugs.extend(await grant_shared_apps_to_sa(db, sa))
     
     db.add(sa)
     await db.commit()

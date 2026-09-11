@@ -20,6 +20,7 @@ from app.routes.app_backups import reassociate_orphan_backups
 
 from app.database import get_db
 from app.models import Application, User, ServiceAccount, UserAppRole, ApprovalStatus, service_account_app_access, DEFAULT_ROLES, UserFavorite, utcnow, AppDependency, AppGroup, AppDeployment, UserWorkshopAccess
+from app.m2m_scope import grant_shared_apps_to_sa
 from app.routes.app_groups import group_to_brief
 from app.schemas import (
     AppCreate, AppCreateSimplified, AppUpdate, AppResponse, AppWithUsers, AppWithUsersAndDocker,
@@ -1052,18 +1053,10 @@ async def create_app(
         )
         service_account = result.scalar_one()
         service_account.applications.append(app)
-        
-        # Ajouter automatiquement les applications partagées (is_shared_service=True)
-        shared_result = await db.execute(
-            select(Application).where(Application.is_shared_service == True)
-        )
-        shared_apps = shared_result.scalars().all()
-        shared_slugs = []
-        for shared_app in shared_apps:
-            if shared_app not in service_account.applications:
-                service_account.applications.append(shared_app)
-                shared_slugs.append(shared_app.slug)
-        
+
+        # AN-2 : services partagés avec parité de contexte atelier (helper central)
+        shared_slugs = await grant_shared_apps_to_sa(db, service_account)
+
         # Sauvegarder les credentials automatiquement
         all_app_slugs = [app_data.slug] + shared_slugs
         secrets_file = save_service_account_credentials(
@@ -1558,16 +1551,9 @@ async def register_app(
                 db.add(sa)
                 sa.applications.append(existing_app)
 
-                # Associer les shared services (même logique/isolation que
-                # create_service_account : parité de contexte atelier)
-                sa_is_workshop = bool(getattr(existing_app, "is_workshop", False))
-                shared_result = await db.execute(
-                    select(Application).where(Application.is_shared_service == True)
-                )
-                for shared_app in shared_result.scalars().all():
-                    if shared_app not in sa.applications:
-                        if bool(getattr(shared_app, "is_workshop", False)) == sa_is_workshop:
-                            sa.applications.append(shared_app)
+                # Associer les shared services (AN-2 : helper central, parité
+                # de contexte atelier)
+                await grant_shared_apps_to_sa(db, sa)
 
                 await db.commit()
 
@@ -2000,16 +1986,8 @@ async def admin_auto_register_app(
     service_account = result.scalar_one()
     service_account.applications.append(app)
     
-    # Ajouter automatiquement les applications partagées (is_shared_service=True)
-    shared_result = await db.execute(
-        select(Application).where(Application.is_shared_service == True)
-    )
-    shared_apps = shared_result.scalars().all()
-    shared_slugs = []
-    for shared_app in shared_apps:
-        if shared_app not in service_account.applications:
-            service_account.applications.append(shared_app)
-            shared_slugs.append(shared_app.slug)
+    # AN-2 : services partagés avec parité de contexte atelier (helper central)
+    shared_slugs = await grant_shared_apps_to_sa(db, service_account)
     
     await db.commit()
     await db.refresh(app)
@@ -2186,16 +2164,8 @@ async def batch_import_apps(
             service_account = sa_result.scalar_one()
             service_account.applications.append(app)
             
-            # Ajouter les services partagés au SA
-            shared_result = await db.execute(
-                select(Application).where(Application.is_shared_service == True)
-            )
-            shared_apps = shared_result.scalars().all()
-            shared_slugs = []
-            for shared_app in shared_apps:
-                if shared_app not in service_account.applications:
-                    service_account.applications.append(shared_app)
-                    shared_slugs.append(shared_app.slug)
+            # AN-2 : services partagés avec parité de contexte atelier (helper central)
+            shared_slugs = await grant_shared_apps_to_sa(db, service_account)
             
             await db.commit()
             await db.refresh(app)
@@ -2535,15 +2505,8 @@ async def regenerate_app_secret(
     new_secret = ServiceAccount.generate_client_secret()
     sa.client_secret_hash = get_password_hash(new_secret)
 
-    shared_result = await db.execute(
-        select(Application).where(Application.is_shared_service == True)
-    )
-    shared_apps = shared_result.scalars().all()
-    synced_slugs = []
-    for shared_app in shared_apps:
-        if shared_app not in sa.applications:
-            sa.applications.append(shared_app)
-            synced_slugs.append(shared_app.slug)
+    # AN-2 : resync des services partagés avec parité de contexte atelier
+    synced_slugs = await grant_shared_apps_to_sa(db, sa)
 
     await db.commit()
 
@@ -3030,16 +2993,7 @@ async def approve_or_reject_app(
         for sa in app.service_accounts:
             sa.is_active = True
             sa.description = sa.description.replace(" (en attente d'approbation)", "") if sa.description else None
-            
-            # Ajouter les services partagés existants au SA de cette app
-            shared_result = await db.execute(
-                select(Application)
-                .where(Application.is_shared_service == True)
-                .where(Application.approval_status == ApprovalStatus.approved)
-                .where(Application.id != app.id)
-            )
-            shared_apps = shared_result.scalars().all()
-            
+
             # Charger les applications du SA
             sa_result = await db.execute(
                 select(ServiceAccount)
@@ -3047,11 +3001,13 @@ async def approve_or_reject_app(
                 .where(ServiceAccount.id == sa.id)
             )
             sa_loaded = sa_result.scalar_one()
-            
-            for shared_app in shared_apps:
-                if shared_app not in sa_loaded.applications:
-                    sa_loaded.applications.append(shared_app)
-                    logger.info(f"🔗 Service partagé '{shared_app.slug}' ajouté au SA de '{app.slug}'")
+
+            # AN-2 : services partagés avec parité de contexte atelier
+            # (helper central — l'ancienne copie sans filtre était la source
+            # du banc : un SA prod héritait d'ateliers partagés)
+            added_slugs = await grant_shared_apps_to_sa(db, sa_loaded)
+            for slug_added in added_slugs:
+                logger.info(f"🔗 Service partagé '{slug_added}' ajouté au SA de '{app.slug}'")
         
         # Si l'app est un service partagé, l'ajouter à tous les SA existants
         shared_added_count = 0
