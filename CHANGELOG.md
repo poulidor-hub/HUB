@@ -7,6 +7,11 @@
 
 ## [3.52.0] - 11 septembre 2026
 
+### 📣 Pour les utilisateurs
+- **Corrigé** : une application pouvait recevoir, via le Hub, les informations d'identification d'une **autre application** (cas des applications ayant accès à plusieurs services). Chaque application reçoit désormais **les siennes**, sans exception.
+- **Sécurité** : les clés d'appel machine-à-machine d'une application ne donnent **plus accès aux ateliers** (environnements de test) ni aux applications désactivées. Chaque atelier est cloisonné : une fuite de clé ne peut plus exposer le reste du parc.
+- **Nettoyage** : les accès croisés hérités du passé (13 constatés sur l'instance) ont été retirés automatiquement.
+
 ### 🔐 Sécurité M2M : identité d'app fiable (`/me/credentials`) + périmètre minimal des service accounts (AN-1/AN-2, banc 2026-09-10)
 
 Traitement des 2 tickets 🔴 critiques issus de la campagne de banc du socle
