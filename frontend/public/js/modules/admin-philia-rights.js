@@ -160,3 +160,50 @@ function renderPhiliaAgencies() {
     var filter = document.getElementById('philiaRightsAgenciesFilter');
     if (filter) filter.addEventListener('input', renderPhiliaAgencies);
 })();
+
+// ── Suppression (confirmation forte, action définitive) ────────
+
+// Appelé par les boutons « Retirer » (data-arg1=id, arg2=groupValue,
+// arg3=groupLabel, arg4=agencyLabel)
+function openPhiliaRightRemoveModal(agencyId, groupValue, groupLabel, agencyLabel) {
+    if (!philiaRightsState.current) return;
+    philiaRightsState.pendingRemove = {
+        philia_user_id: philiaRightsState.current.philia_user_id,
+        agencyId: agencyId,
+        groupValue: groupValue,
+        groupLabel: groupLabel
+    };
+    document.getElementById('philiaRightRemoveDetails').innerHTML =
+        '<strong>Utilisateur :</strong> ' +
+        _philiaEsc(philiaRightsState.current.hub_username || 'id NG ' + philiaRightsState.current.philia_user_id) +
+        ' (id NG ' + _philiaEsc(philiaRightsState.current.philia_user_id) + ')<br>' +
+        '<strong>Agence :</strong> ' + _philiaEsc(agencyLabel) + '<br>' +
+        '<strong>Groupe retiré :</strong> ' + _philiaEsc(groupLabel) +
+        ' <span class="badge bg-info text-dark">adm_group_id ' + _philiaEsc(groupValue) + '</span>';
+    bootstrap.Modal.getOrCreateInstance(
+        document.getElementById('philiaRightRemoveModal')).show();
+}
+
+// Appelé par le bouton danger de la modale
+async function confirmRemovePhiliaRight() {
+    var pending = philiaRightsState.pendingRemove;
+    if (!pending) return;
+    var modal = bootstrap.Modal.getOrCreateInstance(
+        document.getElementById('philiaRightRemoveModal'));
+    try {
+        var result = await api.removePhiliaRight(
+            pending.philia_user_id, pending.agencyId, pending.groupValue, pending.groupLabel);
+        modal.hide();
+        philiaRightsState.pendingRemove = null;
+        showToast('Droit retiré',
+            'Suppression effectuée dans PhiliaNG (' + (result.removed_count || 0) +
+            ' ligne(s)). Rechargement…', 'success');
+        // Re-fetch du seul bloc concerné (agences) — lecture source pour vérifier
+        var data = await api.getPhiliaPerimeters(pending.philia_user_id, 'agencies');
+        philiaRightsState.agencies = data.entries || [];
+        renderPhiliaIdentity({ total: philiaRightsState.mo.length }, data);
+        renderPhiliaAgencies();
+    } catch (error) {
+        showToast('Échec de la suppression', error.message, 'danger');
+    }
+}
