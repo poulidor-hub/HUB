@@ -197,6 +197,30 @@ def _get_owner_service_account_for_app(app: Application) -> Optional[ServiceAcco
     return next(iter(app.service_accounts), None)
 
 
+def _resolve_sa_owner_app(sa: ServiceAccount) -> Optional[Application]:
+    """Résout l'app d'identité d'un service account, de façon déterministe.
+
+    AN-1 (banc 2026-09-10) : `sa.applications[0]` sur une relation N-N non
+    ordonnée livre une app arbitraire pour tout SA multi-apps. L'app
+    retournée est donc :
+    1. celle dont le SA est propriétaire (convention de nommage
+       `_is_owner_service_account`) ;
+    2. sinon son unique app liée (déterministe, pas d'ambiguïté) ;
+    3. sinon None (multi-apps sans propriétaire identifiable → l'appelant
+       doit refuser plutôt que livrer une app arbitraire).
+    """
+    apps = list(sa.applications or [])
+    if not apps:
+        return None
+    owner_app = next(
+        (app for app in apps if _is_owner_service_account(app, sa)),
+        None,
+    )
+    if owner_app:
+        return owner_app
+    return apps[0] if len(apps) == 1 else None
+
+
 # ===== IP Whitelist pour auto-enregistrement =====
 # Réseaux Docker autorisés par défaut pour l'auto-enregistrement (sans authentification)
 # SÉCURITÉ : Restreint aux réseaux Docker internes uniquement
@@ -2330,7 +2354,6 @@ async def get_app_credentials(
                 .where(ServiceAccount.client_id == client_id_from_token)
             )
             sa = result.scalar_one_or_none()
-            app = sa.applications[0] if sa and sa.applications else None
         except HTTPException:
             raise
         except Exception as e:
@@ -2338,6 +2361,28 @@ async def get_app_credentials(
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Token M2M invalide ou expiré"
+            )
+
+        # AN-1 : résolution déterministe par le client_id du token (jamais
+        # `applications[0]`, arbitraire sur une relation N-N non ordonnée)
+        app = _resolve_sa_owner_app(sa) if sa else None
+        if sa and app is None and sa.applications:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    "Service account lié à plusieurs applications sans propriétaire "
+                    "identifiable ; impossible de déterminer les credentials à livrer"
+                ),
+            )
+        if not sa:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Service account non trouvé"
+            )
+        if not app:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Aucune application associée à ce service account"
             )
     else:
         if not is_docker_network_ip(client_ip):
@@ -2365,7 +2410,8 @@ async def get_app_credentials(
                 .where(ServiceAccount.client_id == client_id)
             )
             sa = result.scalar_one_or_none()
-            app = sa.applications[0] if sa and sa.applications else None
+            # AN-1 : même contrat que le path token (jamais `applications[0]`)
+            app = _resolve_sa_owner_app(sa) if sa else None
         else:
             result = await db.execute(
                 select(Application)
@@ -2390,12 +2436,17 @@ async def get_app_credentials(
             )
 
         if not app:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Aucune application associée à ce service account"
-            )
-
-        if client_id and not sa.applications:
+            if sa.applications:
+                # SA multi-apps sans propriétaire identifiable : refus plutôt
+                # que livraison d'une app arbitraire (AN-1)
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=(
+                        "Service account lié à plusieurs applications sans "
+                        "propriétaire identifiable ; impossible de déterminer "
+                        "les credentials à livrer"
+                    ),
+                )
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Aucune application associée à ce service account"
