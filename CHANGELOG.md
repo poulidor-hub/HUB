@@ -5,6 +5,17 @@
 
 ---
 
+## [3.52.1] - 12 septembre 2026
+
+### 📣 Pour les utilisateurs
+- **Corrigé** : dans la vue Santé, l'atelier d'une application dont le dossier technique ne porte pas le même nom que son identifiant (ex. Philia Proxy) apparaissait comme inexistant — le bloc « Atelier : … » avec les actions Mettre à jour / Déployer ne s'affichait pas. Il est de nouveau visible et fonctionnel.
+
+### ⚡ Résolution dossier app par slug (workshop) + nettoyage fiche atelier fantôme
+- `workshop_service` : nouveau résolveur `_app_dir(slug)` — cas canonique `APPS/<slug>/` (validé par `APP_SLUG` du `.env`), sinon **scan des `.env`** des apps, repli `APPS/<slug>/` (comportement historique). Corrige la vue Santé et toutes les opérations atelier pour les apps dont dossier ≠ slug (`exemple-app`→`philia-proxy`, `exemple-app`→`exemple-app`, …) : 8 sites d'appel branchés.
+- Tests : `test_workshop_state_dir_name_differs_from_slug`, `test_app_dir_resolver` (hub/tests/test_workshop_routes.py, 29 passed).
+
+---
+
 ## [3.52.0] - 11 septembre 2026
 
 ### 📣 Pour les utilisateurs

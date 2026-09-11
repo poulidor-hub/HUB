@@ -86,8 +86,31 @@ def _read_env_file(path: Path) -> dict[str, str]:
     return result
 
 
+def _app_dir(slug: str) -> Path:
+    """Dossier local de l'app pour un slug donné.
+
+    Le nom du dossier ne dérive pas toujours du slug (ex. APPS/exemple-app pour
+    « philia-proxy ») : cas canonique APPS/<slug>/ si son .env déclare
+    APP_SLUG=<slug>, sinon scan des .env ; repli : APPS/<slug>/ (comportement
+    historique — les opérations lèveront une erreur explicite).
+    """
+    root = get_apps_dir()
+    direct = root / slug
+    if _read_env_file(direct / ".env").get("APP_SLUG") == slug:
+        return direct
+    try:
+        for child in sorted(root.iterdir()):
+            if not child.is_dir() or child.name.startswith("."):
+                continue
+            if _read_env_file(child / ".env").get("APP_SLUG") == slug:
+                return child
+    except OSError:
+        pass
+    return direct
+
+
 def _ws_env_path(slug: str) -> Path:
-    return get_apps_dir() / slug / ".workshop.env"
+    return _app_dir(slug) / ".workshop.env"
 
 
 def _write_ws_env_full(path: Path, config: dict[str, str]) -> None:
@@ -319,7 +342,7 @@ def _ws_compose_env(slug: str) -> dict[str, str]:
     _COMPOSE_ENV_ALLOWLIST)."""
     env = _compose_base_env()
     env.update(_read_env_file(_ws_env_path(slug)))
-    version_file = get_apps_dir() / slug / "VERSION"
+    version_file = _app_dir(slug) / "VERSION"
     if version_file.exists():
         v = version_file.read_text().strip()
         if v:
@@ -360,7 +383,7 @@ async def _delete_workshop_app_row(ws_slug: str) -> bool:
 
 def get_workshop_state(slug: str) -> dict:
     """État atelier lu depuis le disque (contrat), sans DB ni docker."""
-    app_dir = get_apps_dir() / slug
+    app_dir = _app_dir(slug)
     env = _read_env_file(_ws_env_path(slug))
     version_file = app_dir / "VERSION"
     git_ok = False
@@ -504,7 +527,7 @@ async def _op_recreate(op_id: int, slug: str) -> None:
     --force-recreate est indispensable : un simple up -d ne recrée pas un
     conteneur dont seule une variable du .env (non référencée au moment du run
     précédent) a changé."""
-    app_dir = get_apps_dir() / slug
+    app_dir = _app_dir(slug)
     compose_file = app_dir / "docker-compose.yml"
     if not compose_file.exists():
         raise RuntimeError(f"docker-compose.yml introuvable : {app_dir}")
@@ -536,7 +559,7 @@ async def _op_recreate(op_id: int, slug: str) -> None:
 # ── CREATE ──
 
 async def _op_create(op_id: int, slug: str, ref: str | None = None) -> None:
-    app_dir = get_apps_dir() / slug
+    app_dir = _app_dir(slug)
     ws_slug = f"{slug}-ws"
     compose_file = app_dir / "docker-compose.yml"
 
@@ -629,7 +652,7 @@ async def _op_create(op_id: int, slug: str, ref: str | None = None) -> None:
 async def _op_update(op_id: int, slug: str, ref: str | None = None) -> None:
     """Mise à jour de l'atelier : checkout detached de origin/main (défaut)
     ou de origin/{ref} (branches → atelier). Idempotent, rollback sur échec."""
-    app_dir = get_apps_dir() / slug
+    app_dir = _app_dir(slug)
     ws_slug = f"{slug}-ws"
     compose_file = app_dir / "docker-compose.yml"
     env = _read_env_file(_ws_env_path(slug))
@@ -710,7 +733,7 @@ async def _op_update(op_id: int, slug: str, ref: str | None = None) -> None:
 # ── SHIP (déploiement prod + suppression atelier) ──
 
 async def _op_ship(op_id: int, slug: str) -> None:
-    app_dir = get_apps_dir() / slug
+    app_dir = _app_dir(slug)
     ws_slug = f"{slug}-ws"
     compose_file = app_dir / "docker-compose.yml"
     env = _read_env_file(_ws_env_path(slug))
@@ -818,7 +841,7 @@ async def _op_ship(op_id: int, slug: str) -> None:
 # ── REMOVE ──
 
 async def _op_remove(op_id: int, slug: str) -> None:
-    app_dir = get_apps_dir() / slug
+    app_dir = _app_dir(slug)
     ws_slug = f"{slug}-ws"
     compose_file = app_dir / "docker-compose.yml"
     env = _read_env_file(_ws_env_path(slug))

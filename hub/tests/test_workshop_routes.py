@@ -336,3 +336,43 @@ async def test_branches_cached_30s(client, async_session, admin_token, monkeypat
     assert r1.status_code == 200 and r2.status_code == 200
     assert n["count"] == 2                 # 1 repos + 1 branches, pas 2×2
     assert r2.json()["cached"] is True
+
+
+async def test_workshop_state_dir_name_differs_from_slug(client, async_session,
+                                                         admin_token, tmp_path,
+                                                         monkeypatch):
+    # Apps dont le dossier ≠ slug (ex. APPS/exemple-app pour « philia-proxy ») :
+    # l'état atelier doit être lu via APP_SLUG du .env, pas le nom du dossier.
+    await _mk_app(async_session, slug="myapp-proxy")
+    app = tmp_path / "MyApp_IA"; app.mkdir(parents=True)
+    (app / ".env").write_text("APP_SLUG=myapp-proxy\n")
+    ws._write_ws_env_full(app / ".workshop.env", {
+        "APP_SLUG": "myapp-proxy-ws", "API_PORT": "10007", "FRONTEND_PORT": "5207",
+        "FRONTEND_HTTPS_PORT": "5208", "WS_REF": "main", "WS_COMMIT": "abc",
+        "APP_SUBNET": "10.210.7.0/24"})
+    monkeypatch.setattr(ws, "get_apps_dir", lambda: tmp_path)
+    r = await client.get("/api/apps/myapp-proxy/workshop",
+                         headers=get_auth_header(admin_token))
+    assert r.status_code == 200
+    data = r.json()
+    assert data["exists"] is True
+    assert data["ws_slug"] == "myapp-proxy-ws"
+    assert data["frontend_port"] == "5207"
+
+
+def test_app_dir_resolver(tmp_path, monkeypatch):
+    monkeypatch.setattr(ws, "get_apps_dir", lambda: tmp_path)
+    # cas canonique : dossier == slug, .env concordant
+    plain = tmp_path / "plain"; plain.mkdir()
+    (plain / ".env").write_text("APP_SLUG=plain\n")
+    assert ws._app_dir("plain") == plain
+    # dossier ≠ slug : résolu par scan des .env
+    odd = tmp_path / "Odd_Dir"; odd.mkdir()
+    (odd / ".env").write_text("APP_SLUG=odd-slug\n")
+    assert ws._app_dir("odd-slug") == odd
+    # dossier == slug mais .env d'un AUTRE slug : le scan doit gagner
+    hijack = tmp_path / "hijack"; hijack.mkdir()
+    (hijack / ".env").write_text("APP_SLUG=autre\n")
+    assert ws._app_dir("autre") == hijack
+    # repli historique : rien ne matche → APPS/<slug>
+    assert ws._app_dir("unknown") == tmp_path / "unknown"
