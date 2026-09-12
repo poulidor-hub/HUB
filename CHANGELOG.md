@@ -7,6 +7,9 @@
 
 ## [3.53.1] - 12 septembre 2026
 
+### 📣 Pour les utilisateurs
+- **Corrigé** : le nouveau contrôle du socle de la vue Santé signalait à tort « Health & connexion au Hub » et « Versions & enregistrement » en échec sur des applications pourtant bien connectées. Le rapport est désormais fiable : une application saine affiche 7/7.
+
 ### ⚡ Corrigé : socle-check lit le format réel de /api/health/detailed (vérification réelle 3.53.0)
 - Le health/detailed réel du socle (`hub-socle` ≥ 2.23.x) expose `hub.connected`
   et `app.version` **imbriqués** — pas de clés top-level `hub_connected`/`version`.
@@ -25,6 +28,9 @@
 ---
 
 ## [3.53.0] - 12 septembre 2026
+
+### 📣 Pour les utilisateurs
+- **Ajouté** : dans la vue Santé, un bouton « Contrôler le socle » (🩺) sur chaque application. En un clic, il vérifie que l'application est bien intégrée au Hub — connexion, authentification des utilisateurs, canal machine-à-machine, préférences, découverte des données, sauvegardes et versions — puis affiche un rapport avec un score sur 7 et le détail de chaque vérification (durées incluses). Simple diagnostic : rien n'est modifié dans l'application.
 
 ### ⚡ Socle-check : contrôles d'intégration hub↔app en un clic (module + route + vue Santé)
 - `app/socle_check.py` : module des 7 contrôles séquentiels — health détaillé (+ `hub_connected`), auth user JWT via JWKS, canal M2M service account (`/api/m2m/catalog`), round-trip préférences idempotent, discovery hub_data, liste backups (lecture seule), cohérence versions. Timeout 5 s/contrôle, zéro effet de bord, transport httpx injectable (tests MockTransport, zéro réseau).
