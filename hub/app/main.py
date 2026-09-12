@@ -27,6 +27,7 @@ from app.routes import philia_rights
 from app.routes import settings as settings_routes
 from app.routes import network as network_routes
 from app.routes import app_recreate
+from app.routes import app_socle_check
 
 import logging
 
@@ -749,6 +750,7 @@ app.include_router(account_requests.router)
 app.include_router(settings_routes.router)
 app.include_router(network_routes.router)
 app.include_router(app_recreate.router)
+app.include_router(app_socle_check.router)
 app.include_router(vpn.router)
 app.include_router(oidc.router)
 app.include_router(github_catalog.router)
