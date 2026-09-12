@@ -5,6 +5,17 @@
 
 ---
 
+## [3.52.2] - 12 septembre 2026
+
+### 📣 Pour les utilisateurs
+- **Corrigé** : le bouton « Créer l'atelier » de la vue Santé échouait pour les applications dont le dossier technique ne porte pas le même nom que leur identifiant (ex. Transfert de fichiers). Le passage en atelier depuis la vue Santé fonctionne désormais de bout en bout pour ces applications.
+
+### ⚡ Routes atelier : résolution dossier par slug (passage en atelier depuis la vue santé)
+- `routes/workshop.py` : les 5 contrôles git/remote utilisaient `APPS/{slug}/` — pour les apps au dossier ≠ slug (ex. `exemple-app`→`exemple-app`), la création d'atelier répondait 400 « pas de repo git » alors même que le dépôt est correct. Tous les points d'appel passent par le résolveur `_app_dir(slug)` (v3.52.1).
+- Tests : `test_create_ok_dir_differs_from_slug` (repo git réel dans un dossier au nom différent, 30 passed).
+
+---
+
 ## [3.52.1] - 12 septembre 2026
 
 ### 📣 Pour les utilisateurs

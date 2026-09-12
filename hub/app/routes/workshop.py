@@ -13,9 +13,9 @@ from app.github_client import fetch_github_json, parse_github_url
 from app.models import Application, User, WorkshopOperation
 from app.workshop_service import (
     _alloc_subnet,
+    _app_dir,
     _configure_remote,
     _git_state,
-    get_apps_dir,
     get_workshop_state,
     has_active_workshop_operation,
     start_workshop_operation,
@@ -64,7 +64,7 @@ async def get_workshop(slug: str, db: AsyncSession = Depends(get_db),
     """État atelier (contrat .workshop.env) + git_ok + opération active."""
     app = await _get_app_or_404(db, slug)
     state = get_workshop_state(slug)
-    state["git_ok"] = (await _git_state(get_apps_dir() / slug))["ok"]
+    state["git_ok"] = (await _git_state(_app_dir(slug)))["ok"]
     state["active_operation"] = await has_active_workshop_operation(db, slug=slug)
     state["git_repo_url"] = app.git_repo_url  # valeur DB (pré-remplissage modale)
     return state
@@ -84,7 +84,7 @@ async def create_workshop(slug: str, body: WorkshopRefIn | None = None,
     if state["exists"]:
         raise HTTPException(status_code=409,
                             detail=f"Atelier déjà existant pour '{slug}'.")
-    if not (await _git_state(get_apps_dir() / slug))["ok"]:
+    if not (await _git_state(_app_dir(slug)))["ok"]:
         raise HTTPException(status_code=400,
                             detail="Cette app n'a pas de repo git avec remote origin — "
                                    "l'atelier ne peut pas être créé en ligne.")
@@ -112,7 +112,7 @@ async def update_workshop(slug: str, body: WorkshopRefIn | None = None,
     if not state["exists"]:
         raise HTTPException(status_code=409,
                             detail=f"Aucun atelier pour '{slug}' — créez-le d'abord.")
-    if not (await _git_state(get_apps_dir() / slug))["ok"]:
+    if not (await _git_state(_app_dir(slug)))["ok"]:
         raise HTTPException(status_code=400,
                             detail="Cette app n'a pas de repo git avec remote origin.")
     op_id = await start_workshop_operation(slug, "update", admin.username, ref=ref)
@@ -131,7 +131,7 @@ async def ship_workshop(slug: str, db: AsyncSession = Depends(get_db),
     if not state["exists"]:
         raise HTTPException(status_code=409,
                             detail=f"Aucun atelier pour '{slug}' — créez-le d'abord.")
-    if not (await _git_state(get_apps_dir() / slug))["ok"]:
+    if not (await _git_state(_app_dir(slug)))["ok"]:
         raise HTTPException(status_code=400,
                             detail="Cette app n'a pas de repo git avec remote origin.")
     if state.get("ws_ref") != "main":
@@ -191,7 +191,7 @@ async def configure_app_git(slug: str, body: GitConfigIn,
         raise HTTPException(status_code=400,
                             detail="URL invalide — doit commencer par http:// ou https://")
     try:
-        sync = await _configure_remote(get_apps_dir() / slug, url)
+        sync = await _configure_remote(_app_dir(slug), url)
     except RuntimeError as e:
         raise HTTPException(status_code=409, detail=str(e))
     app.git_repo_url = url

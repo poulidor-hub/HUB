@@ -145,7 +145,7 @@ async def test_git_config_409_not_a_repo(client, async_session, admin_token,
                                          tmp_path, monkeypatch):
     await _mk_app(async_session)
     (tmp_path / "wstest").mkdir()
-    monkeypatch.setattr(route_mod, "get_apps_dir", lambda: tmp_path)
+    monkeypatch.setattr(ws, "get_apps_dir", lambda: tmp_path)
 
     async def _real_remote(app_dir, url):  # pas un repo → RuntimeError
         raise RuntimeError("/pas/un/repo n'est pas un dépôt git — déployez l'app depuis son dépôt d'abord")
@@ -195,7 +195,7 @@ async def test_workshop_state_exposes_git_repo_url(client, async_session,
     app_row = await _mk_app(async_session)
     app_row.git_repo_url = "https://db.example/repo.git"
     await async_session.commit()
-    monkeypatch.setattr(route_mod, "get_apps_dir", lambda: tmp_path)
+    monkeypatch.setattr(ws, "get_apps_dir", lambda: tmp_path)
 
     # Adaptation du brief : get_workshop_state est SYNC côté route (réalité
     # workshop_service) — le mock async du brief levait TypeError.
@@ -376,3 +376,35 @@ def test_app_dir_resolver(tmp_path, monkeypatch):
     assert ws._app_dir("autre") == hijack
     # repli historique : rien ne matche → APPS/<slug>
     assert ws._app_dir("unknown") == tmp_path / "unknown"
+
+
+async def test_create_ok_dir_differs_from_slug(client, async_session, admin_token,
+                                               tmp_path, monkeypatch):
+    # Le « passage en atelier » depuis la vue santé doit fonctionner pour les
+    # apps dont le dossier ≠ slug : la route résout le dossier via APP_SLUG
+    # (ex. APPS/exemple-app pour « philia-proxy ») avant le contrôle git.
+    import subprocess
+
+    await _mk_app(async_session, slug="myapp-proxy")
+    app = tmp_path / "MyApp_IA"; app.mkdir(parents=True)
+    (app / "docker-compose.yml").write_text("services: {}\n")
+    (app / ".env").write_text("APP_SLUG=myapp-proxy\n")
+    subprocess.run(["git", "init", "-q"], cwd=app, check=True)
+    subprocess.run(["git", "remote", "add", "origin", "https://git.example/x.git"],
+                   cwd=app, check=True)
+    subprocess.run(["git", "config", "user.email", "t@t"], cwd=app, check=True)
+    subprocess.run(["git", "config", "user.name", "t"], cwd=app, check=True)
+    (app / "f").write_text("x")
+    subprocess.run(["git", "add", "-A"], cwd=app, check=True)
+    subprocess.run(["git", "commit", "-qm", "init"], cwd=app, check=True)
+    monkeypatch.setattr(ws, "get_apps_dir", lambda: tmp_path)
+    monkeypatch.setattr(route_mod, "has_active_workshop_operation", _async_ret(False))
+    started = {"called": False}
+    async def _fake_start(slug, operation, triggered_by, ref=None):
+        started["called"] = True
+        return 7
+    monkeypatch.setattr(route_mod, "start_workshop_operation", _fake_start)
+    r = await client.post("/api/apps/myapp-proxy/workshop",
+                          headers=get_auth_header(admin_token))
+    assert r.status_code == 201, r.json()
+    assert started["called"] is True
