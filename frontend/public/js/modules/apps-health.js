@@ -199,6 +199,7 @@ function renderAppCard(app) {
                 '<button data-action="stopApp" data-arg1="' + slug + '" style="' + btnCss + 'color:#dc2626;" title="Arreter">■</button>' +
                 '<button data-action="restartApp" data-arg1="' + slug + '" id="restartBtn_' + slug + '" style="' + btnCss + '" title="Redemarrer">⟳</button>' +
                 '<button data-action="showLogs" data-arg1="' + slug + '" style="' + btnCss + '" title="Logs">📋</button>' +
+                '<button data-action="socleCheck" data-arg1="' + slug + '" id="socleCheckBtn_' + slug + '" style="' + btnCss + '" title="Contrôler le socle">🩺</button>' +
                 '<button data-action="toggleBranches" data-arg1="' + slug + '" id="branchBtn_' + slug + '" style="' + btnCss.replace('border-right:1px solid #e2e8f0;', '') + 'color:#7c3aed;background:#f5f3ff;" title="Déployer une branche (via l\'atelier)">🌿</button>' +
             '</div>';
     }
@@ -351,6 +352,66 @@ async function restartApp(slug) {
         showToast('Erreur', error.message, 'danger');
         btn.disabled = false;
         btn.innerHTML = '⟳';
+    }
+}
+
+// ─── Socle-check (rapport d'intégration hub↔app) ──────────────────────
+
+// Statuts des contrôles — mêmes pastilles/couleurs que la vue (#16a34a/#f59e0b/#dc2626)
+var _SOCLE_STATUS = {
+    pass: { color: '#16a34a' },
+    warn: { color: '#f59e0b' },
+    fail: { color: '#dc2626' },
+};
+
+function _socleScoreColor(passed) {
+    return passed >= 7 ? '#16a34a' : (passed >= 4 ? '#f59e0b' : '#dc2626');
+}
+
+function _renderSocleReport(report) {
+    var rows = (report.controls || []).map(function (c) {
+        var st = _SOCLE_STATUS[c.status] || { color: '#9ca3af' };
+        return '<div style="display:flex;align-items:baseline;gap:8px;padding:8px 0;border-bottom:1px solid #f1f5f9;">' +
+            '<span style="color:' + st.color + ';font-size:13px;flex:none;">●</span>' +
+            '<div style="flex:1;min-width:0;">' +
+                '<div style="font-size:13px;font-weight:600;color:#0f172a;">' + escapeHtml(c.label || c.id || '') + '</div>' +
+                '<div style="font-size:11.5px;color:#64748b;word-break:break-word;">' + escapeHtml(c.detail || '') + '</div>' +
+            '</div>' +
+            '<span style="flex:none;font-size:10.5px;color:#94a3b8;white-space:nowrap;">' +
+                (c.duration_ms != null ? c.duration_ms + ' ms' : '') + '</span>' +
+        '</div>';
+    }).join('');
+
+    return '<div style="display:flex;align-items:center;gap:12px;margin-bottom:4px;">' +
+            '<span style="background:' + _socleScoreColor(report.passed) + ';color:#fff;font-size:13px;font-weight:700;padding:4px 10px;border-radius:6px;">' +
+                escapeHtml(report.score || (report.passed + '/' + report.total)) + '</span>' +
+            '<span style="font-size:12px;color:#334155;">app <strong>' + escapeHtml(report.app_version || '—') + '</strong>' +
+                ' · hub <strong>' + escapeHtml(report.hub_version || '—') + '</strong></span>' +
+            '<span style="margin-left:auto;font-size:11px;color:#94a3b8;">' +
+                (report.total_ms != null ? report.total_ms + ' ms' : '') + '</span>' +
+        '</div>' +
+        '<div>' + rows + '</div>';
+}
+
+async function socleCheck(slug) {
+    var btn = document.getElementById('socleCheckBtn_' + slug);
+    if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+    }
+    var modal = _showModal('Contrôle du socle — ' + slug,
+        '<div class="text-center py-4"><div class="spinner-border spinner-border-sm"></div> Contrôles en cours (jusqu\'à ~35 s)…</div>');
+    try {
+        var report = await api.socleCheck(slug);
+        modal.querySelector('.modal-body').innerHTML = _renderSocleReport(report);
+    } catch (error) {
+        modal.querySelector('.modal-body').innerHTML =
+            '<div class="alert alert-danger mb-0">Erreur : ' + escapeHtml(error.message) + '</div>';
+    } finally {
+        if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = '🩺';
+        }
     }
 }
 

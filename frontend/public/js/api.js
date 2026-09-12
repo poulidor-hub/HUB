@@ -1190,6 +1190,19 @@ class HubAPI {
     }
 
     /**
+     * Contrôle du socle d'une app : 7 vérifications d'intégration hub↔app
+     * en conditions réelles (jusqu'à ~35 s — timeout porté à 60 s).
+     * @param {string} slug
+     * @returns {Promise<{slug, hub_version, app_version, score, passed, total, total_ms, date, controls}>}
+     */
+    async socleCheck(slug) {
+        return this.request(`/apps/${encodeURIComponent(slug)}/socle-check`, {
+            method: 'POST',
+            timeout: 60000
+        });
+    }
+
+    /**
      * Recupere le CHANGELOG.md depuis GitHub
      * @param {string} slug
      * @returns {Promise<{ok, markdown, repo_configured}>}
