@@ -17,6 +17,7 @@ from app.auth import get_current_admin
 from app.config import get_settings
 from app.database import get_db
 from app.github_client import parse_github_url, load_db_token, slugify_repo
+from app.models import AppSetting
 from app.models import Application, GithubRepoCache, User, utcnow
 from app.port_allocator import allocate_ports_for_app, PortPoolExhausted, SubnetPoolExhausted
 from app.schemas import (
@@ -95,11 +96,23 @@ async def list_github_repos(
 
     fetched_at = max((c.fetched_at for c in cached), default=None)
     token_configured = bool(get_settings().github_token or await load_db_token(db))
+
+    # Moniteur de vivacité (github_token_monitor) : dernier résultat connu
+    from app.github_token_monitor import LAST_CHECK_KEY, LAST_RESULT_KEY
+
+    async def _setting(key: str):
+        row = await db.get(AppSetting, key)
+        return row.value if row else None
+
+    last_result = await _setting(LAST_RESULT_KEY)
+    token_valid = (last_result == "valid") if last_result in ("valid", "invalid") else None
     return GithubRepoListResponse(
         repos=repos,
         total=len(repos),
         fetched_at=_iso(fetched_at),
         token_configured=token_configured,
+        token_valid=token_valid,
+        token_last_checked=await _setting(LAST_CHECK_KEY),
     )
 
 

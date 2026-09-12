@@ -255,6 +255,10 @@ class Settings(BaseSettings):
     # Token API GitHub (optionnel, évite la rate-limit sur les appels publics)
     github_token: str = ""
 
+    # Moniteur de vivacité du token GitHub (en secondes)
+    # 0 = désactivé, 3600 = toutes les heures
+    github_token_check_interval: int = 3600
+
     # Cooldown pour les notifications SSE d'audit (en secondes)
     # Évite les rafraîchissements trop fréquents de la page audit
     audit_sse_cooldown: float = 5.0

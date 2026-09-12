@@ -69,6 +69,7 @@ _backup_scheduler_task = None
 _snapshot_scheduler_task = None
 _msg_dispatch_task = None
 _outbox_worker_task = None
+_github_token_check_task = None
 
 
 async def create_default_admin():
@@ -372,6 +373,10 @@ async def lifespan(app: FastAPI):
     # Démarrer la tâche de purge des logs
     _log_purge_task = asyncio.create_task(periodic_log_purge())
 
+    # Démarrer le moniteur de vivacité du token GitHub (alerte admins si invalide)
+    from app.github_token_monitor import periodic_github_token_check
+    _github_token_check_task = asyncio.create_task(periodic_github_token_check())
+
     # Démarrer le cleanup périodique des sessions utilisateurs (timeout 20 min).
     # Avant : démarré au 1er client SSE -> après un restart, les sessions
     # restées ouvertes au crash restaient "actives" indéfiniment.
@@ -481,6 +486,12 @@ async def lifespan(app: FastAPI):
         _msg_dispatch_task.cancel()
         try:
             await _msg_dispatch_task
+        except asyncio.CancelledError:
+            pass
+    if _github_token_check_task:
+        _github_token_check_task.cancel()
+        try:
+            await _github_token_check_task
         except asyncio.CancelledError:
             pass
 

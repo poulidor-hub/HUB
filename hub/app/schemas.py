@@ -2137,6 +2137,9 @@ class GithubRepoListResponse(BaseModel):
     total: int
     fetched_at: Optional[str] = None  # ISO, dernière sync du cache
     token_configured: bool
+    # Moniteur de vivacité (github_token_monitor) — None si jamais vérifié
+    token_valid: Optional[bool] = None
+    token_last_checked: Optional[str] = None
 
 
 class GithubRepoPrepareRequest(BaseModel):

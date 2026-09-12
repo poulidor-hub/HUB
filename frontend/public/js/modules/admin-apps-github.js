@@ -24,7 +24,9 @@ function renderGithubApps(data) {
     const summary = document.getElementById('githubAppsSummary');
     const fetchedStr = data.fetched_at ? ' · sync ' + formatRelative(data.fetched_at) : ' · jamais synchronisé';
     var tokenBadge = data.token_configured
-        ? ' · <span style="color:#16a34a;font-size:12px;">🔑 token configuré</span> <a href="#" data-action="toggleGithubTokenForm" style="font-size:12px;">(modifier)</a>'
+        ? (data.token_valid === false
+            ? ' · <span style="color:#f59e0b;font-size:12px;" title="' + (data.token_last_checked ? 'Dernier contrôle : ' + data.token_last_checked : '') + '">⚠️ token invalide (refusé par GitHub)</span> <a href="#" data-action="toggleGithubTokenForm" style="font-size:12px;">(corriger)</a>'
+            : ' · <span style="color:#16a34a;font-size:12px;">🔑 token configuré</span> <a href="#" data-action="toggleGithubTokenForm" style="font-size:12px;">(modifier)</a>')
         : ' · <span style="color:#dc2626;font-size:12px;">⚠️ pas de token</span>';
     summary.innerHTML = '<strong>' + data.total + '</strong> repo(s)' + fetchedStr + tokenBadge;
 
