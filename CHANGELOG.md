@@ -5,6 +5,16 @@
 
 ---
 
+## [3.53.0] - 12 septembre 2026
+
+### ⚡ Socle-check : contrôles d'intégration hub↔app en un clic (module + route + vue Santé)
+- `app/socle_check.py` : module des 7 contrôles séquentiels — health détaillé (+ `hub_connected`), auth user JWT via JWKS, canal M2M service account (`/api/m2m/catalog`), round-trip préférences idempotent, discovery hub_data, liste backups (lecture seule), cohérence versions. Timeout 5 s/contrôle, zéro effet de bord, transport httpx injectable (tests MockTransport, zéro réseau).
+- Route `POST /api/apps/{slug}/socle-check` (admin, `routes/app_socle_check.py`) : mint de 2 tokens éphémères TTL 5 min — JWT user `admin` sur l'app (discovery/backup) + service account au périmètre minimal `{slug: "service"}` (fidèle à `sa_apps_claim`, AN-2) — exécution contre `app.api_url` ; 404 slug inconnu, 409 sans api_url ; **rapport 200 même en échec** (un contrôle qui tombe est documenté, jamais bloquant).
+- Vue Santé : bouton « Contrôler le socle » (🩺) sur chaque carte app + modale rapport — badge score coloré (≥7 vert / ≥4 orange / <4 rouge), versions hub/app, durées, 7 contrôles en pastilles pass/warn/fail ; `api.socleCheck` POST timeout 60 s ; échappement HTML sur tout contenu dynamique ; cache-busting 3.53.0.
+- Tests : `test_socle_check.py` (module, 7 tests, transport mocké), `test_socle_check_route.py` (5 tests — tokens audités par décodage RSA réel : type/périmètre/TTL) ; suite hub complète **1070 passed**.
+
+---
+
 ## [3.52.2] - 12 septembre 2026
 
 ### 📣 Pour les utilisateurs
