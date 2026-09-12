@@ -5,6 +5,20 @@
 
 ---
 
+## [3.54.0] - 12 septembre 2026
+
+### 📣 Pour les utilisateurs
+- **Ajouté** : le Hub surveille désormais automatiquement son token GitHub (catalogue des dépôts, vérification des mises à jour). Si le token est refusé par GitHub — révoqué ou expiré — les administrateurs reçoivent une notification immédiate (cloche) et la vue Apps GitHub affiche un avertissement orange. Fini la panne silencieuse : plus aucune fonction GitHub ne se dégrade sans qu'on le sache.
+
+### ⚡ Moniteur de vivacité du token GitHub (alerte admins)
+- `app/github_token_monitor.py` : check horaire `GET api.github.com/user` avec le token courant (env → app_settings), transport httpx injectable (tests MockTransport, zéro réseau). États `valid|invalid|missing|error` — les erreurs réseau/5xx sont muettes et sans effet sur l'état d'alerte.
+- Alerte UNIQUEMENT sur la transition ok→invalid (anti-spam par état persisté en AppSetting) : `UserMessage` system/warning à chaque admin actif (cloche + toast SSE, lien « Corriger le token ») + `log_action` audit système. Réarmement automatique au retour `valid`.
+- Boucle `periodic_github_token_check` (pattern `periodic_docker_sync`) : `GITHUB_TOKEN_CHECK_INTERVAL` (défaut 3600 s, 0 = désactivé), `create_task` au lifespan + cancel au shutdown.
+- `GET /api/apps/github/repos` : nouveaux champs `token_valid`/`token_last_checked` ; badge de la vue Apps GitHub orange « token invalide » (dernier contrôle en tooltip).
+- Tests : `test_github_token_monitor.py` (16 — décision pure, 401/403/5xx/réseau, fallback DB, transition + anti-spam, kill-switch) ; suite hub complète **1088 passed**.
+
+---
+
 ## [3.53.1] - 12 septembre 2026
 
 ### 📣 Pour les utilisateurs
