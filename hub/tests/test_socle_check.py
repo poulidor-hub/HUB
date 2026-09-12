@@ -170,3 +170,37 @@ def test_tokens_envoyes_dans_les_headers():
     _run(routes)
     assert seen["auth"] == "Bearer user-jwt"
     assert seen["m2m"] == "Bearer svc-jwt"
+
+
+# ─── Format réel du socle (health/detailed 2.23.x) ────────────────────
+# Le health/detailed réel expose hub.connected et app.version IMBRIQUÉS —
+# pas de clés top-level hub_connected/version. Les mocks ci-dessus reflétaient
+# une hypothèse incorrecte (régression détectée par la vérif réelle 3.53.0).
+
+def _ok_routes_format_reel(**overrides):
+    """Routes au format RÉEL : payload detailed imbriqué."""
+    def health(req):
+        return 200, {
+            "status": "healthy",
+            "app": {"slug": "mon-app", "name": "Mon App",
+                    "version": overrides.get("app_version", "2.5.0")},
+            "hub": {"connected": overrides.get("hub_connected", True),
+                    "can_authenticate": True},
+        }
+    return _ok_routes(**{"_health": health}) if False else [
+        ("GET", "/api/health/detailed", health),
+    ] + _ok_routes()[1:]
+
+
+def test_format_reel_health_detailed_pass():
+    report = _run(_ok_routes_format_reel())
+    assert report["score"] == "7/7", {c["id"]: c["detail"] for c in report["controls"]}
+    assert report["app_version"] == "2.5.0"
+
+
+def test_format_reel_hub_deconnecte_fail_health_et_versions():
+    report = _run(_ok_routes_format_reel(hub_connected=False))
+    by_id = _by_id(report)
+    assert by_id["health"]["status"] == "fail"
+    assert by_id["versions"]["status"] == "fail"
+    assert by_id["user_auth"]["status"] == "pass"

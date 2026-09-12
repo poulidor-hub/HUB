@@ -30,6 +30,22 @@ async def _request(client: httpx.AsyncClient, method: str, path: str,
     return resp.status_code, payload
 
 
+def _hub_connected(payload: dict) -> bool:
+    """hub.connected (format socle 2.23.x, imbriqué) ou hub_connected (top-level)."""
+    hub = payload.get("hub")
+    value = payload.get("hub_connected",
+                        hub.get("connected") if isinstance(hub, dict) else None)
+    return value is True
+
+
+def _app_version_of(payload: dict) -> str | None:
+    """version top-level, ou app.version (format socle 2.23.x)."""
+    if payload.get("version"):
+        return payload.get("version")
+    app = payload.get("app")
+    return app.get("version") if isinstance(app, dict) else None
+
+
 async def _check_health(client: httpx.AsyncClient) -> tuple[str, str]:
     started = time.monotonic()
     status, payload = await _request(client, "GET", "/api/health/detailed")
@@ -37,10 +53,10 @@ async def _check_health(client: httpx.AsyncClient) -> tuple[str, str]:
         return "fail", f"HTTP {status} sur /api/health/detailed"
     if not isinstance(payload, dict):
         return "fail", "réponse /api/health/detailed inattendue (non-JSON objet)"
-    connected = payload.get("hub_connected") is True
+    connected = _hub_connected(payload)
     healthy = payload.get("status") == "healthy"
     if healthy and connected:
-        return "pass", f"status healthy, hub_connected, version {payload.get('version')}"
+        return "pass", f"status healthy, hub_connected, version {_app_version_of(payload)}"
     if not connected:
         return "fail", "app démarrée mais hub_connected=false (registration hub absente)"
     return "fail", f"status={payload.get('status')!r} (healthy attendu)"
@@ -120,8 +136,8 @@ async def _check_versions(client: httpx.AsyncClient) -> tuple[str, str]:
     status, payload = await _request(client, "GET", "/api/health/detailed")
     if status != 200 or not isinstance(payload, dict):
         return "fail", "health détaillé indisponible — cohérence non vérifiable"
-    version = payload.get("version")
-    connected = payload.get("hub_connected") is True
+    version = _app_version_of(payload)
+    connected = _hub_connected(payload)
     if not connected:
         return "fail", "hub_connected=false — l'app n'est pas enregistrée auprès du hub"
     if not version:

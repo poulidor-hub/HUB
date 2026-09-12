@@ -5,6 +5,25 @@
 
 ---
 
+## [3.53.1] - 12 septembre 2026
+
+### ⚡ Corrigé : socle-check lit le format réel de /api/health/detailed (vérification réelle 3.53.0)
+- Le health/detailed réel du socle (`hub-socle` ≥ 2.23.x) expose `hub.connected`
+  et `app.version` **imbriqués** — pas de clés top-level `hub_connected`/`version`.
+  Le module livré en 3.53.0 lisait les clés top-level (hypothèse reprise telle
+  quelle dans les mocks des tests) : contrôles health et versions en fail à tort
+  (5/7 observé sur `controle-socle`, app pourtant enregistrée et saine).
+- **Corrigé** : `_hub_connected()` / `_app_version_of()` lisent les deux formats
+  (imbriqué socle en priorité, top-level conservé pour tolérance).
+- Détecté par la vérification en conditions réelles sur `controle-socle`
+  (socle 2.23.3) ; 2 tests ajoutés au format réel — suite hub **1072 passed**.
+
+| Fonctionnalité | Description |
+|----------------|-------------|
+| **À compléter** | Décrivez les changements de cette version |
+
+---
+
 ## [3.53.0] - 12 septembre 2026
 
 ### ⚡ Socle-check : contrôles d'intégration hub↔app en un clic (module + route + vue Santé)
