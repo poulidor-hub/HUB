@@ -113,3 +113,40 @@ async def test_invalid_redirect_uri_rejected(client: AsyncClient, async_session,
         headers=_sa_headers(sa, test_app),
     )
     assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_get_returns_metadata_without_secret(
+    client: AsyncClient, async_session, test_app
+):
+    sa = await _make_sa_for_app(async_session, test_app)
+    headers = _sa_headers(sa, test_app)
+    created = (await client.post("/api/oidc/self-client",
+                                 json={"redirect_uris": [BASE]},
+                                 headers=headers)).json()
+    got = await client.get("/api/oidc/self-client", headers=headers)
+    assert got.status_code == 200
+    data = got.json()
+    assert data["client_id"] == created["client_id"]
+    assert "client_secret" not in data
+
+
+@pytest.mark.asyncio
+async def test_get_404_when_no_client(client: AsyncClient, async_session, test_app):
+    sa = await _make_sa_for_app(async_session, test_app)
+    resp = await client.get("/api/oidc/self-client", headers=_sa_headers(sa, test_app))
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_other_app_sa_cannot_see_client(
+    client: AsyncClient, async_session, test_app, other_app
+):
+    sa_owner = await _make_sa_for_app(async_session, test_app, name="sa_owner")
+    sa_other = await _make_sa_for_app(async_session, other_app, name="sa_other")
+    await client.post("/api/oidc/self-client",
+                      json={"redirect_uris": [BASE]},
+                      headers=_sa_headers(sa_owner, test_app))
+    resp = await client.get("/api/oidc/self-client",
+                            headers=_sa_headers(sa_other, other_app))
+    assert resp.status_code == 404

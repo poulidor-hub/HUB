@@ -1047,3 +1047,27 @@ async def upsert_self_oidc_client(
     data["authorization_endpoint"] = meta["authorization_endpoint"]
     data["token_endpoint"] = meta["token_endpoint"]
     return JSONResponse(status_code=code, content=data)
+
+
+@router.get("/api/oidc/self-client")
+async def get_self_oidc_client(
+    sa_app: tuple = Depends(get_current_service_account),
+    db: AsyncSession = Depends(get_db),
+):
+    """Métadonnées du client OIDC de l'app appelante (sans secret)."""
+    _sa, app = sa_app
+    result = await db.execute(
+        select(OAuthClient).where(OAuthClient.app_id == app.id)
+    )
+    client = result.scalars().first()
+    if client is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Aucun client OIDC lié à cette application"
+        )
+    data = _serialize_client(client)
+    meta = build_oidc_metadata(get_settings())
+    data["issuer"] = meta["issuer"]
+    data["authorization_endpoint"] = meta["authorization_endpoint"]
+    data["token_endpoint"] = meta["token_endpoint"]
+    return data
