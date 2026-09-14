@@ -15,8 +15,12 @@ services:
     command: postgres -c log_min_error_statement=fatal
 
   hub-api:
-    # Hot-reload pour le développement
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --timeout-graceful-shutdown 5
+    # ⚠️ PAS de --reload en prod : le watcher WatchFiles surveille aussi le
+    # montage apps_source (les apps) — toute écriture d'app (backup zip, upload)
+    # déclenche un reload qui tue les tâches de fond en cours (backups) et peut
+    # figer le reloader définitivement (incidents du 2026-09-14, backup exemple-app :
+    # hub gelé 3×, process enfant disparu sans respawn).
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --timeout-graceful-shutdown 5
     environment:
       - APP_ENV=development
       - DOCKER_SCAN_ENABLED=true

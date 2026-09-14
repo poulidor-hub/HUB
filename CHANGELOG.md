@@ -5,6 +5,29 @@
 
 ---
 
+## [3.54.1] - 14 septembre 2026
+
+### ⚡ Corrigé — backups d'apps : extraction metadata en streaming + hot-reload retiré du banc prod
+
+- **app_backups.py / extract_metadata_from_zip** : ne plus `json.load()` le
+  data.json complet des backups — les backups génériques (format 3.0) peuvent
+  dépasser plusieurs centaines de MB (exemple-app : 1M lignes / 53.7 MB zippé) et
+  le parse complet en dicts Python dépassait la RAM du conteneur (2 GB) :
+  MemoryError avalé par `asyncio.create_task` → backup figé "running" 85 %
+  pour toujours. Désormais l'objet `metadata` (petit, en tête du JSON) est
+  extrait en streaming (JSONDecoder.raw_decode incrémental, chunks 64 KB),
+  la section `data` n'est jamais chargée. Fallback parse complet conservé
+  pour les anciens formats sans "metadata".
+- **docker-compose.dev.yml** : retrait de `--reload` du command hub-api —
+  le watcher WatchFiles surveillait aussi le montage `apps_source` (les apps) :
+  chaque écriture d'app (backup zip, upload) déclenchait un reload qui tuait
+  les tâches de fond en cours (backups) et figeait le reloader sans respawn
+  (hub gelé, incident 2026-09-14 ×3, restauration par docker restart hub-api).
+- Preuve : backup exemple-app `success` (1 062 944 rows / 53.7 MB, ~60 s), hub UP
+  en continu pendant et après le backup (cf. POULIDOR/docs/migrationv1_rapport/16-exemple-app.md).
+
+---
+
 ## [3.54.0] - 12 septembre 2026
 
 ### 📣 Pour les utilisateurs

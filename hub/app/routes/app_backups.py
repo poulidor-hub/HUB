@@ -268,11 +268,41 @@ def extract_metadata_from_zip(zip_content: bytes) -> dict:
                     break
             
             if data_file:
-                with zf.open(data_file) as f:
-                    data = json.load(f)
-                    
-                    # Extraire la version depuis metadata
-                    metadata = data.get("metadata", {})
+                # ⚠️ Ne JAMAIS json.load() le fichier entier : les backups
+                # génériques (format 3.0) peuvent contenir des data.json de
+                # plusieurs centaines de MB (ex. exemple-app : 1M lignes) — le parse
+                # complet en dicts Python dépasse la RAM du conteneur et tue la
+                # tâche de fond (exception avalée par create_task → backup
+                # bloqué "running" à 85% pour toujours).
+                # On extrait l'objet "metadata" (petit, en tête du JSON) en
+                # streaming, sans jamais charger la section "data".
+                metadata: dict | None = None
+                try:
+                    decoder = json.JSONDecoder()
+                    buf = b""
+                    with zf.open(data_file) as f:
+                        while True:
+                            chunk = f.read(65536)
+                            if not chunk:
+                                break
+                            buf += chunk
+                            i = buf.find(b'"metadata"')
+                            if i == -1:
+                                continue
+                            j = buf.find(b"{", i)
+                            if j == -1:
+                                continue
+                            try:
+                                obj, _end = decoder.raw_decode(buf[j:].decode("utf-8", "ignore"))
+                                metadata = obj
+                                break
+                            except json.JSONDecodeError:
+                                # objet metadata pas encore complet → chunk suivant
+                                continue
+                except Exception as stream_err:
+                    logger.warning(f"Extraction metadata streaming échouée: {stream_err}")
+
+                if metadata is not None:
                     result["app_version"] = metadata.get("app_version") or metadata.get("version")
                     result["format_version"] = metadata.get("format_version")
                     result["total_tables"] = safe_int(metadata.get("total_tables"))
@@ -289,32 +319,39 @@ def extract_metadata_from_zip(zip_content: bytes) -> dict:
                         result["restore_requires_offline"]
                         or parse_bool(metadata.get("restore_requires_offline"))
                     )
-                    
-                    # Extraire les compteurs depuis data
+                    if metadata.get("tables") or metadata.get("table_stats"):
+                        summary_parts = []
+                        for key, count in (metadata.get("table_stats") or {}).items():
+                            if count:
+                                summary_parts.append(f"{count} {key.replace('_', ' ').title()}")
+                        if summary_parts:
+                            result["content_summary"] = ", ".join(summary_parts[:6])
+                else:
+                    # Fallback formats historiques SANS section "metadata"
+                    # (backups anciens, supposés petits) : parse complet.
+                    with zf.open(data_file) as f:
+                        data = json.load(f)
+
+                    metadata = data.get("metadata", {})
+                    result["app_version"] = metadata.get("app_version") or metadata.get("version")
+                    result["format_version"] = metadata.get("format_version")
+                    result["total_tables"] = safe_int(metadata.get("total_tables"))
+                    result["total_rows"] = safe_int(metadata.get("total_rows"))
+
                     backup_data = data.get("data", {})
-                    
-                    # Compter les items
                     items = backup_data.get("items", [])
                     result["total_items"] = len(items)
-                    
-                    # Compter les préférences
                     prefs = backup_data.get("user_preferences", []) or backup_data.get("preferences", [])
                     result["total_preferences"] = len(prefs)
-                    
-                    # Compter les fichiers uploadés
                     files = backup_data.get("uploaded_files", []) or backup_data.get("files", [])
                     result["total_files"] = len(files)
-                    
-                    # Construire un résumé du contenu
+
                     summary_parts = []
-                    
-                    # Parcourir toutes les clés de data pour un résumé complet
                     for key, value in backup_data.items():
                         if isinstance(value, list) and len(value) > 0:
-                            # Formater le nom de la clé pour l'affichage
                             display_name = key.replace("_", " ").title()
                             summary_parts.append(f"{len(value)} {display_name}")
-                    
+
                     if summary_parts:
                         result["content_summary"] = ", ".join(summary_parts)
                     else:
