@@ -5,6 +5,39 @@
 
 ---
 
+## [3.56.0] - 14 septembre 2026
+
+### ⚡ Déploiement UI des apps aligné sur la voie manuelle
+
+Le déploiement déclenché depuis l'admin (POST `/api/apps/{slug}/deploy`) suit
+désormais strictement la voie manuelle de référence (`make sync-env` → `make
+build` → `make up` transitivement via le Makefile de l'app) :
+
+- **Plus de fuite d'env du hub** : `make build`/`make up` lancés avec l'env
+  allowlistée (`compose_base_env()`, parité atelier/recreate). Auparavant, l'env
+  complet du conteneur hub-api était hérité par le make/compose de l'app → les
+  `${VAR}` homonymes du compose d'app pouvaient être écrasés (ex.
+  `HUB_HTTPS_ENABLED`, cf. bug atelier SSL WRONG_VERSION_NUMBER).
+- **Parité `hubctl _write_app_env`** sur le `.env` écrit par le hub :
+  `APP_SUBNET` écrit dès le déploiement (si alloué) — sans lui `make build`
+  échoue sur `${APP_SUBNET:?}` avant le sync-env de l'app ;
+  `SECRETS_ENCRYPTION_KEY` générée à la création est désormais réellement
+  persistée (elle était générée puis perdue si absente du `.env.example`) ;
+  `.env` restreint à `0600` à chaque déploiement (secrets en clair).
+- **Échec explicite sans Makefile** : une app sans Makefile (non conforme au
+  template) fait échouer le déploiement avec un message clair — suppression du
+  fallback `docker compose` nu (sans sync-env, sans overlay HTTPS, `APP_SUBNET`
+  manquant : voué à l'échec silencieux ou au compose cassé).
+- **`git pull --ff-only`** (parité action générée `UPDATE`) : plus de merge
+  surprise sur un historique divergent.
+- Allowlist compose extraite dans `hub/app/compose_env.py` (module partagé
+  deploy/workshop, sans cycle d'import ; alias privés conservés dans
+  `workshop_service`).
+- Tests : 7 nouveaux cas (`test_app_deploy.py`, cycle TDD rouge→vert) ;
+  suite complète 1105 passed / 0 failed.
+
+---
+
 ## [3.55.0] - 14 septembre 2026
 
 ### ⚡ Self-service OIDC M2M — /api/oidc/self-client
