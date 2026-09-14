@@ -5,6 +5,29 @@
 
 ---
 
+## [3.55.0] - 14 septembre 2026
+
+### ⚡ Self-service OIDC M2M — /api/oidc/self-client
+
+- `POST /api/oidc/self-client` (token M2M requis) : crée/régénère le client
+  OIDC lié à l'app appelante (FK `oauth_clients.app_id` résolue depuis le
+  ServiceAccount — jamais depuis le body). Secret retourné une seule fois
+  (stocké bcrypt) ; validation redirect_uris (http/https, 1..5).
+- `GET /api/oidc/self-client` : métadonnées du client de l'app, sans secret.
+- Nouvelle dépendance `get_current_service_account` (auth.py) — miroir de
+  `get_current_admin` ; les routes CRUD admin OIDC restent inchangées
+  (JWT admin requis).
+- Refus tracés : SA multi-apps → 409 (ambiguïté app_id), JWT utilisateur →
+  403. Audit : `oidc_self_client_create|regenerate|get`
+  (service_account_id tracé).
+- Finalité : premier déploiement d'app 100 % automatique (SSO sans
+  HUB_ADMIN_PASSWORD côté app) — cf. spec exemple-app
+  `docs/superpowers/specs/2026-09-14-oidc-self-provisioning-design.md`.
+- Tests : 10 nouveaux (`test_oidc_self_client.py`) ; suite complète
+  1098 passed / 0 failed.
+
+---
+
 ## [3.54.1] - 14 septembre 2026
 
 ### ⚡ Corrigé — backups d'apps : extraction metadata en streaming + hot-reload retiré du banc prod
