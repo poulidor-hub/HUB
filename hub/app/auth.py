@@ -507,3 +507,50 @@ async def get_current_admin(
             detail="Accès administrateur requis"
         )
     return current_user
+
+
+async def get_current_service_account(
+    token: str = Depends(oauth2_scheme),
+    db: AsyncSession = Depends(get_db)
+) -> tuple:
+    """Résout le ServiceAccount porteur du token (endpoints self-service M2M).
+
+    Retourne (sa, app) où `app` est l'unique application active+approuvée
+    accessible au SA. Un SA multi-apps est ambigu → 409.
+    """
+    from app.m2m_scope import sa_apps_claim
+
+    payload = await verify_token_not_revoked(token, db)
+    if payload.get("type") != "service_account":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Endpoint réservé aux service accounts"
+        )
+
+    client_id = payload.get("sub")
+    if not client_id:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token invalide"
+        )
+
+    result = await db.execute(
+        select(ServiceAccount)
+        .options(selectinload(ServiceAccount.applications))
+        .where(ServiceAccount.client_id == client_id)
+    )
+    sa = result.scalar_one_or_none()
+    if sa is None or not sa.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Service account invalide"
+        )
+
+    allowed = set(sa_apps_claim(sa))  # filtre canonique : actives + approuvées + atelier
+    apps = [a for a in (sa.applications or []) if a.slug in allowed]
+    if len(apps) != 1:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Service account multi-applications — self-client non résolvable"
+        )
+    return sa, apps[0]
