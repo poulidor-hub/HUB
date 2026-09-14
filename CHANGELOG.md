@@ -5,6 +5,41 @@
 
 ---
 
+## [3.56.1] - 15 septembre 2026
+
+### ⚡ Validation prod du pipeline 3.56.0 — restaurations base pour le test
+
+Validation de bout en bout du nouveau pipeline de déploiement sur la prod du
+serveur de dev (déclenché via `POST /api/apps/exemple-app/deploy`, id=3 :
+clone/pull --ff-only → .env → make build/up → health → success, ~2 min,
+app re-mise en ligne sur ses ports d'origine 9002/4204-4205, conteneurs
+healthy). Aucun code impacté — entrée opérationnelle.
+
+Restaurations faites en base / sur le dépôt pour rendre le test possible
+(l'app exemple-app existait mais son enregistrement était incomplet) :
+
+- `applications.git_repo_url` pour `exemple-app` : `NULL` →
+  `https://github.com/Poutchouli/exemple-app.git` (sans lui, le endpoint
+  `/deploy` répond 400).
+- Ligne `port_allocations` recréée pour `exemple-app` @ 192.0.2.10 :
+  (9002, 4204, 4205, subnet `192.168.80.0/20`) — valeurs relevées sur l'état
+  courant (registre + conteneurs + réseau Docker), exactement ce que
+  l'allocateur idempotent aurait produit. Sans elle, l'allocation aurait
+  attribué de NOUVEAUX ports (9002/4204 étant vus occupés) → l'app aurait
+  déménagé et les URLs du registre seraient devenues mortes.
+- Remote git local de l'app basculé SSH → HTTPS
+  (`git@github.com:Poutchouli/exemple-app.git` →
+  `https://github.com/Poutchouli/exemple-app.git`) : le conteneur hub-api n'a
+  ni client SSH ni clé ; l'auth de déploiement du hub = HTTPS + PAT
+  (`http.extraheader`, cf. `deploy_service._git_auth_args`).
+
+Comportement observés conformes à la 3.56.0 : `.env` préservé (secrets non
+régénérés, `POSTGRES_PASSWORD` inchangé — app healthy sur sa base, chmod 0600,
+normalisation seule du rewrite), `git pull --ff-only` (fast-forward visible
+dans les logs), build/up sous env allowlistée.
+
+---
+
 ## [3.56.0] - 14 septembre 2026
 
 ### ⚡ Déploiement UI des apps aligné sur la voie manuelle
