@@ -1,7 +1,10 @@
 """Déploiement automatique des apps du parc (spec 2026-08-18-auto-deploy-apps).
 
-Pipeline : git clone/pull -> .env -> make build && make up (fallback docker
-compose) -> health check. Un déploiement à la fois (lock asyncio global).
+Pipeline : git clone/pull --ff-only -> .env -> make build && make up
+(parité voie manuelle : make build/up incluent le sync-env de l'app) ->
+health check. Un déploiement à la fois (lock asyncio global).
+App sans Makefile = échec explicite (jamais de `docker compose` nu sans
+sync-env ni overlay HTTPS).
 """
 import re
 import secrets
@@ -25,7 +28,14 @@ ENV_VARIANTS: dict[str, list[str]] = {
 # Clés décisionnelles toujours présentes dans le .env final (« le HUB décide,
 # l'app suit »). FRONTEND_HTTPS_PORT n'y figure pas : remplacée seulement si
 # présente (le Makefile sync-env la pose sinon).
-ENSURE_KEYS = ["APP_SLUG", "API_PORT", "FRONTEND_PORT", "HUB_HOST", "APP_HOST", "HUB_HTTPS_ENABLED"]
+# - APP_SUBNET : parité hubctl _write_app_env — écrit dès le déploiement,
+#   sinon `make build` échoue sur ${APP_SUBNET:?} avant le sync-env de l'app.
+# - SECRETS_ENCRYPTION_KEY : générée uniquement à la création du .env ; si le
+#   .env.example omet la clé, elle doit quand même être persistée.
+ENSURE_KEYS = [
+    "APP_SLUG", "API_PORT", "FRONTEND_PORT", "APP_SUBNET",
+    "HUB_HOST", "APP_HOST", "HUB_HTTPS_ENABLED", "SECRETS_ENCRYPTION_KEY",
+]
 
 
 def build_env_values(slug: str, api_port: int, frontend_port: int, hub_host: str) -> dict[str, str]:
@@ -96,6 +106,7 @@ import httpx
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.compose_env import compose_base_env
 from app.config import get_settings
 from app.database import async_session_maker
 from app.models import AppDeployment, Application
@@ -250,10 +261,11 @@ async def _run_deployment(deployment_id: int, slug: str, session_factory=None) -
             app_dir = get_apps_dir() / slug
             api_port, frontend_port = allocation.api_port, allocation.frontend_port
 
-            # --- Étape 1 : clone / pull ---
+            # --- Étape 1 : clone / pull --ff-only (parité action UPDATE) ---
             git_common = ["git", "-c", "safe.directory=*"]
             if (app_dir / ".git").exists():
-                cmd = git_common + _git_auth_args(token) + ["-C", str(app_dir), "pull"]
+                cmd = git_common + _git_auth_args(token) + ["-C", str(app_dir),
+                                                            "pull", "--ff-only"]
                 cwd = app_dir
             else:
                 app_dir.parent.mkdir(parents=True, exist_ok=True)
@@ -278,21 +290,36 @@ async def _run_deployment(deployment_id: int, slug: str, session_factory=None) -
                           **generate_secrets()}
             else:
                 values = build_env_values(slug, api_port, frontend_port, host)
+            # Subnet alloué par le hub — écrit dès le déploiement (parité
+            # hubctl _write_app_env) : NULL pour les allocations antérieures
+            # au pool, dans ce cas le sync-env de l'app le rattrapera.
+            if allocation.subnet:
+                values["APP_SUBNET"] = allocation.subnet
             apply_env_values(env_path, values)
+            env_path.chmod(0o600)  # secrets en clair : parité hubctl _write_app_env
             await _update_deployment(
                 deployment_id, factory, current_step="build",
                 logs=f"[{_now():%H:%M:%S}] .env configuré (API={api_port}, FRONT={frontend_port})\n")
 
-            # --- Étapes 3-4 : build + up (Makefile si présent, sinon compose) ---
-            has_makefile = (app_dir / "Makefile").exists()
-            if has_makefile:
-                build_cmd, up_cmd = ["make", "build"], ["make", "up"]
-            else:
-                build_cmd, up_cmd = ["docker", "compose", "build"], ["docker", "compose", "up", "-d"]
-            out = await _run_cmd(build_cmd, app_dir, TIMEOUT_BUILD)
+            # --- Étapes 3-4 : build + up via le Makefile de l'app (voie
+            #     manuelle : make build/make up incluent le sync-env). Jamais
+            #     de `docker compose` nu : sans Makefile, l'app est non conforme
+            #     au template (pas de sync-env, pas d'overlay HTTPS, et le
+            #     compose exigerait ${APP_SUBNET:?} absent du .env). ---
+            if not (app_dir / "Makefile").exists():
+                raise RuntimeError(
+                    "App sans Makefile — non conforme au template HUBapp. "
+                    "Le déploiement automatique exige le Makefile du template "
+                    "(make build / make up) ; déployez manuellement ou "
+                    "réalignez l'app sur le template."
+                )
+            env_base = compose_base_env()  # jamais l'env du hub dans l'app (cf. COMPOSE_ENV_ALLOWLIST)
+            out = await _run_cmd(["make", "build"], app_dir, TIMEOUT_BUILD,
+                                 env_base=env_base)
             await _update_deployment(deployment_id, factory, current_step="up",
                                      logs=out[-4000:] + "\n")
-            out = await _run_cmd(up_cmd, app_dir, TIMEOUT_UP)
+            out = await _run_cmd(["make", "up"], app_dir, TIMEOUT_UP,
+                                 env_base=env_base)
             await _update_deployment(deployment_id, factory, current_step="health",
                                      logs=out[-2000:] + "\n")
 

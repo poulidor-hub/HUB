@@ -114,6 +114,23 @@ def test_apply_env_ensures_hub_https_enabled_present(tmp_path):
     assert "HUB_HTTPS_ENABLED=false" in env.read_text()
 
 
+def test_apply_env_appends_app_subnet(tmp_path):
+    """Parité hubctl _write_app_env : APP_SUBNET écrit dès le déploiement.
+    Sans lui, `make build` échoue sur ${APP_SUBNET:?} avant que le sync-env
+    de l'app n'ait pu intervenir (apps dont le .env.example omet la clé)."""
+    env = _write_env(tmp_path, "UNRELATED=1\n")
+    apply_env_values(env, {"APP_SUBNET": "10.50.0.42/24"})
+    assert "APP_SUBNET=10.50.0.42/24" in env.read_text()
+
+
+def test_apply_env_appends_secrets_encryption_key(tmp_path):
+    """Parité hubctl : la clé Fernet générée est écrite même si absente du
+    .env.example (bug : générée puis perdue, jamais persistée)."""
+    env = _write_env(tmp_path, "UNRELATED=1\n")
+    apply_env_values(env, {"SECRETS_ENCRYPTION_KEY": "fernet-key-123"})
+    assert "SECRETS_ENCRYPTION_KEY=fernet-key-123" in env.read_text()
+
+
 def test_generate_secrets(tmp_path):
     s1 = generate_secrets()
     s2 = generate_secrets()
@@ -161,7 +178,7 @@ def _install_fake_exec(monkeypatch, results):
     queue = list(results)
 
     async def _fake_exec(*cmd, cwd=None, env=None, stdout=None, stderr=None):
-        calls.append({"cmd": cmd, "cwd": str(cwd)})
+        calls.append({"cmd": cmd, "cwd": str(cwd), "env": env})
         rc, out = queue.pop(0) if queue else (0, b"")
         return _FakeProc(rc, out)
 
@@ -175,7 +192,8 @@ async def _mk_deployment(async_session, slug="exemple-app", repo="https://github
                           git_repo_url=repo)
     async_session.add(app_row)
     alloc = PortAllocation(app_slug=slug, host="192.0.2.10", api_port=9002,
-                           frontend_port=4204, frontend_https_port=4205)
+                           frontend_port=4204, frontend_https_port=4205,
+                           subnet="10.50.0.7/24")
     async_session.add(alloc)
     dep = AppDeployment(app_slug=slug, status="pending")
     async_session.add(dep)
@@ -189,8 +207,10 @@ async def test_run_deployment_success(async_session, monkeypatch, tmp_path):
     import app.deploy_service as ds
 
     dep_id = await _mk_deployment(async_session)
-    (tmp_path / "exemple-app").mkdir()
-    (tmp_path / "exemple-app" / ".env.example").write_text(
+    appdir = tmp_path / "exemple-app"
+    appdir.mkdir()
+    (appdir / "Makefile").write_text("build:\n\t@echo build\nup:\n\t@echo up\n")  # app conforme template
+    (appdir / ".env.example").write_text(
         "APP_SLUG=old\nAPP_PORT=1\nPOSTGRES_PASSWORD=x\n"
     )
 
@@ -242,6 +262,7 @@ async def test_run_deployment_env_preserved_on_redeploy(async_session, monkeypat
     appdir.mkdir()
     (appdir / ".env.example").write_text("APP_PORT=1\nPOSTGRES_PASSWORD=x\n")
     (appdir / ".env").write_text("APP_SLUG=old\nAPP_PORT=1\nPOSTGRES_PASSWORD=keep\n")
+    (appdir / "Makefile").write_text("build:\n\t@echo build\nup:\n\t@echo up\n")  # app conforme template
     (appdir / ".git").mkdir()  # dir existante -> pull, pas clone
 
     calls = _install_fake_exec(monkeypatch, [(0, b"pull"), (0, b""), (0, b"")])
@@ -254,6 +275,134 @@ async def test_run_deployment_env_preserved_on_redeploy(async_session, monkeypat
     env_text = (appdir / ".env").read_text()
     assert "POSTGRES_PASSWORD=keep" in env_text
     assert "APP_SLUG=exemple-app" in env_text
+
+
+# ---- Alignement sur la voie manuelle / hubctl (parité _write_app_env) ----
+
+@pytest.mark.asyncio
+async def test_run_deployment_pull_uses_ff_only(async_session, monkeypatch, tmp_path):
+    """Parité action UPDATE : `git pull --ff-only`, pas de merge surprise."""
+    import app.deploy_service as ds
+
+    dep_id = await _mk_deployment(async_session)
+    appdir = tmp_path / "exemple-app"
+    appdir.mkdir()
+    (appdir / "Makefile").write_text("build:\nup:\n")
+    (appdir / ".env.example").write_text("APP_SLUG=old\n")
+    (appdir / ".env").write_text("APP_SLUG=old\n")
+    (appdir / ".git").mkdir()  # dir existante -> pull
+
+    calls = _install_fake_exec(monkeypatch, [(0, b"pull"), (0, b""), (0, b"")])
+    monkeypatch.setattr(ds, "_wait_healthy", lambda *a, **k: asyncio.sleep(0, result=True))
+    monkeypatch.setattr(ds.get_settings(), "apps_host_path", str(tmp_path))
+
+    await ds._run_deployment(dep_id, "exemple-app", session_factory=lambda: _CtxSession(async_session))
+
+    pulls = [c for c in calls if "pull" in c["cmd"]]
+    assert pulls, "la mise à jour doit passer par git pull"
+    assert any("--ff-only" in c["cmd"] for c in pulls)
+
+
+@pytest.mark.asyncio
+async def test_run_deployment_writes_app_subnet(async_session, monkeypatch, tmp_path):
+    """Le subnet alloué par le hub est écrit dans le .env (parité hubctl),
+    y compris quand le .env.example omet la clé."""
+    import app.deploy_service as ds
+
+    dep_id = await _mk_deployment(async_session)
+    appdir = tmp_path / "exemple-app"
+    appdir.mkdir()
+    (appdir / "Makefile").write_text("build:\nup:\n")
+    (appdir / ".env.example").write_text("APP_SLUG=old\n")  # pas d'APP_SUBNET
+
+    calls = _install_fake_exec(monkeypatch, [(0, b"clone"), (0, b""), (0, b"")])
+    monkeypatch.setattr(ds, "_wait_healthy", lambda *a, **k: asyncio.sleep(0, result=True))
+    monkeypatch.setattr(ds.get_settings(), "apps_host_path", str(tmp_path))
+
+    await ds._run_deployment(dep_id, "exemple-app", session_factory=lambda: _CtxSession(async_session))
+
+    env_text = (appdir / ".env").read_text()
+    assert "APP_SUBNET=10.50.0.7/24" in env_text
+
+
+@pytest.mark.asyncio
+async def test_run_deployment_env_chmod_600(async_session, monkeypatch, tmp_path):
+    """Parité hubctl : le .env est restreint à 0600 (secrets en clair)."""
+    import os
+    import app.deploy_service as ds
+
+    dep_id = await _mk_deployment(async_session)
+    appdir = tmp_path / "exemple-app"
+    appdir.mkdir()
+    (appdir / "Makefile").write_text("build:\nup:\n")
+    (appdir / ".env.example").write_text("APP_SLUG=old\n")
+    env_path = appdir / ".env"
+    env_path.write_text("APP_SLUG=old\n")
+    os.chmod(env_path, 0o644)  # chmod relâché avant re-déploiement
+    (appdir / ".git").mkdir()
+
+    calls = _install_fake_exec(monkeypatch, [(0, b"pull"), (0, b""), (0, b"")])
+    monkeypatch.setattr(ds, "_wait_healthy", lambda *a, **k: asyncio.sleep(0, result=True))
+    monkeypatch.setattr(ds.get_settings(), "apps_host_path", str(tmp_path))
+
+    await ds._run_deployment(dep_id, "exemple-app", session_factory=lambda: _CtxSession(async_session))
+
+    assert (env_path.stat().st_mode & 0o777) == 0o600
+
+
+@pytest.mark.asyncio
+async def test_run_deployment_build_uses_allowlisted_env(async_session, monkeypatch, tmp_path):
+    """Jamais l'env du conteneur hub dans le make/compose de l'app (parité
+    atelier/recreate) : allowlist seulement — sinon les ${VAR} du compose de
+    l'app sont écrasées par des clés hub homonymes (ex. HUB_HTTPS_ENABLED)."""
+    import app.deploy_service as ds
+
+    dep_id = await _mk_deployment(async_session)
+    appdir = tmp_path / "exemple-app"
+    appdir.mkdir()
+    (appdir / "Makefile").write_text("build:\nup:\n")
+    (appdir / ".env.example").write_text("APP_SLUG=old\n")
+    (appdir / ".env").write_text("APP_SLUG=old\n")
+    (appdir / ".git").mkdir()
+
+    calls = _install_fake_exec(monkeypatch, [(0, b"pull"), (0, b""), (0, b"")])
+    monkeypatch.setattr(ds, "_wait_healthy", lambda *a, **k: asyncio.sleep(0, result=True))
+    monkeypatch.setattr(ds.get_settings(), "apps_host_path", str(tmp_path))
+    monkeypatch.setenv("HUB_HTTPS_ENABLED", "true")  # poison : clé hub homonyme
+
+    await ds._run_deployment(dep_id, "exemple-app", session_factory=lambda: _CtxSession(async_session))
+
+    builds = [c for c in calls if "build" in c["cmd"]]
+    ups = [c for c in calls if any("up" == part for part in c["cmd"])]
+    assert builds and ups
+    for c in builds + ups:
+        assert c["env"] is not None
+        assert "HUB_HTTPS_ENABLED" not in c["env"], \
+            "l'env du hub ne doit pas fuiter dans le make/compose de l'app"
+        assert "PATH" in c["env"], "l'allowlist doit laisser passer l'essentiel"
+
+
+@pytest.mark.asyncio
+async def test_run_deployment_fails_explicitly_without_makefile(async_session, monkeypatch, tmp_path):
+    """App sans Makefile (non conforme template) : échec explicite, jamais un
+    `docker compose` nu sans sync-env (APP_SUBNET manquant, pas d'overlay HTTPS)."""
+    import app.deploy_service as ds
+
+    dep_id = await _mk_deployment(async_session)
+    appdir = tmp_path / "exemple-app"
+    appdir.mkdir()  # pas de Makefile
+    (appdir / ".env.example").write_text("APP_SLUG=old\n")
+
+    calls = _install_fake_exec(monkeypatch, [(0, b"clone")])
+    monkeypatch.setattr(ds.get_settings(), "apps_host_path", str(tmp_path))
+
+    await ds._run_deployment(dep_id, "exemple-app", session_factory=lambda: _CtxSession(async_session))
+
+    dep = await async_session.get(AppDeployment, dep_id)
+    await async_session.refresh(dep)
+    assert dep.status == "failed"
+    assert "Makefile" in (dep.logs or "")
+    assert len(calls) == 1, "aucun build/up ne doit être tenté sans Makefile"
 
 
 @pytest.mark.asyncio

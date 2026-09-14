@@ -314,25 +314,12 @@ def _alloc_subnet() -> str | None:
 
 # ── Env compose atelier ──
 
-# Clés transmises aux sous-processus docker compose / make (accès docker +
-# locales). JAMAIS l'env complet du hub-api : certaines clés du hub partagent
-# leur nom avec des clés des apps mais avec un AUTRE sens — ex. HUB_HTTPS_ENABLED
-# (hub : « le hub sert du HTTPS » ≠ app : « joindre l'API hub en HTTPS »). En
-# passant l'env hub au compose, l'interpolation ${VAR:-défaut} du
-# docker-compose.yml de l'app écrasait le .env de l'app → app atelier en HTTPS
-# sur le port HTTP du hub (SSL WRONG_VERSION_NUMBER) : enregistrement + JWKS en
-# échec, atelier invisible (« Mode dégradé »). Le compose lit lui-même
-# APPS/X/.env (source canonique) : l'OS ne doit rien lui imposer.
-_COMPOSE_ENV_ALLOWLIST = (
-    "PATH", "HOME", "TZ", "LANG", "LC_ALL",
-    "DOCKER_HOST", "DOCKER_CONTEXT", "DOCKER_CONFIG", "DOCKER_API_VERSION",
-    "DOCKER_TLS_VERIFY", "DOCKER_CERT_PATH",
+# Allowlist déplacée dans app.compose_env (partagée avec deploy_service) ;
+# alias privés conservés pour les appelants historiques.
+from app.compose_env import (  # noqa: E402
+    COMPOSE_ENV_ALLOWLIST as _COMPOSE_ENV_ALLOWLIST,
+    compose_base_env as _compose_base_env,
 )
-
-
-def _compose_base_env() -> dict[str, str]:
-    """Env minimal (allowlist) pour tout sous-processus compose/make du hub."""
-    return {k: os.environ[k] for k in _COMPOSE_ENV_ALLOWLIST if k in os.environ}
 
 
 def _ws_compose_env(slug: str) -> dict[str, str]:
