@@ -5,21 +5,22 @@ Réutilise settings.jwt_private_key, JWKS endpoint, hash_token(), get_password_h
 """
 from datetime import timedelta
 from typing import List, Optional
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlparse
 import logging
 import time
 
 import httpx
 import jwt as pyjwt
 from fastapi import APIRouter, Body, Depends, Form, HTTPException, Query, Request, status
-from fastapi.responses import RedirectResponse, HTMLResponse
+from fastapi.responses import RedirectResponse, HTMLResponse, JSONResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import (
     get_current_admin,
+    get_current_service_account,
     hash_token,
     resolve_user_by_oidc_sub,
     utcnow,
@@ -830,6 +831,23 @@ def _serialize_client(c: OAuthClient) -> dict:
     }
 
 
+class SelfClientRequest(BaseModel):
+    """Self-service M2M : provisionne le client OIDC de l'app appelante."""
+    redirect_uris: List[str]
+    regenerate: bool = True
+    scopes: List[str] = ["openid", "profile", "email"]
+
+    @field_validator("redirect_uris")
+    @classmethod
+    def _validate_uris(cls, v: List[str]) -> List[str]:
+        if not v or len(v) > 5:
+            raise ValueError("1 à 5 redirect_uris requis")
+        for uri in v:
+            if urlparse(uri).scheme.lower() not in ("http", "https"):
+                raise ValueError(f"redirect_uri invalide (http/https requis) : {uri}")
+        return v
+
+
 @router.get("/api/oidc/clients")
 async def list_oidc_clients(
     admin: User = Depends(get_current_admin),
@@ -962,3 +980,70 @@ async def delete_oidc_client(
     )
     await db.commit()
     return None
+
+
+# ============================================================
+# SELF-SERVICE M2M — l'app provisionne SON client OIDC
+# ============================================================
+
+@router.post("/api/oidc/self-client")
+async def upsert_self_oidc_client(
+    payload: SelfClientRequest,
+    sa_app: tuple = Depends(get_current_service_account),
+    db: AsyncSession = Depends(get_db),
+    request: Request = None,
+):
+    """Crée/régénère le client OIDC lié à l'app appelante (token M2M requis).
+
+    Le secret n'est retourné qu'à la création ou à la régénération
+    (stocké bcrypt côté Hub).
+    """
+    sa, app = sa_app
+    from app.auth import get_password_hash
+
+    result = await db.execute(
+        select(OAuthClient).where(OAuthClient.app_id == app.id)
+    )
+    client = result.scalars().first()
+
+    raw_secret = None
+    code = 200
+    if client is None:
+        raw_secret = OAuthClient.generate_client_secret()
+        client = OAuthClient(
+            client_id=OAuthClient.generate_client_id(),
+            client_secret_hash=get_password_hash(raw_secret),
+            name=app.name,
+            redirect_uris=payload.redirect_uris,
+            scopes=payload.scopes,
+            auto_approve=True,
+            app_id=app.id,
+        )
+        db.add(client)
+        code = 201
+        action = "oidc_self_client_create"
+    elif payload.regenerate:
+        raw_secret = OAuthClient.generate_client_secret()
+        client.client_secret_hash = get_password_hash(raw_secret)
+        client.redirect_uris = payload.redirect_uris
+        client.scopes = payload.scopes
+        action = "oidc_self_client_regenerate"
+    else:
+        action = "oidc_self_client_get"
+
+    await log_action(
+        db=db, user_id=None, action=action,
+        target=client.client_id, request=request,
+        service_account_id=sa.id, response_status=code,
+    )
+    await db.commit()
+    await db.refresh(client)
+
+    data = _serialize_client(client)
+    if raw_secret is not None:
+        data["client_secret"] = raw_secret  # affiché UNE SEULE FOIS
+    meta = build_oidc_metadata(get_settings())
+    data["issuer"] = meta["issuer"]
+    data["authorization_endpoint"] = meta["authorization_endpoint"]
+    data["token_endpoint"] = meta["token_endpoint"]
+    return JSONResponse(status_code=code, content=data)
