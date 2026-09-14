@@ -24,6 +24,9 @@ ps:
 	$(COMPOSE) ps
 
 XDIST_WORKERS ?= auto
+# Conteneur de test limité à 2g (mem_limit hub-api de la prod) : « auto » (16 workers)
+# déclenche l'OOM du cgroup ⇒ workers tués. Défaut borné, surchargeable.
+XDIST_WORKERS_DOCKER ?= 4
 
 .PHONY: test test-seq test-cov test-docker
 
@@ -44,4 +47,4 @@ test-docker: ## Tests dans la stack de test isolée (-p pouly-test, tests copié
 	docker compose -p pouly-test -f docker-compose.yml -f docker-compose.test.yml up -d --build hub-api
 	docker compose -p pouly-test -f docker-compose.yml -f docker-compose.test.yml cp hub/tests hub-api:/code/tests
 	docker compose -p pouly-test -f docker-compose.yml -f docker-compose.test.yml cp hub/pytest.ini hub-api:/code/pytest.ini
-	docker compose -p pouly-test -f docker-compose.yml -f docker-compose.test.yml exec -T hub-api sh -c "cd /code && python -m pytest tests -n $(XDIST_WORKERS)"
+	docker compose -p pouly-test -f docker-compose.yml -f docker-compose.test.yml exec -T hub-api sh -c "cd /code && python -m pytest tests -n $(XDIST_WORKERS_DOCKER)"
