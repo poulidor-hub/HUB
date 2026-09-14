@@ -150,3 +150,39 @@ async def test_other_app_sa_cannot_see_client(
     resp = await client.get("/api/oidc/self-client",
                             headers=_sa_headers(sa_other, other_app))
     assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_multi_app_sa_conflict(client: AsyncClient, async_session, test_app, other_app):
+    """SA avec accès à 2 apps → 409 (ambiguïté d'app_id)."""
+    sa = ServiceAccount(
+        name="sa_multi",
+        client_id=ServiceAccount.generate_client_id(),
+        client_secret_hash=get_password_hash("secret123"),
+        is_active=True,
+    )
+    async_session.add(sa)
+    await async_session.flush()
+    await async_session.execute(service_account_app_access.insert().values([
+        {"service_account_id": sa.id, "app_id": test_app.id},
+        {"service_account_id": sa.id, "app_id": other_app.id},
+    ]))
+    await async_session.commit()
+    token, _, _ = create_access_token(
+        username=sa.client_id,
+        apps={test_app.slug: "service", other_app.slug: "service"},
+        is_service_account=True,
+    )
+    resp = await client.post("/api/oidc/self-client",
+                             json={"redirect_uris": [BASE]},
+                             headers=get_auth_header(token))
+    assert resp.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_post_rejects_user_jwt(client: AsyncClient, admin_token):
+    """JWT admin utilisateur → 403 (route réservée aux SA)."""
+    resp = await client.post("/api/oidc/self-client",
+                             json={"redirect_uris": [BASE]},
+                             headers=get_auth_header(admin_token))
+    assert resp.status_code == 403
