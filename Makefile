@@ -45,6 +45,9 @@ test-cov: ## Tests parallèles + couverture HTML (hôte)
 
 test-docker: ## Tests dans la stack de test isolée (-p pouly-test, tests copiés via compose cp)
 	docker compose -p pouly-test -f docker-compose.yml -f docker-compose.test.yml up -d --build hub-api
+	# Purge avant cp : le conteneur persiste entre les runs, et compose cp niche
+	# le dossier source dans la destination si elle existe déjà (tests/tests/...).
+	docker compose -p pouly-test -f docker-compose.yml -f docker-compose.test.yml exec -T hub-api sh -c "rm -rf /code/tests /code/pytest.ini"
 	docker compose -p pouly-test -f docker-compose.yml -f docker-compose.test.yml cp hub/tests hub-api:/code/tests
 	docker compose -p pouly-test -f docker-compose.yml -f docker-compose.test.yml cp hub/pytest.ini hub-api:/code/pytest.ini
 	docker compose -p pouly-test -f docker-compose.yml -f docker-compose.test.yml exec -T hub-api sh -c "cd /code && python -m pytest tests -n $(XDIST_WORKERS_DOCKER)"
