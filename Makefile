@@ -22,3 +22,32 @@ logs:
 
 ps:
 	$(COMPOSE) ps
+
+XDIST_WORKERS ?= auto
+# Conteneur de test limité à 2g (mem_limit hub-api de la prod) : « auto » (16 workers)
+# déclenche l'OOM du cgroup ⇒ workers tués. Défaut borné, surchargeable.
+XDIST_WORKERS_DOCKER ?= 4
+
+.PHONY: test test-seq test-cov test-docker
+
+# ── TESTS ────────────────────────────────────────────────────────────────────
+# Hôte : SQLite en mémoire (un engine par worker, cf. hub/tests/conftest.py).
+# Docker : stack de test isolée (-p pouly-test, cf. docker-compose.test.yml).
+
+test: ## Tests pytest parallèles (hôte, SQLite mémoire) — XDIST_WORKERS=auto
+	cd hub && python3 -m pytest -n $(XDIST_WORKERS)
+
+test-seq: ## Tests pytest séquentiels (debug flaky / ordre-dépendant)
+	cd hub && python3 -m pytest
+
+test-cov: ## Tests parallèles + couverture HTML (hôte)
+	cd hub && python3 -m pytest -n $(XDIST_WORKERS) --cov=app --cov-report=html
+
+test-docker: ## Tests dans la stack de test isolée (-p pouly-test, tests copiés via compose cp)
+	docker compose -p pouly-test -f docker-compose.yml -f docker-compose.test.yml up -d --build hub-api
+	# Purge avant cp : le conteneur persiste entre les runs, et compose cp niche
+	# le dossier source dans la destination si elle existe déjà (tests/tests/...).
+	docker compose -p pouly-test -f docker-compose.yml -f docker-compose.test.yml exec -T hub-api sh -c "rm -rf /code/tests /code/pytest.ini"
+	docker compose -p pouly-test -f docker-compose.yml -f docker-compose.test.yml cp hub/tests hub-api:/code/tests
+	docker compose -p pouly-test -f docker-compose.yml -f docker-compose.test.yml cp hub/pytest.ini hub-api:/code/pytest.ini
+	docker compose -p pouly-test -f docker-compose.yml -f docker-compose.test.yml exec -T hub-api sh -c "cd /code && python -m pytest tests -n $(XDIST_WORKERS_DOCKER)"

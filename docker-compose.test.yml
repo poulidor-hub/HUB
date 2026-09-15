@@ -17,9 +17,11 @@ services:
 
   hub-api:
     container_name: hub-test-api
+    ports: !override []
 
   hub-frontend:
     container_name: hub-test-frontend
+    ports: !override []
 
 networks:
   hub-network:
