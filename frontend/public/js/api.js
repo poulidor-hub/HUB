@@ -1874,22 +1874,4 @@ class HubAPI {
         });
     }
 
-    // ===== Droits Philia (proxy app philia-proxy) =====
-
-    async getPhiliaRightsUsers() {
-        return this.request('/philia-rights/users');
-    }
-
-    async getPhiliaPerimeters(philiaUserId, ptype) {
-        return this.request(`/philia-rights/users/${encodeURIComponent(philiaUserId)}/perimeters?ptype=${ptype}`);
-    }
-
-    async removePhiliaRight(philiaUserId, agencyId, groupValue, label) {
-        return this.request(`/philia-rights/users/${encodeURIComponent(philiaUserId)}/perimeters/${encodeURIComponent(agencyId)}/groups/${encodeURIComponent(groupValue)}`, {
-            method: 'DELETE',
-            body: JSON.stringify({ label: label })
-        });
-    }
-}
-
 const api = new HubAPI();

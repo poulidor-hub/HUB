@@ -5,6 +5,30 @@
 
 ---
 
+## [3.58.0] - 15 septembre 2026
+
+### ⚡ Retrait de la fonction « Droits Philia » du portail
+
+Fonction métier (gestion des droits PhiliaNG) déplacée exclusivement dans
+l'app exemple-app (page `/users-rights`). Le HUB redevient un portail neutre.
+
+- **Frontend** : retrait du bouton nav, du tab pane `#tabPhiliaRights`, de la
+  modale de confirmation et du script `admin-philia-rights.js` (fichier
+  supprimé) ; retrait de `#tabPhiliaRights` de `ADMIN_SUBTAB_TARGETS`
+  (`init.js`) et des 3 méthodes API (`api.js`).
+- **Backend** : suppression du routeur proxy `app/routes/philia_rights.py`
+  (`/api/philia-rights/*` — ne servait que cette UI) et de son câblage
+  (`main.py`, `routes/__init__.py`) ; suppression de
+  `tests/test_philia_rights_proxy.py` ; commentaire de `test_socle_check.py`
+  nettoyé.
+- **Inchangé** : infra SNI/certs `service.example.org` (`pki.py`, confs nginx),
+  API métier de l'app (`/api/admin/philia-rights/*` côté exemple-app).
+- **Validation** : 1099 tests PASS ; rebuild hub-api + hub-frontend ; vérifié
+  live : tab absent du HTML servi, 404 sur le module JS et sur
+  `/api/philia-rights/users`, onglets admin restants intacts.
+
+---
+
 ## [3.57.1] - 15 septembre 2026
 
 ### ⚡ Self-client OIDC : SAs multi-apps (app_slug validé)

@@ -1,7 +1,7 @@
 """Tests du checksum socle (run_socle_check) — HTTP mocké, aucun réseau.
 
 Référence : rapport d'intégration hub↔app, 7 contrôles sans effet de bord.
-Le transport httpx est injecté (MockTransport), comme test_philia_rights_proxy.
+Le transport httpx est injecté (MockTransport).
 """
 import httpx
 import pytest

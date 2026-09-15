@@ -50,7 +50,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // Gérer le changement d'onglet dans la page admin (2 niveaux)
-    const ADMIN_SUBTAB_TARGETS = ['#tabAppGroups', '#tabServiceAccounts', '#tabOidcClients', '#tabGithubApps', '#tabNetwork', '#tabPhiliaRights'];
+    const ADMIN_SUBTAB_TARGETS = ['#tabAppGroups', '#tabServiceAccounts', '#tabOidcClients', '#tabGithubApps', '#tabNetwork'];
     const ADMIN_SUBTAB_STORAGE_KEY = 'hub.admin.subtab';
 
     const adminPageTabsEl = document.getElementById('adminPageTabs');

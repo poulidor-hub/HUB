@@ -64,7 +64,7 @@ strong { color: var(--dark); }
 <tbody>
 <tr>
 <td><strong>Version documentée</strong></td>
-<td>3.37.0 (état de l'art à la date de rédaction)</td>
+<td>3.57.1 (état de l'art à la date de rédaction)</td>
 </tr>
 <tr>
 <td><strong>Nature du document</strong></td>
@@ -142,7 +142,7 @@ fournit à l'administrateur et à l'exploitant les outils d'administration du pa
 </tbody>
 </table>
 <p>Cette grille de lecture structure la partie 2 du présent document.</p>
-<h3>2.3 Chiffres clés (version 3.37.0)</h3>
+<h3>2.3 Chiffres clés (version 3.57.1)</h3>
 <table>
 <thead>
 <tr>
@@ -153,11 +153,11 @@ fournit à l'administrateur et à l'exploitant les outils d'administration du pa
 <tbody>
 <tr>
 <td>Endpoints d'API REST</td>
-<td>≈ 250</td>
+<td>≈ 270</td>
 </tr>
 <tr>
 <td>Tables de base de données</td>
-<td>≈ 34</td>
+<td>≈ 36</td>
 </tr>
 <tr>
 <td>Outils d'automatisation exposés (serveur MCP compagnon)</td>
@@ -165,11 +165,11 @@ fournit à l'administrateur et à l'exploitant les outils d'administration du pa
 </tr>
 <tr>
 <td>Tests automatisés</td>
-<td>≈ 726 (78 fichiers de tests)</td>
+<td>≈ 1030 (104 fichiers de tests)</td>
 </tr>
 <tr>
 <td>Domaines fonctionnels</td>
-<td>22 modules décrits dans ce document</td>
+<td>24 modules décrits dans ce document</td>
 </tr>
 </tbody>
 </table>
@@ -350,7 +350,7 @@ peut les restaurer.</p>
 <tbody>
 <tr>
 <td>Authentification</td>
-<td>Jetons JWT signés <strong>RS256</strong> (clé privée unique au HUB), identifiant de jeton (<code>jti</code>) révocable, <strong>rotation des jetons de renouvellement</strong> stockés hashés</td>
+<td>Jetons JWT signés <strong>RS256</strong> (clé privée unique au HUB), identifiant de jeton (<code>jti</code>) révocable, <strong>rotation des jetons de renouvellement</strong> stockés hashés avec <strong>fenêtre de grâce</strong> (re-délivrance du remplaçant pendant 60 s — fin des déconnexions multi-onglets, détection de vol préservée), identifiant utilisateur stable (<strong>UUID immuable</strong>)</td>
 </tr>
 <tr>
 <td>Second facteur</td>
@@ -386,7 +386,7 @@ peut les restaurer.</p>
 </tr>
 <tr>
 <td>Vérification continue</td>
-<td>≈ 726 tests automatisés (authentification, OIDC, sauvegardes, snapshots, VPN, PKI, migrations…)</td>
+<td>≈ 1030 tests automatisés (authentification, OIDC, sauvegardes, snapshots, VPN, PKI, migrations…)</td>
 </tr>
 </tbody>
 </table>
@@ -464,6 +464,15 @@ messagerie externe.</p>
 - <strong>override de rôles de profil</strong> : ajustement individuel du niveau de droits d'une
   application couverte par un profil (badge « modifié », réinitialisation selon le
   profil) ;
+- <strong>identité stable</strong> : identifiant utilisateur immuable (UUID) ; <strong>renommage de
+  l'identifiant de connexion</strong> par l'administrateur sans rupture des liaisons
+  applicatives (jetons révoqués, identifiant OIDC préservé) ; prénom / nom éditables ;
+- <strong>accès atelier par utilisateur</strong> : visibilité de l'atelier d'une application accordée
+  indépendamment du rôle sur la production — un testeur peut essayer sans accéder au
+  service en ligne (voir § 9.8) ;
+- <strong>droits d'applications relais</strong> : consultation des périmètres d'un utilisateur dans
+  une application relais du parc et retrait de droit, l'action étant exécutée dans
+  l'application source via un appel de service authentifié et tracé dans l'audit ;
 - gestion des <strong>sessions</strong> : révocation immédiate des sessions d'un utilisateur
   (déconnexion forcée propagée en temps réel) ;
 - désactivation du second facteur d'un utilisateur (support) ;
@@ -506,8 +515,12 @@ validation explicite.</p>
   exécution surveillée, statuts en cours / succès / échec, annulation d'une sauvegarde
   en cours ;
 - <strong>rétention</strong> paramétrable par application (nombre d'archives conservées) ;
-- <strong>export chiffré</strong> hybride RSA-OAEP + AES-256-GCM, avec clés dédiées distinctes des
-  clés de signature des jetons ;
+- <strong>export chiffré</strong> hybride RSA-OAEP + AES-256-GCM (clés dédiées distinctes des clés
+  de signature) ou <strong>par mot de passe</strong> — format portable restaurable sur toute autre
+  instance du HUB ;
+- <strong>import de sauvegardes externes</strong> : archives chiffrées (mot de passe ou clé RSA) ou
+  ZIP brut, avec conservation optionnelle dans le registre et restauration immédiate —
+  la migration d'une application entre instances devient un transfert de fichier ;
 - <strong>restauration</strong> : depuis une archive stockée ou depuis un fichier importé ;
 - <strong>administration globale</strong> : vue consolidée, statistiques de stockage, sauvegardes en
   cours, <strong>détection et purge des archives orphelines</strong> (réassociées automatiquement si
@@ -547,6 +560,10 @@ importé la CA.</p>
 <p><strong>Fonctionnalités</strong>
 - <strong>paramètres à chaud</strong> (clé/valeur) : activation des demandes de compte, intégration
   GitHub, configuration VPN…, avec propagation temps réel aux interfaces connectées ;
+- <strong>adresse réseau du HUB</strong> : consultation de l'adresse effective et de sa source,
+  <strong>changement d'adresse validé par l'administrateur</strong> avec plan de propagation aux
+  applications (réécriture ciblée de leur configuration) et recréation des conteneurs
+  concernés ;
 - <strong>snapshots système</strong> : image complète du HUB (export de la base de données, fichiers,
   <strong>code source des applications</strong>, sauvegardes d'applications, configuration des
   conteneurs), compressée puis <strong>chiffrée</strong> (RSA-OAEP + AES-256-GCM), avec :
@@ -555,14 +572,21 @@ importé la CA.</p>
   - <strong>restauration avec prévisualisation</strong> avant application ;
 - <strong>export / import d'environnement</strong> : export logique de la configuration (utilisateurs,
   applications, rôles, comptes de service) et réimport sur une autre instance, en modes
-  création/mise à jour.</p>
+  création/mise à jour ; les <strong>ancres identitaires</strong> des utilisateurs (identifiants
+  stables, liaisons OIDC) sont exportées et restaurées — une reprise après sinistre ne
+  casse plus les liaisons applicatives.</p>
 <p><strong>Bénéfice</strong> — le HUB est lui-même un objet sauvegardé, restaurable et relocalisable.</p>
 <h3>7.7 Déploiement automatique des applications</h3>
 <p><strong>Objectif</strong> — mettre en service une application depuis son dépôt Git en une action.</p>
 <p><strong>Fonctionnalités</strong>
 - <strong>déploiement complet</strong> déclenché depuis l'administration : clonage / mise à jour du
-  dépôt, génération et injection du fichier d'environnement (slug, ports, secrets),
-  construction des conteneurs, démarrage puis vérification de santé ;
+  dépôt (en avance rapide, sans merge), génération et injection du fichier
+  d'environnement (slug, ports, sous-réseau, secrets préservés), construction des
+  conteneurs, démarrage puis vérification de santé — pipeline aligné sur la voie
+  manuelle de référence ;
+- <strong>configuration du dépôt Git depuis l'interface</strong> : enregistrement de l'URL du dépôt
+  avec test de connexion immédiat — débloque mises à jour et déploiement pour les
+  applications installées avant l'arrivée de cette intégration ;
 - <strong>suivi en temps réel</strong> : statut courant, étape en cours, journaux, historique des
   déploiements (un déploiement à la fois, persistance inter-redémarrages, annulation
   propre à l'arrêt du HUB) ;
@@ -592,6 +616,17 @@ quelques clics.</p>
 - <strong>cycle de vie des conteneurs</strong> : démarrage, arrêt, redémarrage d'une application
   depuis l'interface ;
 - <strong>journaux</strong> d'une application consultables directement ;
+- <strong>contrôle du socle d'intégration</strong> : vérification en un clic, pour chaque
+  application, des points d'intégration au HUB (santé, authentification des
+  utilisateurs, canal machine-à-machine, préférences, découverte de données,
+  sauvegardes, cohérence des versions) — rapport détaillé avec score, sans aucun effet
+  de bord ;
+- <strong>pilotage de l'atelier</strong> : création, mise à jour, déploiement en production et
+  suppression de l'atelier directement depuis la vue de santé, avec suivi pas-à-pas
+  (voir § 9.8) ;
+- <strong>surveillance du jeton GitHub</strong> : contrôle périodique de la validité du jeton
+  d'accès au catalogue de dépôts, alerte immédiate des administrateurs en cas de
+  révocation ou d'expiration (fin des dégradations silencieuses) ;
 - <strong>gestion des versions</strong> : comparaison version installée / version publiée sur le
   dépôt Git, consultation du journal des versions, des publications et de <strong>l'écart
   entre deux versions</strong> (aide à la décision de mise à jour).</p>
@@ -605,7 +640,11 @@ décidées sur information, pas au hasard.</p>
 - statistiques d'erreurs, compteur de nouvelles erreurs (badge), détail par erreur ;
 - <strong>acquittement</strong> global des erreurs traitées, purge ;
 - <strong>indicateurs (KPIs) et alertes</strong> : vue de synthèse de l'activité (connexions,
-  utilisateurs, applications, sauvegardes) et points d'attention.</p>
+  utilisateurs, applications, sauvegardes) et points d'attention ;
+- <strong>détection automatique des boucles de requêtes</strong> : alerte sur les requêtes
+  identiques répétées (même chemin, code HTTP, adresse IP) dans une fenêtre courte —
+  une application qui réitère en boucle un appel en échec est signalée avant de noyer
+  le journal.</p>
 <p><strong>Bénéfice</strong> — un seul endroit pour juger de la santé générale du système.</p>
 <h3>8.4 Suivi d'usage et présence (uptime)</h3>
 <p><strong>Objectif</strong> — mesurer l'utilisation réelle de chaque application, en continu.</p>
@@ -620,7 +659,8 @@ décidées sur information, pas au hasard.</p>
   session ou révocation (raisons distinctes) ;
 - <strong>visualisations</strong> : chronologie du jour par application (heatmap d'activité),
   répartition du temps par application, indicateurs de pic / moyenne / percentiles,
-  simultanés sur longue période, avec filtres par application et par période.</p>
+  simultanés sur longue période, avec filtres par application et par période ; les
+  mesures portent sur l'usage <strong>production</strong> (ateliers exclus).</p>
 <p><strong>Bénéfice</strong> — l'exploitant mesure la charge et l'adoption réelle du parc, application
 par application, sans sondage intrusif.</p>
 <hr>
@@ -648,6 +688,10 @@ sans intervention humaine.</p>
   suppression en cascade) ;
 - octroi <strong>client_credentials</strong> : l'application obtient des jetons avec ses identifiants
   de compte de service (secret régénérable, chiffré au repos) ;
+- <strong>identité d'application fiable</strong> : chaque application ne reçoit que ses propres
+  identifiants (jamais ceux d'une autre) ; le périmètre d'un compte de service ne
+  publie que les applications actives, approuvées et du même contexte
+  production/atelier ;
 - <strong>découverte de services</strong> : les applications déclarées « services partagés »
   publient leurs points d'entrée ; les autres applications les découvrent et les
   appellent avec leur jeton M2M ;
@@ -684,8 +728,16 @@ de vérifier nativement les jetons du HUB.</p>
   révoque les jetons et notifie les applications tierces ;
 - administration des <strong>clients OIDC</strong> : URI de redirection en liste stricte, scopes,
   secrets régénérables, activation ;
+- <strong>auto-provisioning du client OIDC</strong> : une application du parc peut créer ou
+  régénérer son propre client OIDC via son jeton machine-à-machine (secret affiché une
+  seule fois) — l'intégration d'une application tierce ne requiert plus aucune
+  intervention de l'administrateur ;
+- <strong>identifiant OIDC immuable</strong> : l'identifiant technique (<code>sub</code>) publié aux
+  applications tierces survit au renommage de l'identifiant de connexion — les
+  liaisons des clients existants ne se cassent jamais ;
 - lancement du flux depuis le tableau de bord du HUB ;
-- limitation de débit dédiée sur le point d'émission des jetons.</p>
+- protection anti-abus sur le point d'émission des jetons (throttle sur les échecs,
+  par client — les succès ne sont jamais pénalisés).</p>
 <p><strong>Bénéfice</strong> — une application tierce du marché s'intègre au parc sans compte
 dédupliqué et sans toucher à son code.</p>
 <h3>9.5 Déconnexion partout (SLO)</h3>
@@ -712,8 +764,8 @@ est configurée, exécutée et surveillée centralement.</p>
 <p><strong>Objectif</strong> — informer l'utilisateur depuis une application.</p>
 <p><strong>Fonctionnalités</strong>
 - <strong>flux d'événements SSE</strong> : une connexion authentifiée par utilisateur (multi-onglets),
-  battement de cœur 30 s (sert aussi au suivi d'activité des sessions), reconnexion
-  automatique côté client ;
+  battement de cœur 15 s (sert aussi au suivi d'activité des sessions et de la
+  présence par application), reconnexion automatique côté client ;
 - diffusion d'événements de rafraîchissement (applications, utilisateurs, droits,
   santé, sauvegardes, messages…) — les interfaces se mettent à jour sans rechargement ;
 - <strong>messagerie applicative</strong> : une application envoie un message à un utilisateur via
@@ -725,12 +777,23 @@ additionnelle.</p>
 <p><strong>Fonctionnalités</strong>
 - toute application dont le slug porte le suffixe d'atelier est identifiée comme
   <strong>atelier</strong> : elle tourne dans un projet de conteneurs séparé, aux côtés de la
-  production (qui peut être à l'arrêt pendant l'atelier) ;
-- <strong>isolation stricte des clés M2M</strong> : un compte de service d'un côté ne peut pas
-  appeler l'autre côté ; la découverte de services filtre selon le monde
-  production/atelier ;
-- filtre tableau de bord « production / ateliers / tout » ; les ateliers sont exclus
-  des rôles proposés aux utilisateurs.</p>
+  production (qui peut être à l'arrêt pendant l'atelier), avec ports et sous-réseau
+  dédiés ;
+- <strong>cycle complet piloté depuis l'interface</strong> : création (copie de la base de
+  production), mise à jour, déploiement en production et suppression — avec suivi
+  d'opération pas-à-pas, journal intégré et retour arrière automatique en cas d'échec
+  (l'atelier est conservé pour diagnostic) ;
+- <strong>déploiement d'une branche en atelier</strong> : n'importe quelle branche du dépôt peut
+  être déployée en atelier pour essai ; la production, elle, reste verrouillée sur la
+  branche principale — une évolution n'y arrive qu'après validation ;
+- <strong>isolation stricte des clés M2M</strong> : un compte de service d'un atelier n'a accès à
+  aucune application de production (et inversement) ; la découverte de services filtre
+  selon le monde production/atelier — une fuite de clé ne peut plus exposer le reste
+  du parc ;
+- <strong>accès par utilisateur</strong> : l'administrateur accorde la visibilité d'un atelier à un
+  utilisateur indépendamment de son accès à la production ; les ateliers sont exclus
+  des rôles proposés aux utilisateurs et des mesures d'usage (§ 8.4) ;
+- filtre tableau de bord « production / ateliers / tout ».</p>
 <p><strong>Bénéfice</strong> — tester une nouvelle version d'application sur une copie, sans risque de
 croisement avec le parc en service.</p>
 <h3>9.9 Automatisation (serveur MCP compagnon)</h3>
@@ -767,11 +830,11 @@ HUB sans documentation externe à maintenir.</p>
 <tbody>
 <tr>
 <td>Authentification</td>
-<td>Jetons, renouvellement, introspection, JWKS, TOTP, récupération, SSO/lancement</td>
+<td>Jetons, renouvellement (rotation + grâce), introspection, JWKS, TOTP, récupération, SSO/lancement</td>
 </tr>
 <tr>
 <td>Utilisateurs</td>
-<td>CRUD, rôles, opérations en masse, import CSV, sessions</td>
+<td>CRUD, rôles, opérations en masse, import CSV, sessions, renommage d'identifiant, accès atelier</td>
 </tr>
 <tr>
 <td>Demandes de compte</td>
@@ -779,7 +842,7 @@ HUB sans documentation externe à maintenir.</p>
 </tr>
 <tr>
 <td>Applications</td>
-<td>Registre, approbation, ports, scanner Docker, dépendances, découverte M2M</td>
+<td>Registre, approbation, ports, scanner Docker, dépendances, découverte M2M, dépôt Git</td>
 </tr>
 <tr>
 <td>Groupes d'applications</td>
@@ -795,7 +858,7 @@ HUB sans documentation externe à maintenir.</p>
 </tr>
 <tr>
 <td>Santé des applications</td>
-<td>État, cycle de vie conteneurs, journaux, versions/dépôt Git</td>
+<td>État, cycle de vie conteneurs, journaux, versions/dépôt Git, contrôle du socle, pilotage atelier</td>
 </tr>
 <tr>
 <td>Usage / présence</td>
@@ -803,7 +866,7 @@ HUB sans documentation externe à maintenir.</p>
 </tr>
 <tr>
 <td>Sauvegardes d'applications</td>
-<td>Réception, planification, rétention, export chiffré, restauration, orphelins</td>
+<td>Réception, planification, rétention, export chiffré (RSA ou mot de passe), import externe, restauration, orphelins</td>
 </tr>
 <tr>
 <td>Snapshots système</td>
@@ -811,7 +874,7 @@ HUB sans documentation externe à maintenir.</p>
 </tr>
 <tr>
 <td>Audit</td>
-<td>Journal, sessions, erreurs, statistiques, exports CSV</td>
+<td>Journal, sessions, erreurs, statistiques, exports CSV, alertes (boucles de requêtes)</td>
 </tr>
 <tr>
 <td>Messages</td>
@@ -823,7 +886,7 @@ HUB sans documentation externe à maintenir.</p>
 </tr>
 <tr>
 <td>OIDC</td>
-<td>Découverte, autorisation, jetons, userinfo, déconnexion arrière, clients</td>
+<td>Découverte, autorisation, jetons, userinfo, déconnexion arrière, clients, auto-provisioning</td>
 </tr>
 <tr>
 <td>VPN</td>
@@ -838,8 +901,16 @@ HUB sans documentation externe à maintenir.</p>
 <td>Clé/valeur à chaud</td>
 </tr>
 <tr>
+<td>Réseau du HUB</td>
+<td>Adresse effective, changement validé, plan de propagation, recréation des applications</td>
+</tr>
+<tr>
+<td>Droits d'applications relais</td>
+<td>Consultation des périmètres, retrait de droit via l'application source</td>
+</tr>
+<tr>
 <td>Catalogue GitHub</td>
-<td>Dépôts en cache, rafraîchissement, préparation de création d'app</td>
+<td>Dépôts en cache, rafraîchissement, vivacité du jeton, préparation de création d'app</td>
 </tr>
 <tr>
 <td>Étiquettes utilisateur</td>
@@ -875,6 +946,10 @@ HUB sans documentation externe à maintenir.</p>
 <tr>
 <td><strong>RS256 / JWKS</strong></td>
 <td>Signature RSA asymétrique / point de publication standard des clés publiques</td>
+</tr>
+<tr>
+<td><strong>Fenêtre de grâce</strong></td>
+<td>Courte période où un jeton de renouvellement remplacé reste accepté — évite les déconnexions entre onglets d'une même application</td>
 </tr>
 <tr>
 <td><strong>M2M</strong></td>
@@ -925,6 +1000,10 @@ HUB sans documentation externe à maintenir.</p>
 <td>Copie sandbox d'une application pour développement/essais, isolée de la production</td>
 </tr>
 <tr>
+<td><strong>Socle d'intégration</strong></td>
+<td>Ensemble des points d'intégration standard d'une application au HUB (santé, authentification, M2M, sauvegardes…)</td>
+</tr>
+<tr>
 <td><strong>MCP</strong></td>
 <td>Protocole d'outillage pour assistants IA — expose l'API du HUB comme outils</td>
 </tr>
@@ -945,7 +1024,7 @@ HUB sans documentation externe à maintenir.</p>
 <tbody>
 <tr>
 <td>Version documentée</td>
-<td>3.37.0</td>
+<td>3.57.1</td>
 </tr>
 <tr>
 <td>Composants livrés</td>
@@ -977,7 +1056,7 @@ HUB sans documentation externe à maintenir.</p>
 </tr>
 <tr>
 <td>Vérification</td>
-<td>≈ 726 tests automatisés — authentification, OIDC, SLO, M2M, sauvegardes, snapshots, VPN, PKI, migrations</td>
+<td>≈ 1030 tests automatisés — authentification, OIDC, SLO, M2M, sauvegardes, snapshots, VPN, PKI, migrations, atelier, réseau</td>
 </tr>
 </tbody>
 </table>
