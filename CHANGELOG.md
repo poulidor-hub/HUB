@@ -5,6 +5,24 @@
 
 ---
 
+## [3.57.1] - 15 septembre 2026
+
+### ⚡ Self-client OIDC : SAs multi-apps (app_slug validé)
+
+- Constat parc : les service accounts ont couramment un périmètre
+  multi-applications (19 apps pour certains) — la résolution mono-app de
+  3.55.0 répondait 409 sur ces SA, bloquant le self-client.
+- `POST|GET /api/oidc/self-client` acceptent désormais `app_slug` (body /
+  query) : validé **contre le périmètre du SA** (403 si hors périmètre) ;
+  SA mono-app : comportement inchangé (aucun app_slug requis) ; multi-apps
+  sans app_slug → 409 explicite.
+- `get_current_service_account` retourne (sa, apps) — la sélection de l'app
+  appartient à la route (helper `_resolve_self_client_app`).
+- 12 tests `test_oidc_self_client.py` (multi-apps + app_slug, hors
+  périmètre 403) ; suite complète 1107 passed / 0 failed.
+
+---
+
 ## [3.57.0] - 15 septembre 2026
 
 ### ⚡ Tests parallélisés (pytest-xdist) + cibles make test
