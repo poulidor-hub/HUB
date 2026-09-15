@@ -153,8 +153,8 @@ async def test_other_app_sa_cannot_see_client(
 
 
 @pytest.mark.asyncio
-async def test_multi_app_sa_conflict(client: AsyncClient, async_session, test_app, other_app):
-    """SA avec accès à 2 apps → 409 (ambiguïté d'app_id)."""
+async def test_multi_app_sa_without_slug_conflict(client: AsyncClient, async_session, test_app, other_app):
+    """SA multi-apps sans app_slug → 409 (ambiguïté)."""
     sa = ServiceAccount(
         name="sa_multi",
         client_id=ServiceAccount.generate_client_id(),
@@ -177,6 +177,44 @@ async def test_multi_app_sa_conflict(client: AsyncClient, async_session, test_ap
                              json={"redirect_uris": [BASE]},
                              headers=get_auth_header(token))
     assert resp.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_multi_app_sa_with_app_slug_resolves(client: AsyncClient, async_session, test_app, other_app):
+    """SA multi-apps + app_slug dans le périmètre → client lié à CETTE app."""
+    sa = ServiceAccount(
+        name="sa_multi2",
+        client_id=ServiceAccount.generate_client_id(),
+        client_secret_hash=get_password_hash("secret123"),
+        is_active=True,
+    )
+    async_session.add(sa)
+    await async_session.flush()
+    await async_session.execute(service_account_app_access.insert().values([
+        {"service_account_id": sa.id, "app_id": test_app.id},
+        {"service_account_id": sa.id, "app_id": other_app.id},
+    ]))
+    await async_session.commit()
+    token, _, _ = create_access_token(
+        username=sa.client_id,
+        apps={test_app.slug: "service", other_app.slug: "service"},
+        is_service_account=True,
+    )
+    resp = await client.post("/api/oidc/self-client",
+                             json={"redirect_uris": [BASE], "app_slug": test_app.slug},
+                             headers=get_auth_header(token))
+    assert resp.status_code == 201
+    assert resp.json()["app_id"] == test_app.id
+
+
+@pytest.mark.asyncio
+async def test_app_slug_outside_sa_scope_rejected(client: AsyncClient, async_session, test_app, other_app):
+    """app_slug hors du périmètre du SA → 403 (pas de provisioning pour autrui)."""
+    sa = await _make_sa_for_app(async_session, test_app, name="sa_scope")
+    resp = await client.post("/api/oidc/self-client",
+                             json={"redirect_uris": [BASE], "app_slug": other_app.slug},
+                             headers=_sa_headers(sa, test_app))
+    assert resp.status_code == 403
 
 
 @pytest.mark.asyncio

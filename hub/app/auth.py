@@ -515,8 +515,9 @@ async def get_current_service_account(
 ) -> tuple:
     """Résout le ServiceAccount porteur du token (endpoints self-service M2M).
 
-    Retourne (sa, app) où `app` est l'unique application active+approuvée
-    accessible au SA. Un SA multi-apps est ambigu → 409.
+    Retourne (sa, apps) où `apps` = applications actives+approuvées du
+    périmètre du SA (filtre canonique sa_apps_claim). La sélection de L'app
+    (unique ou via app_slug) appartient à la route consommatrice.
     """
     from app.m2m_scope import sa_apps_claim
 
@@ -548,9 +549,9 @@ async def get_current_service_account(
 
     allowed = set(sa_apps_claim(sa))  # filtre canonique : actives + approuvées + atelier
     apps = [a for a in (sa.applications or []) if a.slug in allowed]
-    if len(apps) != 1:
+    if not apps:
         raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Service account multi-applications — self-client non résolvable"
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Aucune application active dans le périmètre du service account"
         )
-    return sa, apps[0]
+    return sa, apps

@@ -832,10 +832,15 @@ def _serialize_client(c: OAuthClient) -> dict:
 
 
 class SelfClientRequest(BaseModel):
-    """Self-service M2M : provisionne le client OIDC de l'app appelante."""
+    """Self-service M2M : provisionne le client OIDC de l'app appelante.
+
+    `app_slug` est requis quand le SA a accès à plusieurs applications
+    (parc : SAs multi-apps) et doit appartenir à son périmètre.
+    """
     redirect_uris: List[str]
     regenerate: bool = True
     scopes: List[str] = ["openid", "profile", "email"]
+    app_slug: Optional[str] = None
 
     @field_validator("redirect_uris")
     @classmethod
@@ -846,6 +851,26 @@ class SelfClientRequest(BaseModel):
             if urlparse(uri).scheme.lower() not in ("http", "https"):
                 raise ValueError(f"redirect_uri invalide (http/https requis) : {uri}")
         return v
+
+
+def _resolve_self_client_app(sa_app: tuple, app_slug: Optional[str]):
+    """Sélectionne l'app cible du self-client : app_slug validé contre le
+    périmètre du SA, ou l'app unique si le SA est mono-app. Sinon 409/403."""
+    sa, apps = sa_app
+    if app_slug:
+        app = next((a for a in apps if a.slug == app_slug), None)
+        if app is None:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Application '{app_slug}' hors du périmètre du service account"
+            )
+        return sa, app
+    if len(apps) == 1:
+        return sa, apps[0]
+    raise HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail="Service account multi-applications — précisez app_slug"
+    )
 
 
 @router.get("/api/oidc/clients")
@@ -998,7 +1023,7 @@ async def upsert_self_oidc_client(
     Le secret n'est retourné qu'à la création ou à la régénération
     (stocké bcrypt côté Hub).
     """
-    sa, app = sa_app
+    sa, app = _resolve_self_client_app(sa_app, payload.app_slug)
     from app.auth import get_password_hash
 
     result = await db.execute(
@@ -1053,9 +1078,10 @@ async def upsert_self_oidc_client(
 async def get_self_oidc_client(
     sa_app: tuple = Depends(get_current_service_account),
     db: AsyncSession = Depends(get_db),
+    app_slug: Optional[str] = Query(None),
 ):
     """Métadonnées du client OIDC de l'app appelante (sans secret)."""
-    _sa, app = sa_app
+    _sa, app = _resolve_self_client_app(sa_app, app_slug)
     result = await db.execute(
         select(OAuthClient).where(OAuthClient.app_id == app.id)
     )
