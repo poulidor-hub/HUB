@@ -5,6 +5,18 @@
 
 ---
 
+## [3.57.0] - 15 septembre 2026
+
+### ⚡ Tests parallélisés (pytest-xdist) + cibles make test
+
+- **Ajouté** : dépendance `pytest-xdist>=3.6` (hub/requirements.txt, installée dans l'image hub-api).
+- **Ajouté** : cibles Makefile — `make test` (parallèle `-n auto`, variable `XDIST_WORKERS`), `make test-seq` (séquentiel, debug flaky), `make test-cov` (couverture multi-workers, htmlcov/), `make test-docker` (stack isolée `-p pouly-test`).
+- Perf : suite complète 1105 tests en ~88s en parallèle (×6 vs 534s séquentiel), comptes identiques seq/par vérifiés.
+- `make test-docker` : tests copiés dans le conteneur via `compose cp` (image runtime sans tests, choix historique conservé), pytest restreint à `tests/`, workers bornés à 4 (`XDIST_WORKERS_DOCKER`, mem_limit 2g), purge `/code/tests` avant copie (anti-nesting au 2e run).
+- **Corrigé** : stack de test sans publication de ports hôtes (`ports: !override []`) — compatible prod active (fin de collision 8000/80/443).
+
+---
+
 ## [3.56.1] - 15 septembre 2026
 
 ### ⚡ Validation prod du pipeline 3.56.0 — restaurations base pour le test
