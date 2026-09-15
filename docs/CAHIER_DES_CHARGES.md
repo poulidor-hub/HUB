@@ -4,7 +4,7 @@
 
 | | |
 |---|---|
-| **Version documentée** | 3.57.1 (état de l'art à la date de rédaction) |
+| **Version documentée** | 3.58.0 (état de l'art à la date de rédaction) |
 | **Nature du document** | Cahier des charges descriptif — fonctionnalités livrées et démontrables |
 | **Diffusion** | Interne / externe (document anonymisé) |
 
@@ -68,15 +68,15 @@ fournit à l'administrateur et à l'exploitant les outils d'administration du pa
 
 Cette grille de lecture structure la partie 2 du présent document.
 
-### 2.3 Chiffres clés (version 3.57.1)
+### 2.3 Chiffres clés (version 3.58.0)
 
 | Indicateur | Valeur |
 |---|---|
 | Endpoints d'API REST | ≈ 270 |
 | Tables de base de données | ≈ 36 |
 | Outils d'automatisation exposés (serveur MCP compagnon) | 65 |
-| Tests automatisés | ≈ 1030 (104 fichiers de tests) |
-| Domaines fonctionnels | 24 modules décrits dans ce document |
+| Tests automatisés | ≈ 1020 (103 fichiers de tests) |
+| Domaines fonctionnels | 23 modules décrits dans ce document |
 
 ### 2.4 Empilement technique
 
@@ -210,7 +210,7 @@ peut les restaurer.
 | Sauvegardes | Export chiffré hybride **RSA-OAEP + AES-256-GCM** avec clés dédiées distinctes des clés de signature |
 | Traçabilité | Identifiant de requête sur chaque appel (`X-Request-ID`), journalisation des actions sensibles, exceptions capturées en base avec pile d'appels |
 | Réseau | Seul le port VPN est exposé ; enregistrement des applications restreint par liste blanche réseau |
-| Vérification continue | ≈ 1030 tests automatisés (authentification, OIDC, sauvegardes, snapshots, VPN, PKI, migrations…) |
+| Vérification continue | ≈ 1020 tests automatisés (authentification, OIDC, sauvegardes, snapshots, VPN, PKI, migrations…) |
 
 ---
 
@@ -316,9 +316,6 @@ messagerie externe.
 - **accès atelier par utilisateur** : visibilité de l'atelier d'une application accordée
   indépendamment du rôle sur la production — un testeur peut essayer sans accéder au
   service en ligne (voir § 9.8) ;
-- **droits d'applications relais** : consultation des périmètres d'un utilisateur dans
-  une application relais du parc et retrait de droit, l'action étant exécutée dans
-  l'application source via un appel de service authentifié et tracé dans l'audit ;
 - gestion des **sessions** : révocation immédiate des sessions d'un utilisateur
   (déconnexion forcée propagée en temps réel) ;
 - désactivation du second facteur d'un utilisateur (support) ;
@@ -775,7 +772,6 @@ HUB sans documentation externe à maintenir.
 | PKI / certificats | Génération CA et certificats serveur (outils intégrés) |
 | Paramètres | Clé/valeur à chaud |
 | Réseau du HUB | Adresse effective, changement validé, plan de propagation, recréation des applications |
-| Droits d'applications relais | Consultation des périmètres, retrait de droit via l'application source |
 | Catalogue GitHub | Dépôts en cache, rafraîchissement, vivacité du jeton, préparation de création d'app |
 | Étiquettes utilisateur | Catégories, affectation, accusés de consultation |
 | Profils | Gabarits de rôles applicables |
@@ -809,7 +805,7 @@ HUB sans documentation externe à maintenir.
 
 | Élément | Valeur |
 |---|---|
-| Version documentée | 3.57.1 |
+| Version documentée | 3.58.0 |
 | Composants livrés | API (FastAPI), interface web (SPA native), PostgreSQL, frontal Nginx, serveur VPN WireGuard, serveur MCP compagnon (65 outils) |
 | Empaquetage | Docker Compose (projet unique pour le HUB ; un projet par application du parc) |
 | Plages réservées aux applications | Front : 4200-4699 · API : 9000-9499 (allocation gérée par le HUB) |
@@ -817,4 +813,4 @@ HUB sans documentation externe à maintenir.
 | Prérequis d'exécution | Hôte Docker, accès socket Docker (lecture + pilotage ciblé) ; clés RSA et clé de chiffrement des secrets générées au premier démarrage |
 | Comptes | 1 administrateur minimum (mot de passe forcément changé à la première connexion) |
 | Sauvegardes | Applications : planification cron + rétention par nombre · HUB : snapshots chiffrés (rétention 7 / 24 h par défaut), archivage S3 optionnel |
-| Vérification | ≈ 1030 tests automatisés — authentification, OIDC, SLO, M2M, sauvegardes, snapshots, VPN, PKI, migrations, atelier, réseau |
+| Vérification | ≈ 1020 tests automatisés — authentification, OIDC, SLO, M2M, sauvegardes, snapshots, VPN, PKI, migrations, atelier, réseau |

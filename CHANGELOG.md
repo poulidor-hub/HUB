@@ -5,6 +5,21 @@
 
 ---
 
+## [3.58.1] - 15 septembre 2026
+
+### 📖 Cahier des charges mis à jour à l'état de l'art v3.58.0
+
+| Fonctionnalité | Description |
+|----------------|-------------|
+| Version documentée | `CAHIER_DES_CHARGES.md` passé de v3.37.0 à **v3.58.0** (état de l'art) — delta 3.38→3.57 intégré |
+| Nouveaux contenus | Self-service OIDC M2M (§9.4), socle-check / pilotage atelier / moniteur jeton GitHub (§8.2), détection de boucles de requêtes (§8.3), changement d'IP + propagation (§7.6), identité stable + renommage + accès atelier (§7.1), backups chiffrés par mot de passe (§7.3), dépôt Git configurable + pipeline aligné voie manuelle (§7.7) |
+| §9.8 Atelier réécrit | Cycle complet depuis la vue Santé, branches → atelier (prod verrouillée sur main), accès par utilisateur, cloisonnement M2M renforcé |
+| Aligné 3.58.0 | Retrait de la fonction « Droits Philia » du portail (3.58.0) reflété : plus de mention « droits d'applications relais » (23 modules) |
+| Chiffres clés | Tests ≈726→≈1020 (103 fichiers), tables ≈34→36, endpoints ≈250→≈270, domaines 22→23 |
+| Corrections au passage | Heartbeat SSE 30 s → 15 s (3.34.1) ; livrable HTML autonome reconstruit |
+
+---
+
 ## [3.58.0] - 15 septembre 2026
 
 ### ⚡ Retrait de la fonction « Droits Philia » du portail
