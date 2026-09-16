@@ -189,6 +189,7 @@ def ensure_seeded() -> None:
             continue
         existing.append(KeyEntry(kid=kid, status="active", created_at=_iso(now),
                                  activated_at=_iso(now)))
+        pem.chmod(0o600)
     if existing:
         existing.sort(key=lambda e: (keyring_dir / f"{e.kid}.pem").stat().st_mtime,
                       reverse=True)

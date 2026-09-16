@@ -77,6 +77,17 @@ def test_manifest_missing_but_pem_present_rebuilds(isolated_keyring, tmp_path):
     assert len(isolated_keyring._load_entries()) == 1
 
 
+def test_adopted_pem_gets_chmod_600(isolated_keyring, tmp_path):
+    isolated_keyring.ensure_seeded()
+    kr_dir = tmp_path / "secrets" / "jwt_keys"
+    pem = kr_dir / f"{isolated_keyring.LEGACY_KID}.pem"
+    pem.chmod(0o644)  # simule un restore PRA avec umask laxiste
+    (kr_dir / "manifest.json").unlink()
+    isolated_keyring.reload()
+    isolated_keyring.ensure_seeded()  # chemin d'adoption
+    assert (pem.stat().st_mode & 0o777) == 0o600
+
+
 def test_corrupt_manifest_fails_closed(isolated_keyring, tmp_path):
     isolated_keyring.ensure_seeded()
     kr_dir = tmp_path / "secrets" / "jwt_keys"
