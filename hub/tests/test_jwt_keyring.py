@@ -5,6 +5,7 @@ from pathlib import Path
 
 import jwt as pyjwt
 import pytest
+from fastapi import HTTPException
 
 import app.config as cfg
 
@@ -277,3 +278,39 @@ async def test_access_token_kid_follows_active_key(client, isolated_keyring, adm
     resp = await client.get("/api/auth/.well-known/jwks.json")
     kids = {k["kid"] for k in resp.json()["keys"]}
     assert kids == {new_kid, isolated_keyring.LEGACY_KID}
+
+
+async def test_rotation_timeline(client, isolated_keyring, monkeypatch):
+    """Token ancien-kid : valide pendant l'overlap, rejeté après (spec §7)."""
+    isolated_keyring.ensure_seeded()
+    from app.auth import create_access_token, verify_token
+    token, _, _ = create_access_token(username="admin", apps={})
+    result = isolated_keyring.rotate()
+
+    # Dans l'overlap : l'ancien token reste valide
+    assert verify_token(token)["sub"] == "admin"
+
+    # JWKS publie les deux clés
+    resp = await client.get("/api/auth/.well-known/jwks.json")
+    assert len(resp.json()["keys"]) == 2
+
+    # Après l'overlap : rejet 401
+    overlap_end = datetime.fromisoformat(result["overlap_ends_at"])
+    monkeypatch.setattr(isolated_keyring, "_now",
+                        lambda: overlap_end + timedelta(minutes=1))
+    with pytest.raises(HTTPException) as exc_info:
+        verify_token(token)
+    assert exc_info.value.status_code == 401
+
+
+async def test_token_with_unknown_kid_rejected(client, isolated_keyring):
+    isolated_keyring.ensure_seeded()
+    from app.auth import create_access_token, verify_token
+    token, _, _ = create_access_token(username="admin", apps={})
+    header = pyjwt.get_unverified_header(token)
+    forged = pyjwt.encode({"sub": "admin"}, isolated_keyring.get_active_private_pem(),
+                          algorithm="RS256", headers={"kid": "intruder"})
+    assert header["kid"] != "intruder"
+    with pytest.raises(HTTPException) as exc_info:
+        verify_token(forged)
+    assert exc_info.value.status_code == 401

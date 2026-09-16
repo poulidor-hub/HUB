@@ -224,10 +224,13 @@ def decode_oidc_session_cookie(token: str, settings) -> Optional[str]:
     l'username — la résolution user (resolve_user_by_oidc_sub) gère le
     fallback. Ce helper retourne la valeur brute sans résoudre.
     """
+    entry, public_pem = jwt_keyring.select_verification_key(token)
+    if public_pem is None:
+        return None
     try:
         payload = pyjwt.decode(
             token,
-            settings.jwt_public_key,
+            public_pem,
             algorithms=["RS256"],
             options={"verify_aud": False},
         )
