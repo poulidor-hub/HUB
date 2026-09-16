@@ -361,6 +361,11 @@ async def lifespan(app: FastAPI):
 
     # Générer les clés de chiffrement backup (indépendantes des clés JWT)
     ensure_backup_keys_exist()
+
+    # Trousseau JWT multi-kid : seed au premier boot (importe la paire legacy
+    # sous kid hub-jwt-key-1, ou reconstruit depuis jwt_keys/ — spec §5.1)
+    from app import jwt_keyring
+    jwt_keyring.ensure_seeded()
     
     # Démarrer la tâche de nettoyage périodique
     _cleanup_task = asyncio.create_task(periodic_token_cleanup())
