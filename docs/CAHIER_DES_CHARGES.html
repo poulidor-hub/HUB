@@ -64,7 +64,7 @@ strong { color: var(--dark); }
 <tbody>
 <tr>
 <td><strong>Version documentée</strong></td>
-<td>3.58.0 (état de l'art à la date de rédaction)</td>
+<td>3.59.0 (état de l'art à la date de rédaction)</td>
 </tr>
 <tr>
 <td><strong>Nature du document</strong></td>
@@ -142,7 +142,7 @@ fournit à l'administrateur et à l'exploitant les outils d'administration du pa
 </tbody>
 </table>
 <p>Cette grille de lecture structure la partie 2 du présent document.</p>
-<h3>2.3 Chiffres clés (version 3.58.0)</h3>
+<h3>2.3 Chiffres clés (version 3.59.0)</h3>
 <table>
 <thead>
 <tr>
@@ -165,7 +165,7 @@ fournit à l'administrateur et à l'exploitant les outils d'administration du pa
 </tr>
 <tr>
 <td>Tests automatisés</td>
-<td>≈ 1020 (103 fichiers de tests)</td>
+<td>≈ 1050 (107 fichiers de tests)</td>
 </tr>
 <tr>
 <td>Domaines fonctionnels</td>
@@ -282,6 +282,16 @@ est le cœur du positionnement produit.</p>
 ni le multi-tenant à très grande échelle. Il cible les parcs applicatifs privés (quelques
 dizaines d'applications et d'utilisateurs à quelques centaines) hébergés sur un réseau
 contrôlé, où la lisibilité et la reprise en main priment sur l'exhaustivité des fonctions.</p>
+<p>Le HUB est déployé sur un <strong>hôte unique</strong> : ni le frontal ni l'hôte physique ne sont
+doublés, et <strong>aucune bascule automatique (failover) n'est prévue</strong> — ce serait contraire
+à l'objectif de simplicité. En contrepartie, la reprise après sinistre est traitée comme
+un scénario de premier ordre : snapshots chiffrés <strong>autonomes</strong> (restaurables sur une
+machine neuve sans dépendance à l'instance d'origine), clés de chiffrement exportées hors
+ligne, et <strong>procédure de restauration bare-metal semi-automatique documentée pas à pas</strong>
+(dépôt → secrets → stack vierge → restauration → redémarrage ; les migrations manquantes
+sont rejouées au démarrage, un snapshot ancien est restaurable sur une image récente).
+Le délai de remise en service dépend de cette procédure et de la disponibilité des clés
+hors ligne : il n'est pas garanti contractuellement, il est <strong>répété et outillé</strong>.</p>
 <hr>
 <h2>4. Architecture simplifiée</h2>
 <h3>4.1 Vue d'ensemble</h3>
@@ -350,7 +360,11 @@ peut les restaurer.</p>
 <tbody>
 <tr>
 <td>Authentification</td>
-<td>Jetons JWT signés <strong>RS256</strong> (clé privée unique au HUB), identifiant de jeton (<code>jti</code>) révocable, <strong>rotation des jetons de renouvellement</strong> stockés hashés avec <strong>fenêtre de grâce</strong> (re-délivrance du remplaçant pendant 60 s — fin des déconnexions multi-onglets, détection de vol préservée), identifiant utilisateur stable (<strong>UUID immuable</strong>)</td>
+<td>Jetons JWT signés <strong>RS256</strong>, identifiant de jeton (<code>jti</code>) révocable, <strong>rotation des jetons de renouvellement</strong> stockés hashés avec <strong>fenêtre de grâce</strong> (re-délivrance du remplaçant pendant 60 s — fin des déconnexions multi-onglets, détection de vol préservée), identifiant utilisateur stable (<strong>UUID immuable</strong>)</td>
+</tr>
+<tr>
+<td>Rotation des clés de signature</td>
+<td><strong>Trousseau multi-clés</strong> (<code>kid</code> par empreinte RFC 7638) : rotation <strong>sans rupture</strong> (l'ancienne clé reste publiée au JWKS pendant une fenêtre de transition, 24 h par défaut), <strong>révocation d'urgence</strong>, nettoyage — endpoints d'administration et CLI dédiés ; les applications récupèrent les clés <strong>dynamiquement via JWKS</strong> (sélection par <code>kid</code>, cache local) — <strong>aucun redémarrage requis</strong>, ni côté HUB ni côté applications</td>
 </tr>
 <tr>
 <td>Second facteur</td>
@@ -374,7 +388,7 @@ peut les restaurer.</p>
 </tr>
 <tr>
 <td>Sauvegardes</td>
-<td>Export chiffré hybride <strong>RSA-OAEP + AES-256-GCM</strong> avec clés dédiées distinctes des clés de signature</td>
+<td>Chiffrement hybride <strong>RSA-OAEP + AES-256-GCM</strong> avec une <strong>paire de clés dédiée</strong>, découplée du trousseau de signature ; chaîne de déchiffrement à repli (les archives antérieures restent lisibles) ; contrôle au démarrage si les clés critiques sont absentes</td>
 </tr>
 <tr>
 <td>Traçabilité</td>
@@ -386,7 +400,7 @@ peut les restaurer.</p>
 </tr>
 <tr>
 <td>Vérification continue</td>
-<td>≈ 1020 tests automatisés (authentification, OIDC, sauvegardes, snapshots, VPN, PKI, migrations…)</td>
+<td>≈ 1050 tests automatisés (authentification, OIDC, sauvegardes, snapshots, VPN, PKI, migrations…)</td>
 </tr>
 </tbody>
 </table>
@@ -506,8 +520,14 @@ validation explicite.</p>
 <p><strong>Objectif</strong> — centraliser, planifier et protéger les sauvegardes de tout le parc.</p>
 <p><strong>Fonctionnalités</strong>
 - <strong>réception</strong> des archives poussées par les applications (ZIP, somme de contrôle
-  SHA-256) ou <strong>déclenchement par le HUB</strong> (y compris avec mise au repos du conteneur
-  pendant la sauvegarde — mode « quiesce ») ;
+  SHA-256) ou <strong>déclenchement par le HUB</strong> : le HUB appelle le point de sauvegarde de
+  l'application avec un jeton machine-à-machine — c'est <strong>l'application qui construit
+  son archive</strong> (export logique et cohérent de ses propres données) ; le HUB
+  <strong>n'accède jamais directement à ses volumes</strong> ;
+- <strong>mode quiesce</strong> (par application) : pour les applications dont le stockage l'exige
+  (bases embarquées), le HUB transmet la demande de mise au repos et <strong>l'application
+  arrête puis redémarre elle-même son conteneur</strong> autour de son snapshot — la cohérence
+  est obtenue sans manipulation des volumes par le HUB ;
 - <strong>planification cron</strong> par application (mode désactivé / manuel / planifié),
   exécution surveillée, statuts en cours / succès / échec, annulation d'une sauvegarde
   en cours ;
@@ -563,10 +583,15 @@ importé la CA.</p>
   concernés ;
 - <strong>snapshots système</strong> : image complète du HUB (export de la base de données, fichiers,
   <strong>code source des applications</strong>, sauvegardes d'applications, configuration des
-  conteneurs), compressée puis <strong>chiffrée</strong> (RSA-OAEP + AES-256-GCM), avec :
+  conteneurs), compressée puis <strong>chiffrée</strong> (RSA-OAEP + AES-256-GCM) avec la <strong>paire de
+  clés de sauvegarde dédiée</strong> (découplée du trousseau de signature ; déchiffrement à
+  chaîne de repli pour les archives antérieures), avec :
   - planification cron, rétention paramétrable, statistiques,
   - téléchargement de l'archive, <strong>archivage optionnel vers stockage S3</strong>,
-  - <strong>restauration avec prévisualisation</strong> avant application ;
+  - <strong>restauration avec prévisualisation</strong> avant application,
+  - <strong>restauration bare-metal</strong> : procédure semi-automatique sur machine neuve, les
+    migrations manquantes étant rejouées au démarrage (un snapshot ancien est
+    restaurable sur une image récente) ;
 - <strong>export / import d'environnement</strong> : export logique de la configuration (utilisateurs,
   applications, rôles, comptes de service) et réimport sur une autre instance, en modes
   création/mise à jour ; les <strong>ancres identitaires</strong> des utilisateurs (identifiants
@@ -709,6 +734,10 @@ avec résilience aux incidents réseau.</p>
 - <strong>vérification locale</strong> : l'application valide le jeton JWT avec la <strong>clé publique</strong>
   du HUB (point d'entrée JWKS standard) — aucune base d'utilisateurs, aucun appel au
   HUB à chaque requête ;
+- <strong>rotation des clés transparente</strong> : chaque jeton porte l'identifiant de sa clé de
+  signature (<code>kid</code>) ; l'application sélectionne la bonne clé publique depuis le JWKS
+  (cache local avec rafraîchissement) — une rotation ou une révocation côté HUB ne
+  requiert <strong>ni redéploiement ni interruption</strong> des applications ;
 - <strong>introspection</strong> des jetons (RFC 7662) pour les applications qui préfèrent déléguer
   la vérification ;
 - rôles transmis dans le jeton, enrichis des rôles applicatifs.</p>
@@ -827,7 +856,7 @@ HUB sans documentation externe à maintenir.</p>
 <tbody>
 <tr>
 <td>Authentification</td>
-<td>Jetons, renouvellement (rotation + grâce), introspection, JWKS, TOTP, récupération, SSO/lancement</td>
+<td>Jetons, renouvellement (rotation + grâce), introspection, JWKS multi-clés, TOTP, récupération, SSO/lancement, rotation/révocation des clés de signature</td>
 </tr>
 <tr>
 <td>Utilisateurs</td>
@@ -867,7 +896,7 @@ HUB sans documentation externe à maintenir.</p>
 </tr>
 <tr>
 <td>Snapshots système</td>
-<td>Déclenchement, configuration, restauration avec aperçu, S3</td>
+<td>Déclenchement, configuration, restauration avec aperçu, restauration bare-metal, S3, clé de sauvegarde dédiée</td>
 </tr>
 <tr>
 <td>Audit</td>
@@ -939,6 +968,14 @@ HUB sans documentation externe à maintenir.</p>
 <tr>
 <td><strong>RS256 / JWKS</strong></td>
 <td>Signature RSA asymétrique / point de publication standard des clés publiques</td>
+</tr>
+<tr>
+<td><strong>kid (Key ID)</strong></td>
+<td>Identifiant d'une clé de signature (empreinte RFC 7638), transporté dans chaque jeton — l'application choisit la bonne clé publique depuis le JWKS</td>
+</tr>
+<tr>
+<td><strong>Retiring (clé)</strong></td>
+<td>Statut transitoire d'une clé de signature remplacée : encore publiée pour la transition (24 h par défaut), puis archivée</td>
 </tr>
 <tr>
 <td><strong>Fenêtre de grâce</strong></td>
@@ -1017,7 +1054,7 @@ HUB sans documentation externe à maintenir.</p>
 <tbody>
 <tr>
 <td>Version documentée</td>
-<td>3.58.0</td>
+<td>3.59.0</td>
 </tr>
 <tr>
 <td>Composants livrés</td>
@@ -1049,7 +1086,7 @@ HUB sans documentation externe à maintenir.</p>
 </tr>
 <tr>
 <td>Vérification</td>
-<td>≈ 1020 tests automatisés — authentification, OIDC, SLO, M2M, sauvegardes, snapshots, VPN, PKI, migrations, atelier, réseau</td>
+<td>≈ 1050 tests automatisés — authentification, OIDC, SLO, M2M, sauvegardes, snapshots, VPN, PKI, migrations, atelier, réseau, rotation de clés</td>
 </tr>
 </tbody>
 </table>

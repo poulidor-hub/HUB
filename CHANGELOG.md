@@ -5,6 +5,20 @@
 
 ---
 
+## [3.59.1] - 16 septembre 2026
+
+### 📖 Cahier des charges — réponses aux points d'audit (clés, SPOF, quiesce)
+
+| Fonctionnalité | Description |
+|----------------|-------------|
+| Version documentée | v3.58.0 → **v3.59.0** (état de l'art) |
+| Rotation des clés | §5 : trousseau multi-kid documenté (rotation sans rupture, overlap 24 h, révocation d'urgence) ; §9.3 : les apps récupèrent les clés dynamiquement via JWKS (sélection par `kid`, cache local) — aucun redémarrage requis |
+| SPOF / reprise | §3.3 : hôte unique assumé, pas de failover — stratégie de reprise explicitée (snapshots autonomes + bare-metal semi-automatique, clés hors ligne, RTO outillé mais non garanti) ; §7.6 : restauration bare-metal |
+| Quiesce / volumes | §7.3 : délégation clarifiée — l'app construit son archive (export logique) et gère elle-même son arrêt/relance ; le HUB n'accède jamais aux volumes |
+| Divers | Sauvegardes §5 : paire de clés dédiée + chaîne de repli ; glossaire `kid`/`Retiring` ; chiffres à jour (tests ≈1050, 107 fichiers) ; HTML autonome reconstruit |
+
+---
+
 ## [3.59.0] - 16 septembre 2026
 
 ### 🔐 Rotation multi-kid du JWKS + découplage du chiffrement des snapshots

@@ -4,7 +4,7 @@
 
 | | |
 |---|---|
-| **Version documentée** | 3.58.0 (état de l'art à la date de rédaction) |
+| **Version documentée** | 3.59.0 (état de l'art à la date de rédaction) |
 | **Nature du document** | Cahier des charges descriptif — fonctionnalités livrées et démontrables |
 | **Diffusion** | Interne / externe (document anonymisé) |
 
@@ -68,14 +68,14 @@ fournit à l'administrateur et à l'exploitant les outils d'administration du pa
 
 Cette grille de lecture structure la partie 2 du présent document.
 
-### 2.3 Chiffres clés (version 3.58.0)
+### 2.3 Chiffres clés (version 3.59.0)
 
 | Indicateur | Valeur |
 |---|---|
 | Endpoints d'API REST | ≈ 270 |
 | Tables de base de données | ≈ 36 |
 | Outils d'automatisation exposés (serveur MCP compagnon) | 65 |
-| Tests automatisés | ≈ 1020 (103 fichiers de tests) |
+| Tests automatisés | ≈ 1050 (107 fichiers de tests) |
 | Domaines fonctionnels | 23 modules décrits dans ce document |
 
 ### 2.4 Empilement technique
@@ -129,6 +129,17 @@ Le HUB ne vise pas la fédération d'identités externes, la gestion d'annuaires
 ni le multi-tenant à très grande échelle. Il cible les parcs applicatifs privés (quelques
 dizaines d'applications et d'utilisateurs à quelques centaines) hébergés sur un réseau
 contrôlé, où la lisibilité et la reprise en main priment sur l'exhaustivité des fonctions.
+
+Le HUB est déployé sur un **hôte unique** : ni le frontal ni l'hôte physique ne sont
+doublés, et **aucune bascule automatique (failover) n'est prévue** — ce serait contraire
+à l'objectif de simplicité. En contrepartie, la reprise après sinistre est traitée comme
+un scénario de premier ordre : snapshots chiffrés **autonomes** (restaurables sur une
+machine neuve sans dépendance à l'instance d'origine), clés de chiffrement exportées hors
+ligne, et **procédure de restauration bare-metal semi-automatique documentée pas à pas**
+(dépôt → secrets → stack vierge → restauration → redémarrage ; les migrations manquantes
+sont rejouées au démarrage, un snapshot ancien est restaurable sur une image récente).
+Le délai de remise en service dépend de cette procédure et de la disponibilité des clés
+hors ligne : il n'est pas garanti contractuellement, il est **répété et outillé**.
 
 ---
 
@@ -201,16 +212,17 @@ peut les restaurer.
 
 | Couche | Mécanisme mis en œuvre |
 |---|---|
-| Authentification | Jetons JWT signés **RS256** (clé privée unique au HUB), identifiant de jeton (`jti`) révocable, **rotation des jetons de renouvellement** stockés hashés avec **fenêtre de grâce** (re-délivrance du remplaçant pendant 60 s — fin des déconnexions multi-onglets, détection de vol préservée), identifiant utilisateur stable (**UUID immuable**) |
+| Authentification | Jetons JWT signés **RS256**, identifiant de jeton (`jti`) révocable, **rotation des jetons de renouvellement** stockés hashés avec **fenêtre de grâce** (re-délivrance du remplaçant pendant 60 s — fin des déconnexions multi-onglets, détection de vol préservée), identifiant utilisateur stable (**UUID immuable**) |
+| Rotation des clés de signature | **Trousseau multi-clés** (`kid` par empreinte RFC 7638) : rotation **sans rupture** (l'ancienne clé reste publiée au JWKS pendant une fenêtre de transition, 24 h par défaut), **révocation d'urgence**, nettoyage — endpoints d'administration et CLI dédiés ; les applications récupèrent les clés **dynamiquement via JWKS** (sélection par `kid`, cache local) — **aucun redémarrage requis**, ni côté HUB ni côté applications |
 | Second facteur | **TOTP** (application d'authentification) avec code QR de provisioning, codes de récupération, révocation par l'administrateur |
 | Machine-à-machine | Octroi `client_credentials`, secrets chiffrés au repos (**Fernet**), clé dédiée et obligatoire en production |
 | Limitation de débit | 5 tentatives de connexion / minute / IP sur les endpoints de saisie de mot de passe, réponses 429 avec délai indicatif. Pont OIDC `/api/oidc/token` : pas de plafond IP (échange code→token server-to-server, une seule IP source pour tous les utilisateurs d'une app) mais **throttle anti-abus sur les échecs** — 30 échecs / 60 s par client_id (succès jamais comptés ; garbage sans client_id plafonné par IP) |
 | En-têtes HTTP | `X-Frame-Options`, `X-Content-Type-Options`, `Referrer-Policy`, `Permissions-Policy`, **CSP** stricte |
 | Secrets | Clés RSA hors du dépôt de code, validation de la configuration de sécurité **au démarrage** (refus de boot en production si invalide) |
-| Sauvegardes | Export chiffré hybride **RSA-OAEP + AES-256-GCM** avec clés dédiées distinctes des clés de signature |
+| Sauvegardes | Chiffrement hybride **RSA-OAEP + AES-256-GCM** avec une **paire de clés dédiée**, découplée du trousseau de signature ; chaîne de déchiffrement à repli (les archives antérieures restent lisibles) ; contrôle au démarrage si les clés critiques sont absentes |
 | Traçabilité | Identifiant de requête sur chaque appel (`X-Request-ID`), journalisation des actions sensibles, exceptions capturées en base avec pile d'appels |
 | Réseau | Seul le port VPN est exposé ; enregistrement des applications restreint par liste blanche réseau |
-| Vérification continue | ≈ 1020 tests automatisés (authentification, OIDC, sauvegardes, snapshots, VPN, PKI, migrations…) |
+| Vérification continue | ≈ 1050 tests automatisés (authentification, OIDC, sauvegardes, snapshots, VPN, PKI, migrations…) |
 
 ---
 
@@ -360,8 +372,14 @@ validation explicite.
 
 **Fonctionnalités**
 - **réception** des archives poussées par les applications (ZIP, somme de contrôle
-  SHA-256) ou **déclenchement par le HUB** (y compris avec mise au repos du conteneur
-  pendant la sauvegarde — mode « quiesce ») ;
+  SHA-256) ou **déclenchement par le HUB** : le HUB appelle le point de sauvegarde de
+  l'application avec un jeton machine-à-machine — c'est **l'application qui construit
+  son archive** (export logique et cohérent de ses propres données) ; le HUB
+  **n'accède jamais directement à ses volumes** ;
+- **mode quiesce** (par application) : pour les applications dont le stockage l'exige
+  (bases embarquées), le HUB transmet la demande de mise au repos et **l'application
+  arrête puis redémarre elle-même son conteneur** autour de son snapshot — la cohérence
+  est obtenue sans manipulation des volumes par le HUB ;
 - **planification cron** par application (mode désactivé / manuel / planifié),
   exécution surveillée, statuts en cours / succès / échec, annulation d'une sauvegarde
   en cours ;
@@ -429,10 +447,15 @@ importé la CA.
   concernés ;
 - **snapshots système** : image complète du HUB (export de la base de données, fichiers,
   **code source des applications**, sauvegardes d'applications, configuration des
-  conteneurs), compressée puis **chiffrée** (RSA-OAEP + AES-256-GCM), avec :
+  conteneurs), compressée puis **chiffrée** (RSA-OAEP + AES-256-GCM) avec la **paire de
+  clés de sauvegarde dédiée** (découplée du trousseau de signature ; déchiffrement à
+  chaîne de repli pour les archives antérieures), avec :
   - planification cron, rétention paramétrable, statistiques,
   - téléchargement de l'archive, **archivage optionnel vers stockage S3**,
-  - **restauration avec prévisualisation** avant application ;
+  - **restauration avec prévisualisation** avant application,
+  - **restauration bare-metal** : procédure semi-automatique sur machine neuve, les
+    migrations manquantes étant rejouées au démarrage (un snapshot ancien est
+    restaurable sur une image récente) ;
 - **export / import d'environnement** : export logique de la configuration (utilisateurs,
   applications, rôles, comptes de service) et réimport sur une autre instance, en modes
   création/mise à jour ; les **ancres identitaires** des utilisateurs (identifiants
@@ -611,6 +634,10 @@ avec résilience aux incidents réseau.
 - **vérification locale** : l'application valide le jeton JWT avec la **clé publique**
   du HUB (point d'entrée JWKS standard) — aucune base d'utilisateurs, aucun appel au
   HUB à chaque requête ;
+- **rotation des clés transparente** : chaque jeton porte l'identifiant de sa clé de
+  signature (`kid`) ; l'application sélectionne la bonne clé publique depuis le JWKS
+  (cache local avec rafraîchissement) — une rotation ou une révocation côté HUB ne
+  requiert **ni redéploiement ni interruption** des applications ;
 - **introspection** des jetons (RFC 7662) pour les applications qui préfèrent déléguer
   la vérification ;
 - rôles transmis dans le jeton, enrichis des rôles applicatifs.
@@ -753,7 +780,7 @@ HUB sans documentation externe à maintenir.
 
 | Domaine | Périmètre (synthèse) |
 |---|---|
-| Authentification | Jetons, renouvellement (rotation + grâce), introspection, JWKS, TOTP, récupération, SSO/lancement |
+| Authentification | Jetons, renouvellement (rotation + grâce), introspection, JWKS multi-clés, TOTP, récupération, SSO/lancement, rotation/révocation des clés de signature |
 | Utilisateurs | CRUD, rôles, opérations en masse, import CSV, sessions, renommage d'identifiant, accès atelier |
 | Demandes de compte | Formulaire public, suivi, approbation/rejet, notification des administrateurs |
 | Applications | Registre, approbation, ports, scanner Docker, dépendances, découverte M2M, dépôt Git |
@@ -763,7 +790,7 @@ HUB sans documentation externe à maintenir.
 | Santé des applications | État, cycle de vie conteneurs, journaux, versions/dépôt Git, contrôle du socle, pilotage atelier |
 | Usage / présence | Segments par application, timeline, heatmap, statistiques |
 | Sauvegardes d'applications | Réception, planification, rétention, export chiffré (RSA ou mot de passe), import externe, restauration, orphelins |
-| Snapshots système | Déclenchement, configuration, restauration avec aperçu, S3 |
+| Snapshots système | Déclenchement, configuration, restauration avec aperçu, restauration bare-metal, S3, clé de sauvegarde dédiée |
 | Audit | Journal, sessions, erreurs, statistiques, exports CSV, alertes (boucles de requêtes) |
 | Messages | Envoi ciblé/général/programmé, modèles, reçus, messagerie M2M |
 | Événements | Flux SSE, état |
@@ -784,6 +811,8 @@ HUB sans documentation externe à maintenir.
 | **SSO** | Single Sign-On — authentification unique donnant accès à plusieurs applications |
 | **JWT** | Jeton d'accès signé (JSON Web Token) transportant l'identité et les rôles |
 | **RS256 / JWKS** | Signature RSA asymétrique / point de publication standard des clés publiques |
+| **kid (Key ID)** | Identifiant d'une clé de signature (empreinte RFC 7638), transporté dans chaque jeton — l'application choisit la bonne clé publique depuis le JWKS |
+| **Retiring (clé)** | Statut transitoire d'une clé de signature remplacée : encore publiée pour la transition (24 h par défaut), puis archivée |
 | **Fenêtre de grâce** | Courte période où un jeton de renouvellement remplacé reste accepté — évite les déconnexions entre onglets d'une même application |
 | **M2M** | Machine-to-Machine — échanges entre applications sans utilisateur humain |
 | **OIDC** | OpenID Connect — protocole standard de fournisseur d'identité (au-dessus d'OAuth 2.0) |
@@ -805,7 +834,7 @@ HUB sans documentation externe à maintenir.
 
 | Élément | Valeur |
 |---|---|
-| Version documentée | 3.58.0 |
+| Version documentée | 3.59.0 |
 | Composants livrés | API (FastAPI), interface web (SPA native), PostgreSQL, frontal Nginx, serveur VPN WireGuard, serveur MCP compagnon (65 outils) |
 | Empaquetage | Docker Compose (projet unique pour le HUB ; un projet par application du parc) |
 | Plages réservées aux applications | Front : 4200-4699 · API : 9000-9499 (allocation gérée par le HUB) |
@@ -813,4 +842,4 @@ HUB sans documentation externe à maintenir.
 | Prérequis d'exécution | Hôte Docker, accès socket Docker (lecture + pilotage ciblé) ; clés RSA et clé de chiffrement des secrets générées au premier démarrage |
 | Comptes | 1 administrateur minimum (mot de passe forcément changé à la première connexion) |
 | Sauvegardes | Applications : planification cron + rétention par nombre · HUB : snapshots chiffrés (rétention 7 / 24 h par défaut), archivage S3 optionnel |
-| Vérification | ≈ 1020 tests automatisés — authentification, OIDC, SLO, M2M, sauvegardes, snapshots, VPN, PKI, migrations, atelier, réseau |
+| Vérification | ≈ 1050 tests automatisés — authentification, OIDC, SLO, M2M, sauvegardes, snapshots, VPN, PKI, migrations, atelier, réseau, rotation de clés |
