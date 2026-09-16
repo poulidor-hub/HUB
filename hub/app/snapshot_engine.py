@@ -18,9 +18,6 @@ from typing import Optional
 import zstandard as zstd
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from cryptography.hazmat.primitives import hashes, serialization
-from cryptography.hazmat.primitives.asymmetric import padding
-from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 from app.models import HubSnapshot, utcnow
 from app.snapshot_collectors import (
@@ -29,6 +26,7 @@ from app.snapshot_collectors import (
 )
 from app.snapshot_config import get_snapshot_config
 from app.snapshot_s3 import upload_to_s3
+from app.snapshot_crypto import encrypt_file
 from app.config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -264,29 +262,8 @@ def _read_version() -> str:
 
 
 def _encrypt_file(input_path: Path, output_path: Path):
-    with open(SECRETS_DIR / "jwt_private_key.pem", "rb") as f:
-        private_key = serialization.load_pem_private_key(f.read(), password=None)
-
-    public_key = private_key.public_key()
-
-    aes_key = AESGCM.generate_key(bit_length=256)
-    aesgcm = AESGCM(aes_key)
-    nonce = os.urandom(12)
-
-    plaintext = input_path.read_bytes()
-    ciphertext = aesgcm.encrypt(nonce, plaintext, None)
-
-    encrypted_key = public_key.encrypt(
-        aes_key,
-        padding.OAEP(
-            mgf=padding.MGF1(algorithm=hashes.SHA256()),
-            algorithm=hashes.SHA256(),
-            label=None,
-        ),
-    )
-
-    key_length_bytes = len(encrypted_key).to_bytes(4, "big")
-    output_path.write_bytes(key_length_bytes + encrypted_key + nonce + ciphertext)
+    """Chiffre un fichier de snapshot — délégué à snapshot_crypto (clé backup)."""
+    encrypt_file(input_path, output_path, secrets_dir=SECRETS_DIR)
 
 
 async def cleanup_stale_snapshots(db: AsyncSession):

@@ -90,3 +90,17 @@ def test_candidate_order(tmp_path):
     (kr / "zzz.pem").write_text(p1)
     names = [d for d, _ in list_candidate_private_keys(secrets_dir)]
     assert names == ["backup", "jwt_keyring:zzz.pem", "jwt-legacy"]
+
+
+def test_snapshot_engine_encrypt_roundtrip(tmp_path, monkeypatch):
+    """_encrypt_file du snapshot_engine chiffre désormais avec la clé backup."""
+    import app.snapshot_engine as se
+    secrets_dir = _make_secrets(tmp_path)
+    monkeypatch.setattr(se, "SECRETS_DIR", secrets_dir)
+    plain = tmp_path / "in.bin"
+    plain.write_bytes(b"ENGINE" * 50)
+    out = tmp_path / "out.enc"
+    se._encrypt_file(plain, out)
+    data, desc = decrypt_snapshot_bytes(out.read_bytes(), secrets_dir=secrets_dir)
+    assert data == plain.read_bytes()
+    assert desc == "backup"

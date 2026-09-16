@@ -18,9 +18,8 @@ from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sess
 from sqlalchemy.inspection import inspect as sa_inspect
 
 import zstandard as zstd
-from cryptography.hazmat.primitives import hashes, serialization
-from cryptography.hazmat.primitives.asymmetric import padding
-from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+from app.snapshot_crypto import SnapshotDecryptError, decrypt_snapshot_bytes
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [RESTORE] %(message)s")
 logger = logging.getLogger("snapshot_restore")
@@ -154,24 +153,12 @@ async def run_restore(snapshot_id: str):
             return False
 
         data = enc_path.read_bytes()
-        key_len = int.from_bytes(data[:4], "big")
-        enc_key = data[4:4 + key_len]
-        nonce = data[4 + key_len:4 + key_len + 12]
-        ciphertext = data[4 + key_len + 12:]
-
-        with open(SECRETS_DIR / "jwt_private_key.pem", "rb") as f:
-            priv_key = serialization.load_pem_private_key(f.read(), password=None)
-
-        aes_key = priv_key.decrypt(
-            enc_key,
-            padding.OAEP(
-                mgf=padding.MGF1(algorithm=hashes.SHA256()),
-                algorithm=hashes.SHA256(),
-                label=None,
-            ),
-        )
-        aesgcm = AESGCM(aes_key)
-        plaintext = aesgcm.decrypt(nonce, ciphertext, None)
+        try:
+            plaintext, key_desc = decrypt_snapshot_bytes(data, secrets_dir=SECRETS_DIR)
+        except SnapshotDecryptError as exc:
+            logger.error("Déchiffrement du snapshot impossible : %s", exc)
+            return False
+        logger.info("Snapshot déchiffré (clé : %s)", key_desc)
 
         tar_zst_path = tmp / "snapshot.tar.zst"
         tar_zst_path.write_bytes(plaintext)
