@@ -5,6 +5,7 @@ import pytest
 import io
 from httpx import AsyncClient
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import create_access_token, get_password_hash
 from app.models import User, Profile, Application, UserAppRole, UserSession, user_profiles
@@ -47,6 +48,35 @@ class TestUsersEndpoints:
         
         assert response.status_code == 403
     
+    @pytest.mark.asyncio
+    async def test_list_users_tolerates_legacy_invalid_email(
+        self, client: AsyncClient, admin_user: User, async_session: AsyncSession
+    ):
+        """La liste des users ne doit pas 500 sur un email legacy invalide.
+
+        Régression : un robot M2M créé avec l'email 'exports-robot@hub.local'
+        (domaine spécial RFC 6761, rejeté par email-validator ≥ 2.x) faisait
+        échouer TOUT GET /api/users en ValidationError (UserResponse.email est
+        un EmailStr). La lecture d'une donnée existante doit être tolérante ;
+        la validation stricte reste à l'écriture (UserCreate/UserUpdate).
+        """
+        legacy_robot = User(
+            username="legacy-robot",
+            email="legacy-robot@hub.local",
+            hashed_password=get_password_hash("n0t-used-#1"),
+            is_active=True,
+            is_admin=False,
+        )
+        async_session.add(legacy_robot)
+        await async_session.commit()
+
+        token, _, _ = create_access_token(username=admin_user.username, apps={})
+        response = await client.get("/api/users/", headers=get_auth_header(token))
+
+        assert response.status_code == 200, response.text
+        usernames = [u["username"] for u in response.json()]
+        assert "legacy-robot" in usernames
+
     @pytest.mark.asyncio
     async def test_create_user(self, client: AsyncClient, admin_user: User):
         """Admin peut créer un utilisateur"""
@@ -330,7 +360,6 @@ class TestUsersEndpoints:
         assert data["prenom"] == "Julie"
         assert data["nom"] is None
 
-        from sqlalchemy import select
         result = await async_session.execute(select(User).where(User.id == test_user.id))
         db_user = result.scalar_one()
         assert db_user.prenom == "Julie"

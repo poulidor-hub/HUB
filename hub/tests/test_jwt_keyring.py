@@ -314,3 +314,53 @@ async def test_token_with_unknown_kid_rejected(client, isolated_keyring):
     with pytest.raises(HTTPException) as exc_info:
         verify_token(forged)
     assert exc_info.value.status_code == 401
+
+
+def test_select_verification_key_caches_public_pem(isolated_keyring, monkeypatch):
+    """Le PEM public doit être dérivé UNE fois par kid, pas à chaque vérification.
+
+    Régression perf : select_verification_key relisait le PEM privé et
+    re-chargeait la clé RSA (load_pem_private_key ≈ 250 ms sur RSA-4096 dans
+    le container) À CHAQUE requête authentifiée → ~250 ms ajoutés sur tous
+    les endpoints du Hub (« hub plus snappy »). kid = thumbprint du PEM
+    public (invariant du module) → cache par kid, purgé par reload().
+    """
+    from app.auth import create_access_token
+
+    isolated_keyring.ensure_seeded()
+    token, _, _ = create_access_token(username="admin", apps={})
+
+    calls = {"n": 0}
+    real_read = isolated_keyring._read_private_pem
+
+    def counting_read(kid):
+        calls["n"] += 1
+        return real_read(kid)
+
+    monkeypatch.setattr(isolated_keyring, "_read_private_pem", counting_read)
+    isolated_keyring.reload()  # purge les caches : le 1er select doit relire
+
+    entry1, pem1 = isolated_keyring.select_verification_key(token)
+    entry2, pem2 = isolated_keyring.select_verification_key(token)
+
+    assert entry1 is not None and entry2 is not None
+    assert pem1 == pem2
+    assert calls["n"] == 1, (
+        f"_read_private_pem appelé {calls['n']} fois pour 2 vérifications "
+        "(attendu 1 : le PEM public doit être mis en cache par kid)"
+    )
+
+
+def test_reload_purges_public_pem_cache(isolated_keyring):
+    """reload() invalide aussi le cache de PEM publics (mutation externe)."""
+    from app.auth import create_access_token
+
+    isolated_keyring.ensure_seeded()
+    token, _, _ = create_access_token(username="admin", apps={})
+
+    _, pem1 = isolated_keyring.select_verification_key(token)
+    isolated_keyring.reload()
+    # _KEYRING_DIR pointe toujours sur le même tmp_path : le PEM relui après
+    # reload doit produire exactement le même public PEM (déterminisme).
+    _, pem2 = isolated_keyring.select_verification_key(token)
+    assert pem1 == pem2
