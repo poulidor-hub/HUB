@@ -1873,5 +1873,6 @@ class HubAPI {
             method: 'POST'
         });
     }
+}
 
 const api = new HubAPI();
