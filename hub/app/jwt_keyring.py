@@ -254,3 +254,57 @@ def get_public_pem(kid: str) -> str | None:
         return _private_to_public_pem(_read_private_pem(kid))
     except KeyringError:
         return None
+
+
+def get_for_verification(kid: str | None, now: datetime | None = None) -> KeyEntry | None:
+    """Clé validable : active, ou retiring dans la fenêtre d'overlap.
+    kid=None → clé active. None si kid inconnu ou statut hors fenêtre."""
+    now = now or _now()
+    if kid is None:
+        try:
+            return get_active(now)
+        except KeyringError:
+            return None
+    for entry in _load_entries():
+        if entry.kid == kid and entry.effective_status(now) in ("active", "retiring"):
+            return entry
+    return None
+
+
+def build_jwks(now: datetime | None = None) -> dict:
+    """JWKS OIDC : publie les clés active + retiring (fenêtre d'overlap)."""
+    import base64
+    now = now or _now()
+
+    def int_to_b64url(value: int) -> str:
+        length = (value.bit_length() + 7) // 8
+        return base64.urlsafe_b64encode(value.to_bytes(length, "big")).rstrip(b"=").decode("ascii")
+
+    keys = []
+    for entry in _load_entries():
+        if not entry.is_published(now):
+            continue
+        public_key = serialization.load_pem_public_key(
+            _private_to_public_pem(_read_private_pem(entry.kid)).encode())
+        numbers = public_key.public_numbers()
+        keys.append({
+            "kty": "RSA",
+            "use": "sig",
+            "alg": "RS256",
+            "kid": entry.kid,
+            "n": int_to_b64url(numbers.n),
+            "e": int_to_b64url(numbers.e),
+        })
+    return {"keys": keys}
+
+
+def select_verification_key(token: str, now: datetime | None = None) -> tuple[KeyEntry | None, str | None]:
+    """(entry, public_pem) selon le kid du header JWT ; (None, None) si invalide."""
+    try:
+        header = pyjwt.get_unverified_header(token)
+    except pyjwt.PyJWTError:
+        return None, None
+    entry = get_for_verification(header.get("kid"), now)
+    if entry is None:
+        return None, None
+    return entry, _private_to_public_pem(_read_private_pem(entry.kid))
