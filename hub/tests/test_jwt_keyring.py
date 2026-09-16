@@ -247,3 +247,33 @@ def test_cleanup_removes_old_archived_only(isolated_keyring, monkeypatch):
     assert old_kid not in kids
     assert not (kr._resolve_keyring_dir() / f"{old_kid}.pem").exists()
     assert kr.get_active_kid() == result["new_kid"]
+
+
+@pytest.fixture
+def admin_token_isolated(admin_user, isolated_keyring):
+    """Token admin signé par le trousseau isolé (override du conftest)."""
+    from app.auth import create_access_token
+    token, _, _ = create_access_token(username=admin_user.username, apps={})
+    return token
+
+
+async def test_jwks_endpoint_lists_active_key(client, isolated_keyring):
+    isolated_keyring.ensure_seeded()
+    resp = await client.get("/api/auth/.well-known/jwks.json")
+    assert resp.status_code == 200
+    kids = [k["kid"] for k in resp.json()["keys"]]
+    assert kids == [isolated_keyring.LEGACY_KID]
+
+
+async def test_access_token_kid_follows_active_key(client, isolated_keyring, admin_user):
+    isolated_keyring.ensure_seeded()
+    from app.auth import create_access_token
+    token, _, _ = create_access_token(username=admin_user.username, apps={})
+    assert pyjwt.get_unverified_header(token)["kid"] == isolated_keyring.LEGACY_KID
+    isolated_keyring.rotate()
+    token2, _, _ = create_access_token(username=admin_user.username, apps={})
+    new_kid = isolated_keyring.get_active_kid()
+    assert pyjwt.get_unverified_header(token2)["kid"] == new_kid
+    resp = await client.get("/api/auth/.well-known/jwks.json")
+    kids = {k["kid"] for k in resp.json()["keys"]}
+    assert kids == {new_kid, isolated_keyring.LEGACY_KID}
