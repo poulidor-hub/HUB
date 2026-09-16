@@ -308,3 +308,77 @@ def select_verification_key(token: str, now: datetime | None = None) -> tuple[Ke
     if entry is None:
         return None, None
     return entry, _private_to_public_pem(_read_private_pem(entry.kid))
+
+
+def rotate() -> dict:
+    """Rotation planifiée : nouvelle paire active, l'ancienne passe retiring.
+    Retourne {"new_kid", "old_kid", "overlap_ends_at"} (ISO)."""
+    with _lock:
+        reload()
+        entries = _load_entries()
+        old = get_active()
+        from app.config import generate_rsa_keys
+        private_pem, public_pem = generate_rsa_keys()
+        new_kid = kid_thumbprint(public_pem)
+        if any(e.kid == new_kid for e in entries):
+            raise KeyringError("Collision de kid thumbprint (impossible en pratique)")
+        now = _now()
+        pem_path = _resolve_keyring_dir() / f"{new_kid}.pem"
+        pem_path.write_text(private_pem)
+        pem_path.chmod(0o600)
+        old.status = "retiring"
+        old.retired_at = _iso(now)
+        entries.append(KeyEntry(kid=new_kid, status="active", created_at=_iso(now),
+                                activated_at=_iso(now)))
+        _save_entries(entries)
+        reload()
+        overlap_ends = now + _overlap()
+        logger.warning(
+            "🔑 Rotation JWT : nouveau kid=%s, ancien kid=%s en overlap jusqu'à %s",
+            new_kid, old.kid, _iso(overlap_ends))
+        return {"new_kid": new_kid, "old_kid": old.kid, "overlap_ends_at": _iso(overlap_ends)}
+
+
+def revoke(kid: str) -> None:
+    """Révocation d'urgence : retrait immédiat du JWKS et de la vérification.
+    Refuse la clé active (rotater d'abord). No-op si déjà révoquée."""
+    with _lock:
+        reload()
+        entries = _load_entries()
+        target = next((e for e in entries if e.kid == kid), None)
+        if target is None:
+            raise KeyringError(f"Kid inconnu : {kid}")
+        if target.status == "active":
+            raise KeyringError(
+                "Impossible de révoquer la clé active : rotater d'abord "
+                "(POST /api/auth/keys/rotate), puis révoquer l'ancienne")
+        if target.status == "revoked":
+            reload()
+            return
+        target.status = "revoked"
+        _save_entries(entries)
+        reload()
+        logger.warning("🚫 Clé JWT révoquée : kid=%s", kid)
+
+
+def cleanup(older_than_months: int = 12, now: datetime | None = None) -> list[str]:
+    """Supprime PEM + entrées archived/revoked plus vieilles que le seuil (opt-in)."""
+    with _lock:
+        reload()
+        entries = _load_entries()
+        now = now or _now()
+        removed: list[str] = []
+        kept: list[KeyEntry] = []
+        for entry in entries:
+            eff = entry.effective_status(now)
+            created = _parse(entry.created_at) or now
+            if eff in ("archived", "revoked") and now >= created + timedelta(days=30 * older_than_months):
+                (_resolve_keyring_dir() / f"{entry.kid}.pem").unlink(missing_ok=True)
+                removed.append(entry.kid)
+                continue
+            kept.append(entry)
+        if removed:
+            _save_entries(kept)
+            reload()
+            logger.warning("🧹 Cleanup trousseau : PEM supprimés %s", removed)
+        return removed

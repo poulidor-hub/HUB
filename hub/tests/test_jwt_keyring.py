@@ -169,3 +169,81 @@ def test_select_verification_key(isolated_keyring, monkeypatch):
     entry, _ = isolated_keyring.select_verification_key(no_kid)
     assert entry is not None  # fallback clé active
     assert isolated_keyring.select_verification_key("garbage") == (None, None)
+
+
+def test_rotate_creates_new_active_and_retires_old(isolated_keyring):
+    kr = isolated_keyring
+    kr.ensure_seeded()
+    old_kid = kr.get_active_kid()
+    result = kr.rotate()
+    assert result["old_kid"] == old_kid
+    assert result["new_kid"] != old_kid
+    entries = {e.kid: e for e in kr._load_entries()}
+    assert entries[result["new_kid"]].status == "active"
+    assert entries[old_kid].status == "retiring"
+    assert entries[old_kid].retired_at is not None
+    assert kr.get_active_kid() == result["new_kid"]
+
+
+def test_rotate_keeps_chain_and_double_rotate(isolated_keyring):
+    kr = isolated_keyring
+    kr.ensure_seeded()
+    r1 = kr.rotate()
+    r2 = kr.rotate()
+    kids = [e.kid for e in kr._load_entries()]
+    assert len(kids) == 3
+    assert kr.get_active_kid() == r2["new_kid"]
+    statuses = {e.kid: e.status for e in kr._load_entries()}
+    assert statuses[r1["new_kid"]] == "retiring"
+    assert statuses[r1["old_kid"]] == "retiring"
+
+
+def test_revoke_retiring_key(isolated_keyring):
+    kr = isolated_keyring
+    kr.ensure_seeded()
+    result = kr.rotate()
+    kr.revoke(result["old_kid"])
+    entry = next(e for e in kr._load_entries() if e.kid == result["old_kid"])
+    assert entry.status == "revoked"
+    assert kr.get_for_verification(result["old_kid"]) is None
+
+
+def test_revoke_active_key_raises(isolated_keyring):
+    kr = isolated_keyring
+    kr.ensure_seeded()
+    with pytest.raises(kr.KeyringError, match="rotater"):
+        kr.revoke(kr.get_active_kid())
+
+
+def test_revoke_unknown_and_idempotent(isolated_keyring):
+    kr = isolated_keyring
+    kr.ensure_seeded()
+    with pytest.raises(kr.KeyringError, match="inconnu"):
+        kr.revoke("nosuchkid")
+    kr.rotate()
+    old_kid = [e.kid for e in kr._load_entries() if e.status == "retiring"][0]
+    kr.revoke(old_kid)
+    kr.revoke(old_kid)  # déjà révoqué → no-op sans erreur
+
+
+def test_cleanup_removes_old_archived_only(isolated_keyring, monkeypatch):
+    kr = isolated_keyring
+    kr.ensure_seeded()
+    result = kr.rotate()
+    old_kid = result["old_kid"]
+    # vieillir artificiellement la clé retiring → archived + ancienne
+    # (effective_status dérive « archived » de retired_at, pas de created_at :
+    # il faut vieillir les deux et persister, cleanup() repart du disque)
+    old_ts = datetime(2025, 1, 1, tzinfo=timezone.utc).isoformat()
+    entries = kr._load_entries()
+    old_entry = next(e for e in entries if e.kid == old_kid)
+    old_entry.created_at = old_ts
+    old_entry.retired_at = old_ts
+    kr._save_entries(entries)
+    monkeypatch.setattr(kr, "_now", lambda: datetime(2026, 9, 16, 13, 0, tzinfo=timezone.utc))
+    removed = kr.cleanup(older_than_months=12)
+    assert old_kid in removed
+    kids = [e.kid for e in kr._load_entries()]
+    assert old_kid not in kids
+    assert not (kr._resolve_keyring_dir() / f"{old_kid}.pem").exists()
+    assert kr.get_active_kid() == result["new_kid"]
