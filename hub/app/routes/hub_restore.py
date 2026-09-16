@@ -309,6 +309,8 @@ def build_backup_import_from_zip_bytes(zip_bytes: bytes) -> BackupImport:
         app_backups=env.get("app_backups", []),
         jwt_private_key_b64=env.get("jwt_private_key_b64"),
         jwt_public_key_b64=env.get("jwt_public_key_b64"),
+        backup_private_key_b64=env.get("backup_private_key_b64"),
+        backup_public_key_b64=env.get("backup_public_key_b64"),
     )
 
 

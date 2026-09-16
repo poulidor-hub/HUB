@@ -851,6 +851,8 @@ class BackupExport(BaseModel):
     app_backups: List[AppBackupExport] = []  # Backups d'applications (max 5 par app)
     jwt_private_key_b64: Optional[str] = None  # Clé privée encodée base64
     jwt_public_key_b64: Optional[str] = None   # Clé publique encodée base64
+    backup_private_key_b64: Optional[str] = None  # Paire backup (récupération PRA)
+    backup_public_key_b64: Optional[str] = None
 
 
 class BackupImport(BaseModel):
@@ -871,6 +873,8 @@ class BackupImport(BaseModel):
     app_backups: List[AppBackupExport] = []  # Backups d'applications à restaurer
     jwt_private_key_b64: Optional[str] = None
     jwt_public_key_b64: Optional[str] = None
+    backup_private_key_b64: Optional[str] = None  # Paire backup (récupération PRA)
+    backup_public_key_b64: Optional[str] = None
 
 
 class ImportResult(BaseModel):
