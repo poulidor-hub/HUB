@@ -2,12 +2,11 @@
 # Override Compose pour tests isolés
 # Usage :
 #   docker compose -p pouly-test \
-#     -f docker-compose.yml -f docker-compose.test.yml \
-#     --env-file .env.test up -d
+#     -f docker-compose.yml -f docker-compose.test.yml up -d
 #
 # Isole un Hub de test sans toucher au Hub de production :
 #   - conteneurs renommés (hub-test-*)
-#   - ports décalés via .env.test
+#   - aucune publication de ports hôte (ports: !override [])
 #   - sous-réseau Docker distinct
 # ============================================================
 

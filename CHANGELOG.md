@@ -5,6 +5,19 @@
 
 ---
 
+## [3.58.2] - 16 septembre 2026
+
+### 🆕 Nouvelle version
+
+> ⚠️ Cette entrée a été créée automatiquement par `sync_version.py`.
+> Veuillez compléter les détails des modifications.
+
+| Fonctionnalité | Description |
+|----------------|-------------|
+| **À compléter** | Décrivez les changements de cette version |
+
+---
+
 ## [3.58.1] - 15 septembre 2026
 
 ### 📖 Cahier des charges mis à jour à l'état de l'art v3.58.0
