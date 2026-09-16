@@ -34,6 +34,12 @@ _KEYRING_DIR: Path | None = None  # injectable pour les tests
 
 _lock = threading.Lock()
 _entries: list["KeyEntry"] | None = None  # cache process
+# kid -> PEM public dérivé. Sûr car kid = thumbprint du PEM public (invariant
+# du module) : pour un kid donné, le PEM public est immuable. Purge via
+# reload(). Sans ce cache, CHAQUE vérification de token relit le PEM privé et
+# re-charge la clé RSA (load_pem_private_key ≈ 250 ms sur RSA-4096) → lenteur
+# sur tous les endpoints authentifiés.
+_public_pem_cache: dict[str, str] = {}
 
 
 class KeyringError(Exception):
@@ -116,6 +122,23 @@ def reload() -> None:
     """Purge le cache process (après mutation externe ou en test)."""
     global _entries
     _entries = None
+    _public_pem_cache.clear()
+
+
+def _public_pem_for_kid(kid: str) -> str:
+    """PEM public d'un kid — dérivé une seule fois puis mis en cache.
+
+    La dérivation charge la clé privée RSA (coûteux : ~250 ms sur RSA-4096
+    dans le container) ; le résultat est immuable pour un kid donné.
+    """
+    cached = _public_pem_cache.get(kid)
+    if cached is None:
+        with _lock:
+            cached = _public_pem_cache.get(kid)
+            if cached is None:
+                cached = _private_to_public_pem(_read_private_pem(kid))
+                _public_pem_cache[kid] = cached
+    return cached
 
 
 def _validate(entries: list[KeyEntry]) -> None:
@@ -251,7 +274,7 @@ def get_active_pem_pair() -> tuple[str, str]:
 
 def get_public_pem(kid: str) -> str | None:
     try:
-        return _private_to_public_pem(_read_private_pem(kid))
+        return _public_pem_for_kid(kid)
     except KeyringError:
         return None
 
@@ -285,7 +308,7 @@ def build_jwks(now: datetime | None = None) -> dict:
         if not entry.is_published(now):
             continue
         public_key = serialization.load_pem_public_key(
-            _private_to_public_pem(_read_private_pem(entry.kid)).encode())
+            _public_pem_for_kid(entry.kid).encode())
         numbers = public_key.public_numbers()
         keys.append({
             "kty": "RSA",
@@ -307,7 +330,7 @@ def select_verification_key(token: str, now: datetime | None = None) -> tuple[Ke
     entry = get_for_verification(header.get("kid"), now)
     if entry is None:
         return None, None
-    return entry, _private_to_public_pem(_read_private_pem(entry.kid))
+    return entry, _public_pem_for_kid(entry.kid)
 
 
 def rotate() -> dict:

@@ -5,6 +5,36 @@
 
 ---
 
+## [3.59.3] - 17 septembre 2026
+
+### ⚡ Fix critique — écran de chargement infini du portail (api.js invalide)
+
+| Correctif | Description |
+|-----------|-------------|
+| **Accolade fermante `class HubAPI` restaurée** | Le retrait des méthodes Droits Philia (3.58.0, commit f25628b) avait supprimé par erreur l'accolade de fermeture de la classe en fin de `frontend/public/js/api.js` : SyntaxError → le navigateur rejetait tout le fichier → `window.api` jamais défini |
+| **Symptôme** | Portail bloqué sur l'écran de chargement (logo + spinner) : `init.js` crashait en `ReferenceError: api is not defined` juste après le health-check du badge (`/api/health` répondait, puis plus aucune requête) → ni login ni dashboard, sans erreur backend ni appel réseau visible |
+| **Périmètre touché** | Toutes les installs HUB_base ≥ 3.58.0 (main depuis le 15/09), fresh installs incluses ; aucune donnée affectée — bug purement frontend |
+| **Test anti-régression** | `hub/tests/test_frontend_js_syntax.py` : `node --check` sur chacun des 40 `.js` du frontend (échouait avant fix, 40/40 après) ; skip propre si Node.js absent ; aurait attrapé la régression à la source |
+| **Validation** | Reproduction headless Chromium des 2 erreurs console d'origine (`SyntaxError api.js:1877`, `ReferenceError init.js:209`) ; après fix : loadingScreen retiré du DOM, login affiché, zéro erreur console |
+
+### ⚡ Fix — « Impossible de charger les utilisateurs » (500 sur GET /api/users)
+
+| Correctif | Description |
+|-----------|-------------|
+| **Cause** | Un user robot créé le 13/09 avec l'email `exports-robot@hub.local` (domaine spécial RFC 6761, rejeté par email-validator ≥ 2.x) faisait échouer TOUTE la liste : `UserResponse.email` est un `EmailStr` qui revalide chaque lecture → ValidationError → 500. Présent depuis le 13/09, indépendant du fix frontend |
+| **Fix** | Lecture tolérante : `email: Optional[str]` sur les schémas de réponse (`UserResponse`, `M2MUserSearchItem`, `AccountRequestNotificationAdmin`) — une donnée existante ne doit jamais casser sa lecture. La validation stricte reste à l'écriture (`UserCreate`/`UserUpdate`/`BulkUserCreate`/`AccountRequestCreate` gardent `EmailStr`) |
+| **Test** | `test_list_users_tolerates_legacy_invalid_email` : user avec email `@hub.local` en base → `GET /api/users/` 200 (échouait avant fix) |
+
+### ⚡ Perf — ~250 ms gagnés sur chaque requête authentifiée
+
+| Correctif | Description |
+|-----------|-------------|
+| **Cause** | `jwt_keyring.select_verification_key()` relisait le PEM privé et re-chargeait la clé RSA (`load_pem_private_key` ≈ 250 ms sur RSA-4096 dans le container) À CHAQUE vérification de token, donc sur chaque requête authentifiée (`verify_token`, signature OIDC, JWKS…) — d'où la perte de réactivité générale du portail |
+| **Fix** | Cache process `{kid: PEM public}` (`_public_pem_for_kid`) : sûr car `kid` = thumbprint du PEM public (invariant du module, PEM public immuable par kid) ; purge par `reload()` (rotation, mutation externe, tests). Appliqué à `select_verification_key`, `get_public_pem` et `build_jwks` |
+| **Test** | `test_select_verification_key_caches_public_pem` : 2 vérifications successives → 1 seule lecture de PEM (échouait avant fix) ; `test_reload_purges_public_pem_cache` : déterminisme après purge |
+
+---
+
 ## [3.59.2] - 17 septembre 2026
 
 ### 📖 Documentation — README du dépôt

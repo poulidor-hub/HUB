@@ -197,6 +197,12 @@ class UserAppRoleResponse(BaseModel):
 
 
 class UserResponse(UserBase):
+    # Lecture tolérante : str (et non EmailStr hérité) pour ne jamais 500 sur
+    # des données legacy créées via des chemins non validés (import/export,
+    # bulk CSV, robots M2M — ex. 'exports-robot@hub.local', domaine spécial
+    # RFC 6761 rejeté par email-validator). La création/modif reste stricte
+    # (UserCreate/UserUpdate héritent EmailStr).
+    email: Optional[str] = None
     id: int
     uuid: Optional[str] = None
     prenom: Optional[str] = None
@@ -1571,7 +1577,9 @@ class M2MObservedUserData(BaseModel):
 class M2MUserSearchItem(BaseModel):
     """Utilisateur retourné par la recherche M2M"""
     username: str
-    email: Optional[EmailStr] = None
+    # Lecture tolérante (str, non EmailStr) : ne pas 500 sur un email legacy
+    # invalide — cf. UserResponse pour le détail.
+    email: Optional[str] = None
     app_slug: str
     role: str
 
@@ -1928,7 +1936,8 @@ class AccountRequestNotificationAdmin(BaseModel):
     """Admin pouvant recevoir les notifications de demandes de compte"""
     id: int
     username: str
-    email: Optional[EmailStr] = None
+    # Lecture tolérante (str, non EmailStr) — cf. UserResponse pour le détail.
+    email: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True)
 
