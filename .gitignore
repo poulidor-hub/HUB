@@ -79,3 +79,7 @@ storage/snapshots/
 
 # Identité runtime du Hub (unique par installation — jamais committée)
 secrets/hub_instance_id
+
+# Artefacts de couverture pytest (make test-cov)
+.coverage
+htmlcov/
