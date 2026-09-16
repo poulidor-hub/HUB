@@ -7,14 +7,19 @@
 
 ## [3.58.2] - 16 septembre 2026
 
-### 🆕 Nouvelle version
+### 🐛 Flake minuit UTC (tests usage) + hygiène suite de tests
 
-> ⚠️ Cette entrée a été créée automatiquement par `sync_version.py`.
-> Veuillez compléter les détails des modifications.
-
-| Fonctionnalité | Description |
-|----------------|-------------|
-| **À compléter** | Décrivez les changements de cette version |
+- **Corrigé** : `test_usage_user_day` et `test_usage_user_excludes_workshop_segments`
+  échouaient si le run tombait dans les ~10 min avant minuit UTC — le clamp
+  `ended = min(raw_end, day_end)` (routes/audit.py) tronquait le segment de 10 min
+  traversant minuit (600 s → 330 s). `utcnow` est désormais **gelé à 12:00 UTC** dans
+  ces tests (monkeypatch sur les 3 bindings : models, usage_tracking, route).
+  Reproduction RED prouvée (gel à 23:54:30 → 2 failed, `assert 330 == 600`), suite verte.
+- `.gitignore` : artefacts de couverture (`.coverage`, `htmlcov/`) générés par `make test-cov`.
+- Makefile : variable `COMPOSE_TEST` — la chaîne compose de la stack de test n'est plus
+  dupliquée 5× dans `test-docker` (expansion vérifiée identique via `make -n`).
+- `docker-compose.test.yml` : header à jour (plus de mention `.env.test` / ports décalés —
+  la stack ne publie plus aucun port hôte depuis 3.57.0).
 
 ---
 
