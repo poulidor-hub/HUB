@@ -835,8 +835,9 @@ async def beacon_logout(
 
 @router.get("/public-key")
 async def get_public_key():
-    """Expose la clé publique pour les applications clientes"""
-    return {"public_key": settings.jwt_public_key}
+    """Expose la clé publique active pour les applications clientes"""
+    from app import jwt_keyring
+    return {"public_key": jwt_keyring.get_active_pem_pair()[1]}
 
 
 @router.get("/.well-known/jwks.json")

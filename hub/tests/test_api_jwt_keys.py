@@ -1,4 +1,5 @@
 """Tests API /api/auth/keys — endpoints admin du trousseau (spec §5.5)."""
+import jwt as pyjwt
 import pytest
 from tests.conftest import get_auth_header
 from tests.test_jwt_keyring import isolated_keyring
@@ -72,3 +73,21 @@ async def test_cleanup_endpoint(client, admin_token_isolated):
     resp = await client.post("/api/auth/keys/cleanup?older_than_months=12", headers=hdr)
     assert resp.status_code == 200
     assert resp.json() == {"removed": []}
+
+
+async def test_public_key_endpoint_serves_active_key_after_rotate(client, isolated_keyring):
+    """/api/auth/public-key suit la clé active du trousseau, même après rotation."""
+    isolated_keyring.ensure_seeded()
+    isolated_keyring.rotate()
+
+    resp = await client.get("/api/auth/public-key")
+    assert resp.status_code == 200
+    served_key = resp.json()["public_key"]
+    expected = isolated_keyring.get_public_pem(isolated_keyring.get_active_kid())
+    assert "".join(served_key.split()) == "".join(expected.split())
+
+    # Un token minté APRÈS la rotation se vérifie avec la clé servie.
+    from app.auth import create_access_token
+    token, _, _ = create_access_token(username="admin", apps={})
+    payload = pyjwt.decode(token, served_key, algorithms=["RS256"])
+    assert payload["sub"] == "admin"

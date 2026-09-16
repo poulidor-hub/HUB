@@ -136,6 +136,11 @@ du HUB à l'étape 5 → l'UI fonctionne directement. Les apps doivent être
 | 3 | Déploiement sans montage `../APPS` : capture ignorée (warning), restauration sautée | Extraction manuelle : voir `apps/apps_code.tar` dans l'archive |
 | 4 | Restaurer via l'API (`POST /api/admin/snapshots/{id}/restore`) sur un Hub **en production** réécrit aussi le code APPS/ en place (montage rw) | Réservé au PRA / à assumer explicitement |
 
+> ℹ️ L'export self-backup (ZIP `environment.json`) embarque les clés (JWT +
+> backup) à titre de matériau hors-ligne uniquement : **l'import du zip ne
+> restaure pas les clés** dans `secrets/`. La récupération passe par le coffre
+> hubctl (`export_recovery`) + le `secrets.tar` des snapshots.
+
 ## 📋 Rétention
 
 La rétention est appliquée après chaque snapshot réussi :
