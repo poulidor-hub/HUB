@@ -155,10 +155,12 @@ def ensure_keys_exist(auto_generate: bool = False) -> tuple[str, str]:
 
 
 def ensure_backup_keys_exist() -> tuple[str, str]:
-    if Path("/code").exists():
-        local_secrets_dir = Path("/code/secrets")
-    else:
-        local_secrets_dir = Path(__file__).parent.parent.parent / "secrets"
+    """Paire backup = clé de récupération PRA (chiffrement des snapshots + exports).
+
+    Une génération à chaud en production rend les snapshots chiffrés avec
+    l'ancienne paire irrécupérables — d'où le log CRITICAL (spec §4.3).
+    """
+    local_secrets_dir = _resolve_secrets_dir()
 
     backup_private = local_secrets_dir / "backup_private_key.pem"
     backup_public = local_secrets_dir / "backup_public_key.pem"
@@ -167,10 +169,17 @@ def ensure_backup_keys_exist() -> tuple[str, str]:
         private_key = backup_private.read_text().strip()
         public_key = backup_public.read_text().strip()
         _validate_pem_keys(private_key, public_key)
-        logger.info("🔐 Clés de chiffrement backup chargées")
+        logger.info("🔐 Clés de chiffrement backup chargées (récupération PRA : OK)")
         return private_key, public_key
 
     logger.info("🔐 Génération automatique des clés de chiffrement backup...")
+    import os
+    if os.environ.get("APP_ENV", "production") == "production":
+        logger.critical(
+            "Clés backup ABSENTES : paire générée à chaud en production. Tout snapshot "
+            "chiffré avec l'ancienne paire devient IRRÉCUPÉRABLE. Restaurez "
+            "secrets/backup_*.pem depuis le coffre hubctl avant tout nouveau snapshot."
+        )
     private_key, public_key = generate_rsa_keys()
     local_secrets_dir.mkdir(parents=True, exist_ok=True)
     backup_private.write_text(private_key)

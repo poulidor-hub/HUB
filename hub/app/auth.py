@@ -11,6 +11,7 @@ from sqlalchemy import select, delete, update
 from sqlalchemy.orm import selectinload
 
 from app.config import get_settings
+from app import jwt_keyring
 from app.database import get_db
 from app.models import User, ServiceAccount, RefreshToken, RevokedToken, UserAppRole, UserTag, utcnow
 
@@ -121,14 +122,12 @@ def create_access_token(
     if nom:
         payload["nom"] = nom
     
-    # Header avec kid pour identifier la clé de signature
-    headers = {
-        "kid": "hub-jwt-key-1"  # Doit correspondre au kid dans le JWKS
-    }
-    
+    # Header avec kid pour identifier la clé de signature (trousseau multi-kid)
+    headers = {"kid": jwt_keyring.get_active_kid()}
+
     token = jwt.encode(
         payload,
-        settings.jwt_private_key,
+        jwt_keyring.get_active_private_pem(),
         algorithm=settings.jwt_algorithm,
         headers=headers
     )
@@ -153,24 +152,30 @@ def create_reset_token(username: str, hashed_password: str) -> str:
     }
     return jwt.encode(
         payload,
-        settings.jwt_private_key,
+        jwt_keyring.get_active_private_pem(),
         algorithm=settings.jwt_algorithm,
-        headers={"kid": "hub-jwt-key-1"},
+        headers={"kid": jwt_keyring.get_active_kid()},
     )
 
 
 def decode_reset_token(token: str) -> dict:
     """Décode et valide un reset token. Lève HTTPException(400) si invalide."""
+    entry, public_pem = jwt_keyring.select_verification_key(token)
+    if entry is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                            detail="Jeton de réinitialisation invalide ou expiré")
     try:
         payload = jwt.decode(
             token,
-            settings.jwt_public_key,
+            public_pem,
             algorithms=[settings.jwt_algorithm],
         )
     except jwt.PyJWTError:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Jeton de réinitialisation invalide ou expiré")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                            detail="Jeton de réinitialisation invalide ou expiré")
     if payload.get("scope") != "pwd_reset":
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Jeton de réinitialisation invalide ou expiré")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                            detail="Jeton de réinitialisation invalide ou expiré")
     return payload
 
 
@@ -362,11 +367,17 @@ async def revoke_all_user_tokens(db: AsyncSession, user_id: int) -> None:
 
 
 def verify_token(token: str) -> dict:
-    """Vérifie un token JWT avec la clé publique RSA"""
+    """Vérifie un token JWT — clé sélectionnée par kid depuis le trousseau."""
+    entry, public_pem = jwt_keyring.select_verification_key(token)
+    if entry is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token invalide"
+        )
     try:
         payload = jwt.decode(
             token,
-            settings.jwt_public_key,
+            public_pem,
             algorithms=[settings.jwt_algorithm]
         )
     except jwt.ExpiredSignatureError:

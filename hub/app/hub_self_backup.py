@@ -27,6 +27,8 @@ SECRETS_DIR = Path("/code/secrets")
 SERVICE_ACCOUNTS_DIR = SECRETS_DIR / "service_accounts"
 JWT_PRIVATE_KEY_PATH = SECRETS_DIR / "jwt_private_key.pem"
 JWT_PUBLIC_KEY_PATH = SECRETS_DIR / "jwt_public_key.pem"
+BACKUP_PRIVATE_KEY_PATH = SECRETS_DIR / "backup_private_key.pem"
+BACKUP_PUBLIC_KEY_PATH = SECRETS_DIR / "backup_public_key.pem"
 STORAGE_BASE_DIR = Path("/code/storage/backups")
 MAX_BACKUPS_PER_APP_EXPORT = 5
 
@@ -147,6 +149,14 @@ async def _do_export(
         if JWT_PUBLIC_KEY_PATH.exists():
             jwt_public_key = base64.b64encode(JWT_PUBLIC_KEY_PATH.read_bytes()).decode()
 
+    backup_private_key = None
+    backup_public_key = None
+    if include_jwt_keys:
+        if BACKUP_PRIVATE_KEY_PATH.exists():
+            backup_private_key = base64.b64encode(BACKUP_PRIVATE_KEY_PATH.read_bytes()).decode()
+        if BACKUP_PUBLIC_KEY_PATH.exists():
+            backup_public_key = base64.b64encode(BACKUP_PUBLIC_KEY_PATH.read_bytes()).decode()
+
     app_backups_export = []
     if include_app_backups:
         app_slugs = [app.slug for app in apps]
@@ -201,6 +211,8 @@ async def _do_export(
         app_backups=app_backups_export,
         jwt_private_key_b64=jwt_private_key,
         jwt_public_key_b64=jwt_public_key,
+        backup_private_key_b64=backup_private_key,
+        backup_public_key_b64=backup_public_key,
     )
 
 

@@ -18,6 +18,7 @@ from pydantic import BaseModel, field_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app import jwt_keyring
 from app.auth import (
     get_current_admin,
     get_current_service_account,
@@ -644,11 +645,14 @@ bearer_scheme = HTTPBearer(auto_error=False)
 async def _decode_oidc_access_token(
     credentials: HTTPAuthorizationCredentials,
 ) -> dict:
-    """Décode et valide un access_token OIDC signé par le HUB."""
+    """Décode et valide un access_token OIDC signé par le HUB (kid-aware)."""
+    entry, public_pem = jwt_keyring.select_verification_key(credentials.credentials)
+    if public_pem is None:
+        raise HTTPException(401, "Token invalide: kid inconnu")
     try:
         payload = pyjwt.decode(
             credentials.credentials,
-            settings.jwt_public_key,
+            public_pem,
             algorithms=["RS256"],
             options={"verify_aud": False},
         )

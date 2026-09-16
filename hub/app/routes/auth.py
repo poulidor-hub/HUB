@@ -835,56 +835,21 @@ async def beacon_logout(
 
 @router.get("/public-key")
 async def get_public_key():
-    """Expose la clé publique pour les applications clientes"""
-    return {"public_key": settings.jwt_public_key}
+    """Expose la clé publique active pour les applications clientes"""
+    from app import jwt_keyring
+    return {"public_key": jwt_keyring.get_active_pem_pair()[1]}
 
 
 @router.get("/.well-known/jwks.json")
 async def get_jwks():
     """
     Endpoint JWKS (JSON Web Key Set) - Standard OIDC.
-    
-    Expose la clé publique au format JWK pour permettre aux applications
-    de récupérer dynamiquement la clé de vérification des tokens JWT.
-    
-    Les applications doivent appeler cet endpoint à chaque démarrage
-    pour récupérer la clé publique actuelle.
-    
-    Returns:
-        dict: JWKS contenant la clé publique RSA
+
+    Publie les clés publiques RSA acceptées en vérification : la clé active
+    (signature) + les clés `retiring` pendant la fenêtre d'overlap (spec §5.3).
     """
-    import base64
-    from cryptography.hazmat.primitives import serialization
-    from cryptography.hazmat.backends import default_backend
-    
-    # Charger la clé publique PEM
-    public_key_pem = settings.jwt_public_key.encode('utf-8')
-    public_key = serialization.load_pem_public_key(public_key_pem, backend=default_backend())
-    
-    # Extraire les composants RSA (n et e)
-    public_numbers = public_key.public_numbers()
-    
-    # Convertir en base64url (sans padding)
-    def int_to_base64url(value: int) -> str:
-        """Convertit un entier en base64url sans padding"""
-        # Calculer le nombre d'octets nécessaires
-        byte_length = (value.bit_length() + 7) // 8
-        value_bytes = value.to_bytes(byte_length, byteorder='big')
-        return base64.urlsafe_b64encode(value_bytes).rstrip(b'=').decode('ascii')
-    
-    # Construire le JWK
-    jwk = {
-        "kty": "RSA",
-        "use": "sig",
-        "alg": settings.jwt_algorithm,
-        "kid": "hub-jwt-key-1",  # Key ID pour identifier cette clé
-        "n": int_to_base64url(public_numbers.n),
-        "e": int_to_base64url(public_numbers.e)
-    }
-    
-    return {
-        "keys": [jwk]
-    }
+    from app import jwt_keyring
+    return jwt_keyring.build_jwks()
 
 
 @router.post("/token/introspect", response_model=TokenIntrospection)

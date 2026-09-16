@@ -5,6 +5,28 @@
 
 ---
 
+## [3.59.0] - 16 septembre 2026
+
+### 🔐 Rotation multi-kid du JWKS + découplage du chiffrement des snapshots
+
+- **Ajouté** : trousseau de clés JWT (`secrets/jwt_keys/`, PEM + manifest) — vue
+  (`GET /api/auth/keys`), rotation sans rupture (`POST /api/auth/keys/rotate`),
+  révocation d'urgence (`POST /api/auth/keys/revoke`, 409 sur clé active),
+  nettoyage opt-in (`POST /api/auth/keys/cleanup`). Kid dérivé par thumbprint
+  RFC 7638 ; la clé existante conserve le kid `hub-jwt-key-1`.
+- **Ajouté** : `hubctl jwt keys|rotate|revoke|cleanup`.
+- **Modifié** : les snapshots sont chiffrés avec la paire `backup_*.pem`
+  (découplage de la clé de signature). Déchiffrement à chaîne de repli
+  (backup → trousseau → JWT legacy) : les snapshots antérieurs restent lisibles.
+  ⚠️ Forward-only : un snapshot créé avec ≥ 3.59.0 exige ≥ 3.59.0 pour être restauré.
+- **Modifié** : JWKS publie les clés active + retiring (overlap 24 h, variable
+  `JWT_KEY_OVERLAP_HOURS`) ; vérification kid-aware (tokens d'accès, reset,
+  cookie session OIDC, access_token OIDC).
+- **Sécurité** : génération à chaud des clés backup en production → log CRITICAL
+  (snapshots antérieurs potentiellement irrécupérables).
+- Apps : AUCUN changement requis (JWKS multi-clés supporté nativement par
+  PyJWKClient et les clients OIDC).
+
 ## [3.58.2] - 16 septembre 2026
 
 ### 🐛 Flake minuit UTC (tests usage) + hygiène suite de tests

@@ -22,7 +22,7 @@ from app.outbox import outbox_service
 from app.models import User, ErrorLog, utcnow
 from app.auth import get_password_hash, cleanup_expired_tokens, get_current_admin, generate_oidc_sub
 from app.config import get_settings, build_cors_config, get_instance_id
-from app.routes import auth, users, apps, service_accounts, audit, docs, events, app_backups, profiles, apps_health, messages, account_requests, snapshots, vpn, oidc, github_catalog, hub_restore, tags, app_groups, app_deploy, workshop
+from app.routes import auth, users, apps, service_accounts, audit, docs, events, app_backups, profiles, apps_health, messages, account_requests, snapshots, vpn, oidc, github_catalog, hub_restore, tags, app_groups, app_deploy, workshop, jwt_keys
 from app.routes import settings as settings_routes
 from app.routes import network as network_routes
 from app.routes import app_recreate
@@ -361,6 +361,11 @@ async def lifespan(app: FastAPI):
 
     # Générer les clés de chiffrement backup (indépendantes des clés JWT)
     ensure_backup_keys_exist()
+
+    # Trousseau JWT multi-kid : seed au premier boot (importe la paire legacy
+    # sous kid hub-jwt-key-1, ou reconstruit depuis jwt_keys/ — spec §5.1)
+    from app import jwt_keyring
+    jwt_keyring.ensure_seeded()
     
     # Démarrer la tâche de nettoyage périodique
     _cleanup_task = asyncio.create_task(periodic_token_cleanup())
@@ -745,6 +750,7 @@ def _get_error_type(status_code: int) -> str:
 
 # Routes
 app.include_router(auth.router)
+app.include_router(jwt_keys.router)
 app.include_router(users.router)
 app.include_router(apps_health.router)
 app.include_router(apps.router)

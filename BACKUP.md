@@ -68,13 +68,14 @@ curl -X PUT "http://localhost:8000/api/admin/snapshots/config" \
 
 ## 🔄 Restauration bare-metal (nouvelle machine)
 
-> ⚠️ **Prérequis vital** : le snapshot est chiffré par enveloppe hybride
-> (AES-256-GCM + RSA). La clé privée RSA `secrets/jwt_private_key.pem` est
-> DANS le snapshot chiffré, mais il faut cette clé pour déchiffrer le
-> snapshot. **Sans copie hors-ligne de cette clé, aucun snapshot n'est
-> récupérable.** Conserver hors de la machine (coffre hubctl
-> `export_recovery` + copie Offline) :
-> 1. `secrets/` complet (clé JWT RSA incluse)
+> ⚠️ **Prérequis vital** : les snapshots sont chiffrés par enveloppe hybride
+> (AES-256-GCM + RSA) avec la paire `secrets/backup_private_key.pem` /
+> `backup_public_key.pem` (depuis v3.59.0 ; auparavant la clé JWT). Le
+> déchiffrement essaie automatiquement : clé backup → trousseau
+> `secrets/jwt_keys/` → clé JWT legacy — les snapshots anciens restent lisibles.
+> **Sans copie hors-ligne de ces clés, aucun snapshot n'est récupérable.**
+> Conserver hors de la machine (coffre hubctl `export_recovery` + copie Offline) :
+> 1. `secrets/` complet (paire backup, trousseau `jwt_keys/`, clé JWT incluse)
 > 2. Les fichiers `.env` (HUB_base et APPS/*)
 
 ### Procédure semi-automatique (recommandée)
@@ -134,6 +135,11 @@ du HUB à l'étape 5 → l'UI fonctionne directement. Les apps doivent être
 | 2 | Images Docker des apps non capturées (par design) | `make build` depuis le code restauré |
 | 3 | Déploiement sans montage `../APPS` : capture ignorée (warning), restauration sautée | Extraction manuelle : voir `apps/apps_code.tar` dans l'archive |
 | 4 | Restaurer via l'API (`POST /api/admin/snapshots/{id}/restore`) sur un Hub **en production** réécrit aussi le code APPS/ en place (montage rw) | Réservé au PRA / à assumer explicitement |
+
+> ℹ️ L'export self-backup (ZIP `environment.json`) embarque les clés (JWT +
+> backup) à titre de matériau hors-ligne uniquement : **l'import du zip ne
+> restaure pas les clés** dans `secrets/`. La récupération passe par le coffre
+> hubctl (`export_recovery`) + le `secrets.tar` des snapshots.
 
 ## 📋 Rétention
 

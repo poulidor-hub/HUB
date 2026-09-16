@@ -33,6 +33,34 @@ def reset_rate_limiter():
     _token_failures.clear()
 
 
+@pytest.fixture(autouse=True)
+def _isolated_jwt_keyring(tmp_path, monkeypatch):
+    """Isole le trousseau JWT multi-kid pour CHAQUE test (jamais les vrais secrets/).
+
+    Depuis la signature par trousseau (jwt_keyring), tout test qui émet un JWT
+    sans fixture dédiée lirait `secrets/jwt_keys/` — absent sur l'hôte de test
+    (le seed au démarrage du conteneur est fail-closed). On seede donc un
+    trousseau jetable dans tmp_path à partir d'une COPIE en lecture de la paire
+    legacy réelle : les tokens restent signés par la même clé que
+    `settings.jwt_public_key` (mis en cache au chargement), kid = hub-jwt-key-1
+    tant qu'aucune rotation n'a lieu. Les tests du trousseau lui-même
+    (test_jwt_keyring.isolated_keyring) re-patchent par-dessus sans conflit.
+    """
+    import app.config as cfg
+    from app import jwt_keyring
+
+    secrets_dir = tmp_path / "secrets_keyring"
+    secrets_dir.mkdir()
+    (secrets_dir / "jwt_private_key.pem").write_text(get_settings().jwt_private_key)
+    (secrets_dir / "jwt_public_key.pem").write_text(get_settings().jwt_public_key)
+    monkeypatch.setattr(cfg, "_SECRETS_DIR", secrets_dir)
+    monkeypatch.setattr(jwt_keyring, "_KEYRING_DIR", secrets_dir / "jwt_keys")
+    jwt_keyring.reload()
+    jwt_keyring.ensure_seeded()
+    yield
+    jwt_keyring.reload()
+
+
 # Champs OIDC mutés par certains tests ; sauvegardés puis restaurés par la fixture `settings`.
 _OIDC_FIELDS_TO_SNAPSHOT = (
     "oidc_issuer",
