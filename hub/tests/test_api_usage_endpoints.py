@@ -1,5 +1,5 @@
 """Tests des endpoints /api/audit/usage/* (admin uniquement)."""
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 import pytest
 from sqlalchemy import select
@@ -8,9 +8,22 @@ from app.models import AppUsageSegment, UserSession, utcnow
 from app.usage_tracking import touch_app_presence
 from tests.test_usage_segments import _make_session
 
+# Instant figé loin de toute frontière de jour UTC (convention naive-UTC).
+# Les segments de test de 10 min ne doivent jamais traverser minuit : le clamp
+# `ended = min(raw_end, day_end)` de l'endpoint les tronquerait (flake 23:50→00:00
+# UTC observé en CI — durée 330 s au lieu de 600 s).
+FROZEN_NOW = datetime(2026, 6, 15, 12, 0, 0)
+
+
+def _freeze_utcnow(monkeypatch):
+    """Fige utcnow dans les 3 modules qui le bindent (models, tracking, route)."""
+    for mod in ("app.models", "app.usage_tracking", "app.routes.audit"):
+        monkeypatch.setattr(f"{mod}.utcnow", lambda: FROZEN_NOW)
+
 
 @pytest.mark.asyncio
-async def test_usage_user_day(client, async_session, admin_token, test_user):
+async def test_usage_user_day(client, async_session, admin_token, test_user, monkeypatch):
+    _freeze_utcnow(monkeypatch)
     s = await _make_session(async_session, test_user)
     await touch_app_presence(async_session, s, "test-app")
     seg = (await async_session.execute(select(AppUsageSegment))).scalar_one()
@@ -18,7 +31,7 @@ async def test_usage_user_day(client, async_session, admin_token, test_user):
     seg.end_reason = "switch"
     await async_session.commit()
 
-    today = utcnow().strftime("%Y-%m-%d")
+    today = FROZEN_NOW.strftime("%Y-%m-%d")
     resp = await client.get(
         f"/api/audit/usage/user/{test_user.id}?date={today}",
         headers={"Authorization": f"Bearer {admin_token}"},
@@ -151,9 +164,10 @@ async def test_usage_user_open_segment_visible(client, async_session, admin_toke
 
 
 @pytest.mark.asyncio
-async def test_usage_user_excludes_workshop_segments(client, async_session, admin_token, test_user):
+async def test_usage_user_excludes_workshop_segments(client, async_session, admin_token, test_user, monkeypatch):
     """Les segments atelier (slug finissant par -ws) sont exclus de l'uptime
     utilisateur : cette vue ne mesure que l'usage production."""
+    _freeze_utcnow(monkeypatch)
     s = await _make_session(async_session, test_user)
     await touch_app_presence(async_session, s, "test-app")
     await touch_app_presence(async_session, s, "test-app-ws")
@@ -164,7 +178,7 @@ async def test_usage_user_excludes_workshop_segments(client, async_session, admi
         seg.end_reason = "switch"
     await async_session.commit()
 
-    today = utcnow().strftime("%Y-%m-%d")
+    today = FROZEN_NOW.strftime("%Y-%m-%d")
     resp = await client.get(
         f"/api/audit/usage/user/{test_user.id}?date={today}",
         headers={"Authorization": f"Bearer {admin_token}"},
