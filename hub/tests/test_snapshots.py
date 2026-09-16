@@ -462,6 +462,7 @@ class TestAppsCodeEngine:
         from pathlib import Path as _P
         from cryptography.hazmat.primitives import serialization
         from cryptography.hazmat.primitives.asymmetric import rsa
+        import app.config as cfg
         from app import snapshot_collectors
         from app import snapshot_engine
         from app.snapshot_engine import create_snapshot
@@ -474,9 +475,13 @@ class TestAppsCodeEngine:
         (src / "monapp" / ".git" / "HEAD").write_text("ref: refs/heads/main\n")
         monkeypatch.setattr(snapshot_collectors, "APPS_SOURCE_DIR", src)
 
-        # Secrets : paire RSA jetable (le snapshot est chiffré avec la clé publique JWT)
+        # Secrets : paires RSA jetables (snapshot chiffré avec la paire backup,
+        # repli legacy JWT — cf. snapshot_crypto, découplage T2/T3)
         secrets_dir = tmp_path / "secrets"
         secrets_dir.mkdir()
+        backup_priv, backup_pub = cfg.generate_rsa_keys()
+        (secrets_dir / "backup_private_key.pem").write_text(backup_priv)
+        (secrets_dir / "backup_public_key.pem").write_text(backup_pub)
         key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
         (secrets_dir / "jwt_private_key.pem").write_bytes(
             key.private_bytes(
