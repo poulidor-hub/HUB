@@ -5,6 +5,18 @@
 
 ---
 
+## [3.59.2] - 17 septembre 2026
+
+### 📖 Documentation — README du dépôt
+
+| Fonctionnalité | Description |
+|----------------|-------------|
+| **README créé** | Le dépôt n'avait aucun README à la racine : rôle du Hub, fonctionnalités (auth JWT/JWKS, OIDC, M2M, messagerie SSE, backups/snapshots, VPN WireGuard, PKI), place dans le parc (diagramme Mermaid), démarrage (`install.sh`, cibles make), tests, table des 9 documents de référence |
+| **Stack documentée à la réalité** | Frontend vanilla JS (Bootstrap 5, ECharts, sans build) — pas React ; JWKS public sur `/api/auth/.well-known/jwks.json` |
+| **Version synchronisée** | `INTEGRATION.md` et `frontend/index.html` passés à v3.59.2 par `sync_version.py` |
+
+---
+
 ## [3.59.1] - 16 septembre 2026
 
 ### 📖 Cahier des charges — réponses aux points d'audit (clés, SPOF, quiesce)
