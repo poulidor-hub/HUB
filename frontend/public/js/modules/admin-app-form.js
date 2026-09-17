@@ -647,18 +647,17 @@ async function handleSaveApp(event) {
             }
 
             await api.createApp(data);
+            // Modal fermée dès la création : le suivi de déploiement n'est pas
+            // captif (toast à la fin — spec 2026-09-17 §3.3)
             appFormModal.hide();
-            let deployStarted = false;
-            if (data.git_repo_url) {
-                try { deployStarted = await triggerDeploy(data.slug); } catch (_) { /* erreur déjà affichée dans la modal de déploiement */ }
-            }
             const sharedMsg = isSharedService ? ' (API partagée M2M)' : '';
-            showToast('Succès', `Application créée${sharedMsg}${deployStarted ? ' — déploiement lancé' : ''}`, 'success');
-            
-            // Rafraîchir le token pour avoir accès à la nouvelle app immédiatement
-            await refreshTokenAfterAppChange('création');
-            
-            await loadAdminData();
+            showToast('Succès', `Application créée${sharedMsg}`, 'success');
+            if (data.git_repo_url) {
+                triggerDeploy(data.slug).catch(() => {}); // erreur déjà toastée
+            }
+            // Rafraîchissements en arrière-plan, non bloquants
+            refreshTokenAfterAppChange('création', true).catch(() => {});
+            loadAdminData().catch(() => {});
         }
         loadApps(); // Refresh dashboard
     } catch (error) {
