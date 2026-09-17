@@ -326,6 +326,13 @@ function renderUsageHeatmap(containerId, data) {
             data: flat.map(([x, y, v]) => [x, days.length - 1 - y, v])
         }]
     }, true);
+    // Re-mesure le conteneur : si une instance a été créée pendant que l'onglet
+    // était caché (SSE audit_updated → renderUsageHeatmap sur panneau display:none,
+    // canvas mesuré à 0px), setOption seul réutilise cette taille fausse et la
+    // vue d'ensemble reste « écrasée » jusqu'au F5. resize() aligne le canvas sur
+    // le conteneur désormais visible — même contractuelle que les renderers
+    // renderUserDayTimeline / renderUserDayBreakdown ci-dessus.
+    chart.resize();
 }
 
 // Courbe simultanés + barres uniques/jour (mixte, double axe Y)

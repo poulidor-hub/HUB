@@ -5,6 +5,21 @@
 
 ---
 
+## [3.59.4] - 17 septembre 2026
+
+## [3.59.4] - 17 septembre 2026
+
+### ⚡ Fix UI — vue d'ensemble Audit écrasée au retour d'un autre onglet
+
+| Correctif | Description |
+|-----------|-------------|
+| **Symptôme** | Page Audit & Suivi : après avoir consulté « Uptime utilisateurs », la heatmap « Activité du parc » de la vue d'ensemble revenait écrasée (bande étroite) jusqu'à un F5 |
+| **Cause** | Un re-render déclenché pendant l'onglet caché (SSE `audit_updated` → `loadAuditPageOverview`) crée l'instance ECharts sur un panneau `display:none` → canvas mesuré à 0 px (fallback 100 px) ; au retour, `renderUsageHeatmap` réutilisait cette instance avec `setOption()` **sans `chart.resize()`** — contrairement à `renderUserDayTimeline` et `renderUserDayBreakdown` qui l'appellent déjà |
+| **Fix** | `chart.resize()` en fin de `renderUsageHeatmap` — re-mesure le conteneur désormais visible |
+| **Validation E2E** | Scénario headless Chromium (session admin réelle) : render caché w=0 → retour : canvas 100 px / ECRASÉ avant fix ; après fix le render du retour re-mesure à 662 px (= conteneur) / OK — reproduction déterministe |
+
+---
+
 ## [3.59.3] - 17 septembre 2026
 
 ### ⚡ Fix critique — écran de chargement infini du portail (api.js invalide)
