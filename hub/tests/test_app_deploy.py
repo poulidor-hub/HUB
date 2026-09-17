@@ -569,3 +569,26 @@ async def test_apps_host_path_setting_default(settings):
     st = get_settings()
     assert hasattr(st, "apps_host_path")
     assert st.apps_host_path  # non vide par défaut
+
+
+@pytest.mark.asyncio
+async def test_requalify_stuck_deployments(async_session):
+    from app.deploy_service import requalify_stuck_deployments
+
+    async_session.add(AppDeployment(app_slug="a", status="pending"))
+    async_session.add(AppDeployment(app_slug="b", status="running"))
+    async_session.add(AppDeployment(app_slug="c", status="success"))
+    await async_session.commit()
+
+    n = await requalify_stuck_deployments(async_session)
+    assert n == 2
+
+    from sqlalchemy import select
+    rows = (await async_session.execute(
+        select(AppDeployment).where(AppDeployment.app_slug.in_(["a", "b", "c"]))
+    )).scalars().all()
+    by_slug = {r.app_slug: r for r in rows}
+    assert by_slug["a"].status == "failed"
+    assert by_slug["b"].status == "failed"
+    assert "redémarrage" in (by_slug["a"].logs or "")
+    assert by_slug["c"].status == "success"  # inchangé

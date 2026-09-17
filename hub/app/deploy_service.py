@@ -165,6 +165,26 @@ def cancel_all_deployments() -> None:
     _deploy_tasks.clear()
 
 
+async def requalify_stuck_deployments(db: AsyncSession) -> int:
+    """Boot : requalifie en 'failed' les déploiements restés pending/running.
+
+    Au démarrage, aucune tâche de déploiement n'est vivante : toute ligne
+    pending/running provient d'un crash/redémarrage (sinon 409 permanent).
+    """
+    result = await db.execute(
+        select(AppDeployment).where(AppDeployment.status.in_(["pending", "running"]))
+    )
+    stuck = result.scalars().all()
+    for dep in stuck:
+        dep.status = "failed"
+        dep.current_step = "interrompu"
+        dep.finished_at = _now()
+        dep.logs = ((dep.logs or "") +
+                    f"[{_now():%H:%M:%S}] ❌ Interrompu par redémarrage du HUB — relancez le déploiement\n")[-LOGS_CAP:]
+    await db.commit()
+    return len(stuck)
+
+
 async def start_deployment(slug: str, triggered_by: str | None) -> int:
     """Crée la ligne de déploiement et lance la tâche de fond (non-bloquant)."""
     async with async_session_maker() as db:
