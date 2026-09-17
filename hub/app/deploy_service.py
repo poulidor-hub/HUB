@@ -121,7 +121,21 @@ TIMEOUT_UP = 180
 TIMEOUT_HEALTH = 120
 LOGS_CAP = 100_000
 
-_deploy_lock = asyncio.Lock()          # 1 déploiement à la fois, globalement
+_deploy_semaphore: asyncio.Semaphore | None = None
+
+
+def _get_semaphore() -> asyncio.Semaphore:
+    """Pool de déploiements simultanés (lazy : N lu une seule fois, borné 1-6).
+
+    Remplace l'ancien verrou global (1 déploiement à la fois) : les petites apps
+    peuvent se déployer en parallèle, les excédentaires attendent en file
+    (statut DB 'pending').
+    """
+    global _deploy_semaphore
+    if _deploy_semaphore is None:
+        n = max(1, min(6, int(get_settings().max_concurrent_deployments)))
+        _deploy_semaphore = asyncio.Semaphore(n)
+    return _deploy_semaphore
 _deploy_tasks: set[asyncio.Task] = set()
 
 
@@ -133,10 +147,12 @@ def get_apps_dir() -> Path:
     return Path(get_settings().apps_host_path)
 
 
-async def has_active_deployment(db: AsyncSession) -> bool:
+async def has_active_deployment_for(db: AsyncSession, slug: str) -> bool:
+    """Un déploiement est-il déjà en cours/en file pour CETTE app uniquement ?"""
     result = await db.execute(
         select(AppDeployment.id)
         .where(AppDeployment.status.in_(["pending", "running"]))
+        .where(AppDeployment.app_slug == slug)
         .limit(1)
     )
     return result.scalar_one_or_none() is not None
@@ -242,9 +258,23 @@ async def _wait_healthy(api_port: int, timeout: int = TIMEOUT_HEALTH) -> bool:
 
 
 async def _run_deployment(deployment_id: int, slug: str, session_factory=None) -> None:
-    """Pipeline complet. Chaque étape journalise en DB (statut + étape + logs)."""
-    async with _deploy_lock:
-        factory = session_factory or async_session_maker
+    """Pipeline complet. Chaque étape journalise en DB (statut + étape + logs).
+
+    File d'attente : la ligne reste 'pending' tant qu'aucun slot du pool n'est
+    libre ; le statut passe 'running' à l'acquisition du sémaphore.
+    """
+    factory = session_factory or async_session_maker
+    sem = _get_semaphore()
+    try:
+        await sem.acquire()
+    except asyncio.CancelledError:
+        await _update_deployment(
+            deployment_id, factory, status="failed",
+            current_step="annulé en file", finished_at=_now(),
+            logs="Déploiement annulé (shutdown du HUB) pendant l'attente d'un slot\n",
+        )
+        raise
+    try:
         await _update_deployment(deployment_id, factory, status="running", current_step="clone",
                                  logs=f"[{_now():%H:%M:%S}] Déploiement démarré\n")
         try:
@@ -345,6 +375,8 @@ async def _run_deployment(deployment_id: int, slug: str, session_factory=None) -
             await _update_deployment(deployment_id, factory, status="failed",
                                      finished_at=_now(),
                                      logs=f"[{_now():%H:%M:%S}] ❌ {e}\n")
+    finally:
+        sem.release()
 
 
 def _now():

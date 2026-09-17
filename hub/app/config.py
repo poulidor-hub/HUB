@@ -268,6 +268,10 @@ class Settings(BaseSettings):
     # 0 = désactivé, 3600 = toutes les heures
     github_token_check_interval: int = 3600
 
+    # Déploiements simultanés max (petites apps : 3 ; borné 1-6 au runtime).
+    # La file d'attente reste en DB (statut 'pending' jusqu'à l'acquisition d'un slot).
+    max_concurrent_deployments: int = 3
+
     # Cooldown pour les notifications SSE d'audit (en secondes)
     # Évite les rafraîchissements trop fréquents de la page audit
     audit_sse_cooldown: float = 5.0

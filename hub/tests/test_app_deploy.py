@@ -406,13 +406,15 @@ async def test_run_deployment_fails_explicitly_without_makefile(async_session, m
 
 
 @pytest.mark.asyncio
-async def test_has_active_deployment(async_session):
-    from app.deploy_service import has_active_deployment
+async def test_has_active_deployment_for(async_session):
+    """Le conflit ne vise que la même app (pool de déploiements, spec 2026-09-17)."""
+    from app.deploy_service import has_active_deployment_for
 
-    assert not await has_active_deployment(async_session)
+    assert not await has_active_deployment_for(async_session, "exemple-app")
     async_session.add(AppDeployment(app_slug="a", status="running"))
     await async_session.commit()
-    assert await has_active_deployment(async_session)
+    assert await has_active_deployment_for(async_session, "a")
+    assert not await has_active_deployment_for(async_session, "exemple-app")
 
 
 # ---- Endpoints ----
@@ -454,8 +456,31 @@ async def test_deploy_400_without_repo(client, admin_token, async_session):
 
 
 @pytest.mark.asyncio
-async def test_deploy_conflict_when_active(client, admin_token, app_with_repo, async_session, monkeypatch):
+async def test_deploy_no_conflict_with_other_app(client, admin_token, app_with_repo, async_session, monkeypatch):
+    """Un déploiement d'une AUTRE app ne bloque plus (pool, spec 2026-09-17 §3.5)."""
     async_session.add(AppDeployment(app_slug="other", status="running"))
+    await async_session.commit()
+    import app.routes.app_deploy as route_mod
+
+    async def _fake_start(slug, triggered_by):
+        return 43
+    monkeypatch.setattr(route_mod, "start_deployment", _fake_start)
+    r = await client.post("/api/apps/exemple-app/deploy", headers=get_auth_header(admin_token))
+    assert r.status_code == 201
+
+
+@pytest.mark.asyncio
+async def test_deploy_conflict_same_app(client, admin_token, app_with_repo, async_session):
+    async_session.add(AppDeployment(app_slug="exemple-app", status="running"))
+    await async_session.commit()
+    r = await client.post("/api/apps/exemple-app/deploy", headers=get_auth_header(admin_token))
+    assert r.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_deploy_conflict_pending_same_app(client, admin_token, app_with_repo, async_session):
+    """Une app 'pending' (en file) est aussi protégée contre le double déclenchement."""
+    async_session.add(AppDeployment(app_slug="exemple-app", status="pending"))
     await async_session.commit()
     r = await client.post("/api/apps/exemple-app/deploy", headers=get_auth_header(admin_token))
     assert r.status_code == 409
