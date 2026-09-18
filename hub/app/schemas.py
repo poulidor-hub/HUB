@@ -2155,6 +2155,18 @@ class GithubRepoListResponse(BaseModel):
     token_last_checked: Optional[str] = None
 
 
+class RepoAccessInfo(BaseModel):
+    """Résultat du préflight d'accès Git (prépare / check-access)."""
+    ok: bool
+    reason_key: Optional[str] = None
+    reason: Optional[str] = None
+
+
+class GithubRepoCheckAccessRequest(BaseModel):
+    repo_full_name: Optional[str] = None  # "owner/repo" — résolu via le cache
+    clone_url: Optional[str] = None       # ou URL directe
+
+
 class GithubRepoPrepareRequest(BaseModel):
     repo_full_name: str  # "owner/repo"
 
@@ -2169,6 +2181,7 @@ class GithubRepoPrepareResponse(BaseModel):
     subnet: str | None = None
     host: str
     ports_reused: bool
+    repo_access: Optional[RepoAccessInfo] = None
 
 
 class GithubRepoRefreshResponse(BaseModel):

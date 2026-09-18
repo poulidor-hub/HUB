@@ -406,13 +406,15 @@ async def test_run_deployment_fails_explicitly_without_makefile(async_session, m
 
 
 @pytest.mark.asyncio
-async def test_has_active_deployment(async_session):
-    from app.deploy_service import has_active_deployment
+async def test_has_active_deployment_for(async_session):
+    """Le conflit ne vise que la même app (pool de déploiements, spec 2026-09-17)."""
+    from app.deploy_service import has_active_deployment_for
 
-    assert not await has_active_deployment(async_session)
+    assert not await has_active_deployment_for(async_session, "exemple-app")
     async_session.add(AppDeployment(app_slug="a", status="running"))
     await async_session.commit()
-    assert await has_active_deployment(async_session)
+    assert await has_active_deployment_for(async_session, "a")
+    assert not await has_active_deployment_for(async_session, "exemple-app")
 
 
 # ---- Endpoints ----
@@ -454,8 +456,31 @@ async def test_deploy_400_without_repo(client, admin_token, async_session):
 
 
 @pytest.mark.asyncio
-async def test_deploy_conflict_when_active(client, admin_token, app_with_repo, async_session, monkeypatch):
+async def test_deploy_no_conflict_with_other_app(client, admin_token, app_with_repo, async_session, monkeypatch):
+    """Un déploiement d'une AUTRE app ne bloque plus (pool, spec 2026-09-17 §3.5)."""
     async_session.add(AppDeployment(app_slug="other", status="running"))
+    await async_session.commit()
+    import app.routes.app_deploy as route_mod
+
+    async def _fake_start(slug, triggered_by):
+        return 43
+    monkeypatch.setattr(route_mod, "start_deployment", _fake_start)
+    r = await client.post("/api/apps/exemple-app/deploy", headers=get_auth_header(admin_token))
+    assert r.status_code == 201
+
+
+@pytest.mark.asyncio
+async def test_deploy_conflict_same_app(client, admin_token, app_with_repo, async_session):
+    async_session.add(AppDeployment(app_slug="exemple-app", status="running"))
+    await async_session.commit()
+    r = await client.post("/api/apps/exemple-app/deploy", headers=get_auth_header(admin_token))
+    assert r.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_deploy_conflict_pending_same_app(client, admin_token, app_with_repo, async_session):
+    """Une app 'pending' (en file) est aussi protégée contre le double déclenchement."""
+    async_session.add(AppDeployment(app_slug="exemple-app", status="pending"))
     await async_session.commit()
     r = await client.post("/api/apps/exemple-app/deploy", headers=get_auth_header(admin_token))
     assert r.status_code == 409
@@ -544,3 +569,26 @@ async def test_apps_host_path_setting_default(settings):
     st = get_settings()
     assert hasattr(st, "apps_host_path")
     assert st.apps_host_path  # non vide par défaut
+
+
+@pytest.mark.asyncio
+async def test_requalify_stuck_deployments(async_session):
+    from app.deploy_service import requalify_stuck_deployments
+
+    async_session.add(AppDeployment(app_slug="a", status="pending"))
+    async_session.add(AppDeployment(app_slug="b", status="running"))
+    async_session.add(AppDeployment(app_slug="c", status="success"))
+    await async_session.commit()
+
+    n = await requalify_stuck_deployments(async_session)
+    assert n == 2
+
+    from sqlalchemy import select
+    rows = (await async_session.execute(
+        select(AppDeployment).where(AppDeployment.app_slug.in_(["a", "b", "c"]))
+    )).scalars().all()
+    by_slug = {r.app_slug: r for r in rows}
+    assert by_slug["a"].status == "failed"
+    assert by_slug["b"].status == "failed"
+    assert "redémarrage" in (by_slug["a"].logs or "")
+    assert by_slug["c"].status == "success"  # inchangé

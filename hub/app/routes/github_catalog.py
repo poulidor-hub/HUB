@@ -20,12 +20,15 @@ from app.github_client import parse_github_url, load_db_token, slugify_repo
 from app.models import AppSetting
 from app.models import Application, GithubRepoCache, User, utcnow
 from app.port_allocator import allocate_ports_for_app, PortPoolExhausted, SubnetPoolExhausted
+from app.repo_access import check_repo_access
 from app.schemas import (
     GithubRepo,
     GithubRepoListResponse,
+    GithubRepoCheckAccessRequest,
     GithubRepoPrepareRequest,
     GithubRepoPrepareResponse,
     GithubRepoRefreshResponse,
+    RepoAccessInfo,
 )
 
 router = APIRouter(prefix="/api/apps/github", tags=["github"])
@@ -307,6 +310,11 @@ async def prepare_app_from_repo(
     except SubnetPoolExhausted as e:
         raise HTTPException(status_code=409, detail=f"Pool de sous-réseaux saturé : {e}")
 
+    # Préflight d'accès Git (non bloquant ici : le formulaire alerte tôt ;
+    # la création, elle, re-vérifie côté serveur — spec 2026-09-17 §3.1)
+    token = get_settings().github_token or await load_db_token(db)
+    access = await check_repo_access(cached.clone_url, token)
+
     return GithubRepoPrepareResponse(
         slug=slug,
         name=cached.name,
@@ -317,4 +325,31 @@ async def prepare_app_from_repo(
         subnet=alloc.subnet,
         host=host,
         ports_reused=reused,
+        repo_access=RepoAccessInfo(ok=access.ok, reason_key=access.reason_key, reason=access.reason),
     )
+
+
+@router.post("/check-access", response_model=RepoAccessInfo)
+async def check_repo_access_endpoint(
+    payload: GithubRepoCheckAccessRequest,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_admin),
+):
+    """Vérifie l'accès Git d'un dépôt (repo du cache ou URL directe). Non bloquant."""
+    url = payload.clone_url
+    if not url and payload.repo_full_name:
+        cached = (await db.execute(
+            select(GithubRepoCache).where(GithubRepoCache.full_name == payload.repo_full_name)
+        )).scalar_one_or_none()
+        if not cached:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Repo '{payload.repo_full_name}' non trouvé dans le cache. Synchronisez d'abord.",
+            )
+        url = cached.clone_url
+    if not url:
+        raise HTTPException(status_code=400, detail="Fournir repo_full_name ou clone_url")
+
+    token = get_settings().github_token or await load_db_token(db)
+    result = await check_repo_access(url, token)
+    return RepoAccessInfo(ok=result.ok, reason_key=result.reason_key, reason=result.reason)

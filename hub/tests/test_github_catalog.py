@@ -250,9 +250,16 @@ class TestPrepare:
     """Tests de POST /api/apps/github/prepare (Task 6)."""
 
     @pytest.mark.asyncio
-    async def test_prepare_success(self, client: AsyncClient, admin_user, async_session, settings):
+    async def test_prepare_success(self, client: AsyncClient, admin_user, async_session, settings, monkeypatch):
         """Préparation réussie : slug dérivé + ports alloués + git_repo_url."""
         settings.github_token = "ghp_test"
+        # Préflight mocké : aucun appel réseau en test (cf. Task 2 plan)
+        import app.routes.github_catalog as gc
+        from app.repo_access import RepoAccessResult
+
+        async def _access_ok(clone_url, token):
+            return RepoAccessResult(True, "ok", "Accès au dépôt vérifié.")
+        monkeypatch.setattr(gc, "check_repo_access", _access_ok)
         async_session.add(GithubRepoCache(
             repo_id=1, name="Mon-Projet_Cool", full_name="MYCOMPANY/Mon-Projet_Cool",
             owner="MYCOMPANY", html_url="https://github.com/MYCOMPANY/Mon-Projet_Cool",
@@ -307,9 +314,15 @@ class TestPrepare:
         assert r.status_code == 404
 
     @pytest.mark.asyncio
-    async def test_prepare_ports_idempotent(self, client: AsyncClient, admin_user, async_session, settings):
+    async def test_prepare_ports_idempotent(self, client: AsyncClient, admin_user, async_session, settings, monkeypatch):
         """Deuxième prepare même slug → ports_reused True, mêmes ports."""
         settings.github_token = "ghp_test"
+        import app.routes.github_catalog as gc
+        from app.repo_access import RepoAccessResult
+
+        async def _access_ok(clone_url, token):
+            return RepoAccessResult(True, "ok", "Accès au dépôt vérifié.")
+        monkeypatch.setattr(gc, "check_repo_access", _access_ok)
         async_session.add(GithubRepoCache(
             repo_id=1, name="x", full_name="o/x", owner="o",
             html_url="x", clone_url="x.git",
@@ -322,3 +335,117 @@ class TestPrepare:
         assert b1["ports_reused"] is False
         assert b2["ports_reused"] is True
         assert (b1["api_port"], b1["frontend_port"]) == (b2["api_port"], b2["frontend_port"])
+
+
+class TestRepoAccessPreflight:
+    """Préflight d'accès Git : prepare enrichi + POST /check-access (spec 2026-09-17)."""
+
+    @staticmethod
+    def _add_cache(async_session, repo_id: int, full_name: str):
+        async_session.add(GithubRepoCache(
+            repo_id=repo_id, name=full_name.split("/")[1], full_name=full_name,
+            owner=full_name.split("/")[0],
+            html_url=f"https://github.com/{full_name}",
+            clone_url=f"https://github.com/{full_name}.git",
+        ))
+
+    @pytest.mark.asyncio
+    async def test_prepare_includes_repo_access_ok(self, client, admin_user, async_session, settings, monkeypatch):
+        """prepare renvoie repo_access (mocké ok) — le formulaire prévient tôt."""
+        settings.github_token = "ghp_test"
+        self._add_cache(async_session, 901, "o/AccessOk")
+        await async_session.commit()
+
+        import app.routes.github_catalog as gc
+        from app.repo_access import RepoAccessResult
+
+        async def _access(clone_url, token):
+            return RepoAccessResult(True, "ok", "Accès au dépôt vérifié.")
+        monkeypatch.setattr(gc, "check_repo_access", _access)
+
+        token, _, _ = create_access_token(username=admin_user.username, apps={})
+        r = await client.post("/api/apps/github/prepare",
+                              headers=get_auth_header(token),
+                              json={"repo_full_name": "o/AccessOk"})
+        assert r.status_code == 200
+        assert r.json()["repo_access"]["ok"] is True
+        assert r.json()["repo_access"]["reason_key"] == "ok"
+
+    @pytest.mark.asyncio
+    async def test_prepare_includes_repo_access_denied(self, client, admin_user, async_session, settings, monkeypatch):
+        """prepare renvoie repo_access denied — aucun blocage côté prepare (UX only)."""
+        settings.github_token = "ghp_test"
+        self._add_cache(async_session, 902, "o/AccessKo")
+        await async_session.commit()
+
+        import app.routes.github_catalog as gc
+        from app.repo_access import RepoAccessResult
+
+        async def _access(clone_url, token):
+            return RepoAccessResult(False, "access_denied",
+                                    "Le token configuré ne peut pas accéder à ce dépôt privé.")
+        monkeypatch.setattr(gc, "check_repo_access", _access)
+
+        token, _, _ = create_access_token(username=admin_user.username, apps={})
+        r = await client.post("/api/apps/github/prepare",
+                              headers=get_auth_header(token),
+                              json={"repo_full_name": "o/AccessKo"})
+        assert r.status_code == 200
+        assert r.json()["repo_access"]["ok"] is False
+        assert r.json()["repo_access"]["reason_key"] == "access_denied"
+
+    @pytest.mark.asyncio
+    async def test_check_access_by_full_name(self, client, admin_user, async_session, settings, monkeypatch):
+        """check-access résout repo_full_name via le cache et délègue au module."""
+        settings.github_token = "ghp_test"
+        self._add_cache(async_session, 903, "o/CacheTest")
+        await async_session.commit()
+
+        import app.routes.github_catalog as gc
+        from app.repo_access import RepoAccessResult
+        seen = {}
+
+        async def _access(clone_url, token):
+            seen["clone_url"] = clone_url
+            return RepoAccessResult(True, "ok", "Accès au dépôt vérifié.")
+        monkeypatch.setattr(gc, "check_repo_access", _access)
+
+        token, _, _ = create_access_token(username=admin_user.username, apps={})
+        r = await client.post("/api/apps/github/check-access",
+                              headers=get_auth_header(token),
+                              json={"repo_full_name": "o/CacheTest"})
+        assert r.status_code == 200
+        assert r.json()["ok"] is True
+        assert seen["clone_url"] == "https://github.com/o/CacheTest.git"
+
+    @pytest.mark.asyncio
+    async def test_check_access_by_clone_url(self, client, admin_user, settings, monkeypatch):
+        """check-access accepte une URL directe (URL Git éditée dans le formulaire)."""
+        import app.routes.github_catalog as gc
+        from app.repo_access import RepoAccessResult
+
+        async def _access(clone_url, token):
+            return RepoAccessResult(False, "access_denied", "Refus.")
+        monkeypatch.setattr(gc, "check_repo_access", _access)
+
+        token, _, _ = create_access_token(username=admin_user.username, apps={})
+        r = await client.post("/api/apps/github/check-access",
+                              headers=get_auth_header(token),
+                              json={"clone_url": "https://github.com/other/direct.git"})
+        assert r.status_code == 200
+        assert r.json()["ok"] is False
+
+    @pytest.mark.asyncio
+    async def test_check_access_unknown_repo_404(self, client, admin_user, settings):
+        token, _, _ = create_access_token(username=admin_user.username, apps={})
+        r = await client.post("/api/apps/github/check-access",
+                              headers=get_auth_header(token),
+                              json={"repo_full_name": "o/Inconnu"})
+        assert r.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_check_access_requires_payload(self, client, admin_user, settings):
+        token, _, _ = create_access_token(username=admin_user.username, apps={})
+        r = await client.post("/api/apps/github/check-access",
+                              headers=get_auth_header(token), json={})
+        assert r.status_code == 400

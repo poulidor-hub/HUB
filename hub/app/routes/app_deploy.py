@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import get_current_admin
 from app.database import get_db
-from app.deploy_service import has_active_deployment, start_deployment
+from app.deploy_service import has_active_deployment_for, start_deployment
 from app.models import AppDeployment, Application, User
 
 router = APIRouter(prefix="/api/apps", tags=["deploiement"])
@@ -48,10 +48,10 @@ async def deploy_app(
             status_code=400,
             detail="git_repo_url manquant : impossible de déployer sans dépôt Git",
         )
-    if await has_active_deployment(db):
+    if await has_active_deployment_for(db, slug):
         raise HTTPException(
             status_code=409,
-            detail="Un déploiement est déjà en cours. Réessayez une fois terminé.",
+            detail=f"Un déploiement de '{slug}' est déjà en cours ou en file d'attente. Réessayez une fois terminé.",
         )
     deployment_id = await start_deployment(slug=slug, triggered_by=admin.username)
     logger.info(f"Déploiement #{deployment_id} lancé pour {slug} par {admin.username}")

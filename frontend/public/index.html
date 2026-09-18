@@ -2375,6 +2375,7 @@
                 </div>
                 <form id="appForm" data-action="handleSaveApp" data-args="event">
                     <div class="modal-body pt-3">
+                        <div id="appGitAccessBanner" class="d-none mb-3"></div>
                         <input type="hidden" id="appId">
                         <input type="hidden" id="appMode" value="create">
                         
@@ -2393,7 +2394,7 @@
                             </div>
                             <div class="col-md-4">
                                 <label class="form-label mb-1">Slug</label>
-                                <input type="text" class="form-control" id="appSlug" pattern="[a-z0-9\-]+" readonly>
+                                <input type="text" class="form-control" id="appSlug" pattern="[a-z0-9\-]+" required readonly>
                                 <small class="text-muted" id="slugHint">Généré automatiquement</small>
                             </div>
                         </div>

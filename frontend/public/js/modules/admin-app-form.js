@@ -57,7 +57,68 @@ async function showAddAppForm() {
     updateIconPreview();
     updateAppFormPreview();
     updateUrlPreview();
+    renderGitAccessBanner(null);
+    document.getElementById('appSubmitBtn').disabled = false;
     appFormModal.show();
+}
+
+// ===== Préflight d'accès Git (spec 2026-09-17) =====
+
+/**
+ * Rend le bandeau d'accès Git en haut du formulaire (vert/rouge) et pilote
+ * l'état du bouton « Enregistrer ». access = { ok, reason_key, reason } ou null.
+ * `checked_url` (si présent) mémorise l'URL déjà vérifiée pour ne pas re-vérifier.
+ */
+function renderGitAccessBanner(access) {
+    // Copie défensive : window._appFormRepoAccess = { ok, reason_key, reason, checked_url? }
+    window._appFormRepoAccess = access ? Object.assign({}, access) : null;
+    const banner = document.getElementById('appGitAccessBanner');
+    if (!banner) return;
+    const gitUrl = (document.getElementById('appGitRepoUrl')?.value || '').trim();
+    if (!gitUrl) {
+        banner.classList.add('d-none');
+        banner.innerHTML = '';
+        updateAppSubmitState();
+        return;
+    }
+    banner.classList.remove('d-none');
+    const accessState = window._appFormRepoAccess;
+    if (accessState && accessState.ok) {
+        banner.innerHTML = '<div class="alert alert-success py-2 mb-0 small"><i class="bi bi-check-circle me-1"></i><strong>Accès au dépôt vérifié</strong> — le token peut cloner ce dépôt.</div>';
+    } else {
+        const reason = (accessState && accessState.reason) || 'Accès au dépôt non vérifié.';
+        banner.innerHTML =
+            '<div class="alert alert-danger py-2 mb-0 small"><i class="bi bi-exclamation-triangle me-1"></i><strong>Accès au dépôt refusé</strong> — ' +
+            escapeHtml(reason) +
+            ' <a href="#" data-action="toggleGithubTokenForm">(configurer le token)</a> · <a href="#" data-action="recheckGitAccess">(réessayer)</a></div>';
+    }
+    updateAppSubmitState();
+}
+
+/** Bloque « Enregistrer » uniquement en création avec un dépôt Git à accès refusé. */
+function updateAppSubmitState() {
+    const btn = document.getElementById('appSubmitBtn');
+    if (!btn) return;
+    const mode = document.getElementById('appMode')?.value;
+    const gitUrl = (document.getElementById('appGitRepoUrl')?.value || '').trim();
+    const access = window._appFormRepoAccess;
+    const denied = mode !== 'edit' && gitUrl && access && access.ok === false;
+    btn.disabled = !!denied;
+}
+
+/** Re-vérification manuelle (« réessayer » du bandeau rouge). */
+async function recheckGitAccess() {
+    const gitUrl = (document.getElementById('appGitRepoUrl')?.value || '').trim();
+    if (!gitUrl) return;
+    const banner = document.getElementById('appGitAccessBanner');
+    if (banner) banner.innerHTML = '<div class="alert alert-secondary py-2 mb-0 small"><span class="spinner-border spinner-border-sm me-1"></span>Vérification de l\'accès au dépôt…</div>';
+    try {
+        const access = await api.checkRepoAccess({ clone_url: gitUrl });
+        access.checked_url = gitUrl;
+        renderGitAccessBanner(access);
+    } catch (e) {
+        showToast('Erreur', e.message || 'Vérification impossible', 'danger');
+    }
 }
 
 // ===== Docker Details Modal =====
@@ -555,20 +616,48 @@ async function handleSaveApp(event) {
                 create_service_account: false  // L'app créera son M2M en s'auto-enregistrant
             };
             if (gitRepoUrl) data.git_repo_url = gitRepoUrl;
-            
-            await api.createApp(data);
-            appFormModal.hide();
-            let deployStarted = false;
-            if (data.git_repo_url) {
-                try { deployStarted = await triggerDeploy(data.slug); } catch (_) { /* erreur déjà affichée dans la modal de déploiement */ }
+
+            // Garde locale : slug invalide => message clair sans POST (422 obscure)
+            if (!data.slug || !/^[a-z0-9-]{2,50}$/.test(data.slug)) {
+                showToast('Erreur', 'Slug invalide ou vide : saisissez un nom (le slug est généré automatiquement).', 'danger');
+                return;
             }
+            // Préflight à la soumission si l'URL Git n'a pas encore été vérifiée
+            // ou a été modifiée (spec 2026-09-17 §3.2). Refus => modal ouverte,
+            // aucune création.
+            if (data.git_repo_url) {
+                const access = window._appFormRepoAccess;
+                if (!access || access.checked_url !== data.git_repo_url) {
+                    try {
+                        const fresh = await api.checkRepoAccess({ clone_url: data.git_repo_url });
+                        fresh.checked_url = data.git_repo_url;
+                        renderGitAccessBanner(fresh);
+                        if (!fresh.ok) {
+                            showToast('Erreur', fresh.reason || 'Accès au dépôt refusé.', 'danger');
+                            return;
+                        }
+                    } catch (e) {
+                        showToast('Erreur', e.message || 'Vérification du dépôt impossible.', 'danger');
+                        return;
+                    }
+                } else if (access.ok === false) {
+                    showToast('Erreur', access.reason || 'Accès au dépôt refusé.', 'danger');
+                    return;
+                }
+            }
+
+            await api.createApp(data);
+            // Modal fermée dès la création : le suivi de déploiement n'est pas
+            // captif (toast à la fin — spec 2026-09-17 §3.3)
+            appFormModal.hide();
             const sharedMsg = isSharedService ? ' (API partagée M2M)' : '';
-            showToast('Succès', `Application créée${sharedMsg}${deployStarted ? ' — déploiement lancé' : ''}`, 'success');
-            
-            // Rafraîchir le token pour avoir accès à la nouvelle app immédiatement
-            await refreshTokenAfterAppChange('création');
-            
-            await loadAdminData();
+            showToast('Succès', `Application créée${sharedMsg}`, 'success');
+            if (data.git_repo_url) {
+                triggerDeploy(data.slug).catch(() => {}); // erreur déjà toastée
+            }
+            // Rafraîchissements en arrière-plan, non bloquants
+            refreshTokenAfterAppChange('création', true).catch(() => {});
+            loadAdminData().catch(() => {});
         }
         loadApps(); // Refresh dashboard
     } catch (error) {
@@ -798,6 +887,9 @@ function openAppFormPrefilled(prepared) {
         set('appGitRepoUrl', prepared.git_repo_url || '');
 
         if (typeof updateUrlPreview === 'function') updateUrlPreview();
+
+        // Préflight renvoyé par le prepare (spec 2026-09-17) : verdict immédiat
+        renderGitAccessBanner(prepared.repo_access ? Object.assign({ checked_url: prepared.git_repo_url }, prepared.repo_access) : null);
 
         const modalBody = document.querySelector('#appFormModal .modal-body');
         if (modalBody && !document.getElementById('prefilledEnvBanner')) {

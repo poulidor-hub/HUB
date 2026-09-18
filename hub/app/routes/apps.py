@@ -44,6 +44,8 @@ from app.routes.audit import log_action
 from app.docker_scanner import docker_scanner
 from app.port_allocator import allocate_ports_for_app, docker_occupied_ports, release_ports_for_app, PortPoolExhausted, SubnetPoolExhausted
 from app.m2m_catalog_export import build_m2m_catalog_export
+from app.repo_access import check_repo_access
+from app.github_client import load_db_token
 
 router = APIRouter(prefix="/api/apps", tags=["Applications"])
 settings = get_settings()
@@ -979,6 +981,20 @@ async def create_app(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Ce slug existe déjà"
         )
+
+    # Préflight Git (défense serveur — spec 2026-09-17 §3.1) : refuser de créer
+    # une app dont le dépôt n'est pas clonable avec le token configuré.
+    # Aucune ligne en DB si l'accès est refusé — plus de cartes fantômes.
+    if app_data.git_repo_url:
+        git_token = settings.github_token or await load_db_token(db)
+        git_access = await check_repo_access(app_data.git_repo_url, git_token)
+        if not git_access.ok:
+            raise HTTPException(
+                # littéral 422 : HTTP_422_UNPROCESSABLE_ENTITY est déprécié en
+                # starlette >= 0.48 (image de test = DeprecationWarning -> erreur)
+                status_code=422,
+                detail=f"Dépôt Git inaccessible : {git_access.reason}",
+            )
     
     # Déterminer le host (custom ou celui du Hub via config)
     if app_data.custom_host:

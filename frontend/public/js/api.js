@@ -1773,6 +1773,16 @@ class HubAPI {
         });
     }
 
+    // ===== Préflight d'accès Git (spec 2026-09-17) =====
+    async checkRepoAccess(payload) {
+        // payload : { repo_full_name } ou { clone_url } → { ok, reason_key, reason }
+        return this.request('/apps/github/check-access', {
+            method: 'POST',
+            body: JSON.stringify(payload),
+            headers: { 'Content-Type': 'application/json' },
+        });
+    }
+
     // ===== Déploiement automatique =====
     async deployApp(slug) {
         return this.request(`/apps/${encodeURIComponent(slug)}/deploy`, { method: 'POST' });

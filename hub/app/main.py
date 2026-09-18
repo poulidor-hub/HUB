@@ -436,6 +436,16 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         logger.warning(f"⚠️ Kill-switch snapshots au démarrage a échoué: {exc}")
 
+    # Kill-switch déploiements : requalifier les pending/running orphelins (crash)
+    try:
+        from app.deploy_service import requalify_stuck_deployments
+        async with async_session_maker() as dep_db:
+            requalified = await requalify_stuck_deployments(dep_db)
+        if requalified:
+            logger.info(f"♻️ {requalified} déploiement(s) stuck requalifié(s) en échec")
+    except Exception as exc:
+        logger.warning(f"⚠️ Kill-switch déploiements au démarrage a échoué: {exc}")
+
     logger.info("✅ Hub prêt !")
     yield
     

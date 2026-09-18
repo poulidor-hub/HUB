@@ -25,7 +25,10 @@ JS_DIR = REPO_ROOT / "frontend" / "public" / "js"
 
 def _collect_js_files():
     if not JS_DIR.is_dir():
-        pytest.skip(f"dossier introuvable: {JS_DIR}")
+        # allow_module_level requis : en docker (make test-docker) le module est
+        # collecté au top-level alors que frontend/ n'est pas copié dans l'image
+        # (hub/Dockerfile ne copie que app/, migrations/, pki.py).
+        pytest.skip(f"dossier introuvable: {JS_DIR}", allow_module_level=True)
     files = sorted(JS_DIR.rglob("*.js"))
     assert files, f"aucun .js trouvé sous {JS_DIR}"
     return files

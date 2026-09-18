@@ -408,8 +408,16 @@ class TestCreateAppGitRepoUrl:
     """Test de persistence git_repo_url via POST /api/apps/"""
 
     @pytest.mark.asyncio
-    async def test_create_app_with_git_repo_url(self, client: AsyncClient, admin_user):
+    async def test_create_app_with_git_repo_url(self, client: AsyncClient, admin_user, monkeypatch):
         """POST /api/apps/ persiste git_repo_url quand fourni (option α)."""
+        # Préflight mocké : ce test valide la persistence, pas l'accès réseau
+        import app.routes.apps as apps_mod
+        from app.repo_access import RepoAccessResult
+
+        async def _access_ok(clone_url, token):
+            return RepoAccessResult(True, "ok", "Accès au dépôt vérifié.")
+        monkeypatch.setattr(apps_mod, "check_repo_access", _access_ok)
+
         token, _, _ = create_access_token(username=admin_user.username, apps={})
         payload = {
             "name": "Mon App",
@@ -423,3 +431,61 @@ class TestCreateAppGitRepoUrl:
         apps = {a["slug"]: a for a in rget.json()}
         assert apps["mon-app-gh"].get("git_repo_url") == "https://github.com/MYCOMPANY/mon-app.git"
         await client.delete(f"/api/apps/{apps['mon-app-gh']['id']}", headers=get_auth_header(token))
+
+
+class TestCreateAppGitPreflight:
+    """Garde serveur : création bloquée (422) si le dépôt Git est inaccessible (spec 2026-09-17 §3.1)."""
+
+    @pytest.mark.asyncio
+    async def test_create_app_git_access_denied_422(self, client, admin_token, async_session, monkeypatch):
+        """Refus AVANT création : aucune ligne en DB si le dépôt est inaccessible."""
+        import app.routes.apps as apps_mod
+        from app.repo_access import RepoAccessResult
+
+        async def fake_access(clone_url, token):
+            return RepoAccessResult(False, "access_denied",
+                                    "Le token configuré ne peut pas accéder à ce dépôt privé.")
+        monkeypatch.setattr(apps_mod, "check_repo_access", fake_access)
+
+        payload = {
+            "name": "Inaccessible", "slug": "inaccessible", "api_port": 8601,
+            "git_repo_url": "https://github.com/o/prive.git",
+        }
+        r = await client.post("/api/apps/", json=payload, headers=get_auth_header(admin_token))
+        assert r.status_code == 422
+        assert "Dépôt Git inaccessible" in r.json()["detail"]
+
+        from sqlalchemy import select
+        rows = (await async_session.execute(
+            select(Application).where(Application.slug == "inaccessible")
+        )).scalars().all()
+        assert rows == []
+
+    @pytest.mark.asyncio
+    async def test_create_app_git_access_ok_creates(self, client, admin_token, async_session, monkeypatch):
+        import app.routes.apps as apps_mod
+        from app.repo_access import RepoAccessResult
+
+        async def fake_access(clone_url, token):
+            return RepoAccessResult(True, "ok", "Accès au dépôt vérifié.")
+        monkeypatch.setattr(apps_mod, "check_repo_access", fake_access)
+
+        payload = {
+            "name": "Accessible", "slug": "accessible", "api_port": 8602,
+            "git_repo_url": "https://github.com/o/pub.git",
+        }
+        r = await client.post("/api/apps/", json=payload, headers=get_auth_header(admin_token))
+        assert r.status_code == 201
+
+    @pytest.mark.asyncio
+    async def test_create_app_without_git_skips_preflight(self, client, admin_token, monkeypatch):
+        """Sans git_repo_url : aucun appel au préflight (comportement inchangé)."""
+        import app.routes.apps as apps_mod
+
+        async def unexpected(clone_url, token):
+            raise AssertionError("préflight ne doit pas être appelé sans git_repo_url")
+        monkeypatch.setattr(apps_mod, "check_repo_access", unexpected)
+
+        payload = {"name": "SansGit", "slug": "sansgit", "api_port": 8603}
+        r = await client.post("/api/apps/", json=payload, headers=get_auth_header(admin_token))
+        assert r.status_code == 201
