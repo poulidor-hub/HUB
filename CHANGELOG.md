@@ -5,7 +5,25 @@
 
 ---
 
-## [3.59.4] - 17 septembre 2026
+## [3.60.0] - 18 septembre 2026
+
+### ⚡ Feature — Ajout d'applications fiable et non intrusif (spec 2026-09-17)
+
+| Changement | Description |
+|------------|-------------|
+| **Préflight d'accès Git** | Nouveau `hub/app/repo_access.py` : `git ls-remote` avec le PAT (mécanique `http.extraheader` réutilisée du déploiement — token jamais en ligne de commande ni en log) + diagnostic API GitHub. Messages actionnables : SSO d'organisation non autorisé, droit `repo` manquant, token absent/invalide, GitHub inaccessible, URL non GitHub |
+| **Création bloquée (défense serveur)** | `POST /api/apps/` refuse (422 « Dépôt Git inaccessible : … ») et **n'insère aucune ligne** si `git_repo_url` n'est pas clonable — fin des cartes fantômes créées puis jamais déployées |
+| **Catalogue GitHub** | `POST /api/apps/github/prepare` renvoie `repo_access {ok, reason_key, reason}` (non bloquant) ; nouveau `POST /api/apps/github/check-access` (admin) pour re-vérifier une URL éditée dans le formulaire |
+| **Formulaire d'ajout** | Bandeau vert « Accès au dépôt vérifié » / rouge avec liens « configurer le token » et « réessayer » ; bouton Enregistrer désactivé si accès refusé ; re-check à la soumission si l'URL change ; garde slug invalide avec message clair (fin des 422 obscurs) ; champ slug `required` |
+| **Déploiements parallèles** | Verrou global `asyncio.Lock` remplacé par `Semaphore(max_concurrent_deployments)` (défaut 3, borné 1-6, configurable via `.env`) ; le 409 ne vise plus que la même app (`has_active_deployment_for`) ; les déploiements excédentaires attendent en file (statut DB `pending` jusqu'à l'acquisition d'un slot) |
+| **Requalification au boot** | Les `app_deployments` restés `pending/running` après crash/redémarrage sont requalifiés `failed` (« Interrompu par redémarrage du HUB ») — fin des 409 permanents (pattern kill-switch backups/snapshots) |
+| **UX non intrusive** | Modal de déploiement refondée en suivi multi-déploiements : polling global unique, modal purement visuelle et **fermable sans arrêter le suivi** (l'ancien `hidden.bs.modal` qui tuait le polling est supprimé), toasts de fin succès/échec, suivi prolongé à 30 min |
+| **Post-création allégée** | Modal fermée dès la création réussie ; refresh token + rechargements admin/dashboard en arrière-plan non bloquants (`silent=true`) |
+| **Délégateur durci** | `preventDefault()` **systématique** sur les `form[data-action]` (un handler absent ne déclenche plus le submit natif = plus de rechargement de page parasite) ; fallback visible « Action indisponible — rechargez la page » sur click/submit/change/input |
+| **Badge « Non déployée » retiré** | Décision produit : plus aucun badge de statut de déploiement dans l'admin |
+| **Tests** | +16 tests (repo_access 7, prepare/check-access 6, garde 422 3) ; suite hôte 1196 PASS ; suite docker (`make test-docker`) 1156 PASS + 1 skip ; fix `test_frontend_js_syntax` (skip module-level) et 422 littéral (starlette 0.48) pour la validation conteneur |
+
+---
 
 ## [3.59.4] - 17 septembre 2026
 
