@@ -990,7 +990,9 @@ async def create_app(
         git_access = await check_repo_access(app_data.git_repo_url, git_token)
         if not git_access.ok:
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                # littéral 422 : HTTP_422_UNPROCESSABLE_ENTITY est déprécié en
+                # starlette >= 0.48 (image de test = DeprecationWarning -> erreur)
+                status_code=422,
                 detail=f"Dépôt Git inaccessible : {git_access.reason}",
             )
     
