@@ -5,6 +5,16 @@
 
 ---
 
+## [3.60.1] - 19 septembre 2026
+
+### ⚡ Fix — nginx : imports de gros backups (client_max_body_size 1G)
+
+| Changement | Description |
+|------------|-------------|
+| **`client_max_body_size` 50M → 1G** | `frontend/nginx.conf`, `nginx-ssl.conf` (80/443) et `nginx-philia-ng.conf` (proxy externe). La limite volontaire de 3.47.4 (posée contre le défaut nginx 1 Mo) bloquait en 413 tout import de backup > 50 Mo — incompatibles avec les backups volumineux (incident exemple-app > 150 Mo). Contexte local : relève à 1 G |
+
+---
+
 ## [3.60.0] - 18 septembre 2026
 
 ### ⚡ Feature — Ajout d'applications fiable et non intrusif (spec 2026-09-17)
