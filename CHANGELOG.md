@@ -5,6 +5,23 @@
 
 ---
 
+## [3.61.0] - 19 septembre 2026
+
+### 🆕 HTTPS des apps — émission des certificats par la PKI du HUB
+
+- **`POST /api/apps/cert/issue`** (auth M2M) : émission/remplacement du cert serveur
+  d'une app signé par la « Hub Local CA » (RSA 4096, SAN = `PKI_CERT_DOMAINS` +
+  `PKI_CERT_IPS` + `HUB_HOST`, validité 365 j). Ré-émission automatique si expiration
+  proche (marge 30 j) ou changement de SAN (ex : changement d'IP du serveur).
+- Garde anti cross-slug : un service account ne peut demander un cert que pour les
+  slugs qu'il possède.
+- Consommé par `backend/cert_sync.py` des apps template (boucle 6 h + au démarrage) :
+  les apps basculent d'un cert auto-signé à un cert signé par la CA sans intervention.
+- Cherry-pick de `feat/apps-github-refonte` (f315af4, 63b13c2, e90a99d — revus) sur
+  main 3.60.1 ; 7 tests dédiés (`tests/test_app_certs.py`).
+
+---
+
 ## [3.60.1] - 19 septembre 2026
 
 ### ⚡ Fix — nginx : imports de gros backups (client_max_body_size 1G)
