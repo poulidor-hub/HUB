@@ -42,7 +42,8 @@ class CertIssueResponse(BaseModel):
 
 
 async def _san_for_slug(db: AsyncSession, slug: str) -> list[str]:
-    """SAN = host propre à l'app si elle est distante, sinon host du HUB.
+    """SAN = domains du HUB (PKI_CERT_DOMAINS, ex. localhost pour l'accès opérateur)
+    + host de l'app : propre à l'app si elle est distante, sinon host du HUB.
 
     Pas de colonne app_host/custom_host sur Application : pour une app distante,
     `registered_from_ip` (migration 005) est le host du serveur de l'app.
@@ -50,8 +51,17 @@ async def _san_for_slug(db: AsyncSession, slug: str) -> list[str]:
     result = await db.execute(select(Application).where(Application.slug == slug))
     app = result.scalar_one_or_none()
     if app is not None and app.is_remote and app.registered_from_ip:
-        return [app.registered_from_ip]
-    return [get_settings().get_hub_host()]
+        host = app.registered_from_ip
+    else:
+        host = get_settings().get_hub_host()
+    domains = [d.strip() for d in get_settings().pki_cert_domains.split(",") if d.strip()]
+    seen: set[str] = set()
+    san: list[str] = []
+    for value in domains + [host]:
+        if value and value not in seen:
+            seen.add(value)
+            san.append(value)
+    return san
 
 
 def _fingerprint(cert_pem: str) -> str:

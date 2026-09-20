@@ -51,6 +51,17 @@ async def test_cert_issue_returns_pems(client, service_account, certs_env):
 
 
 @pytest.mark.asyncio
+async def test_cert_issue_san_inclut_localhost_et_hub_host(client, service_account, certs_env):
+    """Demande utilisateur 2026-09-19 : le SAN couvre localhost (accès opérateur,
+    curl --cacert depuis le serveur) ET le host du HUB (accès portail/utilisateurs)."""
+    r = await client.post("/api/apps/cert/issue", headers=_sa_headers(service_account))
+    assert r.status_code == 200
+    san = r.json()["san"]
+    assert "localhost" in san
+    assert get_settings().get_hub_host() in san
+
+
+@pytest.mark.asyncio
 async def test_cert_issue_idempotent(client, service_account, certs_env):
     r1 = await client.post("/api/apps/cert/issue", headers=_sa_headers(service_account))
     r2 = await client.post("/api/apps/cert/issue", headers=_sa_headers(service_account))
