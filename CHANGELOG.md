@@ -5,6 +5,32 @@
 
 ---
 
+## [3.61.1] - 19 septembre 2026
+
+### 🔧 Fix — SAN des certs apps : localhost inclus
+
+- `POST /api/apps/cert/issue` : le SAN des certs émis inclut désormais
+  `PKI_CERT_DOMAINS` (localhost, hub.local, hub-frontend) en plus du host du
+  HUB — `curl --cacert ca.crt https://localhost:<port>` passe la vérification
+  (accès opérateur depuis le serveur). Changement de SAN → ré-émission
+  automatique par `cert_sync` (boucle 6 h ou restart de l'api app).
+
+---
+
+
+## [3.61.1] - 20 septembre 2026
+
+### 🆕 Nouvelle version
+
+> ⚠️ Cette entrée a été créée automatiquement par `sync_version.py`.
+> Veuillez compléter les détails des modifications.
+
+| Fonctionnalité | Description |
+|----------------|-------------|
+| **À compléter** | Décrivez les changements de cette version |
+
+---
+
 ## [3.61.0] - 19 septembre 2026
 
 ### 🆕 HTTPS des apps — émission des certificats par la PKI du HUB
