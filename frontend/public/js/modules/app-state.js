@@ -46,6 +46,9 @@ let _sseInitializing = false;    // Guard contre les initialisations SSE concurr
 let _sseAppsUpdateTimer = null;
 let _ssePermissionsUpdateTimer = null;
 const SSE_DEBOUNCE_DELAY = 800;  // ms
+let _sseErrorBadgeTimer = null;   // debounce re-fetch badge erreurs navbar
+let _sseErrorsListTimer = null;   // debounce re-fetch liste Audit > Erreurs
+let _sseActiveUsersTimer = null;  // debounce refresh vues utilisateurs actifs
 
 // Tracking des tooltips Bootstrap (évite les fuites mémoire)
 let _activeTooltips = [];

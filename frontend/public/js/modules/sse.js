@@ -342,22 +342,58 @@ function handleSSEEvent(data) {
             // Mettre à jour les statistiques affichées en temps réel
             updateStatsDisplay(data.data);
             break;
-            
-        case 'audit_updated':
-            // Rafraîchir les données d'audit si on est sur cette page
-            if (currentPage === 'audit') {
-                // Rafraîchir les données d'audit sans toast (pour éviter le spam)
-                loadAuditPageData();
+
+        case 'active_users_changed': {
+            // Présence users/apps : rafraîchir les vues Audit visibles qui
+            // affichent sessions/usage. Le dashboard (compteurs) passe déjà
+            // par stats_updated — aucun fetch en arrière-plan.
+            if (_sseActiveUsersTimer) clearTimeout(_sseActiveUsersTimer);
+            _sseActiveUsersTimer = setTimeout(() => {
+                _sseActiveUsersTimer = null;
+                if (currentPage === 'audit') {
+                    loadAuditPageData();
+                }
+            }, SSE_DEBOUNCE_DELAY);
+            break;
+        }
+
+        case 'audit_updated': {
+            const isErrorEvent = data.data?.action === 'error_logged';
+            if (isErrorEvent) {
+                // Erreur HTTP loguée : badge navbar (debounce) + liste Erreurs si visible
+                if (currentUser?.is_admin) {
+                    if (_sseErrorBadgeTimer) clearTimeout(_sseErrorBadgeTimer);
+                    _sseErrorBadgeTimer = setTimeout(() => {
+                        _sseErrorBadgeTimer = null;
+                        updateErrorNotificationBadge();
+                    }, SSE_DEBOUNCE_DELAY);
+                }
+                if (currentPage === 'audit') {
+                    const activeTarget = document.querySelector('#auditPageTabs .nav-link.active')?.getAttribute('data-bs-target');
+                    if (activeTarget === '#auditPageErrors') {
+                        if (_sseErrorsListTimer) clearTimeout(_sseErrorsListTimer);
+                        _sseErrorsListTimer = setTimeout(() => {
+                            _sseErrorsListTimer = null;
+                            loadAuditPageErrors();
+                        }, SSE_DEBOUNCE_DELAY);
+                    }
+                    // Les autres sous-onglets n'affichent pas d'erreurs HTTP : pas de reload
+                }
+            } else {
+                // Comportement historique (actions d'audit classiques, log_added)
+                if (currentPage === 'audit') {
+                    loadAuditPageData();
+                }
+                if (currentUser?.is_admin) {
+                    updateErrorNotificationBadge();
+                }
             }
             // Mettre à jour aussi les stats si disponibles
             if (data.data?.stats) {
                 updateStatsDisplay(data.data.stats);
             }
-            // Mettre à jour le badge d'erreurs dans la nav
-            if (currentUser?.is_admin) {
-                updateErrorNotificationBadge();
-            }
             break;
+        }
 
         case 'user_permissions_changed': {
             // Droits modifiés pour un utilisateur — rafraîchir token + apps si c'est nous
