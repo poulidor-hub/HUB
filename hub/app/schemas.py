@@ -1708,6 +1708,12 @@ class MessageBrief(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class MessageBadgePrioritiesUpdate(BaseModel):
+    """Priorités comptées dans le badge messages navbar (préférence GLOBALE instance).
+    Liste vide acceptée = badge masqué ; seules info|warning|urgent sont valides."""
+    priorities: List[str] = Field(default_factory=list)
+
+
 class MessageTemplateCreate(BaseModel):
     """Creation d'un template de message"""
     name: str = Field(..., min_length=1, max_length=255)

@@ -605,7 +605,10 @@ async def _log_error_to_db(
     try:
         request_id = getattr(request.state, "request_id", str(uuid.uuid4()))
         source_app_slug = getattr(request.state, "source_app_slug", None)
-        
+
+        # Import local (pattern des tâches) : respecte le patch test de
+        # app.database.async_session_maker au lieu de la liaison module-level.
+        from app.database import async_session_maker
         async with async_session_maker() as db:
             error_log = ErrorLog(
                 request_id=request_id,
@@ -624,6 +627,16 @@ async def _log_error_to_db(
             db.add(error_log)
             await db.commit()
             logger.debug(f"📝 Erreur {error_code} loggée: {request.url.path}")
+            # Temps réel : badge erreurs navbar + liste Audit "Erreurs"
+            try:
+                from app.routes.audit import _notify_audit
+                _notify_audit(extra={
+                    "action": "error_logged",
+                    "error_code": error_code,
+                    "source_app_slug": source_app_slug,
+                })
+            except ImportError:
+                pass
     except Exception as log_error:
         logger.warning(f"⚠️ Erreur lors du logging d'erreur: {log_error}")
 

@@ -7,6 +7,7 @@ import asyncio
 import json
 import hmac
 import hashlib
+import time
 from typing import Set, Optional, Dict
 from datetime import datetime, timezone
 
@@ -72,6 +73,23 @@ def notify_event(event_type: str, data: Optional[dict] = None):
     except RuntimeError:
         # Pas de loop actif
         pass
+
+
+# Cooldown pour l'événement de présence (évite les rafales login/logout/segments)
+ACTIVE_USERS_COOLDOWN_S = 2.0
+_active_users_last_notify = 0.0
+
+
+def notify_active_users_changed():
+    """Diffuse 'active_users_changed' (changement de présence users/apps) avec
+    cooldown 2 s. Payload volontairement vide : le client rafraîchit ses vues
+    visibles (Audit vue d'ensemble / Uptime / Par Application / Sessions)."""
+    global _active_users_last_notify
+    current_time = time.monotonic()
+    if current_time - _active_users_last_notify < ACTIVE_USERS_COOLDOWN_S:
+        return
+    _active_users_last_notify = current_time
+    notify_event("active_users_changed", {})
 
 
 async def send_to_user(user_id: int, event_type: str, data: Optional[dict] = None):
@@ -166,6 +184,7 @@ async def periodic_session_cleanup():
                     logger.info(f"🧹 Cleanup périodique: {cleaned} session(s) expirée(s) fermée(s)")
                     # Mettre à jour les stats après cleanup
                     await broadcast_stats_update()
+                    notify_active_users_changed()
         except asyncio.CancelledError:
             break
         except Exception as e:
@@ -277,10 +296,12 @@ async def handle_app_disconnect(user_id: int, app_slug: str):
         async with async_session_maker() as db:
             session = await get_active_session_for_user(db, user_id)
             if session:
-                await close_app_segment(db, session.id, app_slug, utcnow(), "disconnect")
+                closed = await close_app_segment(db, session.id, app_slug, utcnow(), "disconnect")
                 if session.current_app_slug == app_slug:
                     session.current_app_slug = None
                 await db.commit()
+                if closed > 0:
+                    notify_active_users_changed()
     except Exception as e:
         logger.warning(f"⚠️ Fermeture segment app {app_slug} user {user_id}: {e}")
 

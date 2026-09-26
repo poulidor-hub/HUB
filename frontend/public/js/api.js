@@ -1585,6 +1585,14 @@ class HubAPI {
         return this.request(url);
     }
 
+    async getBadgePriorities() {
+        return this.request('/messages/badge-priorities');
+    }
+
+    async updateBadgePriorities(priorities) {
+        return this.request('/messages/badge-priorities', { method: 'PUT', body: JSON.stringify({ priorities }) });
+    }
+
     async getMessageDetail(id) {
         return this.request(`/messages/${id}`);
     }

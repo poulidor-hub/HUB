@@ -1946,7 +1946,30 @@
                     </div>
 
                     <div class="msg-sidebar-section">
-                        <div class="msg-sidebar-section-title">Priorite</div>
+                        <div class="msg-sidebar-section-title d-flex justify-content-between align-items-center">
+                            <span>Priorite</span>
+                            <div class="dropdown">
+                                <button class="btn btn-sm btn-link text-secondary p-0 lh-1" id="msgBadgePrefsBtn" data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-expanded="false" title="Priorites comptees dans le badge de la navbar" aria-label="Priorites comptees dans le badge de la navbar">
+                                    <i class="bi bi-gear"></i>
+                                </button>
+                                <div class="dropdown-menu dropdown-menu-end p-3 shadow-sm" aria-labelledby="msgBadgePrefsBtn" style="min-width: 230px;">
+                                    <h6 class="dropdown-header px-0">Badge navbar : priorites comptees</h6>
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox" id="msgBadgePref-info" checked>
+                                        <label class="form-check-label" for="msgBadgePref-info">Info</label>
+                                    </div>
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox" id="msgBadgePref-warning" checked>
+                                        <label class="form-check-label" for="msgBadgePref-warning">Warning</label>
+                                    </div>
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox" id="msgBadgePref-urgent" checked>
+                                        <label class="form-check-label" for="msgBadgePref-urgent">Urgent</label>
+                                    </div>
+                                    <div class="form-text mt-2 px-0">Tout decocher masque le badge. Preference globale (tous les admins).</div>
+                                </div>
+                            </div>
+                        </div>
                         <div class="msg-chip-row" id="msgChipPriority">
                             <button class="msg-chip active" data-filter="priority" data-value="" data-action="toggleMsgChip" data-args="$el">Toutes</button>
                             <button class="msg-chip msg-chip-info" data-filter="priority" data-value="info" data-action="toggleMsgChip" data-args="$el">Info</button>

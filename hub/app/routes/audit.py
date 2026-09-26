@@ -50,25 +50,38 @@ _audit_last_notify = 0.0
 
 
 # Import différé pour éviter les imports circulaires
-def _notify_audit():
+def _notify_audit(extra: Optional[dict] = None):
     """
     Notifie les clients SSE d'une mise à jour d'audit.
     Utilise un cooldown configurable (AUDIT_SSE_COOLDOWN dans .env)
     pour éviter les notifications trop fréquentes.
+    extra: champs additionnels fusionnés dans le payload (ex. error_logged).
     """
     global _audit_last_notify
-    
+
     current_time = time.time()
     if current_time - _audit_last_notify < settings.audit_sse_cooldown:
         return  # Cooldown actif, on skip la notification
-    
+
     _audit_last_notify = current_time
-    
+
     try:
         from app.routes.events import notify_event
-        notify_event("audit_updated", {"action": "log_added"})
+        payload = {"action": "log_added"}
+        if extra:
+            payload.update(extra)
+        notify_event("audit_updated", payload)
     except ImportError:
         pass  # Module events pas encore chargé
+
+
+def _notify_active_users():
+    """Notifie un changement de présence (session/segment). Cooldown géré côté events."""
+    try:
+        from app.routes.events import notify_active_users_changed
+        notify_active_users_changed()
+    except ImportError:
+        pass
 
 
 # =============================================================================
@@ -256,10 +269,11 @@ async def start_session(
         user_agent=user_agent[:255] if user_agent else None
     )
     db.add(new_session)
-    
+
     # Notifier les clients SSE
     _notify_audit()
-    
+    _notify_active_users()
+
     return new_session
 
 
@@ -322,6 +336,7 @@ async def end_session(
         )
         # Notifier les clients SSE
         _notify_audit()
+        _notify_active_users()
 
     return session
 
