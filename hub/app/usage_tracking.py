@@ -84,19 +84,26 @@ async def close_app_segment(
     return len(segments)
 
 
-async def touch_app_presence(db: AsyncSession, session: UserSession, app_slug: str) -> None:
+async def touch_app_presence(db: AsyncSession, session: UserSession, app_slug: str) -> bool:
     """Présence dans une app : ouvre un segment par couple (session, app).
     Les segments des autres apps restent ouverts (usage parallèle multi-onglets) ;
-    ils sont fermés par leur propre connexion SSE ou à la fermeture de session."""
+    ils sont fermés par leur propre connexion SSE ou à la fermeture de session.
+    Returns: True si un segment a été ouvert (présence nouvelle)."""
     open_seg = await _get_open_segment(db, session.id, app_slug)
     if open_seg is not None:
-        return
+        return False
     db.add(AppUsageSegment(
         session_id=session.id,
         user_id=session.user_id,
         app_slug=app_slug,
         started_at=utcnow(),
     ))
+    try:
+        from app.routes.events import notify_active_users_changed
+        notify_active_users_changed()
+    except ImportError:
+        pass
+    return True
 
 
 async def close_segments_for_session(
