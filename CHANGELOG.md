@@ -5,6 +5,21 @@
 
 ---
 
+## [3.62.1] - 26 septembre 2026
+
+### 🔧 Fix — scories release : entrée CHANGELOG orpheline + test flaky
+
+- **CHANGELOG** : suppression de l'entrée placeholder orpheline « [3.61.1] -
+  20 septembre 2026 » (scorie d'un bump auto `sync_version.py`, doublon de
+  l'entrée réelle du 19/09 — même numéro de version, contenu « À compléter »).
+- **Tests** : `test_run_deployment_success` était flaky (~1,6 %) — le
+  placeholder `POSTGRES_PASSWORD=x` dans le `.env` de test réapparaissait
+  quand `secrets.token_urlsafe(24)` générait un secret commençant par `x`
+  (~1/64), faisant échouer l'assertion `not in`. Remplacé par `?` (hors
+  alphabet urlsafe `[A-Za-z0-9_-]`) → assertion déterministe.
+
+---
+
 ## [3.62.0] - 26 septembre 2026
 
 ### ⚡ Notifications temps réel sans refresh + badge messages filtrable
