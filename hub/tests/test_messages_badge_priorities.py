@@ -5,7 +5,6 @@ Préférence globale (instance) : priorités comptées dans le badge messages na
 """
 import json
 import pytest
-from sqlalchemy import select
 
 from app.models import AppSetting
 from .conftest import get_auth_header
@@ -60,4 +59,10 @@ async def test_put_dedup_and_canonical_order(client, admin_token):
 @pytest.mark.asyncio
 async def test_requires_admin(client, user_token):
     resp = await client.get(URL, headers=get_auth_header(user_token))
+    assert resp.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_put_requires_admin(client, user_token):
+    resp = await client.put(URL, json={"priorities": ["info"]}, headers=get_auth_header(user_token))
     assert resp.status_code == 403

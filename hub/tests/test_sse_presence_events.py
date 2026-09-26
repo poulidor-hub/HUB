@@ -10,7 +10,6 @@ from sqlalchemy import select
 
 from app.models import ErrorLog, UserSession, utcnow
 from app.usage_tracking import touch_app_presence
-from .conftest import get_auth_header
 
 
 @pytest.fixture(autouse=True)

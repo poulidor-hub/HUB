@@ -553,7 +553,9 @@ async def get_badge_priorities(
     db: AsyncSession = Depends(get_db)
 ):
     """Priorités comptées dans le badge messages de la navbar (préférence globale).
-    Défaut : toutes. [] = badge masqué. Valeur corrompue → repli sur toutes."""
+    Défaut : toutes. [] = badge masqué. Valeur absente/corrompue → repli sur
+    toutes ; liste contenant des inconnues → projection sur les valides ([] si
+    aucune)."""
     row = await db.get(AppSetting, BADGE_PRIORITIES_KEY)
     parsed = list(VALID_PRIORITIES)
     if row is not None:
