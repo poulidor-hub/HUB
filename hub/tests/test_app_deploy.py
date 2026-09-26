@@ -211,7 +211,7 @@ async def test_run_deployment_success(async_session, monkeypatch, tmp_path):
     appdir.mkdir()
     (appdir / "Makefile").write_text("build:\n\t@echo build\nup:\n\t@echo up\n")  # app conforme template
     (appdir / ".env.example").write_text(
-        "APP_SLUG=old\nAPP_PORT=1\nPOSTGRES_PASSWORD=x\n"
+        "APP_SLUG=old\nAPP_PORT=1\nPOSTGRES_PASSWORD=?\n"
     )
 
     calls = _install_fake_exec(monkeypatch, [(0, b"clone ok"), (0, b""), (0, b"")])
@@ -227,7 +227,9 @@ async def test_run_deployment_success(async_session, monkeypatch, tmp_path):
     env_text = (tmp_path / "exemple-app" / ".env").read_text()
     assert "APP_SLUG=exemple-app" in env_text
     assert "APP_PORT=9002" in env_text
-    assert "POSTGRES_PASSWORD=x" not in env_text     # secret régénéré à la création
+    # Placeholder '?' : jamais produit par token_urlsafe (alphabet [A-Za-z0-9_-]),
+    # sinon un secret régénéré commençant par le placeholder fausse l'assertion (~1/64).
+    assert "POSTGRES_PASSWORD=?" not in env_text     # secret régénéré à la création
 
     dep = await async_session.get(AppDeployment, dep_id)
     await async_session.refresh(dep)

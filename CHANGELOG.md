@@ -46,20 +46,6 @@
 
 ---
 
-
-## [3.61.1] - 20 septembre 2026
-
-### 🆕 Nouvelle version
-
-> ⚠️ Cette entrée a été créée automatiquement par `sync_version.py`.
-> Veuillez compléter les détails des modifications.
-
-| Fonctionnalité | Description |
-|----------------|-------------|
-| **À compléter** | Décrivez les changements de cette version |
-
----
-
 ## [3.61.0] - 19 septembre 2026
 
 ### 🆕 HTTPS des apps — émission des certificats par la PKI du HUB
