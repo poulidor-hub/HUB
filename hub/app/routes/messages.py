@@ -17,14 +17,15 @@ from typing import Optional, List, Union
 from urllib.parse import urlparse, urljoin
 import csv
 import io
+import json
 import time
 import logging
 
 from app.database import get_db
-from app.models import User, UserMessage, MessageReadReceipt, MessageTemplate, ServiceAccount, Application, utcnow
+from app.models import User, UserMessage, MessageReadReceipt, MessageTemplate, ServiceAccount, Application, AppSetting, utcnow
 from app.auth import get_current_user, get_current_entity, get_current_admin, get_settings
 from app.schemas import (
-    MessageCreate, MessageM2MCreate, MessageResponse, MessageBrief,
+    MessageCreate, MessageM2MCreate, MessageBadgePrioritiesUpdate, MessageResponse, MessageBrief,
     PaginatedMessagesResponse,
     MessageSyncItem, MessageSyncResponse,
     ReceiptSyncItem, ReceiptSyncResponse,
@@ -536,6 +537,71 @@ async def get_message_stats(
         "apps_count": len(by_app),
         "top_apps": top_apps[:10],
     }
+
+
+# =============================================================================
+# PRÉFÉRENCE BADGE NAVBAR (globale à l'instance)
+# =============================================================================
+
+BADGE_PRIORITIES_KEY = "messages_badge_priorities"
+VALID_PRIORITIES = ("info", "warning", "urgent")
+
+
+@router.get("/badge-priorities")
+async def get_badge_priorities(
+    current_user: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """Priorités comptées dans le badge messages de la navbar (préférence globale).
+    Défaut : toutes. [] = badge masqué. Valeur corrompue → repli sur toutes."""
+    row = await db.get(AppSetting, BADGE_PRIORITIES_KEY)
+    parsed = list(VALID_PRIORITIES)
+    if row is not None:
+        try:
+            value = json.loads(row.value)
+            if isinstance(value, list):
+                parsed = value
+        except (TypeError, ValueError):
+            pass  # repli sur toutes
+    return {"priorities": [p for p in VALID_PRIORITIES if p in parsed]}
+
+
+@router.put("/badge-priorities")
+async def update_badge_priorities(
+    body: MessageBadgePrioritiesUpdate,
+    current_user: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """Met à jour la préférence globale puis notifie : messages_updated (badges)
+    + settings_updated (resync de la préférence chez les autres admins)."""
+    invalid = [p for p in body.priorities if p not in VALID_PRIORITIES]
+    if invalid:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Priorités invalides : {', '.join(sorted(set(invalid)))}"
+        )
+    priorities = [p for p in VALID_PRIORITIES if p in set(body.priorities)]
+
+    row = await db.get(AppSetting, BADGE_PRIORITIES_KEY)
+    if row is None:
+        row = AppSetting(key=BADGE_PRIORITIES_KEY, value=json.dumps(priorities),
+                         updated_by_id=current_user.id)
+        db.add(row)
+    else:
+        row.value = json.dumps(priorities)
+        row.updated_by_id = current_user.id
+    await db.commit()
+
+    _notify_message()  # badge recalculé partout (cooldown 0,5 s existant)
+    try:
+        from app.routes.events import notify_event
+        notify_event("settings_updated", {
+            "key": BADGE_PRIORITIES_KEY,
+            "value": json.dumps(priorities),
+        })
+    except ImportError:
+        pass
+    return {"priorities": priorities}
 
 
 @router.get("/export")
