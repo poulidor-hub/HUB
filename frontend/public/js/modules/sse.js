@@ -189,6 +189,7 @@ function refreshAllBadges() {
     
     // Badges réservés aux administrateurs
     if (currentUser?.is_admin) {
+        loadMessagesBadgePriorities();
         updateNavMessagesBadge();
         updateErrorNotificationBadge();
         loadPendingAppsCount();
@@ -556,6 +557,10 @@ function handleSSEEvent(data) {
             if (data.data?.key === 'account_requests_enabled') {
                 const toggle = document.getElementById('toggleAccountRequests');
                 if (toggle) toggle.checked = data.data.value === 'true';
+            }
+            if (data.data?.key === 'messages_badge_priorities') {
+                // Un admin a changé la préférence : resync locale puis badge
+                loadMessagesBadgePriorities().then(() => updateNavMessagesBadge());
             }
             break;
 

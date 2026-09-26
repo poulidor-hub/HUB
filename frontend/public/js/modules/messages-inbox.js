@@ -15,6 +15,10 @@ let msgViewMode = 'cards'; // 'cards' | 'compact'
 let msgActiveFilters = { status: 'all', priority: '', sender: '' };
 let msgSearchTimer = null;
 
+// Préférence GLOBALE (instance) : priorités comptées dans le badge navbar messages.
+// Défaut en mémoire = toutes, jusqu'au retour du GET (repli = toutes si erreur).
+let messagesBadgePriorities = ['info', 'warning', 'urgent'];
+
 function switchMessageTab(tab) {
     currentMessageTab = tab;
     messagesPage = 1;
@@ -76,15 +80,7 @@ async function loadMessagesPage() {
         document.getElementById('msgTabBroadcastBadge').textContent = statsBroadcast.total || 0;
         document.getElementById('msgTabUserBadge').textContent = statsUser.total || 0;
 
-        const navBadge = document.getElementById('navMessagesBadge');
-        if (statsAll.total > 0) {
-            if (navBadge) {
-                navBadge.textContent = statsAll.total > 99 ? '99+' : statsAll.total;
-                navBadge.style.display = 'inline';
-            }
-        } else if (navBadge) {
-            navBadge.style.display = 'none';
-        }
+        _applyNavMessagesBadgeCount(_badgeCountFromStats(statsAll));
 
         if (msgViewMode === 'cards') {
             renderMessageCards(data);
@@ -699,16 +695,75 @@ function updateMessageBellBadge(count) {
     }
 }
 
-async function updateNavMessagesBadge() {
+function _badgeCountFromStats(stats) {
+    if (!stats) return 0;
+    const byPriority = stats.by_priority || {};
+    return messagesBadgePriorities.reduce((sum, p) => sum + (byPriority[p] || 0), 0);
+}
+
+function _applyNavMessagesBadgeCount(count) {
     const navBadge = document.getElementById('navMessagesBadge');
     if (!navBadge) return;
+    if (count > 0) {
+        navBadge.textContent = count > 99 ? '99+' : count;
+        navBadge.style.display = 'inline';
+    } else {
+        navBadge.style.display = 'none';
+    }
+}
+
+function _setMessagesBadgePriorities(priorities) {
+    if (!Array.isArray(priorities)) {
+        messagesBadgePriorities = ['info', 'warning', 'urgent'];
+        return;
+    }
+    // [] conservé tel quel = badge masqué (comportement validé)
+    messagesBadgePriorities = ['info', 'warning', 'urgent'].filter(p => priorities.includes(p));
+}
+
+async function updateNavMessagesBadge() {
     try {
         const stats = await api.getMessageStats(null, undefined);
-        const total = stats.total || 0;
-        if (total > 0) { navBadge.textContent = total > 99 ? '99+' : total; navBadge.style.display = 'inline'; }
-        else { navBadge.style.display = 'none'; }
+        _applyNavMessagesBadgeCount(_badgeCountFromStats(stats));
     } catch (e) { /* Silencieux */ }
 }
+
+async function loadMessagesBadgePriorities() {
+    try {
+        const result = await api.getBadgePriorities();
+        _setMessagesBadgePriorities(result.priorities);
+    } catch (e) {
+        // Repli silencieux : toutes les priorités (comportement historique)
+        messagesBadgePriorities = ['info', 'warning', 'urgent'];
+    }
+    _syncBadgePrefsUI();
+}
+
+function _syncBadgePrefsUI() {
+    ['info', 'warning', 'urgent'].forEach(p => {
+        const cb = document.getElementById(`msgBadgePref-${p}`);
+        if (cb) cb.checked = messagesBadgePriorities.includes(p);
+    });
+}
+
+async function saveMessagesBadgePriorities() {
+    const priorities = ['info', 'warning', 'urgent']
+        .filter(p => document.getElementById(`msgBadgePref-${p}`)?.checked);
+    try {
+        const result = await api.updateBadgePriorities(priorities);
+        _setMessagesBadgePriorities(result.priorities);
+        updateNavMessagesBadge(); // recalcul immédiat pour cet admin
+    } catch (e) {
+        showToast('Erreur', e.message || 'Impossible d\'enregistrer la préférence', 'danger');
+        _syncBadgePrefsUI(); // revert visuel des checkboxes
+    }
+}
+
+// Wiring des checkboxes (HTML statique de la SPA → présentes au chargement).
+// data-bs-auto-close="outside" laisse le popover ouvert pendant les clics.
+['info', 'warning', 'urgent'].forEach(p => {
+    document.getElementById(`msgBadgePref-${p}`)?.addEventListener('change', saveMessagesBadgePriorities);
+});
 
 // ===== User Inbox (3 volets : sidebar / liste / detail) =====
 
