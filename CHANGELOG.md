@@ -5,6 +5,35 @@
 
 ---
 
+## [3.62.0] - 26 septembre 2026
+
+### ⚡ Notifications temps réel sans refresh + badge messages filtrable
+
+- **SSE erreurs enrichi** : `_log_error_to_db` (point unique de création
+  d'`ErrorLog`) émet désormais `audit_updated` avec
+  `{"action": "error_logged", "error_code", "source_app_slug"}` — le badge
+  erreurs de la navbar (Audit) et la liste Erreurs (sous-onglet visible) se
+  mettent à jour sans refresh (debounce 800 ms côté client).
+- **Nouvel événement SSE `active_users_changed`** (cooldown 2 s,
+  `notify_active_users_changed`) émis à chaque changement de présence :
+  start/end session (login, logout, force logout, déconnexion SSE, cleanup
+  stales), ouverture/fermeture de segment d'usage par app — les vues Audit
+  (Vue d'ensemble, Uptime, Par Application, Sessions) se rafraîchissent en
+  direct ; le dashboard reste couvert par `stats_updated`.
+- **Badge messages navbar filtrable par priorité** : nouvelle préférence
+  GLOBALE instance `messages_badge_priorities` (AppSetting, défaut toutes,
+  `[]` = badge masqué) + endpoints admin `GET/PUT
+  /api/messages/badge-priorities` (422 si priorité invalide). Le PUT émet
+  `messages_updated` + `settings_updated` → recalcul du badge chez tous les
+  admins ouverts. Frontend : le badge somme `stats.by_priority` sur les
+  priorités cochées ; roue crantée à côté des chips « Priorité » de la vue
+  admin Messages (popover 3 checkboxes, sauvegarde au changement).
+- Perf : aucun nouveau polling, aucune animation, fetchs conditionnés à la
+  visibilité des vues. 10 nouveaux tests (présence/cooldown, badge-priorities) ;
+  suite complète 1213 passed.
+
+---
+
 ## [3.61.1] - 19 septembre 2026
 
 ### 🔧 Fix — SAN des certs apps : localhost inclus
