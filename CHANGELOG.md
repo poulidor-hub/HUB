@@ -5,6 +5,25 @@
 
 ---
 
+## [3.62.2] - 27 septembre 2026
+
+### 🔧 Fix — crash démarrage hub-api : greenlet absent avec SQLAlchemy 2.1
+
+- **Dépendances** (`hub/requirements.txt`) : `sqlalchemy>=2.0.0` →
+  `sqlalchemy[asyncio]>=2.0.25,<3.0`.
+- **Cause** : la contrainte flottante résolvait SQLAlchemy 2.1.x, qui
+  n'installe plus `greenlet` automatiquement (devenu extra optionnel).
+  L'import de `sqlalchemy.ext.asyncio` (utilisé par `app/database.py`)
+  levait alors `ImportError: The SQLAlchemy asyncio module requires that
+  the Python 'greenlet' library is installed` → hub-api en crash boucle
+  au démarrage, hub et apps indisponibles.
+- **Fix** : l'extra `[asyncio]` garantit la présence de greenlet pour
+  SQLAlchemy 2.0.x comme 2.1.x ; borne haute `<3.0` pour bloquer toute
+  future rupture de major. Alignement sur la convention déjà en vigueur
+  dans `HUBapp_TEMPLATE_base` et les apps du parc.
+
+---
+
 ## [3.62.1] - 26 septembre 2026
 
 ### 🔧 Fix — scories release : entrée CHANGELOG orpheline + test flaky
