@@ -828,12 +828,16 @@ async def get_system_time():
 @app.get("/api/config/hub-host")
 async def get_hub_host():
     """Retourne l'IP/hostname du Hub pour la configuration des applications"""
+    # get_settings() à l'appel (pas la référence module-level `settings`) :
+    # si le singleton est reconstruit (reload, tests), la valeur configurée
+    # courante fait foi — une référence figée servirait un état périmé.
+    current = get_settings()
     return {
-        "host": settings.get_hub_host(),
-        "configured": bool(settings.hub_host),
-        "message": "IP auto-détectée" if not settings.hub_host else "IP configurée",
-        "api_port": settings.hub_api_port,
-        "frontend_port": settings.hub_frontend_port,
+        "host": current.get_hub_host(),
+        "configured": bool(current.hub_host),
+        "message": "IP auto-détectée" if not current.hub_host else "IP configurée",
+        "api_port": current.hub_api_port,
+        "frontend_port": current.hub_frontend_port,
         "instance_id": get_instance_id(),
     }
 
