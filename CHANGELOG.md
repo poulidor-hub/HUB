@@ -5,6 +5,33 @@
 
 ---
 
+## [3.62.3] - 30 septembre 2026
+
+### 🔧 Fix — auto-détection robuste du hub-host (Hub déplacé/cloné)
+
+- **Problème** : un `HUB_HOST` configuré (`.env` ou DB `app_settings`) hérité
+  d'un clone, d'un déplacement de poste ou d'une restauration PRA était servi
+  tel quel par `get_hub_host()` — toutes les apps resynchronisaient l'ancienne
+  IP (ex. `192.0.2.10`) via `GET /api/config/hub-host` à chaque
+  `make up`/`build`/`sync-env`, en boucle.
+- **`app/config.py` — `get_hub_host()`** : si la valeur configurée est une IP
+  n'appartenant à aucune interface locale du poste, fallback sur l'IP
+  auto-détectée (`get_server_ip()`) + warning loggué (1× par IP). Un hostname
+  (DNS) reste toujours accepté. Nouveau helper `_is_local_ip()` : check UDP
+  connect (aucun paquet émis), caché 60 s (la route est appelée à chaque
+  requête de config).
+- **`app/main.py` — `GET /api/config/hub-host`** : lit désormais
+  `get_settings()` à l'appel au lieu de la référence module-level `settings`
+  figée à l'import (bug latent : servait un état périmé après reconstruction
+  du singleton).
+- **Tests** : `tests/test_hub_host_locality.py` (7 cas — fallback, warning
+  unique, IP locale conservée, hostname, cache) ; conftest global neutralise
+  la localité (`_is_local_ip=True`) pour les tests de mécanique utilisant des
+  IP de documentation RFC 5737 ; suite complète verte (1221 hôte, 1181+1 en
+  stack Docker isolée `pouly-test`).
+
+---
+
 ## [3.62.2] - 27 septembre 2026
 
 ### 🔧 Fix — crash démarrage hub-api : greenlet absent avec SQLAlchemy 2.1
