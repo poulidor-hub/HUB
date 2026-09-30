@@ -2,8 +2,10 @@ from pydantic_settings import BaseSettings
 from pydantic import ConfigDict
 from functools import lru_cache
 from pathlib import Path
+import ipaddress
 import socket
 import logging
+import time
 import uuid
 
 logger = logging.getLogger(__name__)
@@ -18,6 +20,38 @@ def get_server_ip() -> str:
             return s.getsockname()[0]
     except Exception:
         return "localhost"
+
+
+# Cache du check « cette IP est-elle sur une interface locale ? » (UDP connect
+# sans paquet émis). get_hub_host() est appelé à chaque requête de config :
+# sans cache, le check partirait en O(appels) — TTL court suffisant car une
+# IP locale ne change que rarement (DHCP renew, déplacement de poste).
+_LOCAL_IP_CACHE_TTL = 60.0
+_local_ip_cache: dict[str, tuple[bool, float]] = {}
+_stale_hub_host_warned: set[str] = set()
+
+
+def _is_local_ip(ip: str) -> bool:
+    """True si `ip` est assignée à une interface locale de ce poste."""
+    now = time.monotonic()
+    hit = _local_ip_cache.get(ip)
+    if hit is not None and now - hit[1] < _LOCAL_IP_CACHE_TTL:
+        return hit[0]
+    local = False
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.settimeout(0.5)
+            s.connect((ip, 80))
+            local = s.getsockname()[0] == ip
+    except OSError:
+        local = False
+    _local_ip_cache[ip] = (local, now)
+    return local
+
+
+def _clear_local_ip_cache() -> None:
+    """Vide le cache de localité (réservé aux tests)."""
+    _local_ip_cache.clear()
 
 
 def generate_rsa_keys() -> tuple[str, str]:
@@ -354,9 +388,30 @@ class Settings(BaseSettings):
     _jwt_keys_cache: tuple[str, str] | None = None
     
     def get_hub_host(self) -> str:
-        """Retourne le host du Hub (configuré ou auto-détecté)"""
+        """Host du Hub : valeur configurée si encore valide, sinon auto-détectée.
+
+        Une IP configurée (env HUB_HOST ou DB app_settings) qui n'existe plus
+        sur ce poste — Hub déplacé, cloné ou restauré depuis un PRA — est
+        ignorée : on retombe sur l'IP locale détectée plutôt que de pousser
+        une ancienne IP à toutes les apps (elles la resynchronisent via
+        GET /api/config/hub-host). Un hostname (DNS) reste toujours valable.
+        """
         if self.hub_host:
-            return self.hub_host
+            configured = self.hub_host
+            try:
+                ipaddress.ip_address(configured)
+            except ValueError:
+                return configured  # hostname/DNS : indépendant du poste
+            if _is_local_ip(configured):
+                return configured
+            if configured not in _stale_hub_host_warned:
+                _stale_hub_host_warned.add(configured)
+                logger.warning(
+                    f"⚠️ HUB_HOST configuré ({configured}) absent des interfaces "
+                    f"locales de ce poste (Hub déplacé ?) — IP auto-détectée "
+                    f"utilisée à la place : {get_server_ip()}"
+                )
+            return get_server_ip()
         return get_server_ip()
     
     def _load_jwt_keys(self) -> tuple[str, str]:
