@@ -61,6 +61,19 @@ def _isolated_jwt_keyring(tmp_path, monkeypatch):
     jwt_keyring.reload()
 
 
+@pytest.fixture(autouse=True)
+def _hub_host_locality_neutralized(monkeypatch):
+    """Comportement par défaut des tests : une IP configurée est toujours servie.
+
+    get_hub_host() ignore désormais une IP configurée absente des interfaces
+    locales (Hub déplacé/cloné — cf. test_hub_host_locality.py). La plupart des
+    tests existants configurent des IP de documentation (RFC 5737) pour tester
+    la MÉCANIQUE (SAN, propagation, VPN, env/DB) : on force _is_local_ip=True
+    pour neutraliser le fallback. Les tests de localité surchargent à False.
+    """
+    monkeypatch.setattr("app.config._is_local_ip", lambda ip: True)
+
+
 # Champs OIDC mutés par certains tests ; sauvegardés puis restaurés par la fixture `settings`.
 _OIDC_FIELDS_TO_SNAPSHOT = (
     "oidc_issuer",

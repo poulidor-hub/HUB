@@ -18,7 +18,11 @@ HUB_HOST_KEY = "hub_host"
 
 @pytest.fixture(autouse=True)
 def _restore_hub_host_singleton():
-    """Les tests mutent le singleton get_settings() — restauration systématique."""
+    """Les tests mutent le singleton get_settings() — restauration systématique.
+
+    (La neutralisation de la localité — _is_local_ip=True — est globale au
+    conftest : ce fichier teste la mécanique env/DB/mutation, pas la localité.)
+    """
     from app.config import get_settings
     settings = get_settings()
     saved = settings.hub_host
