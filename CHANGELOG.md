@@ -5,6 +5,28 @@
 
 ---
 
+## [3.62.4] - 2 octobre 2026
+
+### 🔧 Fix — VPN : le toggle ON régénère `wg0.conf` absente (auto-réparation)
+
+- **Incident (02/10/2026 16:53)** : toggle OFF puis ON en 1 s via l'UI → le OFF
+  supprime `wg0.conf` du volume `hub_base_vpn-config` (comportement historique),
+  mais le ON ne le régénérait pas : conteneur `hub-wireguard` démarré sans
+  config, tunnel mort malgré `vpn_enabled=true` (« conf=ABSENTE » côté
+  `hubctl vpn sync`, retour tunnel OK uniquement après régénération manuelle
+  depuis la DB). Audit : `VPN_DISABLED`×2 → `VPN_ENABLED`×2 (double-fire UI).
+- **`app/routes/vpn.py` — `toggle_vpn`** : au toggle ON, si le serveur est
+  initialisé (`vpn_server_private_key` en DB) mais `wg0.conf` absent, la conf
+  est régénérée depuis la DB (clés + peers) via `_regenerate_and_sync` (port
+  `vpn_listen_port`, subnet `vpn_subnet`). Si la conf existe déjà, comportement
+  inchangé (aucune réécriture).
+- **Tests** (`tests/test_vpn.py` — `TestVpnToggle`) : reproduction rouge/vert
+  du scénario incident (OFF → ON → conf régénérée avec `[Interface]` +
+  `ListenPort`) + garde-fou « conf déjà présente → pas de réécriture ». Suite
+  complète verte (1223 passed).
+
+---
+
 ## [3.62.3] - 30 septembre 2026
 
 ### 🔧 Fix — auto-détection robuste du hub-host (Hub déplacé/cloné)
