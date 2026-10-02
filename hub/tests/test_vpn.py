@@ -368,6 +368,75 @@ class TestVpnToggle:
         assert resp.status_code == 200
         assert resp.json()["vpn_enabled"] is True
 
+    async def test_toggle_enable_regenere_conf_absente(
+        self, client: AsyncClient, async_session: AsyncSession,
+        admin_token: str, vpn_temp_dir: str, monkeypatch,
+    ):
+        """Bug 02/10/2026 : toggle OFF supprime wg0.conf, toggle ON ne le
+        régénérait pas → conteneur démarré sans config (« conf=ABSENTE »).
+        Le toggle ON doit auto-régénérer la conf si le serveur est initialisé."""
+        import pathlib
+
+        import app.routes.vpn as vpn_mod
+
+        def fake_exec(container, cmd):
+            # Aucun docker réel en tests : listen-port inconnu (conteneur absent)
+            if cmd == ["wg", "show", "wg0", "listen-port"]:
+                return 1, ""
+            return 0, ""
+
+        monkeypatch.setattr(vpn_mod, "_docker_exec", fake_exec)
+
+        await _seed_server_settings(async_session, initialized=True, enabled=False)
+        auth = get_auth_header(admin_token)
+        conf_path = pathlib.Path(vpn_temp_dir) / "wg_confs" / "wg0.conf"
+
+        # Reproduction du scénario incident : OFF (supprime la conf) puis ON
+        resp = await client.put("/api/vpn/toggle", json={"enabled": False}, headers=auth)
+        assert resp.status_code == 200
+        assert not conf_path.exists()  # comportement OFF existant : conf supprimée
+
+        resp = await client.put("/api/vpn/toggle", json={"enabled": True}, headers=auth)
+        assert resp.status_code == 200
+        assert resp.json()["vpn_enabled"] is True
+
+        # Fix : la conf doit être régénérée (clés + peers toujours en DB)
+        assert conf_path.exists()
+        content = conf_path.read_text()
+        assert "[Interface]" in content
+        assert "ListenPort = 51820" in content
+
+    async def test_toggle_enable_conf_deja_presente_ne_double_pas(
+        self, client: AsyncClient, async_session: AsyncSession,
+        admin_token: str, vpn_temp_dir: str, monkeypatch,
+    ):
+        """Toggle ON quand la conf existe déjà : pas de réécriture inutile
+        (comportement minimal, l'état fichier reste la source appliquée)."""
+        import pathlib
+
+        import app.routes.vpn as vpn_mod
+
+        def fake_exec(container, cmd):
+            if cmd == ["wg", "show", "wg0", "listen-port"]:
+                return 1, ""
+            return 0, ""
+
+        monkeypatch.setattr(vpn_mod, "_docker_exec", fake_exec)
+
+        await _seed_server_settings(async_session, initialized=True, enabled=False)
+        auth = get_auth_header(admin_token)
+        conf_path = pathlib.Path(vpn_temp_dir) / "wg_confs" / "wg0.conf"
+        conf_path.parent.mkdir(parents=True, exist_ok=True)
+        conf_path.write_text("# conf existante\n")
+        before = conf_path.stat().st_mtime_ns
+
+        resp = await client.put("/api/vpn/toggle", json={"enabled": True}, headers=auth)
+        assert resp.status_code == 200
+        assert resp.json()["vpn_enabled"] is True
+
+        assert conf_path.read_text() == "# conf existante\n"
+        assert conf_path.stat().st_mtime_ns == before
+
 
 # =============================================================================
 # _regenerate_and_sync — application des changements (fix wg syncconf)
