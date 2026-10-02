@@ -454,6 +454,19 @@ async def toggle_vpn(
         conf_path = _wg_conf_path()
         if conf_path.exists():
             conf_path.unlink()
+    else:
+        # Auto-réparation (bug 02/10/2026) : le toggle OFF supprime wg0.conf ;
+        # si le serveur est initialisé mais le fichier absent (OFF puis ON,
+        # restauration…), on le régénère depuis la DB — sinon le conteneur
+        # démarre sans config (« conf=ABSENTE » côté hubctl vpn sync).
+        server_privkey = await _get_setting(db, VPN_SERVER_PRIVKEY)
+        if server_privkey and not _wg_conf_path().exists():
+            listen_port_str = await _get_setting(db, VPN_LISTEN_PORT) or "51820"
+            subnet = await _get_setting(db, VPN_SUBNET) or "10.8.0.0/24"
+            await _regenerate_and_sync(
+                db, server_privkey, int(listen_port_str), subnet
+            )
+            logger.info("wg0.conf régénérée au toggle ON (fichier absent)")
 
     await db.commit()
 
