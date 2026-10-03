@@ -89,6 +89,32 @@ def parse_github_url(git_repo_url: str) -> Optional[tuple[str, str]]:
     return m.group(1), m.group(2)
 
 
+# scp-like : git@host:owner/repo[.git] — forme copiée depuis l'UI GitHub « SSH »
+_SCP_LIKE_RE = re.compile(r'^git@([^:/]+):(.+?)(?:\.git)?/?$')
+# ssh:// explicite : ssh://[user@]host/path[.git]
+_SSH_URL_RE = re.compile(r'^ssh://(?:[^@]+@)?([^/:]+)(?::\d+)?/(.+?)(?:\.git)?/?$')
+
+
+def normalize_github_url(git_repo_url: Optional[str]) -> Optional[str]:
+    """Normalise une URL de dépôt Git en HTTPS.
+
+    Le PAT ne s'applique qu'au HTTPS et le conteneur hub n'a pas de binaire
+    ssh : une URL SSH (git@github.com:owner/repo.git) faisait échouer le clone
+    avec « cannot run ssh: No such file or directory » (bug 2026-10-03, 4
+    échecs exemple-app). Les formes scp-like et ssh:// sont converties ;
+    les autres URLs (HTTPS, non-git) sont rendues inchangées.
+    """
+    if not git_repo_url:
+        return git_repo_url
+    url = git_repo_url.strip()
+    for pattern in (_SCP_LIKE_RE, _SSH_URL_RE):
+        m = pattern.match(url)
+        if m:
+            host, path = m.group(1), m.group(2)
+            return f"https://{host}/{path}.git"
+    return url
+
+
 def slugify_repo(name: str) -> str:
     """Slugifie un nom de repo : minuscules, accents retirés, non-alphanum → '-'.
 

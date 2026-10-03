@@ -45,7 +45,7 @@ from app.docker_scanner import docker_scanner
 from app.port_allocator import allocate_ports_for_app, docker_occupied_ports, release_ports_for_app, PortPoolExhausted, SubnetPoolExhausted
 from app.m2m_catalog_export import build_m2m_catalog_export
 from app.repo_access import check_repo_access
-from app.github_client import load_db_token
+from app.github_client import load_db_token, normalize_github_url
 
 router = APIRouter(prefix="/api/apps", tags=["Applications"])
 settings = get_settings()
@@ -985,9 +985,12 @@ async def create_app(
     # Préflight Git (défense serveur — spec 2026-09-17 §3.1) : refuser de créer
     # une app dont le dépôt n'est pas clonable avec le token configuré.
     # Aucune ligne en DB si l'accès est refusé — plus de cartes fantômes.
-    if app_data.git_repo_url:
+    # URL normalisée SSH→HTTPS : le PAT ne s'applique qu'au HTTPS et le clone
+    # du déploiement s'exécute sans binaire ssh (bug 2026-10-03).
+    git_repo_url = normalize_github_url(app_data.git_repo_url) if app_data.git_repo_url else None
+    if git_repo_url:
         git_token = settings.github_token or await load_db_token(db)
-        git_access = await check_repo_access(app_data.git_repo_url, git_token)
+        git_access = await check_repo_access(git_repo_url, git_token)
         if not git_access.ok:
             raise HTTPException(
                 # littéral 422 : HTTP_422_UNPROCESSABLE_ENTITY est déprécié en
@@ -1031,7 +1034,7 @@ async def create_app(
         requires_auth=app_data.requires_auth,
         is_shared_service=app_data.is_shared_service,
         is_unmanaged=getattr(app_data, "is_unmanaged", False),
-        git_repo_url=app_data.git_repo_url,
+        git_repo_url=git_repo_url,
     )
     # Groupe visuel (facultatif, validé)
     if getattr(app_data, "group_id", None) is not None:

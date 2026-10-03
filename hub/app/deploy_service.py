@@ -109,6 +109,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.compose_env import compose_base_env
 from app.config import get_settings
 from app.database import async_session_maker
+from app.github_client import normalize_github_url
 from app.models import AppDeployment, Application
 from app.port_allocator import allocate_ports_for_app
 
@@ -303,7 +304,10 @@ async def _run_deployment(deployment_id: int, slug: str, session_factory=None) -
                     select(Application).where(Application.slug == slug)
                 )
                 app = result.scalar_one()
-                repo_url = app.git_repo_url
+                # Normalisation SSH→HTTPS (défense) : des apps plus anciennes
+                # peuvent avoir une URL scp-like en DB — le clone tourne sans
+                # binaire ssh (bug 2026-10-03).
+                repo_url = normalize_github_url(app.git_repo_url)
                 host = get_settings().get_hub_host()
                 allocation, _reused = await allocate_ports_for_app(db, slug, host, get_settings())
                 token = await _get_github_token(db)

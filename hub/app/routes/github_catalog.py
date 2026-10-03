@@ -73,15 +73,23 @@ async def list_github_repos(
 
     apps = (await db.execute(select(Application))).scalars().all()
     integrated_keys = set()
+    app_slugs = set()
     for app in apps:
         parsed = parse_github_url(app.git_repo_url) if app.git_repo_url else None
         if parsed:
             integrated_keys.add(parsed)
+        # Un slug d'app existant réserve aussi son repo (bug 2026-10-03 :
+        # une app déployée manuellement sans git_repo_url laissait le repo
+        # affiché « Dispo » puis 409 « slug déjà utilisé » à la création).
+        if app.slug:
+            app_slugs.add(app.slug)
 
     repos = []
     for c in cached:
         parsed = parse_github_url(c.clone_url)
         already = parsed in integrated_keys if parsed else False
+        if not already:
+            already = slugify_repo(c.name) in app_slugs
         repos.append(GithubRepo(
             name=c.name,
             full_name=c.full_name,

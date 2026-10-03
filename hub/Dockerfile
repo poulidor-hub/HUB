@@ -40,6 +40,11 @@ RUN pip install --no-cache-dir --upgrade -r requirements.txt
 COPY ./app /code/app
 COPY ./migrations /code/migrations
 COPY pki.py /code/pki.py
+# Suite de tests exécutable dans le conteneur (parity make test / verify) :
+# pytest.ini porte asyncio_mode=auto — sans lui, pytest-asyncio ignore les
+# fixtures async et toute exécution de hub/tests échoue (bug 2026-10-03).
+COPY pytest.ini /code/pytest.ini
+COPY ./tests /code/tests
 
 # Creer appuser avec l'UID/GID de l'hôte pour les volumes montés.
 # Le GID est aussi accordé au frontend pour lire uniquement server.key.
