@@ -449,3 +449,43 @@ class TestRepoAccessPreflight:
         r = await client.post("/api/apps/github/check-access",
                               headers=get_auth_header(token), json={})
         assert r.status_code == 400
+
+
+class TestAlreadyIntegratedBySlug:
+    """Bug 2026-10-03 : un repo dont le slug est pris par une app SANS
+    git_repo_url apparaissait « Dispo » puis 409 au clic sur « + Ajouter »
+    (cas exemple-app). Le croisement doit aussi regarder le slug dérivé."""
+
+    @pytest.mark.asyncio
+    async def test_slug_pris_sans_git_repo_url_marque_integre(self, client, admin_user, async_session):
+        async_session.add(GithubRepoCache(
+            repo_id=30, name="exemple-app", full_name="Poutchouli/exemple-app",
+            owner="Poutchouli", html_url="https://github.com/Poutchouli/exemple-app",
+            clone_url="https://github.com/Poutchouli/exemple-app.git",
+        ))
+        # App existante déployée manuellement : pas de git_repo_url
+        async_session.add(Application(
+            name="exemple-app", slug="exemple-app", api_url="http://h:9001",
+            git_repo_url=None,
+        ))
+        await async_session.commit()
+
+        token, _, _ = create_access_token(username=admin_user.username, apps={})
+        r = await client.get("/api/apps/github/repos", headers=get_auth_header(token))
+        body = r.json()
+        by_name = {x["name"]: x for x in body["repos"]}
+        assert by_name["exemple-app"]["already_integrated"] is True
+
+    @pytest.mark.asyncio
+    async def test_slug_libre_reste_dispo(self, client, admin_user, async_session):
+        async_session.add(GithubRepoCache(
+            repo_id=31, name="NouvelOutil", full_name="Poutchouli/NouvelOutil",
+            owner="Poutchouli", html_url="https://github.com/Poutchouli/NouvelOutil",
+            clone_url="https://github.com/Poutchouli/NouvelOutil.git",
+        ))
+        await async_session.commit()
+
+        token, _, _ = create_access_token(username=admin_user.username, apps={})
+        r = await client.get("/api/apps/github/repos", headers=get_auth_header(token))
+        by_name = {x["name"]: x for x in r.json()["repos"]}
+        assert by_name["NouvelOutil"]["already_integrated"] is False
