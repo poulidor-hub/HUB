@@ -90,7 +90,7 @@ function renderGitAccessBanner(access) {
         banner.innerHTML =
             '<div class="alert alert-danger py-2 mb-0 small"><i class="bi bi-exclamation-triangle me-1"></i><strong>Accès au dépôt refusé</strong> — ' +
             escapeHtml(reason) +
-            ' <a href="#" data-action="toggleGithubTokenForm">(configurer le token)</a> · <a href="#" data-action="recheckGitAccess">(réessayer)</a></div>';
+            ' <a href="#" data-action="openGithubTokenModal">(configurer le token)</a> · <a href="#" data-action="recheckGitAccess">(réessayer)</a></div>';
     }
     updateAppSubmitState();
 }

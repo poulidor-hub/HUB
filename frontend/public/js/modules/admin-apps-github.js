@@ -1,95 +1,285 @@
 /**
  * Hub Application — Vue « Apps GitHub »
  * Découverte des repos GitHub (cache) + ajout au HUB.
+ *
+ * Design system Hub : en-tête standard, toolbar admin-apps-toolbar, badges
+ * Bootstrap, icônes bi, empty-states et modal token (pattern modals global).
+ * Toggle cartes/table mémorisé en localStorage (défaut : cartes).
  */
 
-let _ghState = { repos: [], fetched_at: null, token_configured: false, search: '', owner: '' };
+const GH_VIEW_STORAGE_KEY = 'github_view_mode';
+const GH_ICON_TILES = {
+    available: 'gh-icon-tile-available',
+    integrated: 'gh-icon-tile-integrated',
+    archived: 'gh-icon-tile-archived',
+};
+const GH_TILE_ICONS = {
+    available: 'bi bi-shield-check',
+    integrated: 'bi bi-hdd-network',
+    archived: 'bi bi-archive',
+};
 
-async function loadGithubApps() {
+let _ghState = {
+    repos: [],
+    fetched_at: null,
+    token_configured: false,
+    token_valid: null,
+    token_last_checked: null,
+    total: 0,
+    search: '',
+    owner: '',
+    view: 'cards',
+};
+
+function _ghGetView() {
+    if (_ghState.view !== 'cards' && _ghState.view !== 'table') {
+        try { _ghState.view = localStorage.getItem(GH_VIEW_STORAGE_KEY) === 'table' ? 'table' : 'cards'; }
+        catch (e) { _ghState.view = 'cards'; }
+    }
+    return _ghState.view;
+}
+
+function loadGithubApps() {
     const grid = document.getElementById('githubAppsGrid');
     if (!grid) return;
     grid.innerHTML = '<div class="text-center py-4"><div class="spinner-border spinner-border-sm"></div> Chargement…</div>';
-    try {
-        const data = await api.listGithubRepos({ search: _ghState.search, owner: _ghState.owner });
+    return api.listGithubRepos({ search: _ghState.search, owner: _ghState.owner }).then(function(data) {
         _ghState.repos = data.repos || [];
         _ghState.fetched_at = data.fetched_at;
+        _ghState.total = typeof data.total === 'number' ? data.total : _ghState.repos.length;
         _ghState.token_configured = data.token_configured;
-        renderGithubApps(data);
-    } catch (e) {
+        _ghState.token_valid = data.token_valid;
+        _ghState.token_last_checked = data.token_last_checked;
+        renderGithubApps();
+    }).catch(function(e) {
         grid.innerHTML = '<div class="alert alert-danger">Erreur: ' + escapeHtml(e.message) + '</div>';
-    }
+    });
 }
 
-function renderGithubApps(data) {
-    const summary = document.getElementById('githubAppsSummary');
-    const fetchedStr = data.fetched_at ? ' · sync ' + formatRelative(data.fetched_at) : ' · jamais synchronisé';
-    var tokenBadge = data.token_configured
-        ? (data.token_valid === false
-            ? ' · <span style="color:#f59e0b;font-size:12px;" title="' + (data.token_last_checked ? 'Dernier contrôle : ' + data.token_last_checked : '') + '">⚠️ token invalide (refusé par GitHub)</span> <a href="#" data-action="toggleGithubTokenForm" style="font-size:12px;">(corriger)</a>'
-            : ' · <span style="color:#16a34a;font-size:12px;">🔑 token configuré</span> <a href="#" data-action="toggleGithubTokenForm" style="font-size:12px;">(modifier)</a>')
-        : ' · <span style="color:#dc2626;font-size:12px;">⚠️ pas de token</span>';
-    summary.innerHTML = '<strong>' + data.total + '</strong> repo(s)' + fetchedStr + tokenBadge;
+function renderGithubApps() {
+    renderGithubTokenBadge();
+    renderGithubHeaderMeta();
 
     const grid = document.getElementById('githubAppsGrid');
-    if (!data.token_configured) {
-        grid.innerHTML = _ghTokenNoConfigHTML();
-        return;
-    }
-    // Afficher le formulaire de token sous la grille si déplié
-    var tokenFormHTML = _ghTokenFormHTML();
-    if (!data.repos || !data.repos.length) {
-        grid.innerHTML =
-            '<div class="text-center py-5">' +
-                '<div style="font-size:32px;">📦</div>' +
-                '<h5>Aucun repo en cache</h5>' +
-                '<p class="text-muted">Synchronisez depuis GitHub pour voir vos dépôts.</p>' +
-                '<button class="btn btn-primary" data-action="syncGithubRepos">🔄 Synchroniser maintenant</button>' +
-            '</div>' +
-            tokenFormHTML;
-        return;
-    }
-    grid.innerHTML = data.repos.map(renderGithubRepoCard).join('') + tokenFormHTML;
+    if (!grid) return;
 
-    const ownerSelect = document.getElementById('githubOwnerSelect');
-    if (ownerSelect) {
-        const owners = Array.from(new Set((data.repos || []).map(function(r) { return r.owner; }))).sort();
-        const current = ownerSelect.value;
-        ownerSelect.innerHTML = '<option value="">Tous les owners</option>' +
-            owners.map(function(o) { return '<option value="' + escapeHtml(o) + '"' + (o === current ? ' selected' : '') + '>' + escapeHtml(o) + '</option>'; }).join('');
+    if (!_ghState.token_configured) {
+        grid.innerHTML = _ghEmptyStateHTML(
+            'bi-key',
+            'Aucun token GitHub configuré',
+            'Configurez un token pour découvrir les dépôts du parc et déployer les apps.',
+            '<button class="btn btn-primary btn-sm" data-action="openGithubTokenModal"><i class="bi bi-key me-1"></i>Configurer le token</button>'
+        );
+        _ghSyncViewToggle();
+        return;
+    }
+
+    const filtered = _ghState.search !== '' || _ghState.owner !== '';
+    if (!_ghState.repos.length) {
+        grid.innerHTML = filtered
+            ? _ghEmptyStateHTML(
+                'bi-search',
+                'Aucun repo ne correspond aux filtres actuels.',
+                'Essayez un autre nom ou changez d\'owner.',
+                '<button class="btn btn-outline-secondary btn-sm" data-action="clearGithubFilters"><i class="bi bi-arrow-counterclockwise me-1"></i>Réinitialiser</button>'
+            )
+            : _ghEmptyStateHTML(
+                'bi-github',
+                'Aucun dépôt en cache',
+                'Lancez une synchronisation pour importer le catalogue depuis GitHub.',
+                '<button class="btn btn-primary btn-sm" data-action="syncGithubRepos"><i class="bi bi-arrow-clockwise me-1"></i>Synchroniser maintenant</button>'
+            );
+        _ghSyncViewToggle();
+        return;
+    }
+
+    grid.innerHTML = _ghGetView() === 'table' ? _ghRenderTable() : _ghRenderCards();
+    _ghSyncViewToggle();
+    _ghSyncOwnerSelect();
+}
+
+function renderGithubTokenBadge() {
+    var el = document.getElementById('githubTokenBadge');
+    if (!el) return;
+    if (!_ghState.token_configured) {
+        el.innerHTML = '<span class="badge bg-danger" title="Configurez un token pour synchroniser le catalogue"><i class="bi bi-key me-1"></i>aucun token</span>';
+        return;
+    }
+    if (_ghState.token_valid === false) {
+        var when = _ghState.token_last_checked ? 'Dernier contrôle : ' + _ghState.token_last_checked : 'GitHub a refusé le token';
+        el.innerHTML = '<span class="badge bg-danger" title="' + escapeHtml(when) + '"><i class="bi bi-exclamation-triangle me-1"></i>token invalide</span>';
+        return;
+    }
+    el.innerHTML = '<span class="badge bg-success" title="Token configuré et accepté par GitHub"><i class="bi bi-key me-1"></i>token valide</span>';
+}
+
+function renderGithubHeaderMeta() {
+    var countEl = document.getElementById('githubAppsCount');
+    var metaEl = document.getElementById('githubSyncMeta');
+    if (countEl) {
+        countEl.innerHTML = '<strong>' + _ghState.total + '</strong> repo(s)';
+    }
+    if (metaEl) {
+        metaEl.textContent = _ghState.fetched_at ? 'sync ' + formatRelative(_ghState.fetched_at) : 'jamais synchronisé';
     }
 }
 
-function renderGithubRepoCard(repo) {
-    var integrated = repo.already_integrated;
-    var archived = repo.archived;
-    var badge = integrated
-        ? '<span class="badge bg-primary">🔵 Intégré</span>'
-        : archived
-            ? '<span class="badge bg-secondary">📦 Archivé</span>'
-            : '<span class="badge bg-success">🟢 Dispo</span>';
-    var action = integrated
-        ? '<button class="btn btn-sm btn-outline-secondary w-100" data-action="viewAppForRepo" data-arg1="' + escapeHtml(repo.full_name) + '">✓ Voir l\'app →</button>'
-        : archived
-            ? '<button class="btn btn-sm btn-outline-secondary w-100" disabled>+ Ajouter au HUB</button>'
-            : '<button class="btn btn-sm btn-success w-100" data-action="addRepoToHub" data-arg1="' + escapeHtml(repo.full_name) + '">+ Ajouter au HUB</button>';
-    var desc = repo.description ? '<div class="small text-muted">' + escapeHtml(repo.description) + '</div>' : '';
-    return '<div class="card h-100 ' + (integrated || archived ? 'opacity-75' : '') + '">' +
-        '<div class="card-body d-flex flex-column">' +
-            '<div class="d-flex justify-content-between align-items-start">' +
-                '<strong>' + escapeHtml(repo.name) + '</strong>' + badge +
+function _ghEmptyStateHTML(icon, title, text, actionHTML) {
+    return '<div class="card border-0 shadow-sm">' +
+        '<div class="card-body">' +
+            '<div class="text-center py-4 text-muted">' +
+                '<i class="bi ' + icon + ' fs-1"></i>' +
+                '<p class="mt-2 mb-1 fw-semibold text-dark">' + escapeHtml(title) + '</p>' +
+                '<p class="small mb-3">' + escapeHtml(text) + '</p>' +
+                actionHTML +
             '</div>' +
-            '<div class="small text-muted">' + escapeHtml(repo.full_name) + '</div>' +
-            desc +
-            '<div class="mt-auto pt-2">' + action + '</div>' +
         '</div>' +
     '</div>';
 }
 
-async function syncGithubRepos() {
+function _ghRepoState(repo) {
+    if (repo.already_integrated) return 'integrated';
+    if (repo.archived) return 'archived';
+    return 'available';
+}
+
+function _ghRepoBadge(state) {
+    if (state === 'integrated') return '<span class="badge bg-primary" title="Une app du HUB est liée à ce dépôt"><i class="bi bi-link-45deg me-1"></i>Intégré</span>';
+    if (state === 'archived') return '<span class="badge bg-secondary" title="Dépôt archivé sur GitHub"><i class="bi bi-archive me-1"></i>Archivé</span>';
+    return '<span class="badge bg-success" title="Dépôt prêt à être ajouté au HUB"><i class="bi bi-check-circle me-1"></i>Dispo</span>';
+}
+
+function _ghRepoAction(state, repo) {
+    var fullNameAttr = ' data-arg1="' + escapeHtml(repo.full_name) + '"';
+    if (state === 'integrated') {
+        return '<button class="btn btn-sm btn-outline-secondary" data-action="viewAppForRepo"' + fullNameAttr + ' title="Ouvrir l\'onglet Applications filtré sur ce dépôt"><i class="bi bi-box-arrow-up-right me-1"></i>Voir l\'app</button>';
+    }
+    if (state === 'archived') {
+        return '<button class="btn btn-sm btn-outline-secondary" disabled title="Dépôt archivé : ajout impossible">Ajouter</button>';
+    }
+    return '<button class="btn btn-sm btn-primary" data-action="addRepoToHub"' + fullNameAttr + '><i class="bi bi-plus-lg me-1"></i>Ajouter au HUB</button>';
+}
+
+function _ghRepoTile(state) {
+    return '<span class="gh-icon-tile ' + GH_ICON_TILES[state] + '"><i class="' + GH_TILE_ICONS[state] + '"></i></span>';
+}
+
+function _ghRenderCards() {
+    var cards = _ghState.repos.map(function(repo) {
+        var state = _ghRepoState(repo);
+        var dimmed = state !== 'available' ? ' opacity-75' : '';
+        var desc = repo.description
+            ? '<div class="gh-repo-desc small text-muted">' + escapeHtml(repo.description) + '</div>'
+            : '<div class="gh-repo-desc small text-muted fst-italic">Pas de description</div>';
+        return '<div class="col">' +
+            '<div class="card h-100 shadow-sm gh-repo-card' + dimmed + '">' +
+                '<div class="card-body d-flex flex-column">' +
+                    '<div class="d-flex justify-content-between align-items-start gap-2">' +
+                        '<div class="d-flex align-items-center gap-2">' +
+                            _ghRepoTile(state) +
+                            '<div>' +
+                                '<div class="gh-repo-name">' + escapeHtml(repo.name) + '</div>' +
+                                '<div class="gh-repo-full">' + escapeHtml(repo.full_name) + ' · ' + escapeHtml(repo.default_branch || 'main') + '</div>' +
+                            '</div>' +
+                        '</div>' +
+                        _ghRepoBadge(state) +
+                    '</div>' +
+                    desc +
+                    '<div class="d-flex justify-content-between align-items-center mt-auto pt-2">' +
+                        '<span class="gh-meta"><i class="bi bi-clock me-1"></i>maj ' + _ghFormatDay(repo.updated_at) + '</span>' +
+                        _ghRepoAction(state, repo) +
+                    '</div>' +
+                '</div>' +
+            '</div>' +
+        '</div>';
+    }).join('');
+    return '<div class="row row-cols-1 row-cols-md-2 row-cols-xl-3 g-3">' + cards + '</div>';
+}
+
+function _ghRenderTable() {
+    var rows = _ghState.repos.map(function(repo) {
+        var state = _ghRepoState(repo);
+        var desc = repo.description ? escapeHtml(repo.description) : '<span class="fst-italic">Pas de description</span>';
+        var dimmed = state !== 'available' ? ' opacity-75' : '';
+        return '<tr class="align-middle' + dimmed + '">' +
+            '<td><div class="d-flex align-items-center gap-2">' +
+                _ghRepoTile(state) +
+                '<div>' +
+                    '<div class="gh-repo-name">' + escapeHtml(repo.name) + '</div>' +
+                    '<code class="small text-muted">' + escapeHtml(repo.full_name) + '</code>' +
+                '</div>' +
+            '</div></td>' +
+            '<td class="small text-muted gh-repo-desc" style="max-width:320px;">' + desc + '</td>' +
+            '<td class="small">' + escapeHtml(repo.owner) + '</td>' +
+            '<td class="gh-meta">' + _ghFormatDay(repo.updated_at) + '</td>' +
+            '<td>' + _ghRepoBadge(state) + '</td>' +
+            '<td class="text-end text-nowrap">' + _ghRepoAction(state, repo) + '</td>' +
+        '</tr>';
+    }).join('');
+    return '<div class="card border-0 shadow-sm">' +
+        '<div class="table-responsive">' +
+            '<table class="table table-hover align-middle mb-0">' +
+                '<thead><tr>' +
+                    '<th>Dépôt</th><th>Description</th><th>Owner</th><th>Maj</th><th>État</th><th class="text-end">Action</th>' +
+                '</tr></thead>' +
+                '<tbody>' + rows + '</tbody>' +
+            '</table>' +
+        '</div>' +
+    '</div>';
+}
+
+function _ghFormatDay(iso) {
+    if (!iso) return '—';
+    var d = new Date(iso);
+    if (isNaN(d.getTime())) return '—';
+    return d.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' });
+}
+
+function _ghSyncViewToggle() {
+    var cardsBtn = document.getElementById('ghViewCardsBtn');
+    var tableBtn = document.getElementById('ghViewTableBtn');
+    var view = _ghGetView();
+    if (cardsBtn) cardsBtn.classList.toggle('active', view === 'cards');
+    if (tableBtn) tableBtn.classList.toggle('active', view === 'table');
+}
+
+function _ghSyncOwnerSelect() {
+    const ownerSelect = document.getElementById('githubOwnerSelect');
+    if (!ownerSelect) return;
+    const owners = Array.from(new Set(_ghState.repos.map(function(r) { return r.owner; }))).sort();
+    const current = ownerSelect.value;
+    ownerSelect.innerHTML = '<option value="">Tous les owners</option>' +
+        owners.map(function(o) { return '<option value="' + escapeHtml(o) + '"' + (o === current ? ' selected' : '') + '>' + escapeHtml(o) + '</option>'; }).join('');
+}
+
+function _ghSyncSearchClear() {
+    var clearBtn = document.getElementById('githubSearchClear');
+    if (clearBtn) clearBtn.classList.toggle('d-none', !_ghState.search);
+}
+
+function setGithubView(mode) {
+    if (mode !== 'cards' && mode !== 'table') return;
+    _ghState.view = mode;
+    try { localStorage.setItem(GH_VIEW_STORAGE_KEY, mode); } catch (e) { /* stockage indisponible */ }
+    // Re-render local (aucun appel API) si des repos sont déjà affichés
+    if (_ghState.repos.length) renderGithubApps();
+}
+
+function syncGithubRepos() {
     var btn = document.getElementById('githubSyncBtn');
-    if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>…'; }
-    try {
-        var r = await api.refreshGithubRepos();
+    if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Synchronisation…';
+    }
+    var done = function() {
+        if (btn) {
+            btn.disabled = false;
+            // Markup identique au shell index.html (l'icône bi ne doit jamais
+            // être remplacée par un emoji — régression 2026-10-03)
+            btn.innerHTML = '<i class="bi bi-arrow-clockwise me-1"></i>Synchroniser';
+        }
+    };
+    return api.refreshGithubRepos().then(function(r) {
         if (!r.token_configured) {
             showToast('GitHub', 'Aucun token GitHub configuré', 'warning');
         } else if (r.error) {
@@ -99,12 +289,10 @@ async function syncGithubRepos() {
         } else {
             showToast('GitHub', r.synced + ' repo(s) synchronisé(s)', 'success');
         }
-        await loadGithubApps();
-    } catch (e) {
+        return loadGithubApps();
+    }).catch(function(e) {
         showToast('Erreur', e.message, 'danger');
-    } finally {
-        if (btn) { btn.disabled = false; btn.innerHTML = '🔄 Synchroniser'; }
-    }
+    }).finally(done);
 }
 
 async function addRepoToHub(fullName) {
@@ -118,12 +306,32 @@ async function addRepoToHub(fullName) {
 }
 
 function viewAppForRepo(fullName) {
-    showToast('Info', 'Recherche de l\'app liée à ' + fullName, 'info');
+    // Bascule vers l'onglet Applications, recherche préremplie sur le nom du dépôt
+    var tabBtn = document.querySelector('[data-bs-target="#tabApps"]');
+    if (tabBtn && typeof bootstrap !== 'undefined' && bootstrap.Tab) {
+        bootstrap.Tab.getOrCreateInstance(tabBtn).show();
+    }
+    var slug = String(fullName || '').split('/').pop().toLowerCase();
+    var search = document.getElementById('adminAppsSearch');
+    if (search) search.value = slug;
+    if (typeof filterAdminApps === 'function') filterAdminApps();
 }
 
 function onGithubFilterChange() {
     _ghState.search = document.getElementById('githubSearchInput').value.trim();
     _ghState.owner = document.getElementById('githubOwnerSelect').value;
+    _ghSyncSearchClear();
+    loadGithubApps();
+}
+
+function clearGithubFilters() {
+    _ghState.search = '';
+    _ghState.owner = '';
+    var searchInput = document.getElementById('githubSearchInput');
+    var ownerSelect = document.getElementById('githubOwnerSelect');
+    if (searchInput) searchInput.value = '';
+    if (ownerSelect) ownerSelect.value = '';
+    _ghSyncSearchClear();
     loadGithubApps();
 }
 
@@ -137,65 +345,23 @@ function formatRelative(iso) {
     return 'il y a ' + Math.floor(secs / 86400) + ' j';
 }
 
-// ─── Gestion du token GitHub ─────────────────────────────────────────
+// ─── Gestion du token GitHub (modal #githubTokenModal) ───────────────
 
-/**
- * HTML du message quand aucun token n'est configuré.
- * Affiche le formulaire de token bien visible.
- */
-function _ghTokenNoConfigHTML() {
-    return '<div class="text-center py-5">' +
-        '<div style="font-size:32px;">⚠️</div>' +
-        '<h5>Aucun token GitHub configuré</h5>' +
-        '<p class="text-muted">La sélection visuelle nécessite un Personal Access Token GitHub.</p>' +
-        _ghTokenFormContent() +
-    '</div>';
-}
-
-/**
- * HTML du formulaire de token (masqué par défaut quand le token est déjà configuré).
- */
-function _ghTokenFormHTML() {
-    return '<div id="ghTokenFormWrapper" style="display:none;margin-top:16px;padding:16px;border:1px solid #e2e8f0;border-radius:8px;background:#f8fafc;">' +
-        '<div class="d-flex justify-content-between align-items-center mb-2">' +
-            '<strong style="font-size:14px;">🔑 Token GitHub</strong>' +
-            '<button class="btn btn-sm btn-outline-secondary" data-action="toggleGithubTokenForm">✕</button>' +
-        '</div>' +
-        '<p class="text-muted small mb-2">Personal Access Token (classic) avec les droits <code>repo</code> et <code>read:org</code>.</p>' +
-        _ghTokenFormContent() +
-    '</div>';
-}
-
-function _ghTokenFormContent() {
-    return '<div class="mx-auto" style="max-width:450px;">' +
-        '<div class="input-group mb-2">' +
-            '<input type="password" id="githubTokenInput" class="form-control" placeholder="ghp_..." autocomplete="off">' +
-            '<button class="btn btn-outline-secondary" type="button" data-action="toggleGithubTokenVisibility" title="Afficher/masquer">' +
-                '<i class="bi bi-eye"></i>' +
-            '</button>' +
-        '</div>' +
-        '<div class="d-flex gap-2 justify-content-center">' +
-            '<button class="btn btn-primary btn-sm" data-action="saveGithubToken">Enregistrer le token</button>' +
-        '</div>' +
-    '</div>';
-}
-
-function toggleGithubTokenForm() {
-    var wrapper = document.getElementById('ghTokenFormWrapper');
-    if (!wrapper) return;
-    if (wrapper.style.display === 'none') {
-        wrapper.style.display = 'block';
-        var input = document.getElementById('githubTokenInput');
-        if (input) { input.value = ''; input.focus(); }
-    } else {
-        wrapper.style.display = 'none';
-    }
+function openGithubTokenModal() {
+    var modalEl = document.getElementById('githubTokenModal');
+    if (!modalEl) return;
+    var input = document.getElementById('githubTokenInput');
+    if (input) { input.value = ''; input.type = 'password'; }
+    bootstrap.Modal.getOrCreateInstance(modalEl).show();
+    if (input) input.focus();
 }
 
 function toggleGithubTokenVisibility() {
     var input = document.getElementById('githubTokenInput');
     if (!input) return;
     input.type = input.type === 'password' ? 'text' : 'password';
+    var icon = input.parentElement ? input.parentElement.querySelector('button i') : null;
+    if (icon) icon.className = input.type === 'password' ? 'bi bi-eye' : 'bi bi-eye-slash';
 }
 
 async function saveGithubToken() {
@@ -206,7 +372,7 @@ async function saveGithubToken() {
         showToast('Token GitHub', 'Veuillez saisir un token', 'warning');
         return;
     }
-    // Validation basique : un PAT GitHub classique commence par ghp_
+    // Validation basique : un PAT GitHub commence par ghp_ (classic) ou github_pat_ (fine-grained)
     if (!token.startsWith('ghp_') && !token.startsWith('github_pat_')) {
         showToast('Token GitHub', 'Le token ne ressemble pas à un PAT GitHub (ghp_... ou github_pat_...)', 'warning');
         return;
@@ -218,16 +384,15 @@ async function saveGithubToken() {
     try {
         await api.updateSetting('github_token', token);
         showToast('Token GitHub', 'Token enregistré avec succès', 'success');
-        // Masquer le formulaire et recharger
-        var wrapper = document.getElementById('ghTokenFormWrapper');
-        if (wrapper) wrapper.style.display = 'none';
+        var modalEl = document.getElementById('githubTokenModal');
+        if (modalEl) bootstrap.Modal.getOrCreateInstance(modalEl).hide();
         await loadGithubApps();
     } catch (e) {
         showToast('Token GitHub', 'Erreur: ' + (e.message || 'échec'), 'danger');
     } finally {
-        if (btn) { btn.disabled = false; btn.textContent = 'Enregistrer le token'; }
+        if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = '<i class="bi bi-check-lg me-1"></i>Enregistrer';
+        }
     }
 }
-
-// (empty after stub removal in Task 9)
-
