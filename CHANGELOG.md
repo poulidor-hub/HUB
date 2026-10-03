@@ -5,6 +5,46 @@
 
 ---
 
+## [3.62.5] - 3 octobre 2026
+
+### 🔧 Fix — Déploiement GitHub des apps : 3 causes d'échec corrigées (E2E exemple-app)
+
+Campagne de tests E2E du déploiement d'apps depuis le front-end (token GitHub
+PAT), cobaye `exemple-app-test` (template v0.3.0) — 2026-10-03.
+
+- **`app/config.py` — `get_hub_host()` en exécution conteneurisée (critique)** :
+  l'IP LAN de l'hôte n'étant jamais une interface locale du conteneur, le check
+  anti-déplacement invalidait systématiquement `HUB_HOST` et retombait sur
+  l'IP interne Docker (`10.42.x.x`) — en cascade : `.env` des apps déployées
+  avec un `HUB_HOST` injoignable (`hub_connected=false`, aucun
+  auto-enregistrement), health check du pipeline en `Connection refused`
+  (déploiement `failed` alors que l'app tourne), URLs d'app fausses en DB,
+  certs SSL avec un mauvais SAN. En conteneur (`/.dockerenv` ou env
+  `container`, détecté par `_running_in_container()`), la valeur configurée
+  est désormais conservée ; la validation anti-déplacement garde du sens hors
+  conteneur uniquement.
+- **`app/github_client.py` — `normalize_github_url()`** : les URLs SSH
+  (`git@host:path`, `ssh://git@host/path`) sont converties en HTTPS au trois
+  points d'entrée — `POST /api/apps` (stockage), `check_repo_access`
+  (préflight), clone du pipeline (défense pour les apps existantes). Le PAT ne
+  s'applique qu'au HTTPS et le conteneur hub n'a pas de binaire ssh
+  (« cannot run ssh » — 4 échecs exemple-app du 18 au 26/09).
+- **`app/routes/github_catalog.py` — `already_integrated` par slug** : un repo
+  dont le slug dérivé est pris par une app existante sans `git_repo_url`
+  (déployée manuellement) apparaissait « Dispo » puis 409 « slug déjà utilisé »
+  à la création (cas exemple-app). La carte est désormais « Intégré ».
+- **`hub/Dockerfile`** : `pytest.ini` + `hub/tests` embarqués dans l'image —
+  suite exécutable in-conteneur sans docker cp ni `-o asyncio_mode=auto`
+  (workflow verify-feature).
+- **Tests** : +8 nouveaux (`test_hub_host.py` ×8, `TestNormalizeGithubUrl`
+  ×10 params, `TestAlreadyIntegratedBySlug` ×2,
+  `test_run_deployment_normalize_ssh_url`) ; `test_hub_host_locality.py`
+  adapté (les cas « stale » simulent l'exécution hors conteneur). Scope vert :
+  299 tests (deploy, catalogue, repo_access, token monitor, config ports,
+  allocation, API apps, workshop, réseau, health instance).
+
+---
+
 ## [3.62.4] - 2 octobre 2026
 
 ### 🔧 Fix — VPN : le toggle ON régénère `wg0.conf` absente (auto-réparation)
