@@ -5,6 +5,41 @@
 
 ---
 
+## [3.62.6] - 3 octobre 2026
+
+### 🎨 UI — Refonte de la vue « Apps GitHub » (alignement design system)
+
+- **En-tête standard** : `h5` + `bi-github` + badge compteur de repos ;
+  état du token en badge Bootstrap (valide/invalide/absent) au lieu du
+  texte inline coloré ; boutons « Token… » et « Synchroniser » en `btn-sm`
+  (fix régression : l'icône `bi` du bouton sync n'est plus écrasée par un
+  emoji au premier clic).
+- **Toolbar** en `card admin-apps-toolbar` (pattern onglet Applications) :
+  recherche avec icône + bouton de réinitialisation, filtre owner, toggle
+  d'affichage **cartes/table** mémorisé en localStorage (défaut : cartes).
+- **Vue cartes** : tuile icône colorée par état (dispo/intégré/archivé),
+  badge d'état, description clampée 2 lignes, meta de mise à jour + action.
+  **Vue table** : dense, pattern table admin (Dépôt/Description/Owner/Maj/
+  État/Action).
+- **Formulaire token** déplacé en modal Bootstrap standard
+  (`#githubTokenModal`, pattern modals global) avec aide sur les scopes —
+  fin du bloc dépliable stylé inline.
+- **Empty states** en pattern `bi` : aucun token (CTA « Configurer le
+  token »), cache vide (CTA « Synchroniser »), filtres sans résultat
+  (CTA « Réinitialiser »).
+- **« Voir l'app »** devient fonctionnel : bascule vers l'onglet
+  Applications avec recherche préremplie (remplace le stub toast).
+- **CSS** : classes dédiées `.gh-*` réutilisant les tokens `:root`
+  (`--vpn-*-bg`, `--text-muted`) — zéro valeur hexadécimale en dur, zéro
+  style inline, une seule transition légère (pattern `.app-card`).
+- Référence croisée : la bannière du formulaire d'app pointe désormais
+  `openGithubTokenModal` (l'ancienne action inline a été retirée).
+- Fichiers : `frontend/public/index.html`, `frontend/public/js/modules/
+  admin-apps-github.js`, `admin-app-form.js`, `frontend/public/css/
+  style.css`. Maquettes validées au préalable (Visual Companion).
+
+---
+
 ## [3.62.5] - 3 octobre 2026
 
 ### 🔧 Fix — Déploiement GitHub des apps : 3 causes d'échec corrigées (E2E exemple-app)
