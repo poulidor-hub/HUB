@@ -594,3 +594,31 @@ async def test_requalify_stuck_deployments(async_session):
     assert by_slug["b"].status == "failed"
     assert "redémarrage" in (by_slug["a"].logs or "")
     assert by_slug["c"].status == "success"  # inchangé
+
+
+@pytest.mark.asyncio
+async def test_run_deployment_normalize_ssh_url(async_session, monkeypatch, tmp_path):
+    """Bug 2026-10-03 : une app enregistrée avec une URL SSH (git@host:path)
+    doit être clonée en HTTPS — le conteneur hub n'a pas de binaire ssh et le
+    PAT ne s'applique qu'au HTTPS (« cannot run ssh: No such file or directory »)."""
+    import app.deploy_service as ds
+
+    dep_id = await _mk_deployment(async_session,
+                                  repo="git@github.com:Poutchouli/exemple-app.git")
+    appdir = tmp_path / "exemple-app"
+    appdir.mkdir()
+    (appdir / "Makefile").write_text("build:\n\t@echo build\nup:\n\t@echo up\n")
+    (appdir / ".env.example").write_text("APP_SLUG=x\n")
+
+    calls = _install_fake_exec(monkeypatch, [(0, b"clone ok"), (0, b""), (0, b"")])
+    monkeypatch.setattr(ds, "_wait_healthy", lambda *a, **k: asyncio.sleep(0, result=True))
+    monkeypatch.setattr(ds.get_settings(), "apps_host_path", str(tmp_path))
+
+    factory = lambda: _CtxSession(async_session)
+    await ds._run_deployment(dep_id, "exemple-app", session_factory=factory)
+
+    clone_cmds = [c["cmd"] for c in calls if "clone" in c["cmd"]]
+    assert clone_cmds, "le clone doit avoir été invoqué"
+    clone_cmd = " ".join(clone_cmds[0])
+    assert "https://github.com/Poutchouli/exemple-app.git" in clone_cmd
+    assert "git@github.com:" not in clone_cmd

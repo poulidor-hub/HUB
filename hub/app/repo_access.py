@@ -13,7 +13,7 @@ import httpx
 
 from app.config import get_settings
 from app.deploy_service import _git_auth_args
-from app.github_client import parse_github_url
+from app.github_client import normalize_github_url, parse_github_url
 
 logger = logging.getLogger(__name__)
 
@@ -83,6 +83,9 @@ async def _api_repo_status(owner_repo: tuple[str, str], token: str | None) -> in
 
 
 async def check_repo_access(clone_url: str, token: str | None) -> RepoAccessResult:
+    # Normalisation SSH→HTTPS : le préflight doit tester le clone tel qu'il
+    # sera réellement exécuté (HTTPS + PAT) — bug 2026-10-03.
+    clone_url = normalize_github_url(clone_url)
     owner_repo = parse_github_url(clone_url)
     if owner_repo is None:
         return RepoAccessResult(True, "non_github", _message_for("non_github"))
