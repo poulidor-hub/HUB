@@ -3,6 +3,7 @@ from pydantic import ConfigDict
 from functools import lru_cache
 from pathlib import Path
 import ipaddress
+import os
 import socket
 import logging
 import time
@@ -52,6 +53,17 @@ def _is_local_ip(ip: str) -> bool:
 def _clear_local_ip_cache() -> None:
     """Vide le cache de localité (réservé aux tests)."""
     _local_ip_cache.clear()
+
+
+def _running_in_container() -> bool:
+    """True si le process tourne dans un conteneur (Docker : /.dockerenv,
+    Podman : variable d'environnement `container`)."""
+    try:
+        if Path("/.dockerenv").exists():
+            return True
+    except OSError:
+        pass
+    return bool(os.environ.get("container"))
 
 
 def generate_rsa_keys() -> tuple[str, str]:
@@ -395,6 +407,14 @@ class Settings(BaseSettings):
         ignorée : on retombe sur l'IP locale détectée plutôt que de pousser
         une ancienne IP à toutes les apps (elles la resynchronisent via
         GET /api/config/hub-host). Un hostname (DNS) reste toujours valable.
+
+        Exception — exécution conteneurisée : l'IP LAN de l'hôte n'est jamais
+        assignée aux interfaces du conteneur, le check « interface locale »
+        l'invaliderait à tort (bug 2026-10-03 : l'IP interne Docker 10.42.x.x
+        était poussée aux apps déployées — health check KO, hub_connected=
+        false, aucun auto-enregistrement). En conteneur, la valeur configurée
+        (issue du .env du poste hôte) est conservée ; le scénario « Hub
+        déplacé » passe par la restauration du .env (hubctl PRA).
         """
         if self.hub_host:
             configured = self.hub_host
@@ -403,6 +423,14 @@ class Settings(BaseSettings):
             except ValueError:
                 return configured  # hostname/DNS : indépendant du poste
             if _is_local_ip(configured):
+                return configured
+            if _running_in_container():
+                if configured not in _stale_hub_host_warned:
+                    _stale_hub_host_warned.add(configured)
+                    logger.info(
+                        f"HUB_HOST={configured} conservé (exécution conteneur : "
+                        f"l'IP de l'hôte n'est pas une interface locale du conteneur)."
+                    )
                 return configured
             if configured not in _stale_hub_host_warned:
                 _stale_hub_host_warned.add(configured)

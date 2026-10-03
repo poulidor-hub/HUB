@@ -36,10 +36,14 @@ def _frozen_detection(monkeypatch, ip: str = "10.99.0.42") -> str:
     return ip
 
 
-# --- IP configurée absente du poste → auto-détection ---
+# --- IP configurée absente du poste → auto-détection (hors conteneur) ---
+# Depuis le fix 2026-10-03, la validation anti-déplacement ne s'applique qu'en
+# exécution NON conteneurisée : en conteneur, l'IP LAN de l'hôte n'est jamais
+# une interface locale et la valeur configurée est conservée (test_hub_host.py).
 
 
 def test_stale_configured_ip_falls_back_to_detection(monkeypatch):
+    monkeypatch.setattr("app.config._running_in_container", lambda: False)
     detected = _frozen_detection(monkeypatch)
     monkeypatch.setattr("app.config._is_local_ip", lambda ip: False)
     settings = get_settings()
@@ -48,6 +52,7 @@ def test_stale_configured_ip_falls_back_to_detection(monkeypatch):
 
 
 def test_stale_configured_ip_logs_warning_once(monkeypatch, caplog):
+    monkeypatch.setattr("app.config._running_in_container", lambda: False)
     _frozen_detection(monkeypatch)
     monkeypatch.setattr("app.config._is_local_ip", lambda ip: False)
     settings = get_settings()
