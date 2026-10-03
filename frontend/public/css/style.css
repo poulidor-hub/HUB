@@ -2662,3 +2662,50 @@ body {
     cursor: pointer;
 }
 .pref-select-clear:hover { text-decoration: underline; }
+
+/* ─── Vue Apps GitHub (tabGithubApps) ───────────────────────────────── */
+/* Réutilise les tokens :root — aucune valeur hex en dur (charte Hub).   */
+
+.gh-icon-tile {
+    width: 34px;
+    height: 34px;
+    border-radius: 8px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: none;
+    font-size: 1rem;
+}
+
+.gh-icon-tile-available { background: var(--vpn-purple-bg); color: var(--vpn-purple); }
+.gh-icon-tile-integrated { background: var(--vpn-blue-bg); color: var(--vpn-blue); }
+.gh-icon-tile-archived { background: var(--vpn-gray-bg); color: var(--vpn-gray); }
+
+.gh-repo-card {
+    /* Même ressenti que .app-card du dashboard : une seule transition légère */
+    transition: transform .15s ease, box-shadow .15s ease;
+}
+
+.gh-repo-card:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 .5rem 1rem rgba(0, 0, 0, .08);
+}
+
+.gh-repo-name { font-weight: 600; }
+
+.gh-repo-full {
+    font-size: .78rem;
+    color: var(--text-muted);
+}
+
+.gh-repo-desc {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
+.gh-meta {
+    font-size: .75rem;
+    color: var(--text-muted);
+}

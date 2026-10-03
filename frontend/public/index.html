@@ -1242,22 +1242,53 @@
                 </div>
                 <!-- GitHub Apps Tab -->
                 <div class="tab-pane fade" id="tabGithubApps" role="tabpanel">
-                    <div class="d-flex justify-content-between align-items-center mb-3">
+                    <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
                         <div>
-                            <h4 class="mb-0">Apps GitHub</h4>
-                            <small class="text-muted" id="githubAppsSummary"></small>
+                            <h5 class="mb-0"><i class="bi bi-github me-2"></i>Apps GitHub</h5>
+                            <small class="text-muted">Catalogue GitHub du parc — découvrez et déployez les apps du template en un clic</small>
                         </div>
-                        <button class="btn btn-primary" id="githubSyncBtn" data-action="syncGithubRepos">
-                            <i class="bi bi-arrow-clockwise me-1"></i>Synchroniser
-                        </button>
+                        <div class="d-flex gap-2 align-items-center">
+                            <span id="githubTokenBadge"></span>
+                            <button class="btn btn-outline-secondary btn-sm" data-action="openGithubTokenModal">
+                                <i class="bi bi-pencil-square me-1"></i>Token…
+                            </button>
+                            <button class="btn btn-primary btn-sm" id="githubSyncBtn" data-action="syncGithubRepos">
+                                <i class="bi bi-arrow-clockwise me-1"></i>Synchroniser
+                            </button>
+                        </div>
                     </div>
-                    <div class="d-flex gap-2 mb-3 flex-wrap">
-                        <input type="text" class="form-control" id="githubSearchInput" placeholder="🔎 Rechercher un repo…" style="max-width:300px;" data-action="onGithubFilterChange">
-                        <select class="form-select" id="githubOwnerSelect" style="max-width:180px;" data-action="onGithubFilterChange">
-                            <option value="">Tous les owners</option>
-                        </select>
+                    <div class="card border-0 shadow-sm mb-3 admin-apps-toolbar">
+                        <div class="card-body py-3">
+                            <div class="row g-2 align-items-end">
+                                <div class="col-xl-4 col-lg-6">
+                                    <label class="form-label small mb-1">Recherche</label>
+                                    <div class="input-group input-group-sm">
+                                        <span class="input-group-text"><i class="bi bi-search"></i></span>
+                                        <input type="search" class="form-control" id="githubSearchInput" placeholder="Nom, description, owner…" data-action="onGithubFilterChange">
+                                        <button class="btn btn-outline-secondary d-none" id="githubSearchClear" data-action="clearGithubFilters" title="Réinitialiser les filtres"><i class="bi bi-x-circle"></i></button>
+                                    </div>
+                                </div>
+                                <div class="col-xl-3 col-md-4">
+                                    <label class="form-label small mb-1">Owner</label>
+                                    <select class="form-select form-select-sm" id="githubOwnerSelect" data-action="onGithubFilterChange">
+                                        <option value="">Tous les owners</option>
+                                    </select>
+                                </div>
+                                <div class="col-xl-auto col-md-2 ms-xl-auto">
+                                    <label class="form-label small mb-1">Affichage</label>
+                                    <div class="btn-group btn-group-sm w-100" role="group" aria-label="Mode d'affichage">
+                                        <button type="button" class="btn btn-outline-secondary" id="ghViewCardsBtn" data-action="setGithubView" data-arg1="cards" title="Vue cartes"><i class="bi bi-grid-3x3-gap"></i></button>
+                                        <button type="button" class="btn btn-outline-secondary" id="ghViewTableBtn" data-action="setGithubView" data-arg1="table" title="Vue tableau"><i class="bi bi-list-ul"></i></button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
                     </div>
-                    <div id="githubAppsGrid" class="row row-cols-1 row-cols-md-2 row-cols-lg-3 g-3"></div>
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <small class="text-muted" id="githubAppsCount"></small>
+                        <small class="text-muted" id="githubSyncMeta"></small>
+                    </div>
+                    <div id="githubAppsGrid"></div>
                 </div>
                 <!-- App Backups Tab - Sauvegardes des Applications -->
                 <div class="tab-pane fade" id="tabAppBackups">
@@ -1780,6 +1811,39 @@
             </div>
         </div>
     </div>
+
+<!-- Modal GitHub Token -->
+<div class="modal fade" id="githubTokenModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h6 class="modal-title"><i class="bi bi-key text-primary me-2"></i>Token GitHub</h6>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Fermer"></button>
+            </div>
+            <div class="modal-body">
+                <label class="form-label small fw-semibold mb-1">Personal Access Token</label>
+                <div class="input-group input-group-sm">
+                    <input type="password" id="githubTokenInput" class="form-control font-monospace" placeholder="ghp_… ou github_pat_…" autocomplete="off">
+                    <button class="btn btn-outline-secondary" type="button" data-action="toggleGithubTokenVisibility" title="Afficher / masquer">
+                        <i class="bi bi-eye"></i>
+                    </button>
+                </div>
+                <div class="form-text">
+                    Token <strong>classic</strong> avec le droit <code>repo</code> (dépôts privés inclus) ou
+                    <strong>fine-grained</strong> limité aux organisations du parc. Stocké côté serveur, jamais réaffiché en clair.
+                </div>
+                <div class="alert alert-info d-flex gap-2 mt-3 mb-0 py-2 px-3 small" role="alert">
+                    <i class="bi bi-shield-lock flex-shrink-0 mt-1"></i>
+                    <span>Le token ne transite que du serveur vers GitHub (clones HTTPS authentifiés). Il est modifiable ou révocable à tout moment depuis vos réglages GitHub.</span>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Annuler</button>
+                <button type="button" class="btn btn-primary btn-sm" data-action="saveGithubToken"><i class="bi bi-check-lg me-1"></i>Enregistrer</button>
+            </div>
+        </div>
+    </div>
+</div>
 
 <!-- Modal Tag Category -->
 <div class="modal fade" id="tagCategoryModal" tabindex="-1" aria-hidden="true">
