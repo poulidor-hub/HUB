@@ -128,6 +128,20 @@ function renderAppTile(app, opts = {}) {
         : 'Cette application n’a pas d’URL de lancement configurée.';
     const appVersionLabel = formatAppVersionLabel(app.app_version);
     const favIcon = app.is_favorite ? 'bi-star-fill text-warning' : 'bi-star';
+    // Badge d'état du dernier déploiement (bug 2026-10-03 : une app dont le
+    // déploiement a échoué s'affichait comme les autres — carte active, rien
+    // de fonctionnel derrière). last_deployment n'est exposé que pour
+    // success/failed (cf. _load_last_deployments).
+    const deployBadge = (() => {
+        const ld = app.last_deployment;
+        if (!ld || ld.status !== 'failed') return '';
+        const when = ld.finished_at
+            ? new Date(ld.finished_at).toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' })
+            : '';
+        const title = 'Dernier déploiement en échec' + (when ? ' le ' + when : '') +
+            ' — l\'application peut ne pas fonctionner. Redéploiement possible depuis l\'administration.';
+        return `<span class="badge bg-danger ms-2" style="font-size:0.65em" title="${escapeHtml(title)}"><i class="bi bi-exclamation-triangle me-1"></i>Échec déploiement</span>`;
+    })();
     // data-action de la carte : wrappers globaux (openAppFromCard / appCardUnavailable)
     const cardAction = !isUnavailable ? 'openAppFromCard' : 'appCardUnavailable';
     const cardArgs = !isUnavailable
@@ -148,7 +162,7 @@ function renderAppTile(app, opts = {}) {
                             <i class="${app.icon}"></i>
                         </div>
                         <div class="app-card-info">
-                            <h6>${escapeHtml(app.name)}${app.is_workshop ? '<span class="badge bg-warning text-dark ms-2" style="font-size:0.65em">ATELIER</span>' : ''}</h6>
+                            <h6>${escapeHtml(app.name)}${app.is_workshop ? '<span class="badge bg-warning text-dark ms-2" style="font-size:0.65em">ATELIER</span>' : ''}${deployBadge}</h6>
                             <p>${escapeHtml(app.description || 'Aucune description')}</p>
                         </div>
                     </div>
