@@ -5,6 +5,31 @@
 
 ---
 
+## [3.62.8] - 4 octobre 2026
+
+### ⚡ Logging horodaté à l'heure du Hub + contrat `epoch_ms`
+
+- **`app/logging_config.py`** (nouveau) : `setup_logging()` configure root +
+  loggers uvicorn (`uvicorn`, `uvicorn.error`, `uvicorn.access`) avec le
+  format commun du parc `2026-10-04T12:34:56.789Z | LEVEL | logger | message`
+  — ISO 8601 UTC, règle parc n°10. Niveau via `LOG_LEVEL` (défaut INFO).
+  `HubClock` porte l'horloge de référence (offset nul côté hub : le Hub EST
+  l'autorité temps) ; `HubTimeFormatter` horodate chaque record depuis
+  `HubClock.now_utc()`. Idempotent ; les filtres existants (ex.
+  `_SuppressLegacySSE401Filter` sur uvicorn.access) sont préservés.
+- **`main.py`** : `setup_logging()` appelé à l'import (après la config
+  logging uvicorn, qui tourne avant l'import de l'app) — tous les logs
+  hub (access inclus) portent désormais un timestamp.
+- **`GET /api/system/time`** : nouveau champ **`epoch_ms`** (ms epoch du
+  Hub) — contrat de synchro d'horloge du parc : les apps l'utilisent pour
+  aligner l'horodatage de leurs logs sur l'heure du Hub (point médian
+  request/réponse). Champs existants (`utc_now`, `utc_now_human`,
+  `timezone`) inchangés (rétro-compat frontend + MCP).
+- **Tests** : `tests/test_logging_config.py` (12 tests — HubClock offset/
+  fallback, format ISO Z, setup idempotent, contrat epoch_ms).
+
+---
+
 ## [3.62.7] - 4 octobre 2026
 
 ### 🔧 Fix — Vue « Apps GitHub » : 4 anomalies relevées par la campagne de tests boutons

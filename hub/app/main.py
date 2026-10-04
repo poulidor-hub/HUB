@@ -30,6 +30,10 @@ from app.routes import app_socle_check
 
 import logging
 
+from app.logging_config import setup_logging
+
+setup_logging()
+
 logger = logging.getLogger(__name__)
 
 
@@ -816,12 +820,18 @@ async def get_system_time():
     Utile côté UI pour aider l'utilisateur à composer ses expressions cron
     en comparant avec son heure locale (les cron de backup sont évalués
     en UTC côté serveur).
+
+    `epoch_ms` est le contrat de synchro d'horloge du parc : les apps
+    l'utilisent pour horodater leurs logs à l'heure du Hub (offset mesuré
+    au point médian request/réponse, cf. backend/logging_config.py du
+    socle). Endpoint public, sans auth.
     """
     now = utcnow()
     return {
         "utc_now": now.isoformat(),
         "utc_now_human": now.strftime("%Y-%m-%d %H:%M:%S UTC"),
         "timezone": "UTC",
+        "epoch_ms": int(time.time() * 1000),
     }
 
 
