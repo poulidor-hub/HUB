@@ -20,6 +20,7 @@ Endpoints admin :
 import ipaddress
 import io
 import logging
+import os
 import re
 import subprocess
 from datetime import datetime, timezone
@@ -309,8 +310,12 @@ async def _regenerate_and_sync(
 
     conf_path = _wg_conf_path()
     _wg_conf_dir()
-    conf_path.write_text(conf_content)
-    conf_path.chmod(0o600)
+    # Création en mode 0600 : write_text+chmod laissait une fenêtre umask
+    # (~0644) sur un fichier contenant la clé privée serveur (revue 05/10).
+    fd = os.open(conf_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
+        f.write(conf_content)
+    conf_path.chmod(0o600)  # fichier préexistant : O_TRUNC conserve ses perms
 
     # Détecter un changement de ListenPort (wg syncconf ne l'applique pas à chaud)
     current_port = _get_current_listen_port()
@@ -438,6 +443,7 @@ async def get_vpn_status(
         "peer_count": peer_count,
         "connected_count": connected_count,
         "listen_port": int(listen_port_str),
+        "conf_exists": _wg_conf_path().exists(),
     }
 
 
