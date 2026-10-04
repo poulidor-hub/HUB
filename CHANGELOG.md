@@ -5,6 +5,28 @@
 
 ---
 
+## [3.62.10] - 4 octobre 2026
+
+### 🔧 Outillage release — garde-fous anti-écrasement croisé
+
+- **Incident 2026-10-04** : deux sessions releaseant en parallèle ont
+  produit un doublon de numéro (méta 0.71.6 ×2) puis une régression de
+  VERSION (0.71.6 poussée après 0.71.7).
+- **`sync_version.py` — le `bump` vérifie AVANT toute écriture** :
+  - origin pas strictement en avance (`get_origin_version()` : fetch
+    upstream + VERSION distant ; silencieux hors-ligne — jamais de blocage
+    d'un workflow légitime) ; abort code 2 avec la marche à suivre ;
+  - numéro cible non déjà pris dans le CHANGELOG (double bump parallèle).
+- **Hook pre-push** (`scripts/hooks/pre-push-version-guard.sh` +
+  `scripts/install-version-guard.sh`) : dernier rempart git — refuse le
+  push d'une VERSION strictement inférieure à celle de la branche distante ;
+  multi-hooks chaînables, partagé avec les worktrees via le common dir.
+- **Tests** : +10 (`test_sync_version_guard.py` : origin en
+  avance/égal/derrière/indéterminable, collision CHANGELOG, bump exit 2
+  sans écriture). Hook validé E2E sur repo simulé.
+
+---
+
 ## [3.62.9] - 4 octobre 2026
 
 ### 🔧 Fix — Dashboard : badge « Échec déploiement » sur les cartes d'app
