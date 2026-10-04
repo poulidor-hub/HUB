@@ -5,6 +5,35 @@
 
 ---
 
+## [3.62.7] - 4 octobre 2026
+
+### 🔧 Fix — Vue « Apps GitHub » : 4 anomalies relevées par la campagne de tests boutons
+
+Campagne de tests fonctionnels de tous les contrôles (04/10/2026, Hub réel) —
+7/9 contrôles OK au premier passage, 4 anomalies corrigées :
+
+- **Persistance du toggle cartes/table** : `_ghState.view` initialisé vide
+  pour que `_ghGetView()` lise `localStorage` au boot — la valeur `'cards'`
+  initiale court-circuitait la lecture (toujours cartes après reload malgré
+  le choix table).
+- **`fetched_at` global** (backend) : `MAX(fetched_at)` sur tout le cache au
+  lieu du seul résultat filtré — un filtrage sans résultat n'affiche plus
+  « jamais synchronisé ».
+- **Timezone** : `formatRelative`/`_ghFormatDay` traitent les timestamps
+  naïfs comme UTC (`_ghParseUtc`) — « sync il y a 2 h » juste après une sync
+  réussie sur un poste en UTC+2.
+- **`integrated_app_slug`** (backend + front) : `GET /api/apps/github/repos`
+  renvoie le slug de l'APP liée au repo (par `git_repo_url` ou par slug
+  dérivé) ; « Voir l'app » l'utilise — repo POULIDOR trouve désormais l'app
+  « hub », exemple-app-2 l'app « exemple-app » (avant : recherche sur « poulidor » /
+  « exemple-app » → 0 résultat).
+
+Tests : +4 (`TestGlobalFetchedAt`, `TestIntegratedAppSlug` ×3). Suite verte
+: 116 tests (catalogue, hub_host, deploy, github_client, repo_access, token
+monitor). Validation E2E sur le Hub réel post-déploiement.
+
+---
+
 ## [3.62.6] - 3 octobre 2026
 
 ### 🎨 UI — Refonte de la vue « Apps GitHub » (alignement design system)
