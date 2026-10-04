@@ -128,10 +128,17 @@ async function handleSaveServerConfig() {
 
 // ── Toggle ──────────────────────────────────────────────
 
+// Garde anti double-fire (incident 02/10 : OFF×2 puis ON×2 en 10 ms) :
+// un seul PUT à la fois, le toggle est désactivé pendant la requête.
+let vpnToggleInFlight = false;
+
 async function handleVpnToggle() {
+    if (vpnToggleInFlight) return;
     const toggle = document.getElementById('toggleVpn');
     const checked = toggle ? toggle.checked : false;
 
+    vpnToggleInFlight = true;
+    if (toggle) toggle.disabled = true;
     try {
         await api.request('/vpn/toggle', {
             method: 'PUT',
@@ -143,6 +150,9 @@ async function handleVpnToggle() {
     } catch (e) {
         showToast('VPN', e.message || 'Erreur', 'danger');
         if (toggle) toggle.checked = !checked;
+    } finally {
+        vpnToggleInFlight = false;
+        if (toggle) toggle.disabled = false;
     }
 }
 
