@@ -28,7 +28,7 @@ let _ghState = {
     total: 0,
     search: '',
     owner: '',
-    view: 'cards',
+    view: '',  // vide au boot : _ghGetView() lit alors localStorage (défaut cartes)
 };
 
 function _ghGetView() {
@@ -37,6 +37,19 @@ function _ghGetView() {
         catch (e) { _ghState.view = 'cards'; }
     }
     return _ghState.view;
+}
+
+/**
+ * Parse un timestamp ISO en le traitant comme UTC quand il est naïf.
+ * fetched_at est stocké naïf (sans suffixe) côté serveur : sans ce correctif,
+ * Date le lirait en heure locale — « sync il y a 2 h » juste après une sync
+ * réussie sur un poste en UTC+2 (bug campagne de tests 2026-10-03).
+ */
+function _ghParseUtc(iso) {
+    if (!iso) return null;
+    var s = String(iso);
+    if (/[Zz]$|[+-]\d{2}:?\d{2}$/.test(s)) return new Date(s);
+    return new Date(s + 'Z');
 }
 
 function loadGithubApps() {
@@ -229,9 +242,8 @@ function _ghRenderTable() {
 }
 
 function _ghFormatDay(iso) {
-    if (!iso) return '—';
-    var d = new Date(iso);
-    if (isNaN(d.getTime())) return '—';
+    var d = _ghParseUtc(iso);
+    if (!d || isNaN(d.getTime())) return '—';
     return d.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' });
 }
 
@@ -306,14 +318,26 @@ async function addRepoToHub(fullName) {
 }
 
 function viewAppForRepo(fullName) {
-    // Bascule vers l'onglet Applications, recherche préremplie sur le nom du dépôt
+    // Bascule vers l'onglet Applications, recherche préremplie sur le slug de
+    // l'APP liée (integrated_app_slug renvoyé par /repos — bug 2026-10-03 :
+    // chercher le slug dérivé du repo donnait 0 résultat quand les deux
+    // diffèrent, ex: repo POULIDOR → app `hub`, repo exemple-app-2 → app `exemple-app`).
     var tabBtn = document.querySelector('[data-bs-target="#tabApps"]');
     if (tabBtn && typeof bootstrap !== 'undefined' && bootstrap.Tab) {
         bootstrap.Tab.getOrCreateInstance(tabBtn).show();
     }
-    var slug = String(fullName || '').split('/').pop().toLowerCase();
+    var searchTerm = '';
+    var repo = (_ghState.repos || []).find(function(r) { return r.full_name === fullName; });
+    if (repo && repo.integrated_app_slug) {
+        searchTerm = repo.integrated_app_slug;
+    } else {
+        // Fallback : slug dérivé du nom du repo (même normalisation que
+        // slugify_repo côté serveur : tout non [a-z0-9] devient '-')
+        searchTerm = String(fullName || '').split('/').pop().toLowerCase()
+            .replace(/[^a-z0-9]+/g, '-');
+    }
     var search = document.getElementById('adminAppsSearch');
-    if (search) search.value = slug;
+    if (search) search.value = searchTerm;
     if (typeof filterAdminApps === 'function') filterAdminApps();
 }
 
@@ -336,8 +360,8 @@ function clearGithubFilters() {
 }
 
 function formatRelative(iso) {
-    if (!iso) return '';
-    var d = new Date(iso);
+    var d = _ghParseUtc(iso);
+    if (!d || isNaN(d.getTime())) return '';
     var secs = Math.floor((Date.now() - d.getTime()) / 1000);
     if (secs < 60) return 'à l\'instant';
     if (secs < 3600) return 'il y a ' + Math.floor(secs / 60) + ' min';

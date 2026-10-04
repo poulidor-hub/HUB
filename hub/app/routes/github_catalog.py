@@ -10,7 +10,7 @@ from typing import Optional
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import get_current_admin
@@ -73,23 +73,37 @@ async def list_github_repos(
 
     apps = (await db.execute(select(Application))).scalars().all()
     integrated_keys = set()
+    integrated_by_repo: dict[tuple[str, str], str] = {}
     app_slugs = set()
     for app in apps:
         parsed = parse_github_url(app.git_repo_url) if app.git_repo_url else None
         if parsed:
             integrated_keys.add(parsed)
+            # Mémorise quelle app est liée (le slug de l'APP, pas celui dérivé
+            # du repo) — consommé par « Voir l'app » (bug 2026-10-03).
+            integrated_by_repo[parsed] = app.slug
         # Un slug d'app existant réserve aussi son repo (bug 2026-10-03 :
         # une app déployée manuellement sans git_repo_url laissait le repo
         # affiché « Dispo » puis 409 « slug déjà utilisé » à la création).
         if app.slug:
             app_slugs.add(app.slug)
 
+    # fetched_at du cache GLOBAL : un filtrage sans résultat ne doit jamais
+    # faire croire à « jamais synchronisé » (bug 2026-10-03).
+    global_fetched = (await db.execute(
+        select(func.max(GithubRepoCache.fetched_at))
+    )).scalar()
+
     repos = []
     for c in cached:
         parsed = parse_github_url(c.clone_url)
         already = parsed in integrated_keys if parsed else False
+        integrated_app_slug = integrated_by_repo.get(parsed) if parsed else None
         if not already:
-            already = slugify_repo(c.name) in app_slugs
+            derived = slugify_repo(c.name)
+            if derived in app_slugs:
+                already = True
+                integrated_app_slug = derived
         repos.append(GithubRepo(
             name=c.name,
             full_name=c.full_name,
@@ -103,9 +117,10 @@ async def list_github_repos(
             private=c.private,
             updated_at=_iso(c.updated_at_github),
             already_integrated=already,
+            integrated_app_slug=integrated_app_slug,
         ))
 
-    fetched_at = max((c.fetched_at for c in cached), default=None)
+    fetched_at = global_fetched
     token_configured = bool(get_settings().github_token or await load_db_token(db))
 
     # Moniteur de vivacité (github_token_monitor) : dernier résultat connu
