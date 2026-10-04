@@ -350,6 +350,40 @@ class TestVpnStatus:
         assert resp.status_code == 200
         assert resp.json()["enabled"] is False
 
+    async def test_status_expose_conf_absente(
+        self, client: AsyncClient, async_session: AsyncSession,
+        admin_token: str, vpn_temp_dir: str, monkeypatch,
+    ):
+        """État résiduel de l'incident 02/10 : enabled + initialisé mais
+        wg0.conf absente → conf_exists doit le révéler à l'UI."""
+        import app.routes.vpn as vpn_mod
+        monkeypatch.setattr(vpn_mod, "_docker_exec", lambda c, cmd: (1, ""))
+
+        await _seed_server_settings(async_session, initialized=True, enabled=True)
+        auth = get_auth_header(admin_token)
+
+        resp = await client.get("/api/vpn/status", headers=auth)
+        assert resp.status_code == 200
+        assert resp.json()["conf_exists"] is False
+
+    async def test_status_expose_conf_presente(
+        self, client: AsyncClient, async_session: AsyncSession,
+        admin_token: str, vpn_temp_dir: str, monkeypatch,
+    ):
+        import pathlib
+
+        import app.routes.vpn as vpn_mod
+        monkeypatch.setattr(vpn_mod, "_docker_exec", lambda c, cmd: (1, ""))
+
+        await _seed_server_settings(async_session, initialized=True, enabled=True)
+        conf_path = pathlib.Path(vpn_temp_dir) / "wg_confs" / "wg0.conf"
+        conf_path.write_text("[Interface]\n")
+        auth = get_auth_header(admin_token)
+
+        resp = await client.get("/api/vpn/status", headers=auth)
+        assert resp.status_code == 200
+        assert resp.json()["conf_exists"] is True
+
 
 # =============================================================================
 # PUT /api/vpn/toggle
@@ -436,6 +470,63 @@ class TestVpnToggle:
 
         assert conf_path.read_text() == "# conf existante\n"
         assert conf_path.stat().st_mtime_ns == before
+
+    async def test_toggle_enable_sans_serveur_initialise(
+        self, client: AsyncClient, async_session: AsyncSession,
+        admin_token: str, vpn_temp_dir: str, monkeypatch,
+    ):
+        """Revue froide 05/10 : toggle ON sans privkey en DB → pas de
+        régénération, pas de crash, conf toujours absente (garde l.463)."""
+        import pathlib
+
+        import app.routes.vpn as vpn_mod
+        monkeypatch.setattr(vpn_mod, "_docker_exec", lambda c, cmd: (1, ""))
+
+        await _seed_server_settings(async_session, initialized=False, enabled=False)
+        auth = get_auth_header(admin_token)
+        conf_path = pathlib.Path(vpn_temp_dir) / "wg_confs" / "wg0.conf"
+
+        resp = await client.put("/api/vpn/toggle", json={"enabled": True}, headers=auth)
+        assert resp.status_code == 200
+        assert resp.json()["vpn_enabled"] is True
+        assert not conf_path.exists()
+
+    async def test_regenerate_conf_cree_le_fichier_en_0600(
+        self, async_session: AsyncSession, vpn_temp_dir: str, monkeypatch,
+    ):
+        """Revue froide 05/10 : la création du fichier (clé privée serveur)
+        ne doit jamais exposer de fenêtre umask (~0644) — création en mode
+        0600, y compris si le chmod final n'a pas pu s'exécuter."""
+        import os
+        import pathlib
+        import stat as stat_mod
+
+        import app.routes.vpn as vpn_mod
+        monkeypatch.setattr(vpn_mod, "_docker_exec", lambda c, cmd: (1, ""))
+
+        def _boom(self, mode):
+            raise OSError("chmod simulé en échec")
+
+        monkeypatch.setattr(vpn_mod.Path, "chmod", _boom)
+
+        old_umask = os.umask(0o022)
+        try:
+            with pytest.raises(OSError):
+                await vpn_mod._regenerate_and_sync(
+                    async_session, _VALID_PRIVKEY, 51820, "10.8.0.0/24"
+                )
+        finally:
+            os.umask(old_umask)
+
+        conf_path = pathlib.Path(vpn_temp_dir) / "wg_confs" / "wg0.conf"
+        mode = stat_mod.S_IMODE(conf_path.stat().st_mode)
+        assert mode == 0o600, f"perms={oct(mode)} — fenêtre umask exposée"
+
+
+
+def pathlib_mod(vpn_temp_dir: str):
+    import pathlib
+    return pathlib.Path(vpn_temp_dir) / "wg_confs" / "wg0.conf"
 
 
 # =============================================================================

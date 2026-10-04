@@ -1520,6 +1520,15 @@
                                 l'application effective se fait côté hôte.
                             </div>
 
+                            <!-- Bandeau état résiduel : conf absente (réparation 1-clic) -->
+                            <div id="vpnConfMissingBanner" class="alert alert-warning py-2 mb-3 small d-none">
+                                <i class="bi bi-exclamation-triangle me-1"></i>
+                                Configuration WireGuard absente du serveur — clés et peers restent
+                                intacts en base.
+                                <button type="button" class="btn btn-sm btn-warning ms-2 py-0"
+                                        data-action="repairVpnConf">Réparer</button>
+                            </div>
+
                             <!-- État : non initialisé -->
                             <div id="vpnInitPanel" class="d-none">
                                 <p class="text-muted">
