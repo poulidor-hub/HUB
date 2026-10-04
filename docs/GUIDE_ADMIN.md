@@ -196,6 +196,17 @@ Pour chaque peer créé :
    Cette commande applique la configuration et démarre le conteneur
    `wireguard-server`.
 
+Cycle OFF/ON et réparation (≥ 3.62.4) :
+
+- La **désactivation** (toggle OFF) supprime `wg0.conf` du serveur ; les
+  clés et les peers restent intacts en base.
+- La **réactivation** (toggle ON) régénère automatiquement `wg0.conf`
+  si elle est absente. En état résiduel (activé + conf absente), la page
+  VPN affiche une alerte avec un bouton **Réparer**.
+- Après un **redémarrage du poste hôte**, le conteneur ne redémarre pas
+  seul (choix de design : pas de conteneur qui tourne à vide) — exécuter
+  `hubctl vpn sync`.
+
 ### 5. Ouverture du port firewall
 
 Le serveur WireGuard écoute sur le port **51820/udp**. Ouvrir ce port
