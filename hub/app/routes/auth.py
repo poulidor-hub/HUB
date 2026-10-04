@@ -293,18 +293,40 @@ async def login_for_token(
     user = result.scalar_one_or_none()
     
     if not user or not verify_password(password, user.hashed_password):
+        # Audit sécurité : tracer la tentative avec l'identifiant soumis,
+        # même lorsque l'utilisateur n'existe pas. JAMAIS le mot de passe.
+        await log_action(
+            db,
+            user_id=user.id if user else None,
+            action="login_failed",
+            target=username,
+            details="Utilisateur inconnu" if not user else "Mot de passe incorrect",
+            request=request,
+            response_status=401,
+        )
+        await db.commit()
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Identifiants incorrects",
             headers={"WWW-Authenticate": "Bearer"}
         )
-    
+
     if not user.is_active:
+        await log_action(
+            db,
+            user_id=user.id,
+            action="login_failed",
+            target=username,
+            details="Compte désactivé",
+            request=request,
+            response_status=403,
+        )
+        await db.commit()
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Compte désactivé"
         )
-    
+
     # Construire les apps avec rôles
     # Construire les apps avec rôles (+ ateliers autorisés)
     apps = await get_apps_with_roles_and_workshops(user, db)
@@ -407,12 +429,34 @@ async def login_with_redirect(
     user = result.scalar_one_or_none()
     
     if not user or not verify_password(login_data.password, user.hashed_password):
+        # Audit sécurité : tracer la tentative avec l'identifiant soumis,
+        # même lorsque l'utilisateur n'existe pas. JAMAIS le mot de passe.
+        await log_action(
+            db,
+            user_id=user.id if user else None,
+            action="login_failed",
+            target=login_data.username,
+            details="Utilisateur inconnu" if not user else "Mot de passe incorrect",
+            request=request,
+            response_status=401,
+        )
+        await db.commit()
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Identifiants incorrects"
         )
-    
+
     if not user.is_active:
+        await log_action(
+            db,
+            user_id=user.id,
+            action="login_failed",
+            target=login_data.username,
+            details="Compte désactivé",
+            request=request,
+            response_status=403,
+        )
+        await db.commit()
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Compte désactivé"
