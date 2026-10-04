@@ -5,6 +5,18 @@
 
 ---
 
+## [3.62.11] - 4 octobre 2026
+
+### 🔧 Hotfix — `scripts/install-version-guard.sh` : chemin double `hooks/hooks/`
+
+- Même correctif que le méta-repo 0.71.10 : l'installateur écrivait
+  `<GIT_DIR>/hooks/hooks/pre-push-version-guard.sh` dans le hook chaîné
+  (double `hooks/`) → `No such file or directory` à chaque push des clones
+  où le hook est installé (fail-closed). Chemin corrigé ; hook file local
+  (.git/modules/HUB_base/hooks/pre-push) réparé. Hotfix immédiat
+  post-merge (fichier introduit en 3.62.10).
+
+---
 ## [3.62.10] - 4 octobre 2026
 
 ### 🔧 Outillage release — garde-fous anti-écrasement croisé
