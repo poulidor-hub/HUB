@@ -48,6 +48,13 @@ async function loadVpnStatus() {
         if (countEl && data.initialized) {
             countEl.textContent = `${data.peer_count} peer(s) · ${data.connected_count} connecté(s)`;
         }
+
+        // État résiduel « activé + initialisé + conf absente » (incident 02/10)
+        const confBanner = document.getElementById('vpnConfMissingBanner');
+        if (confBanner) {
+            const missing = data.enabled && data.initialized && data.conf_exists === false;
+            confBanner.classList.toggle('d-none', !missing);
+        }
     } catch (e) {
         console.error('loadVpnStatus:', e);
     }
@@ -153,6 +160,36 @@ async function handleVpnToggle() {
     } finally {
         vpnToggleInFlight = false;
         if (toggle) toggle.disabled = false;
+    }
+}
+
+// ── Réparation de la conf (état résiduel) ───────────────
+
+let vpnRepairInFlight = false;
+
+async function repairVpnConf() {
+    if (vpnRepairInFlight) return;
+    const endpoint = document.getElementById('vpnSettingsEndpoint')?.value?.trim();
+    const port = parseInt(document.getElementById('vpnSettingsPort')?.value || '51820');
+    if (!endpoint) {
+        showToast('VPN', 'Endpoint requis pour réparer', 'warning');
+        return;
+    }
+
+    vpnRepairInFlight = true;
+    try {
+        // PUT server-config régénère wg0.conf depuis la DB (clés + peers)
+        await api.request('/vpn/server-config', {
+            method: 'PUT',
+            body: JSON.stringify({ endpoint, listen_port: port })
+        });
+        showToast('VPN', 'Configuration régénérée', 'success');
+        await loadVpnStatus();
+        await loadVpnPeers();
+    } catch (e) {
+        showToast('VPN', e.message || 'Erreur de réparation', 'danger');
+    } finally {
+        vpnRepairInFlight = false;
     }
 }
 
