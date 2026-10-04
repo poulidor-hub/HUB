@@ -52,4 +52,7 @@ test-docker: ## Tests dans la stack de test isolée (pouly-test, tests copiés v
 	$(COMPOSE_TEST) exec -T hub-api sh -c "rm -rf /code/tests /code/pytest.ini"
 	$(COMPOSE_TEST) cp hub/tests hub-api:/code/tests
 	$(COMPOSE_TEST) cp hub/pytest.ini hub-api:/code/pytest.ini
+	# test_sync_version_guard importe sync_version.py (racine du repo) —
+	# absente du contexte image (./hub) : copiée à côté des tests.
+	$(COMPOSE_TEST) cp sync_version.py hub-api:/code/sync_version.py
 	$(COMPOSE_TEST) exec -T hub-api sh -c "cd /code && python -m pytest tests -n $(XDIST_WORKERS_DOCKER)"
