@@ -595,6 +595,66 @@ async def request_context_middleware(request: Request, call_next):
 # =============================================================================
 
 
+async def _resolve_error_actor(db, request: Request):
+    """
+    Rattache l'appelant d'une erreur à un utilisateur / service account via le
+    JWT Bearer de la requête.
+
+    Le décodage vérifie la SIGNATURE (pas de sub forgé dans les logs) mais
+    ignore l'EXPIRATION : un token expiré doit rester rattachable à son
+    propriétaire. Ne lève jamais — en cas de doute, (None, None).
+
+    Appelé uniquement sur le chemin d'erreur (zéro impact chemin nominal) :
+    ~1 vérif RSA + 1-2 SELECT indexés.
+    """
+    try:
+        auth_header = request.headers.get("Authorization", "")
+        if not auth_header.startswith("Bearer "):
+            return None, None
+        token = auth_header[len("Bearer "):].strip()
+        if not token:
+            return None, None
+
+        import jwt as pyjwt
+        from app import jwt_keyring
+
+        entry, public_pem = jwt_keyring.select_verification_key(token)
+        if entry is None:
+            return None, None
+        payload = pyjwt.decode(
+            token,
+            public_pem,
+            algorithms=[settings.jwt_algorithm],
+            options={"verify_exp": False},
+        )
+        # Les tokens de reset de mot de passe ne désignent pas une session
+        if payload.get("scope") == "pwd_reset":
+            return None, None
+        sub = payload.get("sub")
+        if not sub:
+            return None, None
+
+        if payload.get("type") == "service_account":
+            from app.models import ServiceAccount
+            result = await db.execute(
+                select(ServiceAccount.id).where(ServiceAccount.client_id == sub)
+            )
+            return None, result.scalar_one_or_none()
+
+        # Utilisateur : claim uid (uuid stable) d'abord, fallback username
+        user_id = None
+        uid = payload.get("uid")
+        if uid:
+            result = await db.execute(select(User.id).where(User.uuid == uid))
+            user_id = result.scalar_one_or_none()
+        if user_id is None:
+            result = await db.execute(select(User.id).where(User.username == sub))
+            user_id = result.scalar_one_or_none()
+        return user_id, None
+    except Exception:
+        return None, None
+
+
 async def _log_error_to_db(
     request: Request,
     error_code: int,
@@ -614,13 +674,16 @@ async def _log_error_to_db(
         # app.database.async_session_maker au lieu de la liaison module-level.
         from app.database import async_session_maker
         async with async_session_maker() as db:
+            # Rattacher l'appelant (utilisateur / service account) si un JWT
+            # Bearer accompagne la requête — silencieux sinon.
+            user_id, service_account_id = await _resolve_error_actor(db, request)
             error_log = ErrorLog(
                 request_id=request_id,
                 error_code=error_code,
                 error_type=error_type,
                 error_message=error_message[:500] if error_message else None,
-                user_id=None,
-                service_account_id=None,
+                user_id=user_id,
+                service_account_id=service_account_id,
                 source_app_slug=source_app_slug,
                 request_method=request.method,
                 request_path=str(request.url.path)[:255],
