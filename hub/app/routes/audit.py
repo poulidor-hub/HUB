@@ -1048,25 +1048,28 @@ async def get_audit_logs(
         query = query.where(AuditLog.ip_address == ip)
         count_query = count_query.where(AuditLog.ip_address == ip)
 
-    # Filtre par username (recherche partielle ILIKE) — résolu en liste d'IDs
+    # Filtre par username (recherche partielle ILIKE) — résolu en liste d'IDs.
+    # Les échecs de login sont tracés avec l'identifiant tenté dans `target`,
+    # y compris pour un utilisateur inexistant (user_id NULL) : on matche aussi
+    # sur target pour l'action login_failed.
     if username:
         username_pattern = f"%{username.strip()}%"
         ids_result = await db.execute(
             select(User.id).where(User.username.ilike(username_pattern))
         )
         matching_ids = [row[0] for row in ids_result.all()]
-        if not matching_ids:
-            # Aucun user ne matche → résultat vide immédiat
-            return {
-                "period_days": days,
-                "total_count": 0,
-                "page": page,
-                "page_size": page_size,
-                "total_pages": 0,
-                "logs": [],
-            }
-        query = query.where(AuditLog.user_id.in_(matching_ids))
-        count_query = count_query.where(AuditLog.user_id.in_(matching_ids))
+        attempted_filter = and_(
+            AuditLog.action == "login_failed",
+            AuditLog.target.ilike(username_pattern),
+        )
+        if matching_ids:
+            combined = or_(AuditLog.user_id.in_(matching_ids), attempted_filter)
+        else:
+            # Aucun utilisateur existant ne matche : seuls les identifiants
+            # tentés (login_failed) peuvent correspondre.
+            combined = attempted_filter
+        query = query.where(combined)
+        count_query = count_query.where(combined)
     
     # Compte total
     result = await db.execute(count_query)
@@ -1734,6 +1737,27 @@ async def export_errors_csv(
     result = await db.execute(query)
     errors = result.scalars().all()
     
+    # Résoudre les utilisateurs et service accounts rattachés aux erreurs
+    user_ids = list(set(e.user_id for e in errors if e.user_id))
+    users_map = {}
+    if user_ids:
+        result = await db.execute(select(User).where(User.id.in_(user_ids)))
+        users_map = {u.id: u.username for u in result.scalars().all()}
+    sa_ids = list(set(e.service_account_id for e in errors if e.service_account_id))
+    sa_map = {}
+    if sa_ids:
+        from app.models import ServiceAccount
+        result = await db.execute(select(ServiceAccount).where(ServiceAccount.id.in_(sa_ids)))
+        sa_map = {s.id: s.client_id for s in result.scalars().all()}
+    
+    def _actor_label(e):
+        if e.user_id:
+            return users_map.get(e.user_id, f"user#{e.user_id}")
+        if e.service_account_id:
+            client_id = sa_map.get(e.service_account_id)
+            return f"sa:{client_id}" if client_id else f"sa#{e.service_account_id}"
+        return ''
+    
     # Générer le CSV
     output = io.StringIO()
     writer = csv.writer(output, delimiter=';')
@@ -1741,7 +1765,7 @@ async def export_errors_csv(
     # En-têtes
     writer.writerow([
         'Date/Heure', 'Request ID', 'Code', 'Type', 'Message',
-        'Méthode', 'Chemin', 'App Source', 'Adresse IP', 'User Agent'
+        'Méthode', 'Chemin', 'App Source', 'Utilisateur', 'Adresse IP', 'User Agent'
     ])
     
     # Données
@@ -1755,6 +1779,7 @@ async def export_errors_csv(
             e.request_method or '',
             e.request_path or '',
             e.source_app_slug or '',
+            _actor_label(e),
             e.ip_address or '',
             e.user_agent or ''
         ])
