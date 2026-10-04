@@ -7,14 +7,22 @@
 
 ## [3.62.9] - 4 octobre 2026
 
-### 🆕 Nouvelle version
+### 🔧 Fix — Dashboard : badge « Échec déploiement » sur les cartes d'app
 
-> ⚠️ Cette entrée a été créée automatiquement par `sync_version.py`.
-> Veuillez compléter les détails des modifications.
-
-| Fonctionnalité | Description |
-|----------------|-------------|
-| **À compléter** | Décrivez les changements de cette version |
+- **Scénario rapporté** : une app créée depuis le front dont le déploiement
+  échoue (clone/build/up/health) restait affichée sur le menu principal
+  comme les autres — carte active, rien de fonctionnel derrière, aucune
+  indication pour l'utilisateur ni l'admin.
+- **`frontend/public/js/modules/dashboard.js`** : badge rouge « Échec
+  déploiement » à côté du nom quand `last_deployment.status === 'failed'`
+  (pattern badge ATELIER existant), tooltip avec la date de l'échec et le
+  rappel du redéploiement possible depuis l'administration. L'information
+  existait déjà côté API (`last_deployment` exposé par `GET /api/apps`,
+  consommé uniquement par la vue admin pour le bouton 🚀) — elle est
+  désormais visible sur le menu principal. Statut success : aucun changement
+  d'affichage.
+- Release 3.62.8 (logging horodaté + epoch_ms) poussée en parallèle par une
+  autre session : bump patch décalé en conséquence (3.62.9).
 
 ---
 
