@@ -27,6 +27,7 @@ Usage:
 """
 
 import re
+import subprocess
 import sys
 from pathlib import Path
 from datetime import datetime
@@ -258,6 +259,108 @@ def sync_changelog(version: str, date: str, old_version: str = None) -> bool:
     return False
 
 
+# ─── Garde-fous anti-écrasement croisé (incident 2026-10-04) ──────────
+# Deux sessions poussant des releases en parallèle ont produit un doublon
+# de numéro (méta) puis une régression de VERSION (0.71.6 après 0.71.7).
+# Ces gardes s'exécutent AVANT toute écriture du bump.
+
+def get_current_branch() -> str | None:
+    """Branche courante, None si indéterminable (HEAD détaché...)."""
+    try:
+        out = subprocess.run(
+            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+            capture_output=True, text=True, timeout=10,
+            cwd=ROOT_DIR,
+        )
+        if out.returncode != 0:
+            return None
+        branch = out.stdout.strip()
+        return branch if branch and branch != "HEAD" else None
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+
+
+def get_origin_version() -> str | None:
+    """VERSION tel que poussé sur l'upstream de la branche courante.
+
+    Retourne None si indéterminable (pas d'upstream, réseau indisponible,
+    timeout) : le garde-fou se met alors en silencieux — il ne doit jamais
+    bloquer un workflow hors-ligne légitime.
+    """
+    branch = get_current_branch()
+    if not branch:
+        return None
+    try:
+        up = subprocess.run(
+            ["git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", f"{branch}@{{u}}"],
+            capture_output=True, text=True, timeout=10, cwd=ROOT_DIR,
+        )
+        if up.returncode != 0:
+            return None
+        upstream = up.stdout.strip()
+        if not upstream:
+            return None
+        fetch = subprocess.run(
+            ["git", "fetch", upstream.split("/")[0], branch, "--quiet"],
+            capture_output=True, text=True, timeout=30, cwd=ROOT_DIR,
+        )
+        if fetch.returncode != 0:
+            return None
+        show = subprocess.run(
+            ["git", "show", f"{upstream}:VERSION"],
+            capture_output=True, text=True, timeout=10, cwd=ROOT_DIR,
+        )
+        if show.returncode != 0:
+            return None
+        origin_version = show.stdout.strip()
+        return origin_version or None
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+
+
+def check_origin_not_ahead(local_version: str) -> bool:
+    """True si le bump peut se faire : origin n'est pas strictement en avance.
+
+    origin en avance = une autre session a poussé une release pendant notre
+    travail → il faut `git pull` (qui déclenchera la résolution
+    CHANGELOG/VERSION) puis re-bump, sinon notre bump écrase la version
+    parallèle (régression poussée, incident 2026-10-04).
+    """
+    origin = get_origin_version()
+    if origin is None:
+        print("   ℹ️  Version origin indéterminable (hors-ligne ?) — garde en silencieux")
+        return True
+    if parse_version(origin) > parse_version(local_version):
+        print(f"❌ COLLISION DE RELEASE : origin/{get_current_branch()} est en version {origin},")
+        print(f"   le dépôt local est en {local_version}. Une autre session a poussé une release")
+        print(f"   pendant votre travail.")
+        print(f"   → git pull origin {get_current_branch()} (résolvez VERSION/CHANGELOG si conflit)")
+        print(f"   → puis relancez le bump.")
+        return False
+    if parse_version(origin) < parse_version(local_version):
+        print(f"   ℹ️  Version locale en avance sur origin ({local_version} > {origin}) — commits non poussés.")
+    return True
+
+
+def check_changelog_collision(new_version: str) -> bool:
+    """True si le numéro cible n'est pas déjà pris dans le CHANGELOG.
+
+    Deux sessions bumpant « patch » en parallèle depuis la même base
+    produisent le même numéro : la deuxième écriture fabrique un doublon
+    d'entrée (incident 2026-10-04, méta-repo 0.71.6 en double).
+    """
+    try:
+        content = CHANGELOG_FILE.read_text()
+    except OSError:
+        return True
+    if f"## [{new_version}]" in content:
+        print(f"❌ COLLISION DE RELEASE : l'entrée [{new_version}] existe déjà dans le CHANGELOG.")
+        print(f"   Une autre session a probablement pris ce numéro en parallèle.")
+        print(f"   → git pull, résolvez, puis re-bump (le numéro suivant sera alloué).")
+        return False
+    return True
+
+
 def check_versions() -> bool:
     """Vérifie la cohérence des versions entre tous les fichiers"""
     version = read_version()
@@ -345,11 +448,21 @@ def main():
         if len(sys.argv) < 3:
             print("❌ Type de bump requis: patch, minor, ou major")
             sys.exit(1)
-        
+
         bump_type = sys.argv[2].lower()
         old_version = read_version()
-        new_version = bump_version(old_version, bump_type)
-        
+
+        # Garde-fous anti-écrasement croisé (AVANT toute écriture) :
+        # 1. origin ne doit pas être en avance (autre session a poussé une release)
+        if not check_origin_not_ahead(old_version):
+            sys.exit(2)
+        # 2. le numéro cible ne doit pas déjà exister (double bump parallèle)
+        candidate = bump_version(old_version, bump_type)
+        if not check_changelog_collision(candidate):
+            sys.exit(2)
+
+        new_version = candidate
+
         print(f"\n📦 Bump de version: {old_version} → {new_version}")
         write_version(new_version)
         sync_all(new_version)
