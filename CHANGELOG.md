@@ -5,6 +5,33 @@
 
 ---
 
+## [3.63.1] - 5 octobre 2026
+
+### 🔧 Durcissement VPN toggle (suite incident 02/10)
+
+- **`app/routes/vpn.py`** : `GET /api/vpn/status` expose `conf_exists` —
+  l'état résiduel « activé + initialisé + conf absente » devient visible
+  par l'UI (invisible jusqu'ici, c'est l'état dans lequel l'incident
+  02/10 avait laissé le serveur).
+- **`app/routes/vpn.py` — `_regenerate_and_sync`** : création de
+  `wg0.conf` via `os.open(mode 0o600)` — `write_text`+`chmod` laissait
+  une fenêtre umask (~0644) sur un fichier contenant la clé privée
+  serveur (revue froide 05/10). `chmod` conservé pour les fichiers
+  préexistants (O_TRUNC garde leurs perms).
+- **Frontend admin-vpn.js** : garde anti double-fire sur le toggle
+  (réentrance + disable pendant la requête) — cause déclencheuse de
+  l'incident 02/10 (OFF×2 puis ON×2 en 10 ms dans l'audit).
+- **Frontend admin-vpn.js + index.html** : bannière d'état résiduel
+  avec bouton **Réparer** (rejoue PUT server-config qui régénère la
+  conf depuis la DB), garde anti double-clic, undefined-safe.
+- **docs/GUIDE_ADMIN.md** : cycle OFF (supprime la conf) / ON
+  (auto-régénère) + `hubctl vpn sync` post-reboot documentés.
+- **Tests** : conf_exists absent/présent, garde toggle ON sans serveur
+  initialisé, création 0600 même si chmod échoue (RED→GREEN). Suite
+  hôte complète : 1285 passed.
+
+---
+
 ## [3.63.0] - 5 octobre 2026
 
 ### ⚡ Audit sécurité — échecs de login tracés + appelant rattaché aux erreurs
