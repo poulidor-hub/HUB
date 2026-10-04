@@ -231,6 +231,7 @@ function renderErrorsTable(data) {
                     <th>Méthode</th>
                     <th>Chemin</th>
                     <th>App Source</th>
+                    <th>Utilisateur</th>
                     <th>Message</th>
                     <th>IP</th>
                     <th></th>
@@ -245,6 +246,7 @@ function renderErrorsTable(data) {
                         <td><code class="small">${e.request_method || '-'}</code></td>
                         <td><code class="small" title="${escapeHtml(e.request_path || '')}">${truncateText(e.request_path, 30)}</code></td>
                         <td>${e.source_app_slug ? `<span class="badge bg-info">${escapeHtml(e.source_app_slug)}</span>` : '-'}</td>
+                        <td><small>${e.username ? `<i class="bi bi-person me-1"></i>${escapeHtml(e.username)}` : '-'}</small></td>
                         <td><small class="text-muted" title="${escapeHtml(e.error_message || '')}">${truncateText(e.error_message, 40)}</small></td>
                         <td><code class="small">${e.ip_address || '-'}</code></td>
                         <td>

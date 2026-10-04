@@ -16,6 +16,7 @@ function getActionLabel(action) {
     const labels = {
         'access_app': 'Accès application',
         'login': 'Connexion',
+        'login_failed': 'Connexion échouée',
         'logout': 'Déconnexion',
         'service_account_login': 'Connexion M2M',
         'create_user': 'Création utilisateur',
@@ -57,6 +58,7 @@ function getActionBadge(action) {
     const badges = {
         'access_app': '<span class="badge bg-secondary">Accès App</span>',
         'login': '<span class="badge bg-secondary">Connexion</span>',
+        'login_failed': '<span class="badge bg-danger"><i class="bi bi-x-octagon me-1"></i>Connexion échouée</span>',
         'logout': '<span class="badge bg-light text-dark">Déconnexion</span>',
         'service_account_login': '<span class="badge bg-dark">M2M</span>'
     };
