@@ -5,6 +5,41 @@
 
 ---
 
+## [3.63.0] - 5 octobre 2026
+
+### ⚡ Audit sécurité — échecs de login tracés + appelant rattaché aux erreurs
+
+- **`login_failed` dans l'audit** : toute tentative de connexion infructueuse
+  sur `/api/auth/token` (grant password) et `/api/auth/login` crée désormais une
+  entrée `AuditLog(action="login_failed")` avec l'**identifiant tenté** en
+  `target` (même pour un utilisateur inexistant), l'utilisateur rattaché si
+  existant, la raison lisible en `details` (Utilisateur inconnu / Mot de passe
+  incorrect / Compte désactivé), IP, user-agent et code de réponse. Le mot de
+  passe n'est **jamais** logué (body brut jamais persisté).
+- **Rattachement de l'appelant aux `error_logs`** : le helper
+  `_resolve_error_actor()` décode le JWT Bearer des requêtes en erreur
+  (signature vérifiée via le trousseau, expiration ignorée, scope `pwd_reset`
+  exclu) pour renseigner `error_logs.user_id` (claim `uid`, fallback `sub`) ou
+  `error_logs.service_account_id` (par `client_id`). Colonnes déjà présentes
+  (migration 003) — alimentées pour la première fois ; aucun rattachement en
+  cas de token absent/invalide (fallback NULL, jamais d'exception). Appelé
+  uniquement sur le chemin d'erreur : zéro impact sur le chemin nominal.
+- **Filtre username de l'audit élargi** : `GET /api/audit/logs?username=X`
+  matche désormais aussi le `target` des `login_failed` (recherche d'un
+  identifiant tenté inexistant possible).
+- **UI Audit** : colonne « Utilisateur » dans la table des Erreurs (le modal
+  détail l'affichait déjà — jusqu'ici toujours « - »), export CSV erreurs avec
+  colonne Utilisateur (`username` ou `sa:<client_id>`), label + badge rouge
+  « Connexion échouée » dans l'onglet Logs.
+- **Tests** : 12 cas d'intégration (`tests/test_api_audit_login_failed.py`)
+  couvrant login_failed × 4 scénarios, rattachement Bearer valide/expiré/M2M/
+  forgé/absent, filtre username élargi. Rouge/vert prouvé par stash ; suite
+  hôte 1281 passed ; suite Docker (Postgres) 1230 passed.
+- Note release : l'entrée 3.62.11 (hotfix install-version-guard) avait été
+  commitée sans bump VERSION — rattrapée par ce bump 3.63.0.
+
+---
+
 ## [3.62.11] - 4 octobre 2026
 
 ### 🔧 Hotfix — `scripts/install-version-guard.sh` : chemin double `hooks/hooks/`
