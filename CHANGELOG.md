@@ -5,6 +5,18 @@
 
 ---
 
+## [3.63.2] - 5 octobre 2026
+
+### 🔧 Fix — lane docker de tests verte (sync_version.py copiée)
+
+- **`Makefile` — `test-docker`** : copie `sync_version.py` dans le
+  conteneur de test. `test_sync_version_guard.py` (3.62.10) importe ce
+  module situé à la racine du repo, absent du contexte image (`./hub`)
+  → `ModuleNotFoundError` à la collection depuis 3.62.10 (10 tests
+  invisibles à la lane docker). Repassée verte : 1245 passed, 0 erreur.
+
+---
+
 ## [3.63.1] - 5 octobre 2026
 
 ### 🔧 Durcissement VPN toggle (suite incident 02/10)
