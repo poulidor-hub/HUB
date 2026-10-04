@@ -2149,6 +2149,11 @@ class GithubRepo(BaseModel):
     private: bool
     updated_at: Optional[str] = None  # ISO
     already_integrated: bool = False  # croisé avec git_repo_url des apps existantes
+    # Slug de l'app HUB liée à ce repo (par git_repo_url ou par slug dérivé).
+    # Consommé par « Voir l'app » : la recherche côté onglet Applications doit
+    # porter sur le slug de l'APP, pas sur celui dérivé du repo (bug 2026-10-03 :
+    # POULIDOR → app `hub`, exemple-app-2 → app `exemple-app`).
+    integrated_app_slug: Optional[str] = None
 
 
 class GithubRepoListResponse(BaseModel):

@@ -489,3 +489,91 @@ class TestAlreadyIntegratedBySlug:
         r = await client.get("/api/apps/github/repos", headers=get_auth_header(token))
         by_name = {x["name"]: x for x in r.json()["repos"]}
         assert by_name["NouvelOutil"]["already_integrated"] is False
+
+
+class TestGlobalFetchedAt:
+    """Bug campagne de tests 2026-10-03 : un filtrage sans résultat affichait
+    « jamais synchronisé » — fetched_at était calculé sur le résultat filtré
+    (max d'une liste vide = None) au lieu du cache global."""
+
+    @pytest.mark.asyncio
+    async def test_filtered_empty_result_keeps_global_fetched_at(self, client, admin_user, async_session):
+        async_session.add(GithubRepoCache(
+            repo_id=40, name="exemple-app", full_name="Poutchouli/exemple-app",
+            owner="Poutchouli", html_url="https://github.com/Poutchouli/exemple-app",
+            clone_url="https://github.com/Poutchouli/exemple-app.git",
+            fetched_at=datetime(2026, 10, 3, 16, 37, 7),
+        ))
+        await async_session.commit()
+
+        token, _, _ = create_access_token(username=admin_user.username, apps={})
+        r = await client.get("/api/apps/github/repos", headers=get_auth_header(token),
+                             params={"search": "zzzaucunrepo"})
+        body = r.json()
+        assert body["total"] == 0
+        assert body["repos"] == []
+        # fetched_at = celui du cache global (jamais None si le cache existe)
+        assert body["fetched_at"] is not None
+        assert "2026-10-03" in body["fetched_at"]
+
+
+class TestIntegratedAppSlug:
+    """Bug campagne de tests 2026-10-03 : « Voir l'app » cherchait le slug
+    dérivé du repo (poulidor / exemple-app) au lieu du slug de l'app liée
+    (hub / exemple-app) → 0 résultat dans l'onglet Applications."""
+
+    @pytest.mark.asyncio
+    async def test_slug_via_git_repo_url(self, client, admin_user, async_session):
+        """Repo lié par git_repo_url à une app dont le slug diffère : l'app
+        `hub` pointe le méta-repo POULIDOR — integrated_app_slug doit valoir
+        `hub`, pas `poulidor`."""
+        async_session.add(GithubRepoCache(
+            repo_id=50, name="POULIDOR", full_name="POULIDOR-Audit-Developpement/POULIDOR",
+            owner="POULIDOR-Audit-Developpement",
+            html_url="https://github.com/POULIDOR-Audit-Developpement/POULIDOR",
+            clone_url="https://github.com/POULIDOR-Audit-Developpement/POULIDOR.git",
+        ))
+        async_session.add(Application(
+            name="Hub", slug="hub", api_url="http://h:8000",
+            git_repo_url="https://github.com/POULIDOR-Audit-Developpement/POULIDOR.git",
+        ))
+        await async_session.commit()
+
+        token, _, _ = create_access_token(username=admin_user.username, apps={})
+        r = await client.get("/api/apps/github/repos", headers=get_auth_header(token))
+        by_name = {x["name"]: x for x in r.json()["repos"]}
+        assert by_name["POULIDOR"]["already_integrated"] is True
+        assert by_name["POULIDOR"]["integrated_app_slug"] == "hub"
+
+    @pytest.mark.asyncio
+    async def test_slug_via_app_slug(self, client, admin_user, async_session):
+        async_session.add(GithubRepoCache(
+            repo_id=51, name="exemple-app", full_name="Poutchouli/exemple-app",
+            owner="Poutchouli", html_url="https://github.com/Poutchouli/exemple-app",
+            clone_url="https://github.com/Poutchouli/exemple-app.git",
+        ))
+        async_session.add(Application(
+            name="exemple-app", slug="exemple-app", api_url="http://h:9001",
+            git_repo_url=None,
+        ))
+        await async_session.commit()
+
+        token, _, _ = create_access_token(username=admin_user.username, apps={})
+        r = await client.get("/api/apps/github/repos", headers=get_auth_header(token))
+        by_name = {x["name"]: x for x in r.json()["repos"]}
+        assert by_name["exemple-app"]["integrated_app_slug"] == "exemple-app"
+
+    @pytest.mark.asyncio
+    async def test_none_when_repo_free(self, client, admin_user, async_session):
+        async_session.add(GithubRepoCache(
+            repo_id=52, name="NouvelOutil", full_name="Poutchouli/NouvelOutil",
+            owner="Poutchouli", html_url="https://github.com/Poutchouli/NouvelOutil",
+            clone_url="https://github.com/Poutchouli/NouvelOutil.git",
+        ))
+        await async_session.commit()
+
+        token, _, _ = create_access_token(username=admin_user.username, apps={})
+        r = await client.get("/api/apps/github/repos", headers=get_auth_header(token))
+        by_name = {x["name"]: x for x in r.json()["repos"]}
+        assert by_name["NouvelOutil"]["already_integrated"] is False
+        assert by_name["NouvelOutil"]["integrated_app_slug"] is None
