@@ -5,6 +5,32 @@
 
 ---
 
+## [3.63.4] - 5 octobre 2026
+
+### 🔧 Catalogue GitHub : TTL sur les réservations de ports (fuite prepare)
+
+- **`app/port_allocator.py`** : une allocation **sans application associée**
+  est désormais une *réservation* qui expire après
+  `PORT_RESERVATION_TTL_MINUTES` (défaut 30 min, `0` = comportement
+  historique). Passé ce délai, ports et sous-réseau redeviennent
+  attribuables et la ligne est purgée paresseusement à l'allocation
+  suivante (`sweep_expired_reservations`, commit indépendant). Bug
+  2026-10-05 : chaque « Ajouter au HUB » abandonné fuyait définitivement
+  ses ports + sous-réseau (nettoyage manuel uniquement).
+- N'expirent **jamais** : les allocations adossées à une app existante et
+  les lignes legacy sans `allocated_at` ; idempotence `(slug, host)`
+  conservée (prepare → création garde ses ports).
+- **`app/config.py`** + **`.env.example`** : nouveau réglage
+  `port_reservation_ttl_minutes` / `PORT_RESERVATION_TTL_MINUTES=30`.
+- **`app/routes/github_catalog.py`** : docstring de `/prepare` documentant
+  la sémantique de réservation.
+- Tests : 6 nouveaux cas (`test_port_allocation.py`) — libération après
+  TTL, blocage réservation fraîche, app-adossée immortelle, TTL=0, ligne
+  legacy, ré-allocation propre du même slug. Suites : hôte 1292 passed,
+  docker 1252 passed, 1 skipped.
+
+---
+
 ## [3.63.3] - 5 octobre 2026
 
 ### 🔧 VPN : minors revue finale (0444, bannière stale, purge tests)
