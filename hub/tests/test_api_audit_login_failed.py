@@ -287,3 +287,133 @@ class TestUsernameFilterMatchesAttempted:
         data = resp.json()
         assert data["total_count"] == 1
         assert data["logs"][0]["action"] == "login"
+
+
+# =============================================================================
+# 4. Acteur M2M exposé par la liste et le détail des erreurs
+# =============================================================================
+
+
+class TestErrorEndpointsExposeActor:
+    @pytest.mark.asyncio
+    async def test_errors_list_exposes_service_account(
+        self,
+        client: AsyncClient,
+        async_session,
+        admin_token: str,
+        service_account: ServiceAccount,
+    ):
+        """GET /api/audit/errors expose le client_id du service account (acteur M2M)"""
+        async_session.add(
+            ErrorLog(
+                error_code=403,
+                error_type="authorization",
+                service_account_id=service_account.id,
+                request_method="GET",
+                request_path="/api/apps",
+            )
+        )
+        await async_session.commit()
+
+        resp = await client.get(
+            "/api/audit/errors",
+            headers={"Authorization": f"Bearer {admin_token}"},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["total"] == 1
+        entry = data["errors"][0]
+        assert entry["user_id"] is None
+        assert entry["username"] is None
+        assert entry["service_account_id"] == service_account.id
+        assert entry["service_account_client_id"] == "sa_test123456789"
+
+    @pytest.mark.asyncio
+    async def test_errors_list_user_actor_unchanged(
+        self,
+        client: AsyncClient,
+        async_session,
+        admin_token: str,
+        test_user: User,
+    ):
+        """Erreur rattachée à un utilisateur : username exposé, champs M2M NULL"""
+        async_session.add(
+            ErrorLog(
+                error_code=404,
+                error_type="not_found",
+                user_id=test_user.id,
+                request_method="GET",
+                request_path="/api/nope",
+            )
+        )
+        await async_session.commit()
+
+        resp = await client.get(
+            "/api/audit/errors",
+            headers={"Authorization": f"Bearer {admin_token}"},
+        )
+        assert resp.status_code == 200
+        entry = resp.json()["errors"][0]
+        assert entry["username"] == "testuser"
+        assert entry["service_account_id"] is None
+        assert entry["service_account_client_id"] is None
+
+    @pytest.mark.asyncio
+    async def test_errors_list_unknown_actor_ids_fallback(
+        self,
+        client: AsyncClient,
+        async_session,
+        admin_token: str,
+    ):
+        """Acteur supprimé entre-temps : ids bruts exposés, client_id NULL, pas de crash"""
+        async_session.add(
+            ErrorLog(
+                error_code=500,
+                error_type="internal",
+                user_id=999999,
+                service_account_id=999999,
+                request_method="POST",
+                request_path="/api/x",
+            )
+        )
+        await async_session.commit()
+
+        resp = await client.get(
+            "/api/audit/errors",
+            headers={"Authorization": f"Bearer {admin_token}"},
+        )
+        assert resp.status_code == 200
+        entry = resp.json()["errors"][0]
+        assert entry["user_id"] == 999999
+        assert entry["username"] is None
+        assert entry["service_account_id"] == 999999
+        assert entry["service_account_client_id"] is None
+
+    @pytest.mark.asyncio
+    async def test_error_detail_exposes_service_account_client_id(
+        self,
+        client: AsyncClient,
+        async_session,
+        admin_token: str,
+        service_account: ServiceAccount,
+    ):
+        """GET /api/audit/errors/{id} expose aussi le client_id du service account"""
+        entry = ErrorLog(
+            error_code=500,
+            error_type="internal",
+            service_account_id=service_account.id,
+            request_method="POST",
+            request_path="/api/x",
+        )
+        async_session.add(entry)
+        await async_session.commit()
+        await async_session.refresh(entry)
+
+        resp = await client.get(
+            f"/api/audit/errors/{entry.id}",
+            headers={"Authorization": f"Bearer {admin_token}"},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["service_account_id"] == service_account.id
+        assert data["service_account_client_id"] == "sa_test123456789"
