@@ -1517,6 +1517,14 @@ async def get_error_logs(
         result = await db.execute(select(User).where(User.id.in_(user_ids)))
         users_map = {u.id: u.username for u in result.scalars().all()}
     
+    # Résoudre les service accounts (acteur M2M) — même logique que l'export CSV
+    sa_ids = list(set(e.service_account_id for e in errors if e.service_account_id))
+    sa_map = {}
+    if sa_ids:
+        from app.models import ServiceAccount
+        result = await db.execute(select(ServiceAccount).where(ServiceAccount.id.in_(sa_ids)))
+        sa_map = {s.id: s.client_id for s in result.scalars().all()}
+    
     return {
         "total": total,
         "page": page,
@@ -1531,6 +1539,8 @@ async def get_error_logs(
                 "error_message": e.error_message,
                 "user_id": e.user_id,
                 "username": users_map.get(e.user_id) if e.user_id else None,
+                "service_account_id": e.service_account_id,
+                "service_account_client_id": sa_map.get(e.service_account_id) if e.service_account_id else None,
                 "source_app_slug": e.source_app_slug,
                 "request_method": e.request_method,
                 "request_path": e.request_path,
@@ -1689,6 +1699,16 @@ async def get_error_detail(
         user = result.scalar_one_or_none()
         username = user.username if user else None
     
+    # Résoudre le client_id du service account si acteur M2M
+    service_account_client_id = None
+    if error.service_account_id:
+        from app.models import ServiceAccount
+        result = await db.execute(
+            select(ServiceAccount).where(ServiceAccount.id == error.service_account_id)
+        )
+        sa = result.scalar_one_or_none()
+        service_account_client_id = sa.client_id if sa else None
+    
     return {
         "id": error.id,
         "request_id": error.request_id,
@@ -1698,6 +1718,7 @@ async def get_error_detail(
         "user_id": error.user_id,
         "username": username,
         "service_account_id": error.service_account_id,
+        "service_account_client_id": service_account_client_id,
         "source_app_slug": error.source_app_slug,
         "request_method": error.request_method,
         "request_path": error.request_path,
