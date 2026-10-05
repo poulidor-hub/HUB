@@ -523,12 +523,6 @@ class TestVpnToggle:
         assert mode == 0o600, f"perms={oct(mode)} — fenêtre umask exposée"
 
 
-
-def pathlib_mod(vpn_temp_dir: str):
-    import pathlib
-    return pathlib.Path(vpn_temp_dir) / "wg_confs" / "wg0.conf"
-
-
 # =============================================================================
 # _regenerate_and_sync — application des changements (fix wg syncconf)
 # =============================================================================
@@ -569,6 +563,33 @@ class TestRegenerateAndSync:
         # syncconf ne doit PAS être appelé si le port a changé (restart uniquement)
         syncconf_calls = [cmd for _, cmd in exec_calls if "syncconf" in " ".join(cmd)]
         assert syncconf_calls == [], "syncconf ne doit pas être appelé si restart"
+
+    async def test_regenere_fichier_preexistant_en_0444(
+        self, async_session: AsyncSession, vpn_temp_dir: str, monkeypatch,
+    ):
+        """Minors revue finale : un wg0.conf préexistant aux perms
+        fantaisistes (0444) ne doit pas faire échouer la régénération
+        (O_WRONLY → EACCES) — remise à niveau puis réécriture."""
+        import os
+        import pathlib
+        import stat as stat_mod
+
+        import app.routes.vpn as vpn_mod
+        monkeypatch.setattr(vpn_mod, "_docker_exec", lambda c, cmd: (1, ""))
+
+        conf_path = pathlib.Path(vpn_temp_dir) / "wg_confs" / "wg0.conf"
+        conf_path.write_text("# ancienne conf illisible\n")
+        conf_path.chmod(0o444)
+
+        await vpn_mod._regenerate_and_sync(
+            async_session, _VALID_PRIVKEY, 51820, "10.8.0.0/24"
+        )
+
+        content = conf_path.read_text()
+        assert "[Interface]" in content
+        assert "# ancienne conf illisible" not in content
+        mode = stat_mod.S_IMODE(conf_path.stat().st_mode)
+        assert mode == 0o600, f"perms={oct(mode)}"
 
     async def test_port_unchanged_uses_syncconf(
         self, async_session: AsyncSession, vpn_temp_dir: str, monkeypatch,
