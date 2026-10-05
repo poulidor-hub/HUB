@@ -246,7 +246,7 @@ function renderErrorsTable(data) {
                         <td><code class="small">${e.request_method || '-'}</code></td>
                         <td><code class="small" title="${escapeHtml(e.request_path || '')}">${truncateText(e.request_path, 30)}</code></td>
                         <td>${e.source_app_slug ? `<span class="badge bg-info">${escapeHtml(e.source_app_slug)}</span>` : '-'}</td>
-                        <td><small>${e.username ? `<i class="bi bi-person me-1"></i>${escapeHtml(e.username)}` : '-'}</small></td>
+                        <td><small>${errorActorHtml(e)}</small></td>
                         <td><small class="text-muted" title="${escapeHtml(e.error_message || '')}">${truncateText(e.error_message, 40)}</small></td>
                         <td><code class="small">${e.ip_address || '-'}</code></td>
                         <td>
@@ -259,10 +259,25 @@ function renderErrorsTable(data) {
     `;
 }
 
+/**
+ * Cellule « Utilisateur » : affiche l'appelant de l'erreur —
+ * username (user), client_id tronqué avec badge M2M (service account), ou fallback id.
+ */
+function errorActorHtml(e) {
+    if (e.username) return `<i class="bi bi-person me-1"></i>${escapeHtml(e.username)}`;
+    const cid = e.service_account_client_id;
+    if (cid) {
+        const short = cid.length > 18 ? cid.slice(0, 15) + '…' : cid;
+        return `<span class="badge bg-dark me-1">M2M</span><code title="${escapeHtml(cid)}">${escapeHtml(short)}</code>`;
+    }
+    if (e.user_id) return `ID: ${e.user_id}`;
+    if (e.service_account_id) return `SA #${e.service_account_id}`;
+    return '-';
+}
+
 function getErrorCodeBadge(code) {
     let bgClass = 'bg-secondary';
-    if (code === 401) bgClass = 'bg-warning text-dark';
-    else if (code === 403) bgClass = 'bg-danger';
+    if (code === 401) bgClass = 'bg-warning text-dark';    else if (code === 403) bgClass = 'bg-danger';
     else if (code === 404) bgClass = 'bg-info';
     else if (code === 422) bgClass = 'bg-warning text-dark';
     else if (code >= 500) bgClass = 'bg-danger';
@@ -324,7 +339,7 @@ async function showErrorDetail(errorId) {
                                 </div>
                                 <div class="col-md-4">
                                     <small class="text-muted">Utilisateur</small>
-                                    <div>${error.username || (error.user_id ? `ID: ${error.user_id}` : '-')}</div>
+                                    <div>${errorActorHtml(error)}</div>
                                 </div>
                                 <div class="col-md-4">
                                     <small class="text-muted">IP</small>
