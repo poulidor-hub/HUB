@@ -5,6 +5,24 @@
 
 ---
 
+## [3.63.3] - 5 octobre 2026
+
+### 🔧 VPN : minors revue finale (0444, bannière stale, purge tests)
+
+- **`app/routes/vpn.py`** : un `wg0.conf` préexistant aux perms
+  fantaisistes (ex. 0444) faisait échouer la régénération en EACCES
+  (500) — remise à niveau 0600 avant ouverture (le propriétaire peut
+  toujours chmod). RED→GREEN, test dédié.
+- **`admin-vpn.js`** : le bouton Enregistrer (réglages serveur)
+  rafraîchit le statut — la bannière « conf absente » obsolète
+  disparaît sans ré-entrer dans l'onglet.
+- **`Makefile` — `test-docker`** : purge de `/code/sync_version.py`
+  (conteneur de test persistant, lane déterministe).
+- **Hygiène** : helper test orphelin supprimé. Suites : hôte test_vpn
+  37 passed, docker 1246 passed.
+
+---
+
 ## [3.63.2] - 5 octobre 2026
 
 ### 🔧 Fix — lane docker de tests verte (sync_version.py copiée)
