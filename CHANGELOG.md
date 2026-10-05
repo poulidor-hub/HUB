@@ -5,6 +5,29 @@
 
 ---
 
+## [3.64.0] - 6 octobre 2026
+
+### ⚡ Audit erreurs : l'acteur M2M exposé dans la liste et le détail
+
+- **`GET /api/audit/errors`** : chaque entrée renvoie désormais
+  `service_account_id` et `service_account_client_id` (résolu par lot,
+  même logique que l'export CSV). Jusqu'ici une erreur venue d'une app
+  M2M affichait « - » dans la colonne Utilisateur de la liste — seul le
+  CSV et le détail identifiaient l'appelant.
+- **`GET /api/audit/errors/{id}`** : expose aussi
+  `service_account_client_id` (résolution par id), pour cohérence
+  liste / détail / export.
+- **UI Audit (`audit-errors.js`)** : helper partagé `errorActorHtml()` —
+  username pour un user, badge « M2M » + `client_id` tronqué (libellé
+  complet au survol) pour un service account, repli sur l'id brut si
+  l'acteur a disparu entre-temps. Utilisé par la table des erreurs et le
+  modal détail.
+- **Tests** : 4 nouveaux (`TestErrorEndpointsExposeActor`) — acteur M2M,
+  acteur user inchangé, ids orphelins sans crash, détail. Suite audit
+  complète verte (26) + suite hôte intégrale (1296).
+
+---
+
 ## [3.63.4] - 5 octobre 2026
 
 ### 🔧 Catalogue GitHub : TTL sur les réservations de ports (fuite prepare)
