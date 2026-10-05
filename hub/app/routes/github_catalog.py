@@ -302,6 +302,11 @@ async def prepare_app_from_repo(
     1. trouve le repo dans le cache (404 sinon)
     2. slug = slugify(repo.name) ; 409 si slug déjà pris par une app
     3. alloue ports via allocate_ports_for_app (idempotent) ; 409 si pool saturé
+
+    L'allocation est une RÉSERVATION : sans création d'app dans le délai
+    PORT_RESERVATION_TTL_MINUTES (défaut 30 min), elle expire et les ports/
+    sous-réseau redeviennent attribuables (bug 2026-10-05 : chaque « Ajouter »
+    abandonné fuyait définitivement ses ports).
     """
     cached = (await db.execute(
         select(GithubRepoCache).where(GithubRepoCache.full_name == payload.repo_full_name)

@@ -361,6 +361,13 @@ class Settings(BaseSettings):
     # Scan best-effort via le socket Docker, à l'allocation.
     subnet_scan_docker_enabled: bool = True
 
+    # Durée (minutes) d'une RÉSERVATION de ports : allocation sans application
+    # associée (prepare du catalogue GitHub, /allocate-ports orphelin). Passé
+    # ce délai, ports et sous-réseau redeviennent attribuables et la ligne est
+    # purgée paresseusement à l'allocation suivante (bug 2026-10-05 : chaque
+    # « Ajouter » abandonné fuyait ports + sous-réseau). 0 = jamais (historique).
+    port_reservation_ttl_minutes: int = 30
+
     # === Pool d'allocation des sous-réseaux Docker des apps ===
     # Attribué par POST /api/apps/allocate-ports (champ `subnet`) : un /N par app.
     # Doit rester DISJOINT des réseaux existants (172.16/12 Docker, 10.42 Hub,
