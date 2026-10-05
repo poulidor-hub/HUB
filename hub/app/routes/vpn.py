@@ -312,6 +312,11 @@ async def _regenerate_and_sync(
     _wg_conf_dir()
     # Création en mode 0600 : write_text+chmod laissait une fenêtre umask
     # (~0644) sur un fichier contenant la clé privée serveur (revue 05/10).
+    # Fichier préexistant aux perms fantaisistes (ex. 0444) : remise à
+    # niveau AVANT ouverture — le propriétaire peut toujours chmod, et
+    # O_WRONLY sur un fichier sans bit d'écriture lèverait EACCES.
+    if conf_path.exists():
+        conf_path.chmod(0o600)
     fd = os.open(conf_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w") as f:
         f.write(conf_content)
