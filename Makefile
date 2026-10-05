@@ -49,7 +49,7 @@ test-docker: ## Tests dans la stack de test isolée (pouly-test, tests copiés v
 	$(COMPOSE_TEST) up -d --build hub-api
 	# Purge avant cp : le conteneur persiste entre les runs, et compose cp niche
 	# le dossier source dans la destination si elle existe déjà (tests/tests/...).
-	$(COMPOSE_TEST) exec -T hub-api sh -c "rm -rf /code/tests /code/pytest.ini"
+	$(COMPOSE_TEST) exec -T hub-api sh -c "rm -rf /code/tests /code/pytest.ini /code/sync_version.py"
 	$(COMPOSE_TEST) cp hub/tests hub-api:/code/tests
 	$(COMPOSE_TEST) cp hub/pytest.ini hub-api:/code/pytest.ini
 	# test_sync_version_guard importe sync_version.py (racine du repo) —
