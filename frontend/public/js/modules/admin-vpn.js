@@ -128,6 +128,9 @@ async function handleSaveServerConfig() {
             body: JSON.stringify({ endpoint, listen_port: port })
         });
         showToast('VPN', 'Réglages enregistrés', 'success');
+        // Le PUT régénère wg0.conf côté serveur : rafraîchir le statut
+        // retire la bannière « conf absente » si elle était obsolète.
+        await loadVpnStatus();
     } catch (e) {
         showToast('VPN', e.message || 'Erreur', 'danger');
     }
