@@ -341,3 +341,139 @@ async def test_delete_allocation_endpoint(client: AsyncClient, admin_user, async
     # Suppression d'un id inexistant -> 404
     missing = await client.delete("/api/apps/admin/ports/allocations/99999", headers=get_auth_header(token))
     assert missing.status_code == 404
+
+
+# ===== Réservations TTL (fuite de ports du prepare catalogue — 2026-10-05) =====
+# Une allocation sans application associée est une RÉSERVATION (prepare du
+# catalogue GitHub, /allocate-ports orphelin). Elle expire après
+# PORT_RESERVATION_TTL_MINUTES : ports/sous-réseau redeviennent attribuables
+# et la ligne est purgée paresseusement à l'allocation suivante. N'expirent
+# JAMAIS : les allocations adossées à une app existante, ni les lignes legacy
+# sans allocated_at, ni (TTL=0) — escape hatch ops.
+
+REMOTE_TEST_HOST = "10.20.30.40"  # ≠ hub host : les scans Docker locaux sont ignorés
+
+from datetime import timedelta
+
+from app.models import Application, utcnow
+
+TTL = 30  # minutes — valeur du test, posée explicitement via monkeypatch
+
+
+def _alloc_row(slug, host, api_port, fe_port, allocated_at="__default__"):
+    kwargs = dict(
+        app_slug=slug, host=host,
+        api_port=api_port, frontend_port=fe_port, frontend_https_port=fe_port + 1,
+    )
+    if allocated_at != "__default__":
+        kwargs["allocated_at"] = allocated_at
+    return PortAllocation(**kwargs)
+
+
+@pytest.fixture
+def ttl_settings(monkeypatch):
+    """Settings avec un TTL explicite (indépendant du .env local)."""
+    monkeypatch.setattr(settings, "port_reservation_ttl_minutes", TTL, raising=False)
+    return settings
+
+
+@pytest.mark.asyncio
+async def test_expired_reservation_frees_ports_and_is_swept(async_session, ttl_settings):
+    """Réservation prepare (> TTL) sans app : ports réattribuables + purge."""
+    hub_host = REMOTE_TEST_HOST  # host distant : scan Docker ignoré
+    old = utcnow() - timedelta(minutes=TTL + 10)
+    async_session.add(_alloc_row("ghost", hub_host, 9000, 4200, allocated_at=old))
+    await async_session.commit()
+
+    alloc, reused = await allocate_ports_for_app(async_session, "new-app", hub_host, settings)
+    assert reused is False
+    assert (alloc.api_port, alloc.frontend_port) == (9000, 4200)  # ports libérés
+
+    ghosts = (await async_session.execute(
+        select(PortAllocation).where(PortAllocation.app_slug == "ghost")
+    )).scalars().all()
+    assert ghosts == []  # réservation expirée purgée
+
+
+@pytest.mark.asyncio
+async def test_fresh_reservation_still_blocks_ports(async_session, ttl_settings):
+    """Réservation récente (sans app) : les ports restent bloqués pour les autres."""
+    hub_host = REMOTE_TEST_HOST  # host distant : scan Docker ignoré
+    fresh = utcnow() - timedelta(minutes=5)
+    async_session.add(_alloc_row("hold", hub_host, 9000, 4200, allocated_at=fresh))
+    await async_session.commit()
+
+    alloc, _ = await allocate_ports_for_app(async_session, "other", hub_host, settings)
+    assert alloc.api_port == 9001  # 9000 encore réservé
+
+
+@pytest.mark.asyncio
+async def test_app_backed_allocation_never_expires(async_session, ttl_settings):
+    """Une allocation adossée à une app existante n'expire jamais."""
+    hub_host = REMOTE_TEST_HOST  # host distant : scan Docker ignoré
+    ancient = utcnow() - timedelta(days=30)
+    async_session.add(Application(
+        name="Stable", slug="stable-app", api_url=f"http://{hub_host}:9000",
+    ))
+    async_session.add(_alloc_row("stable-app", hub_host, 9000, 4200, allocated_at=ancient))
+    await async_session.commit()
+
+    alloc, _ = await allocate_ports_for_app(async_session, "other-app", hub_host, settings)
+    assert alloc.api_port == 9001  # ports de stable-app toujours occupés
+
+    stable = (await async_session.execute(
+        select(PortAllocation).where(PortAllocation.app_slug == "stable-app")
+    )).scalars().all()
+    assert len(stable) == 1  # pas purgée par le sweep
+
+
+@pytest.mark.asyncio
+async def test_ttl_zero_disables_expiry(async_session, monkeypatch):
+    """TTL=0 : comportement historique (aucune expiration)."""
+    monkeypatch.setattr(settings, "port_reservation_ttl_minutes", 0, raising=False)
+    hub_host = REMOTE_TEST_HOST  # host distant : scan Docker ignoré
+    ancient = utcnow() - timedelta(days=365)
+    async_session.add(_alloc_row("ancient", hub_host, 9000, 4200, allocated_at=ancient))
+    await async_session.commit()
+
+    alloc, _ = await allocate_ports_for_app(async_session, "ttl0-app", hub_host, settings)
+    assert alloc.api_port == 9001  # réservation ancienne toujours bloquante
+
+    rows = (await async_session.execute(
+        select(PortAllocation).where(PortAllocation.app_slug == "ancient")
+    )).scalars().all()
+    assert len(rows) == 1
+
+
+@pytest.mark.asyncio
+async def test_legacy_row_without_timestamp_never_expires(async_session, ttl_settings):
+    """Ligne legacy (allocated_at NULL, hors modèle) : conservée, ports bloqués."""
+    hub_host = REMOTE_TEST_HOST  # host distant : scan Docker ignoré
+    async_session.add(_alloc_row("legacy", hub_host, 9000, 4200, allocated_at=None))
+    await async_session.commit()
+
+    alloc, _ = await allocate_ports_for_app(async_session, "legacy-other", hub_host, settings)
+    assert alloc.api_port == 9001
+
+    rows = (await async_session.execute(
+        select(PortAllocation).where(PortAllocation.app_slug == "legacy")
+    )).scalars().all()
+    assert len(rows) == 1
+
+
+@pytest.mark.asyncio
+async def test_expired_reservation_same_slug_gets_clean_realloc(async_session, ttl_settings):
+    """Même slug après expiration : la ligne est recréée proprement (une seule)."""
+    hub_host = REMOTE_TEST_HOST  # host distant : scan Docker ignoré
+    old = utcnow() - timedelta(minutes=TTL + 10)
+    async_session.add(_alloc_row("back-later", hub_host, 9000, 4200, allocated_at=old))
+    await async_session.commit()
+
+    alloc, reused = await allocate_ports_for_app(async_session, "back-later", hub_host, settings)
+    assert reused is False
+    assert (alloc.api_port, alloc.frontend_port) == (9000, 4200)
+
+    rows = (await async_session.execute(
+        select(PortAllocation).where(PortAllocation.app_slug == "back-later")
+    )).scalars().all()
+    assert len(rows) == 1

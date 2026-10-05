@@ -6,13 +6,14 @@
 import asyncio
 import ipaddress
 import logging
+from datetime import timedelta
 from urllib.parse import urlparse
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.docker_scanner import docker_scanner
-from app.models import Application, PortAllocation
+from app.models import Application, PortAllocation, utcnow
 
 logger = logging.getLogger(__name__)
 
@@ -110,8 +111,65 @@ def _ports_from_url(url: str | None) -> set[int]:
         return set()
 
 
+def _reservation_cutoff(settings):
+    """Date limite d'une réservation de ports (None si TTL désactivé).
+
+    Une RÉSERVATION est une allocation sans application associée : ligne créée
+    par le prepare du catalogue GitHub (ou un /allocate-ports orphelin) avant
+    même que le formulaire ne soit soumis. Passé le TTL, ports et sous-réseau
+    redeviennent attribuables — sinon chaque « Ajouter » abandonné fuyait
+    définitivement ports + sous-réseau (bug 2026-10-05).
+    """
+    minutes = getattr(settings, "port_reservation_ttl_minutes", 0) or 0
+    if minutes <= 0:
+        return None
+    return utcnow() - timedelta(minutes=minutes)
+
+
+def _expired_reservations(allocs, app_slugs: set[str], cutoff) -> list:
+    """Lignes à purger : réservations (sans app) antérieures au cutoff.
+
+    N'expirent JAMAIS : une allocation adossée à une app existante, une ligne
+    legacy sans allocated_at (insérée hors modèle), et tout l'ensemble si
+    cutoff est None (TTL=0).
+    """
+    if cutoff is None:
+        return []
+    return [
+        a for a in allocs
+        if a.app_slug not in app_slugs
+        and a.allocated_at is not None
+        and a.allocated_at < cutoff
+    ]
+
+
+async def sweep_expired_reservations(db: AsyncSession, settings) -> int:
+    """Purge les réservations de ports expirées (sans app associée).
+
+    Appelé paresseusement à chaque allocation. Committe lui-même : la purge
+    est indépendante de la transaction de l'appelant. Renvoie le nombre de
+    lignes supprimées.
+    """
+    cutoff = _reservation_cutoff(settings)
+    if cutoff is None:
+        return 0
+    app_slugs = set((await db.execute(select(Application.slug))).scalars())
+    allocs = (await db.execute(select(PortAllocation))).scalars().all()
+    expired = _expired_reservations(allocs, app_slugs, cutoff)
+    for row in expired:
+        await db.delete(row)
+    if expired:
+        await db.commit()
+        logger.info(
+            "🧹 %d réservation(s) de ports expirée(s) purgée(s) (TTL=%s min) : %s",
+            len(expired), getattr(settings, "port_reservation_ttl_minutes", 0),
+            ", ".join(sorted(a.app_slug for a in expired)),
+        )
+    return len(expired)
+
+
 async def _used_ports_for_host(
-    db: AsyncSession, host: str, extra_used: set[int] | None = None
+    db: AsyncSession, host: str, extra_used: set[int] | None = None, cutoff=None
 ) -> tuple[set[int], set[int]]:
     """Retourne (ports_api_utilises, ports_frontend_utilises) pour un host.
 
@@ -121,6 +179,8 @@ async def _used_ports_for_host(
     Un même numéro ne doit jamais être réutilisé sur un host, quel que soit le
     rôle : on renvoie donc le même ensemble fusionné pour API et Frontend
     (les plages ne se chevauchant pas, c'est sûr).
+    `cutoff` (optionnel) exclut les réservations expirées — sans app associée
+    et antérieures à la date limite — qui redeviennent attribuables.
     """
     used_api: set[int] = set()
     used_frontend: set[int] = set()
@@ -140,6 +200,14 @@ async def _used_ports_for_host(
     allocs = (
         await db.execute(select(PortAllocation).where(PortAllocation.host == host))
     ).scalars().all()
+    if cutoff is not None:
+        app_slugs = set((await db.execute(select(Application.slug))).scalars())
+        allocs = [
+            a for a in allocs
+            if a.app_slug in app_slugs
+            or a.allocated_at is None
+            or a.allocated_at >= cutoff
+        ]
     for a in allocs:
         used_api.add(a.api_port)
         used_frontend.add(a.frontend_port)
@@ -151,16 +219,25 @@ async def _used_ports_for_host(
     return all_used, all_used
 
 
-async def _used_subnets_for_host(db: AsyncSession, host: str) -> set[str]:
+async def _used_subnets_for_host(db: AsyncSession, host: str, cutoff=None) -> set[str]:
     """Sous-réseaux déjà alloués (pool Hub) pour un host donné.
 
     Scopé par host comme les ports : deux apps sur des machines différentes
     peuvent réutiliser le même sous-réseau. Retourne les CIDR en chaîne
-    (ex: "10.50.0.0/24").
+    (ex: "10.50.0.0/24"). `cutoff` exclut les réservations expirées (sans app
+    associée et antérieures à la date limite).
     """
     allocs = (
         await db.execute(select(PortAllocation).where(PortAllocation.host == host))
     ).scalars().all()
+    if cutoff is not None:
+        app_slugs = set((await db.execute(select(Application.slug))).scalars())
+        allocs = [
+            a for a in allocs
+            if a.app_slug in app_slugs
+            or a.allocated_at is None
+            or a.allocated_at >= cutoff
+        ]
     return {a.subnet for a in allocs if a.subnet}
 
 
@@ -205,7 +282,14 @@ async def allocate_ports_for_app(
 
     Si une allocation existe pour (slug, host) → la renvoyer (reused=True).
     Sinon calculer les ports libres, persister, renvoyer (reused=False).
+
+    Purge d'abord les réservations expirées (allocations sans application
+    associée, au-delà de port_reservation_ttl_minutes) : les ports et
+    sous-réseaux des « Ajouter » jamais finalisés redeviennent attribuables.
     """
+    await sweep_expired_reservations(db, settings)
+    cutoff = _reservation_cutoff(settings)
+
     existing = (
         await db.execute(
             select(PortAllocation).where(
@@ -218,7 +302,7 @@ async def allocate_ports_for_app(
         if not existing.subnet:
             # Allocation antérieure à l'introduction du pool : remplir
             # paresseusement le sous-réseau (idempotent à partir d'ici).
-            used_subnets = await _used_subnets_for_host(db, host)
+            used_subnets = await _used_subnets_for_host(db, host, cutoff=cutoff)
             used_subnets |= await docker_occupied_subnets(settings, host)
             existing.subnet = pick_free_subnet(
                 used_subnets,
@@ -234,14 +318,16 @@ async def allocate_ports_for_app(
         return existing, True
 
     extra_used = await docker_occupied_ports(settings, host)
-    used_api, used_frontend = await _used_ports_for_host(db, host, extra_used=extra_used)
+    used_api, used_frontend = await _used_ports_for_host(
+        db, host, extra_used=extra_used, cutoff=cutoff
+    )
     api_port, frontend_port, https_port = pick_free_ports(
         used_api,
         used_frontend,
         api_range=(settings.app_port_api_start, settings.app_port_api_end),
         frontend_range=(settings.app_port_frontend_start, settings.app_port_frontend_end),
     )
-    used_subnets = await _used_subnets_for_host(db, host)
+    used_subnets = await _used_subnets_for_host(db, host, cutoff=cutoff)
     used_subnets |= await docker_occupied_subnets(settings, host)
     subnet = pick_free_subnet(
         used_subnets,
