@@ -529,6 +529,7 @@ async def get_apps_status(
             "api_url": app.api_url,
             "frontend_url": app.frontend_url,
             "is_active": app.is_active,
+            "is_workshop": app.is_workshop,
             "status": "offline",
             "response_time_ms": None,
             "error": None,
@@ -575,15 +576,20 @@ async def get_apps_status(
     async with httpx.AsyncClient(timeout=5.0, verify=False) as client:
         status_results = await asyncio.gather(*[check_app(app, client) for app in apps])
     
-    # Statistiques globales
-    online_count = sum(1 for s in status_results if s["status"] == "online")
-    offline_count = sum(1 for s in status_results if s["status"] == "offline")
-    error_count = sum(1 for s in status_results if s["status"] == "error")
-    
+    # Statistiques globales — compteur de connectivité : apps de production
+    # uniquement. Les ateliers (-ws, le plus souvent arrêtés) ne doivent pas
+    # gonfler le dénominateur (« 14/20 applications en ligne » avec 6 ateliers
+    # éteints — demande 2026-10-07). Les entrées par app restent dans apps[]
+    # pour les icônes de la table admin (vue filtre « Atelier »).
+    prod_results = [s for s in status_results if not s["is_workshop"]]
+    online_count = sum(1 for s in prod_results if s["status"] == "online")
+    offline_count = sum(1 for s in prod_results if s["status"] == "offline")
+    error_count = sum(1 for s in prod_results if s["status"] == "error")
+
     return {
         "apps": status_results,
         "summary": {
-            "total": len(status_results),
+            "total": len(prod_results),
             "online": online_count,
             "offline": offline_count,
             "error": error_count
