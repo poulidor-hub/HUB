@@ -77,6 +77,10 @@ services:
       - DOCKER_SCAN_ENABLED=${DOCKER_SCAN_ENABLED:-false}
       - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-}
       - ALLOWED_ORIGIN_REGEX=${ALLOWED_ORIGIN_REGEX:-}
+      # Limite de taille du body (protection DoS) — MB. La limite élargie ne
+      # concerne que les uploads de sauvegarde/import (cf. .env.example).
+      - MAX_BODY_SIZE_MB=${MAX_BODY_SIZE_MB:-10}
+      - MAX_UPLOAD_BODY_SIZE_MB=${MAX_UPLOAD_BODY_SIZE_MB:-512}
       - HUB_HTTPS_ENABLED=${HUB_HTTPS_ENABLED:-true}
       - HUB_HTTPS_PORT=${HUB_HTTPS_PORT:-443}
       # Domaine du proxy transparent PhiliaNG (cert auto-généré par pki.py).

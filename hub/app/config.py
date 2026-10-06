@@ -262,6 +262,15 @@ class Settings(BaseSettings):
     #   ^https?://(192\.168\.1\.\d{1,3}|localhost|127\.0\.0\.1)(:\d+)?$
     allowed_origin_regex: str = ""
 
+    # Limite de taille du body (protection DoS), en MB.
+    # - max_body_size_mb : toutes les routes.
+    # - max_upload_body_size_mb : routes d'upload de sauvegarde/import
+    #   (/api/admin/restore, /api/apps/{slug}/backup/import,
+    #   /api/apps/{slug}/backup/restore/upload) — backups volumineux
+    #   (cf. incident exemple-app > 150 Mo).
+    max_body_size_mb: int = 10
+    max_upload_body_size_mb: int = 512
+
     # Mode développement - Génération automatique des clés JWT
     auto_generate_keys: bool = False  # True uniquement en DEV !
 

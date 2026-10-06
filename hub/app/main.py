@@ -1,5 +1,6 @@
 from contextlib import asynccontextmanager
 import asyncio
+import re
 import time
 import uuid
 import traceback
@@ -552,8 +553,12 @@ app.add_middleware(
 # MIDDLEWARE DE CONTEXTE DE REQUÊTE
 # =============================================================================
 
-# Limite de taille du body (10 MB) pour éviter les attaques DoS
-MAX_BODY_SIZE = 10 * 1024 * 1024  # 10 MB
+# Routes éligibles à la limite de body élargie : uploads de sauvegarde/import
+# (backups potentiellement volumineux — cf. incident exemple-app > 150 Mo).
+# Toutes les autres routes restent soumises à la limite globale (anti-DoS).
+_UPLOAD_BODY_LIMIT_PATH_RE = re.compile(
+    r"^/api/(admin/restore|apps/[^/]+/backup/(?:import|restore/upload))$"
+)
 
 @app.middleware("http")
 async def request_context_middleware(request: Request, call_next):
@@ -562,15 +567,26 @@ async def request_context_middleware(request: Request, call_next):
     - request_id: UUID unique pour tracer la requête
     - source_app_slug: Application source (header X-Slug)
     - start_time: Horodatage de début pour calculer la durée
-    Vérifie aussi la taille du body (protection DoS).
+    Vérifie aussi la taille du body (protection DoS) :
+    - limite globale (max_body_size_mb, défaut 10 MB) sur toutes les routes ;
+    - limite élargie (max_upload_body_size_mb, défaut 512 MB) pour les uploads
+      de sauvegarde/import. Limites lues dans Settings à chaque requête :
+      ajustables via .env sans rebuild.
     """
-    # Vérifier la taille du body
+    # Vérifier la taille du body — seuil choisi selon la route.
     content_length = request.headers.get("content-length")
-    if content_length and int(content_length) > MAX_BODY_SIZE:
-        return JSONResponse(
-            status_code=413,
-            content={"detail": "Corps de requête trop volumineux (max 10 MB)"}
+    if content_length:
+        _settings = get_settings()
+        max_body_mb = (
+            _settings.max_upload_body_size_mb
+            if _UPLOAD_BODY_LIMIT_PATH_RE.match(request.url.path)
+            else _settings.max_body_size_mb
         )
+        if int(content_length) > max_body_mb * 1024 * 1024:
+            return JSONResponse(
+                status_code=413,
+                content={"detail": f"Corps de requête trop volumineux (max {max_body_mb} MB)"}
+            )
     
     # Générer un request_id unique
     request.state.request_id = str(uuid.uuid4())
