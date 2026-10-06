@@ -148,6 +148,7 @@ function showDashboard() {
     document.getElementById('userInfo').classList.remove('d-none');
     document.getElementById('logoutBtn').classList.remove('d-none');
     document.getElementById('changePasswordBtn').classList.remove('d-none');
+    document.getElementById('downloadCertBtn')?.classList.remove('d-none');
     document.getElementById('username').textContent = currentUser.username;
 
     if (currentUser.is_admin) {
@@ -353,6 +354,7 @@ function showLoginScreen() {
     document.getElementById('userInfo').classList.add('d-none');
     document.getElementById('logoutBtn').classList.add('d-none');
     document.getElementById('changePasswordBtn').classList.add('d-none');
+    document.getElementById('downloadCertBtn')?.classList.add('d-none');
     document.getElementById('adminBtn').classList.add('d-none');
     document.getElementById('adminNavigation').classList.add('d-none');
     document.getElementById('messagesSection').classList.add('d-none');

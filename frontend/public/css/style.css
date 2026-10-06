@@ -2709,3 +2709,11 @@ body {
     font-size: .75rem;
     color: var(--text-muted);
 }
+
+/* ===== Modale certificat (téléchargement CA racine) ===== */
+.cert-fp {
+    display: block;
+    word-break: break-all;
+    line-height: 1.5;
+    user-select: all;
+}

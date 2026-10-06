@@ -86,6 +86,9 @@
                     <button id="changePasswordBtn" class="btn btn-outline-light btn-sm me-2 d-none" data-action="showChangePasswordModal" data-args="false" title="Changer le mot de passe">
                         <i class="bi bi-key"></i>
                     </button>
+                    <button id="downloadCertBtn" class="btn btn-outline-light btn-sm me-2 d-none" data-action="showCertificateModal" title="Certificat de confiance du Hub (supprimer les avertissements HTTPS)">
+                        <i class="bi bi-shield-check"></i>
+                    </button>
                     <button id="adminBtn" class="btn btn-outline-light btn-sm me-2 d-none" data-action="showPage" data-args="admin">
                         <i class="bi bi-gear"></i> Admin
                     </button>
@@ -3444,6 +3447,139 @@
         </div>
     </div>
 
+    <!-- Certificate Download Modal -->
+    <div class="modal fade" id="certificateModal" tabindex="-1">
+        <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="bi bi-shield-check me-2 text-success"></i>Certificat de confiance du Hub</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Fermer"></button>
+                </div>
+                <div class="modal-body">
+                    <p class="mb-3">
+                        Les applications du parc sont servies en <strong>HTTPS avec un certificat signé par
+                        l'autorité interne du Hub</strong>. Installez ce certificat <strong>une seule fois par
+                        poste</strong> pour ne plus voir l'avertissement « certificat auto-signé » à l'ouverture
+                        du Hub et de toutes les applications.
+                    </p>
+
+                    <div id="certInfoError" class="alert alert-danger d-none"></div>
+
+                    <div class="card bg-light mb-3">
+                        <div class="card-body py-2">
+                            <div class="row g-2">
+                                <div class="col-md-7">
+                                    <small class="text-muted d-block mb-1">Empreinte SHA-256 de la CA</small>
+                                    <code id="certFingerprint" class="small cert-fp">Chargement…</code>
+                                </div>
+                                <div class="col-md-5">
+                                    <small class="text-muted d-block mb-1">Validité</small>
+                                    <span id="certValidity" class="small">Chargement…</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <button type="button" class="btn btn-primary w-100 mb-1" data-action="downloadCaCert">
+                        <i class="bi bi-download me-1"></i>Télécharger le certificat (POULIDOR-Hub-Root-CA.crt)
+                    </button>
+
+                    <h6 class="mt-3 mb-2"><i class="bi bi-question-circle me-1"></i>Installer le certificat selon votre poste</h6>
+                    <div class="accordion" id="certInstallAccordion">
+                        <div class="accordion-item">
+                            <h2 class="accordion-header">
+                                <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#certWin">Windows 10 / 11</button>
+                            </h2>
+                            <div id="certWin" class="accordion-collapse collapse" data-bs-parent="#certInstallAccordion">
+                                <div class="accordion-body small">
+                                    <ol class="mb-2">
+                                        <li>Double-cliquez sur le fichier téléchargé, puis <strong>Installer le certificat…</strong></li>
+                                        <li>Choisissez « Utilisateur actuel », puis « Placer tous les certificats dans le magasin suivant ».</li>
+                                        <li>Sélectionnez <strong>Autorités de certification racines de confiance</strong>, terminez et acceptez l'avertissement.</li>
+                                    </ol>
+                                    <div class="text-muted">Ou en ligne de commande (invité de commandes) :<br><code>certutil -addstore -f Root POULIDOR-Hub-Root-CA.crt</code></div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="accordion-item">
+                            <h2 class="accordion-header">
+                                <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#certMac">macOS</button>
+                            </h2>
+                            <div id="certMac" class="accordion-collapse collapse" data-bs-parent="#certInstallAccordion">
+                                <div class="accordion-body small">
+                                    <ol>
+                                        <li>Double-cliquez sur le fichier téléchargé : le <strong>Trousseau d'accès</strong> s'ouvre.</li>
+                                        <li>Sélectionnez le certificat « POULIDOR », double-cliquez, déroulez « Faire toujours confiance ».</li>
+                                        <li>Choisissez <strong>Toujours approuver</strong> (SSL), puis fermez avec votre mot de passe.</li>
+                                    </ol>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="accordion-item">
+                            <h2 class="accordion-header">
+                                <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#certLinux">Linux (Debian / Ubuntu)</button>
+                            </h2>
+                            <div id="certLinux" class="accordion-collapse collapse" data-bs-parent="#certInstallAccordion">
+                                <div class="accordion-body small">
+                                    <code>sudo cp POULIDOR-Hub-Root-CA.crt /usr/local/share/ca-certificates/hub-ca.crt &amp;&amp; sudo update-ca-certificates</code>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="accordion-item">
+                            <h2 class="accordion-header">
+                                <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#certFirefox">Firefox (tous systèmes)</button>
+                            </h2>
+                            <div id="certFirefox" class="accordion-collapse collapse" data-bs-parent="#certInstallAccordion">
+                                <div class="accordion-body small">
+                                    <p class="mb-2"><strong>Firefox utilise son propre magasin</strong> : importez-y aussi le certificat, même après une installation système.</p>
+                                    <ol>
+                                        <li>Paramètres → Vie privée et sécurité → rubrique <strong>Certificats</strong> → « Voir les certificats ».</li>
+                                        <li>Onglet <strong>Autorités</strong> → « Importer… » → sélectionnez le fichier téléchargé.</li>
+                                        <li>Cochez « Ce certificat peut identifier des sites web » et validez.</li>
+                                    </ol>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="accordion-item">
+                            <h2 class="accordion-header">
+                                <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#certAndroid">Android</button>
+                            </h2>
+                            <div id="certAndroid" class="accordion-collapse collapse" data-bs-parent="#certInstallAccordion">
+                                <div class="accordion-body small">
+                                    <ol>
+                                        <li>Paramètres → Sécurité → <strong>« Installer un certificat »</strong> → « Autorité de certification » (le libellé varie selon la marque).</li>
+                                        <li>Sélectionnez le fichier téléchargé et confirmez.</li>
+                                    </ol>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="accordion-item">
+                            <h2 class="accordion-header">
+                                <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#certIos">iPhone / iPad (iOS)</button>
+                            </h2>
+                            <div id="certIos" class="accordion-collapse collapse" data-bs-parent="#certInstallAccordion">
+                                <div class="accordion-body small">
+                                    <ol>
+                                        <li>Ouvrez le fichier téléchargé : « Profil téléchargé » → <strong>Installer</strong> (code du poste si demandé).</li>
+                                        <li>Indispensable : Réglages → Général → À propos → <strong>« Réglages de confiance des certificats »</strong> → activez le certificat POULIDOR.</li>
+                                    </ol>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="form-text mt-3">
+                        <i class="bi bi-info-circle me-1"></i>Après l'installation, redémarrez votre navigateur.
+                        Comparez l'empreinte affichée ci-dessus avec celle du fichier installé : elles doivent être identiques.
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Fermer</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Password Recovery Modal -->
     <div class="modal fade" id="recoverModal" tabindex="-1">
         <div class="modal-dialog modal-dialog-centered">
@@ -4242,6 +4378,7 @@
     <script src="js/modules/sse.js?v=3.67.0"></script>
     <script src="js/modules/slo-purge.js?v=3.67.0"></script>
     <script src="js/modules/auth-navigation.js?v=3.67.0"></script>
+    <script src="js/modules/cert-download.js?v=3.67.0"></script>
     <script src="js/modules/dashboard.js?v=3.67.0"></script>
     <script src="js/modules/admin-apps.js?v=3.67.0"></script>
     <script src="js/modules/admin-app-groups.js?v=3.67.0"></script>
