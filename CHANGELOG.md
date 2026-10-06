@@ -5,6 +5,20 @@
 
 ---
 
+## [3.69.0] - 6 octobre 2026
+
+### ⚡ Réimplémentation des routes export/import d'environnement (`/api/admin/backup/*`)
+
+| Fonctionnalité | Description |
+|----------------|-------------|
+| **Contexte** | Les routes `/api/admin/backup/{export,export/download,import,import/upload,import/preview}` avaient été supprimées du backend (commit `e0708e0`, remplacées par le système de snapshots) alors que les clients en dépendent toujours : outils MCP `hub_backup_export_env` / `hub_backup_import_env` (template + 9 apps) et module frontend `backup-import.js`. Symptôme visible : tout upload > 10 Mo recevait un 413 « max 10 MB » du middleware anti-DoS (qui court-circuite avant le 404), masquant la disparition des routes. |
+| **`hub/app/routes/admin_backup.py`** | Nouveau router `/api/admin/backup` (admin requis) : l'export réutilise `app.hub_self_backup` (`_do_export` / `_build_zip_archive`, source unique déjà utilisée par le flux AppBackup — inclut uuid/oidc_sub/prenom/nom et paire backup PRA) ; l'import est réimplémenté, adapté au schéma actuel : modes `skip`/`update`/`error`, flags `include_*`, restauration JWT **et** paire backup avec `restore_jwt_keys`, secrets SA écrits au format moderne (`sa_<name>.env`, valeur `ENC:` préservée telle quelle + avertissement si la `SECRETS_ENCRYPTION_KEY` cible diffère), `user_app_roles_updated` compté, checksums SHA-256 vérifiés à l'import ZIP, politique de rétention appliquée par app importée. |
+| **`hub/app/main.py`** | Router monté ; middleware anti-DoS : les 3 routes d'upload d'environnement (`/import`, `/import/upload`, `/import/preview`) passent à la limite élargie (`MAX_UPLOAD_BODY_SIZE_MB`, défaut 512 MB) au lieu de la limite globale 10 MB. |
+| **Tests** | Nouveau `tests/test_admin_backup_routes.py` (22 cas : présence des routes, 413 > 10 Mo révolus, export JSON/ZIP avec skip des backups sans fichier, modes skip/update/error, création SA + fichier de credentials, upload ZIP avec checksum + rétention + ligne `AppBackup`, preview JSON/ZIP, admin requis). Hôte : 1342 passed. Stack docker `pouly-test` (image rebuilde) : 1296 passed, 6 échecs pré-existants `test_purge_orphan_backups.py` (script racine non copié par la cible `test-docker` depuis 3.67.0, hors périmètre). |
+| **Vérification runtime** | Endpoints exercés dans le conteneur de test avec auth admin réelle : export 200, download 200, preview 200, import 200, **import/upload 11 Mo → 200** (413 révolu), logs propres. |
+
+---
+
 ## [3.68.0] - 6 octobre 2026
 
 ### ⚡ Téléchargement de la CA racine depuis la page Hub (suppression des avertissements HTTPS)
