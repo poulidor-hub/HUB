@@ -5,6 +5,37 @@
 
 ---
 
+## [3.65.0] - 6 octobre 2026
+
+### ⚡ Limite de body configurable — uploads de sauvegarde/import élargis à 512 MB
+
+- **`hub/app/main.py`** — le middleware anti-DoS rejetait en 413 tout body
+  > 10 MB (constante `MAX_BODY_SIZE`) sur TOUTES les routes : tout import
+  de backup > 10 Mo était bloqué côté API alors même que nginx accepte
+  1 G (`client_max_body_size`, cf. 3.47.5). Le middleware choisit
+  désormais le seuil selon la route : limite globale pour tout le monde,
+  limite élargie pour les 3 routes d'upload de backup
+  (`/api/admin/restore`, `/api/apps/{slug}/backup/import`,
+  `/api/apps/{slug}/backup/restore/upload`). Le message 413 reflète la
+  limite réellement appliquée. Constante remplacée par une lecture
+  `get_settings()` à chaque requête (singleton, coût négligeable).
+- **`hub/app/config.py`** — deux nouveaux champs `Settings` :
+  `max_body_size_mb` (défaut 10) et `max_upload_body_size_mb`
+  (défaut 512) — ajustables via `.env` sans rebuild.
+- **`docker-compose.yml` / `.env.example`** — passage des deux clés
+  (`MAX_BODY_SIZE_MB`, `MAX_UPLOAD_BODY_SIZE_MB`, pattern
+  `${VAR:-défaut}`) ; `.env.example` documente la contrainte
+  `MAX_UPLOAD_BODY_SIZE_MB <= client_max_body_size` nginx (1 G).
+- **Tests** — nouveau `tests/test_api_body_limit.py` (9 cas : rejet
+  global 413 + message, tolérance sous le seuil, les 3 routes d'upload
+  acceptent entre les deux seuils et rejettent au-delà de la limite
+  élargie, route métier non concernée). RED→GREEN via stack
+  `pouly-test`. Suite docker complète : 1263 passed (2 échecs
+  pré-existants `test_app_deploy.py`, présents sur HEAD sans ce
+  changement — port allocator, à traiter séparément).
+
+---
+
 ## [3.64.0] - 6 octobre 2026
 
 ### ⚡ Audit erreurs : l'acteur M2M exposé dans la liste et le détail
