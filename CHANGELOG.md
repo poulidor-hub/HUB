@@ -5,6 +5,42 @@
 
 ---
 
+## [3.68.0] - 6 octobre 2026
+
+### ⚡ Téléchargement de la CA racine depuis la page Hub (suppression des avertissements HTTPS)
+
+- **Backend — nouveau router `app/routes/pki_ca.py`** (monté dans `main.py`) :
+  - `GET /api/pki/ca.crt` : sert `certs/ca/ca.crt` en `FileResponse`
+    (`application/x-x509-ca-cert`, nom imposé `POULIDOR-Hub-Root-CA.crt`),
+    404 explicite si la PKI n'est pas initialisée ;
+  - `GET /api/pki/ca/info` : sujet, validité, empreinte SHA-256 (JSON) ;
+  - endpoints **sans authentification** : une CA est publique par nature
+    (`ca.key` jamais servi — testé), et une app distante doit pouvoir
+    récupérer la chaîne de confiance avant de détenir des credentials
+    (URL alignée sur `test_remote_app_m2m.py::test_1_download_ca_certificate`,
+    qui appelait un endpoint jusqu'ici inexistant) ;
+  - chemin en dur, aucune entrée utilisateur → pas de traversal.
+- **Frontend — bouton bouclier « Certificat » dans la navbar** (visibilité
+  login/logout alignée sur le changement de mot de passe) ouvrant la modale
+  `#certificateModal` :
+  - empreinte SHA-256 + validité chargées depuis `/api/pki/ca/info`
+    (contrôle utilisateur du fichier installé) ;
+  - téléchargement blob de `/api/pki/ca.crt` (pattern existant `api.js`),
+    toast succès/échec ;
+  - guide d'installation par plateforme en accordéon : Windows (GUI +
+    `certutil`), macOS (Trousseau), Linux (`update-ca-certificates`),
+    Firefox (magasin séparé), Android, iOS (profils + confiance manuelle).
+  - nouveau module `js/modules/cert-download.js` (fonctions globales,
+    dispatch `data-action` standard) ; tags `?v=` synchronisés.
+- **Docs** : `docs/HTTPS.md` — la voie recommandée d'import de la CA passe
+  par le bouton de l'interface ; procédures manuelles conservées.
+- **Tests** : `hub/tests/test_pki_ca.py` (4) — téléchargement public (PEM +
+  content-type + filename), 404 hermétique PKI absente, `/info`, `ca.key`
+  jamais servi ; test 404 rendu hermétique (certs/ existe toujours en
+  conteneur — constaté au cycle Docker). Suite conteneur : 12/12.
+
+---
+
 ## [3.67.0] - 6 octobre 2026
 
 ### ⚡ Script ops : purge one-shot des backups morts (hubs déployés)
