@@ -1195,16 +1195,27 @@
                         <div class="col-12">
                             <div class="card">
                                 <div class="card-body">
-                                    <div class="d-flex justify-content-between align-items-center mb-2">
+                                    <div class="d-flex justify-content-between align-items-center mb-2 flex-wrap gap-2">
                                         <h5 class="card-title mb-0"><i class="bi bi-arrow-left-right me-1"></i>Propagation de l'IP aux applications</h5>
-                                        <button class="btn btn-primary btn-sm" id="networkApplyBtn" data-action="applyNetworkPropagation" disabled>
-                                            <i class="bi bi-cloud-arrow-up me-1"></i>Propager la sélection (<span id="networkApplyCount">0</span>)
-                                        </button>
+                                        <div class="d-flex gap-2 flex-wrap">
+                                            <button class="btn btn-outline-secondary btn-sm" data-action="selectPendingNetworkApps"
+                                                    title="Coche toutes les apps dont le .env diffère de l'IP effective">
+                                                <i class="bi bi-check2-square me-1"></i>Sélectionner les apps à propager
+                                            </button>
+                                            <button class="btn btn-primary btn-sm" id="networkApplyBtn" data-action="applyNetworkPropagation" disabled>
+                                                <i class="bi bi-cloud-arrow-up me-1"></i>Propager la sélection (<span id="networkApplyCount">0</span>)
+                                            </button>
+                                            <button class="btn btn-success btn-sm" id="networkApplyRecreateBtn" data-action="applyAndRecreateNetwork" disabled
+                                                    title="Écrit l'IP dans les .env puis recrée les conteneurs des apps sélectionnées">
+                                                <i class="bi bi-arrow-repeat me-1"></i>Propager et recréer (<span id="networkApplyRecreateCount">0</span>)
+                                            </button>
+                                        </div>
                                     </div>
                                     <p class="text-muted small mb-2">
-                                        Écrit la nouvelle IP dans le .env des apps sélectionnées. La prise
-                                        en charge par les conteneurs nécessite ensuite leur recréation
-                                        (bouton « Recréer » — interromp l'app quelques secondes).
+                                        « Propager et recréer » fait tout en un geste : écrit l'IP dans les .env
+                                        sélectionnés puis recrée leurs conteneurs (indisponibilité de quelques
+                                        secondes par app). « Propager la sélection » reste disponible pour
+                                        l'écriture seule, la recréation se faisant alors app par app.
                                     </p>
                                     <div id="networkPlanLoading" class="text-muted">Chargement du plan de propagation…</div>
                                     <div id="networkPlanError" class="alert alert-danger d-none"></div>
