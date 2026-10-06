@@ -10,7 +10,25 @@ from pathlib import Path
 
 import pytest
 
-SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "purge_orphan_backups.py"
+
+def _find_purge_script() -> Path:
+    """Localise scripts/purge_orphan_backups.py selon l'environnement d'exécution.
+
+    - Hôte        : <repo>/hub/tests/…  →  <repo>/scripts/purge_orphan_backups.py
+    - Conteneur   : /code/tests/…        →  /code/scripts/purge_orphan_backups.py
+      (la cible `make test-docker` copie le script à côté de /code/tests —
+      le contexte image ne contient que ./hub, pas le dossier scripts/ racine)
+    """
+    here = Path(__file__).resolve()
+    for base in here.parents:
+        candidate = base / "scripts" / "purge_orphan_backups.py"
+        if candidate.exists():
+            return candidate
+    # Comportement historique (échec explicite dans test_script_exists)
+    return here.parents[2] / "scripts" / "purge_orphan_backups.py"
+
+
+SCRIPT = _find_purge_script()
 
 
 @pytest.fixture
