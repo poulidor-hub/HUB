@@ -7,7 +7,8 @@
  * - Plan de propagation : apps v2 enregistrées avec l'IP de leur .env vs
  *   l'IP effective ; propagation de la sélection (POST apply) puis
  *   recréation des conteneurs par app (POST /{slug}/recreate, opération
- *   tracée, polling du statut).
+ *   tracée, polling du statut). Ou les deux en un geste
+ *   (POST propagation-plan/apply-and-recreate, lot tracé + polling global).
  *
  * Les fonctions restent globales pour conserver la compatibilité avec
  * les handlers HTML inline (cf. autres modules admin-*).
@@ -151,11 +152,17 @@ function _updateNetworkSelection(slug, checked) {
 }
 
 function _updateApplyButton() {
-    const btn = document.getElementById('networkApplyBtn');
-    if (!btn) return;
     const count = _networkSelected.size;
-    document.getElementById('networkApplyCount').textContent = count;
-    btn.disabled = count === 0;
+    const applyBtn = document.getElementById('networkApplyBtn');
+    if (applyBtn) {
+        document.getElementById('networkApplyCount').textContent = count;
+        applyBtn.disabled = count === 0;
+    }
+    const batchBtn = document.getElementById('networkApplyRecreateBtn');
+    if (batchBtn) {
+        document.getElementById('networkApplyRecreateCount').textContent = count;
+        batchBtn.disabled = count === 0;
+    }
 }
 
 // ===== Changement d'IP =====
@@ -241,6 +248,20 @@ async function unsetHubHostAction() {
 
 // ===== Propagation =====
 
+function selectPendingNetworkApps() {
+    if (!networkPlan) return;
+    const pending = new Set(networkPlan.apps.filter(a => a.status === 'pending').map(a => a.slug));
+    document.querySelectorAll('#networkPlanBody input[type="checkbox"]').forEach(cb => {
+        const isPending = pending.has(cb.dataset.slug);
+        cb.checked = isPending;
+        _updateNetworkSelection(cb.dataset.slug, isPending);
+    });
+    showToast('Sélection',
+        pending.size ? `${pending.size} app(s) à propager sélectionnée(s).`
+                     : 'Aucune app à propager — tous les .env sont déjà à jour.',
+        pending.size ? 'info' : 'success');
+}
+
 async function applyNetworkPropagation() {
     const slugs = [..._networkSelected];
     if (slugs.length === 0) return;
@@ -275,6 +296,87 @@ async function confirmApplyPropagation() {
     } catch (error) {
         showToast('Erreur', `Propagation : ${error.message}`, 'error');
     }
+}
+
+// ===== Propagation + recréation en un geste =====
+
+async function applyAndRecreateNetwork() {
+    const slugs = [..._networkSelected];
+    if (slugs.length === 0) return;
+    const effectiveHost = networkPlan?.hub_host || '?';
+
+    _showModal('Confirmer propagation + recréation',
+        `<p>Écrire <strong>HUB_HOST=${escapeHtml(effectiveHost)}</strong> dans le <code>.env</code> de
+         <strong>${slugs.length} application(s)</strong> puis <strong>recréer leurs
+         conteneurs</strong> (chacune indisponible quelques secondes) ?</p>
+         <p class="text-muted small">${escapeHtml(slugs.join(', '))}</p>
+         <p class="text-muted small">Chaque recréation est tracée ; le résultat
+         s'affiche application par application à la fin du lot.</p>
+         <div class="text-end">
+            <button class="btn btn-secondary" data-bs-dismiss="modal">Annuler</button>
+            <button class="btn btn-primary" data-action="confirmApplyAndRecreate">
+                <i class="bi bi-arrow-repeat me-1"></i>Propager et recréer
+            </button>
+         </div>`);
+}
+
+async function confirmApplyAndRecreate() {
+    bootstrap.Modal.getInstance(document.querySelector('.modal.show'))?.hide();
+    try {
+        const result = await api.applyAndRecreatePropagation([..._networkSelected]);
+        const written = result.results.filter(r => r.status === 'written').length;
+        const problems = result.results.filter(r => r.status !== 'written');
+        const jobs = result.results.filter(r => r.recreate === 'started')
+            .map(r => ({ slug: r.slug, operation_id: r.operation_id }));
+        showToast('Propagation appliquée',
+            `${written} .env écrit(s) vers ${result.hub_host} — ${jobs.length} recréation(s) lancée(s)` +
+            (problems.length ? ` — ${problems.length} problème(s), voir le plan.` : '.'),
+            problems.length ? 'warning' : 'success');
+        await loadNetworkPlan();
+        if (jobs.length) {
+            const done = await _pollRecreateBatch(jobs);
+            const parts = [];
+            if (done.success.length) parts.push(`${done.success.length} OK`);
+            if (done.failed.length) parts.push(`${done.failed.length} échec(s) : ${done.failed.join(', ')}`);
+            if (done.lost.length) parts.push(`${done.lost.length} sans verdict : ${done.lost.join(', ')}`);
+            showToast('Recréations terminées',
+                `Conteneurs : ${parts.join(' · ')}`,
+                (done.failed.length || done.lost.length) ? 'warning' : 'success');
+            await loadNetworkPlan();
+        }
+    } catch (error) {
+        showToast('Erreur', `Propagation + recréation : ${error.message}`, 'error');
+    }
+}
+
+async function _pollRecreateBatch(jobs) {
+    // Polling global du lot : chaque opération est suivie jusqu'à success/
+    // failed ; deadline globale 6 min (au-delà, l'opération reste en cours
+    // côté serveur — l'admin suit via le statut atelier).
+    const deadline = Date.now() + 6 * 60 * 1000;
+    const pending = new Map(jobs.map(j => [j.slug, j.operation_id]));
+    const done = { success: [], failed: [], lost: [] };
+    while (pending.size > 0 && Date.now() < deadline) {
+        await new Promise(resolve => setTimeout(resolve, 3000));
+        for (const [slug, opId] of [...pending]) {
+            try {
+                const st = await api.getWorkshopStatus(slug);
+                const current = st?.current;
+                if (!current || current.id !== opId) continue;
+                if (current.status === 'success') {
+                    done.success.push(slug);
+                    pending.delete(slug);
+                } else if (current.status === 'failed') {
+                    done.failed.push(slug);
+                    pending.delete(slug);
+                }
+            } catch (error) {
+                console.warn('Polling recréation batch:', slug, error);
+            }
+        }
+    }
+    for (const slug of pending.keys()) done.lost.push(slug);
+    return done;
 }
 
 // ===== Recréation des conteneurs =====

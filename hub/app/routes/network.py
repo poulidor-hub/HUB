@@ -176,22 +176,49 @@ async def unset_hub_host(
 
 # ==== Plan de propagation aux apps (validation admin) ====
 
-def _read_hub_host_from_env(env_path) -> str | None:
-    """Lit l'IP du Hub d'un .env d'app — HUB_HOST puis variantes legacy
-    (HUB_URL, HUB_BASE_URL) qui sont réécrites par apply_env_values."""
+def _read_env_values(env_path) -> dict[str, str]:
+    """Parse un .env d'app (clé=valeur, ignore commentaires et lignes vides)."""
     try:
         lines = env_path.read_text().splitlines()
     except OSError:
-        return None
+        return {}
     values: dict[str, str] = {}
     for line in lines:
         line = line.strip()
         if "=" in line and not line.startswith("#"):
             key, _, value = line.partition("=")
             values[key.strip()] = value.strip()
+    return values
+
+
+def _read_hub_host_from_env(env_path) -> str | None:
+    """Lit l'IP du Hub d'un .env d'app — HUB_HOST puis variantes legacy
+    (HUB_URL, HUB_BASE_URL) qui sont réécrites par apply_env_values."""
+    values = _read_env_values(env_path)
     for key in ("HUB_HOST", "HUB_URL", "HUB_BASE_URL"):
         if values.get(key):
             return values[key]
+    return None
+
+
+def _resolve_app_dir(slug: str):
+    """Répertoire d'une app dans APPS/ : `<slug>` en priorité, sinon index
+    APP_SLUG des .env — le nom du répertoire peut différer du slug registre
+    (ex. `exemple-app` ↔ répertoire `exemple-app`). None si aucun
+    répertoire avec .env ne correspond."""
+    apps_dir = get_apps_dir()
+    direct = apps_dir / slug
+    if (direct / ".env").exists():
+        return direct
+    if apps_dir.is_dir():
+        for child in sorted(apps_dir.iterdir()):
+            if not child.is_dir():
+                continue
+            env_path = child / ".env"
+            if not env_path.exists():
+                continue
+            if _read_env_values(env_path).get("APP_SLUG") == slug:
+                return child
     return None
 
 
@@ -213,17 +240,19 @@ async def get_propagation_plan(
     )
     apps = []
     for app in apps_result.scalars():
-        env_path = get_apps_dir() / app.slug / ".env"
-        if not env_path.exists():
+        app_dir = _resolve_app_dir(app.slug)
+        if app_dir is None:
             apps.append({"slug": app.slug, "current_hub_host": None,
                          "status": "no_env", "is_active": app.is_active})
             continue
-        current = _read_hub_host_from_env(env_path)
+        current = _read_hub_host_from_env(app_dir / ".env")
         apps.append({
             "slug": app.slug,
             "current_hub_host": current,
             "status": "up_to_date" if current == effective else "pending",
             "is_active": app.is_active,
+            # Transparence du mapping : renseigné si le répertoire diffère du slug
+            "env_dir": app_dir.name if app_dir.name != app.slug else None,
         })
 
     ws_result = await db.execute(
@@ -272,15 +301,15 @@ async def apply_propagation_plan(
         if app.is_workshop or app.is_system_app:
             applied.append({"slug": slug, "status": "excluded"})
             continue
-        env_path = get_apps_dir() / app.slug / ".env"
-        if not env_path.exists():
+        app_dir = _resolve_app_dir(slug)
+        if app_dir is None:
             applied.append({"slug": slug, "status": "no_env"})
             continue
 
         # Chirurgical : seules HUB_HOST et ses variantes sont réécrites
-        apply_env_values(env_path, {"HUB_HOST": effective})
-        logger.info(f"🌐 Propagation IP '{effective}' → {app.slug} (.env) par "
-                    f"{current_admin.username}")
+        apply_env_values(app_dir / ".env", {"HUB_HOST": effective})
+        logger.info(f"🌐 Propagation IP '{effective}' → {app.slug} "
+                    f"(.env {app_dir.name}) par {current_admin.username}")
         applied.append({"slug": slug, "status": "written"})
 
     written = sum(1 for a in applied if a["status"] == "written")
@@ -296,6 +325,87 @@ async def apply_propagation_plan(
         pass
 
     return {"hub_host": effective, "applied": applied}
+
+
+@router.post("/propagation-plan/apply-and-recreate",
+             status_code=status.HTTP_202_ACCEPTED)
+async def apply_and_recreate_propagation_plan(
+    payload: dict,
+    current_admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Un seul geste : écrit l'IP effective du Hub dans les .env des apps
+    Explicitement validées par l'admin PUIS lance la recréation de leurs
+    conteneurs (up -d --force-recreate + health-check).
+
+    Chaque recréation est une opération tracée par le moteur atelier — statut
+    via GET /api/apps/{slug}/workshop/status. Une app dont une opération est
+    déjà active garde son .env écrit mais sa recréation est sautée (au lieu
+    d'un 409 qui annulerait tout le lot)."""
+    slugs = payload.get("slugs") if payload else None
+    if not isinstance(slugs, list) or not slugs or \
+            not all(isinstance(s, str) and s.strip() for s in slugs):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                            detail="'slugs' doit être une liste non vide de slugs")
+
+    from app.workshop_service import (
+        has_active_workshop_operation,
+        start_workshop_operation,
+    )
+
+    settings = get_settings()
+    effective = settings.get_hub_host()
+
+    results = []
+    for slug in dict.fromkeys(s.strip() for s in slugs):  # dédoublonné, ordre préservé
+        result = await db.execute(
+            select(Application).where(Application.slug == slug)
+        )
+        app = result.scalar_one_or_none()
+        if app is None:
+            results.append({"slug": slug, "status": "not_found"})
+            continue
+        if app.is_workshop or app.is_system_app:
+            results.append({"slug": slug, "status": "excluded"})
+            continue
+
+        app_dir = _resolve_app_dir(slug)
+        if app_dir is None:
+            results.append({"slug": slug, "status": "no_env"})
+            continue
+
+        # Chirurgical : seules HUB_HOST et ses variantes sont réécrites
+        apply_env_values(app_dir / ".env", {"HUB_HOST": effective})
+        logger.info(f"🌐 Propagation IP '{effective}' → {slug} "
+                    f"(.env {app_dir.name}) par {current_admin.username}")
+
+        entry: dict = {"slug": slug, "status": "written", "env_dir": app_dir.name}
+        if await has_active_workshop_operation(db, slug):
+            entry["recreate"] = "skipped_operation_active"
+            logger.info(f"⏭️ Recréation de '{slug}' sautée : une opération est "
+                        f"déjà active (le .env est à jour)")
+        else:
+            op_id = await start_workshop_operation(slug, "recreate",
+                                                   current_admin.username)
+            entry["recreate"] = "started"
+            entry["operation_id"] = op_id
+            logger.info(f"🔄 Recréation des conteneurs de '{slug}' lancée "
+                        f"(propagation IP, opération {op_id})")
+        results.append(entry)
+
+    started = sum(1 for r in results if r.get("recreate") == "started")
+    logger.info(f"🌐 Propagation + recréation : {started} recréation(s) lancée(s) "
+                f"sur {len(results)} app(s) par {current_admin.username}")
+
+    try:
+        from app.routes.events import broadcast_event
+        await broadcast_event("settings_updated",
+                              {"key": "hub_host_propagation", "value": effective,
+                               "applied": results, "recreate": True})
+    except ImportError:
+        pass
+
+    return {"hub_host": effective, "results": results}
 
 
 # ==== Détection de l'IP LAN du HOST (via docker run --network host) ====

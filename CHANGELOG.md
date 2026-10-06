@@ -5,6 +5,37 @@
 
 ---
 
+## [3.66.0] - 6 octobre 2026
+
+### ⚡ Propagation IP en un geste + mapping slug→répertoire
+
+- **`POST /api/config/network/propagation-plan/apply-and-recreate`** :
+  applique l'IP effective du Hub aux `.env` des apps validées **puis**
+  lance la recréation de leurs conteneurs (opérations atelier tracées,
+  statut pollable par app). Fin du workflow en deux temps manuels —
+  une seule validation admin enchaîne écriture + `up --force-recreate`
+  + health-check. Une app déjà occupée garde son `.env` écrit, sa
+  recréation est sautée (`skipped_operation_active`) au lieu d'un 409
+  qui annulerait le lot.
+- **Résolution slug → répertoire** (`_resolve_app_dir`) : le slug
+  registre peut différer du nom du répertoire `APPS/` (ex.
+  `exemple-app` ↔ `exemple-app`, `exemple-app` ↔
+  `exemple-app`) — résolution par `APP_SLUG` du `.env` avec
+  fallback `<slug>`. Ces apps n'apparaissent plus en `no_env` dans le
+  plan : elles sont désormais propageables et recréables.
+- **`GET /api/config/network/propagation-plan`** : nouveau champ
+  `env_dir` par app (renseigné si le répertoire diffère du slug) pour
+  la transparence du mapping dans l'UI.
+- **UI onglet Réseau** : bouton « Propager et recréer (N) » (lot tracé,
+  polling global avec récap succès/échecs), bouton « Sélectionner les
+  apps à propager » (coche toutes les apps `pending`) ; « Propager la
+  sélection » reste disponible pour l'écriture seule.
+- **Tests** : 9 nouveaux (`test_network_propagation.py`) — mapping,
+  apply sur répertoire mappé, batch, gardes (exclusions, opération
+  active, validation payload, auth).
+
+---
+
 ## [3.65.0] - 6 octobre 2026
 
 ### ⚡ Limite de body configurable — uploads de sauvegarde/import élargis à 512 MB

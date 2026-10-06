@@ -1891,6 +1891,13 @@ class HubAPI {
             method: 'POST'
         });
     }
+
+    async applyAndRecreatePropagation(slugs) {
+        return this.request('/config/network/propagation-plan/apply-and-recreate', {
+            method: 'POST',
+            body: JSON.stringify({ slugs: slugs })
+        });
+    }
 }
 
 const api = new HubAPI();
