@@ -28,10 +28,12 @@ chmod 0600 certs/ca/ca.key
 
 Pour supprimer l'avertissement navigateur, importez le certificat racine `certs/ca/ca.crt` :
 
-- **Linux (Debian/Ubuntu)** : `sudo cp certs/ca/ca.crt /usr/local/share/ca-certificates/hub-ca.crt && sudo update-ca-certificates`
-- **macOS** : Trousseau d'accès → importer `ca.crt` → « Toujours approuver ».
-- **Windows** : `certutil -addstore -f Root certs\ca\ca.crt`
-- **Firefox** : Paramètres → Certificats → Autorités → Importer `ca.crt`.
+- **Via l'interface (recommandé)** : bouton bouclier « Certificat » dans la navbar du Hub (utilisateurs connectés) — télécharge `POULIDOR-Hub-Root-CA.crt` et affiche le guide d'installation par plateforme (Windows, macOS, Linux, Android, iOS, Firefox) ainsi que l'empreinte SHA-256 de contrôle (`GET /api/pki/ca.crt` et `/api/pki/ca/info`, endpoints publics).
+- **Manuellement** :
+  - **Linux (Debian/Ubuntu)** : `sudo cp certs/ca/ca.crt /usr/local/share/ca-certificates/hub-ca.crt && sudo update-ca-certificates`
+  - **macOS** : Trousseau d'accès → importer `ca.crt` → « Toujours approuver ».
+  - **Windows** : `certutil -addstore -f Root certs\ca\ca.crt`
+  - **Firefox** : Paramètres → Certificats → Autorités → Importer `ca.crt` (magasin propre à Firefox, même après installation système).
 
 Empreinte de contrôle : `python pki.py info` (depuis le conteneur `hub-api` : `docker compose exec hub-api python pki.py info`).
 
