@@ -23,7 +23,7 @@ from app.outbox import outbox_service
 from app.models import User, ErrorLog, utcnow
 from app.auth import get_password_hash, cleanup_expired_tokens, get_current_admin, generate_oidc_sub
 from app.config import get_settings, build_cors_config, get_instance_id
-from app.routes import auth, users, apps, service_accounts, audit, docs, events, app_backups, profiles, apps_health, messages, account_requests, snapshots, vpn, oidc, github_catalog, hub_restore, tags, app_groups, app_deploy, workshop, jwt_keys, app_certs, pki_ca
+from app.routes import auth, users, apps, service_accounts, audit, docs, events, app_backups, profiles, apps_health, messages, account_requests, snapshots, vpn, oidc, github_catalog, hub_restore, tags, app_groups, app_deploy, workshop, jwt_keys, app_certs, pki_ca, admin_backup
 from app.routes import settings as settings_routes
 from app.routes import network as network_routes
 from app.routes import app_recreate
@@ -554,10 +554,16 @@ app.add_middleware(
 # =============================================================================
 
 # Routes éligibles à la limite de body élargie : uploads de sauvegarde/import
-# (backups potentiellement volumineux — cf. incident exemple-app > 150 Mo).
+# (backups potentiellement volumineux — cf. incident exemple-app > 150 Mo) :
+#   - /api/admin/restore                     : restauration depuis fichier uploadé
+#   - /api/apps/{slug}/backup/import         : import backup d'app
+#   - /api/apps/{slug}/backup/restore/upload : restore d'app depuis fichier
+#   - /api/admin/backup/import, /import/upload, /import/preview :
+#     import d'environnement Hub (routes réimplémentées 10/2026, cf. admin_backup.py)
 # Toutes les autres routes restent soumises à la limite globale (anti-DoS).
 _UPLOAD_BODY_LIMIT_PATH_RE = re.compile(
-    r"^/api/(admin/restore|apps/[^/]+/backup/(?:import|restore/upload))$"
+    r"^/api/(admin/restore|admin/backup/import(?:/upload|/preview)?"
+    r"|apps/[^/]+/backup/(?:import|restore/upload))$"
 )
 
 @app.middleware("http")
@@ -879,6 +885,7 @@ app.include_router(github_catalog.router)
 app.include_router(app_deploy.router)
 app.include_router(workshop.router)
 app.include_router(hub_restore.router)
+app.include_router(admin_backup.router)
 app.include_router(tags.router)
 app.include_router(app_groups.router)
 app.include_router(app_certs.router)
