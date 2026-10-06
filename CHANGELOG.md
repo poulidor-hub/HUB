@@ -5,6 +5,28 @@
 
 ---
 
+## [3.67.0] - 6 octobre 2026
+
+### ⚡ Script ops : purge one-shot des backups morts (hubs déployés)
+
+- **`scripts/purge_orphan_backups.py`** : purifie le stockage backup d'un
+  Hub déployé en un geste — pilote `docker exec` sur le conteneur
+  hub-api (aucun accès disque hôte, fonctionne sur tout déploiement
+  après `git pull`). Traite les deux niveaux de reliques :
+  1. lignes `app_backups` mortes (app propriétaire supprimée, FK
+     `SET NULL`) — supprimées après rapport ;
+  2. fichiers `*.zip` / `*.encrypted` sous `storage/backups` non
+     référencés par aucune ligne survivante — orphelins purgés.
+- **Sécurités** : dry-run par défaut (`--apply` requis), garde d'âge
+  `--days` (défaut 7 — un backup en cours d'écriture n'est jamais
+  orphelin), fichiers référencés par une ligne vivante toujours
+  intouchables, retrait des répertoires vides, `--container` pour
+  surcharger le nom du conteneur.
+- **Tests** : `test_purge_orphan_backups.py` (6) — logique pure
+  (référencé conservé, récent protégé, déterminisme, référence NULL).
+
+---
+
 ## [3.66.0] - 6 octobre 2026
 
 ### ⚡ Propagation IP en un geste + mapping slug→répertoire
