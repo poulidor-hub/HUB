@@ -55,4 +55,8 @@ test-docker: ## Tests dans la stack de test isolée (pouly-test, tests copiés v
 	# test_sync_version_guard importe sync_version.py (racine du repo) —
 	# absente du contexte image (./hub) : copiée à côté des tests.
 	$(COMPOSE_TEST) cp sync_version.py hub-api:/code/sync_version.py
+	# test_purge_orphan_backups importe scripts/purge_orphan_backups.py (racine
+	# du repo) — copié sous /code/scripts (docker cp ne crée pas le parent).
+	$(COMPOSE_TEST) exec -T hub-api mkdir -p /code/scripts
+	$(COMPOSE_TEST) cp scripts/purge_orphan_backups.py hub-api:/code/scripts/purge_orphan_backups.py
 	$(COMPOSE_TEST) exec -T hub-api sh -c "cd /code && python -m pytest tests -n $(XDIST_WORKERS_DOCKER)"
