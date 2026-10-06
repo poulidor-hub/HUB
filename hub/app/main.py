@@ -23,7 +23,7 @@ from app.outbox import outbox_service
 from app.models import User, ErrorLog, utcnow
 from app.auth import get_password_hash, cleanup_expired_tokens, get_current_admin, generate_oidc_sub
 from app.config import get_settings, build_cors_config, get_instance_id
-from app.routes import auth, users, apps, service_accounts, audit, docs, events, app_backups, profiles, apps_health, messages, account_requests, snapshots, vpn, oidc, github_catalog, hub_restore, tags, app_groups, app_deploy, workshop, jwt_keys, app_certs
+from app.routes import auth, users, apps, service_accounts, audit, docs, events, app_backups, profiles, apps_health, messages, account_requests, snapshots, vpn, oidc, github_catalog, hub_restore, tags, app_groups, app_deploy, workshop, jwt_keys, app_certs, pki_ca
 from app.routes import settings as settings_routes
 from app.routes import network as network_routes
 from app.routes import app_recreate
@@ -882,6 +882,7 @@ app.include_router(hub_restore.router)
 app.include_router(tags.router)
 app.include_router(app_groups.router)
 app.include_router(app_certs.router)
+app.include_router(pki_ca.router)
 
 
 @app.get("/api/health", include_in_schema=False)
