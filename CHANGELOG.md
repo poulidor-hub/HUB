@@ -5,6 +5,19 @@
 
 ---
 
+## [3.69.1] - 6 octobre 2026
+
+### ⚡ `make test-docker` : copie de `scripts/purge_orphan_backups.py` dans le conteneur
+
+| Fonctionnalité | Description |
+|----------------|-------------|
+| **Cause** | Depuis 3.67.0, la cible `test-docker` copiait `tests/`, `pytest.ini` et `sync_version.py` mais pas le script racine `scripts/purge_orphan_backups.py` (le contexte image ne contient que `./hub`) → 6 tests échouaient en conteneur (`test_script_exists` cherchait `/scripts/...` inexistant, + 5 erreurs d'import). |
+| **`Makefile`** | La cible `test-docker` copie désormais le script sous `/code/scripts/` (mkdir préalable — `docker cp` ne crée pas le parent). |
+| **`hub/tests/test_purge_orphan_backups.py`** | Le chemin du script est résolu en remontant les parents de `__file__` (hôte : `<repo>/scripts`, conteneur : `/code/scripts`), repli sur le comportement historique sinon. |
+| **Validation** | `make test-docker` : 1306 passed, 1 skipped, 0 failed. Hôte : 6/6 tests purge. |
+
+---
+
 ## [3.69.0] - 6 octobre 2026
 
 ### ⚡ Réimplémentation des routes export/import d'environnement (`/api/admin/backup/*`)
