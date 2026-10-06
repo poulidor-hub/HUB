@@ -37,8 +37,13 @@ async def test_ca_crt_download_public(client, certs_env):
 
 
 @pytest.mark.asyncio
-async def test_ca_crt_404_when_not_initialized(client):
-    """CA non initialisée (certs/ vide) : 404, pas une 500."""
+async def test_ca_crt_404_when_not_initialized(client, tmp_path, monkeypatch):
+    """CA non initialisée (certs/ vide) : 404, pas une 500.
+
+    Hermétique : redirige _certs_dir vers un tmp_path VIDE — en conteneur,
+    l'entrypoint initialise la vraie PKI (/code/certs existe toujours).
+    """
+    monkeypatch.setattr(pki, "_certs_dir", lambda: tmp_path)
     r = await client.get("/api/pki/ca.crt")
     assert r.status_code == 404
 
