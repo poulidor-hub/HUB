@@ -5,6 +5,24 @@
 
 ---
 
+## [3.69.2] - 7 octobre 2026
+
+### ⚡ Compteur de connectivité — les ateliers ne comptent plus comme offline
+
+- **`GET /api/apps/status`** : le `summary` (« X/Y applications en ligne »,
+  toast admin) ne compte plus que les **apps de production**. Les ateliers
+  (`-ws`, `is_workshop=true`, le plus souvent arrêtés) gonflaient le
+  dénominateur — ex. « Connectivité 14/20 applications en ligne » avec 6
+  ateliers éteints (demande 2026-10-07).
+- Les entrées par app restent dans `apps[]` (champ `is_workshop` ajouté) :
+  les icônes wifi de la table admin continuent de fonctionner, y compris
+  dans la vue filtre « Atelier ».
+- **Tests** : `test_api_apps_status.py` (2) — atelier présent dans `apps[]`
+  mais exclu du summary ; non-régression sans atelier. Suite hôte 1349
+  passed, conteneur ciblé 26 passed.
+
+---
+
 ## [3.69.1] - 6 octobre 2026
 
 ### ⚡ `make test-docker` : copie de `scripts/purge_orphan_backups.py` dans le conteneur
