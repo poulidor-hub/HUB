@@ -63,7 +63,7 @@ const BACKUP_STEP_LABELS = {
 };
 
 function switchBackupWorkspace(tab) {
-    const tabs = ['apps', 'snapshots'];
+    const tabs = ['apps', 'snapshots', 'env'];
     tabs.forEach(name => {
         document.getElementById(`backupWorkspace${capitalizeBackupTab(name)}Tab`)?.classList.toggle('btn-primary', name === tab);
         document.getElementById(`backupWorkspace${capitalizeBackupTab(name)}Tab`)?.classList.toggle('btn-outline-primary', name !== tab);
@@ -77,6 +77,9 @@ function switchBackupWorkspace(tab) {
         if (typeof loadSnapshots === 'function') loadSnapshots();
         if (typeof loadSnapshotConfig === 'function') loadSnapshotConfig();
         if (typeof startProgressPolling === 'function') startProgressPolling();
+    } else if (tab === 'env') {
+        // Export/import d'environnement (module backup-import.js)
+        if (typeof loadBackupInfo === 'function') loadBackupInfo();
     }
 }
 

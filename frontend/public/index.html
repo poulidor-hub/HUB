@@ -1322,6 +1322,9 @@
                         <button type="button" class="btn btn-outline-primary btn-sm" id="backupWorkspaceSnapshotsTab" data-action="switchBackupWorkspace" data-args="snapshots">
                             <i class="bi bi-camera me-1"></i>Snapshots
                         </button>
+                        <button type="button" class="btn btn-outline-primary btn-sm" id="backupWorkspaceEnvTab" data-action="switchBackupWorkspace" data-args="env">
+                            <i class="bi bi-shield-lock me-1"></i>Environnement
+                        </button>
                     </div>
 
                     <div id="backupWorkspaceApps">
@@ -1503,6 +1506,195 @@
                         </div>
                     </div>
                 </div>
+
+                    <!-- ================= Workspace Environnement (export/import) ================= -->
+                    <div id="backupWorkspaceEnv" class="d-none">
+                        <!-- Avertissement sensibilité -->
+                        <div class="alert alert-warning d-flex align-items-start gap-2 py-2 mb-3">
+                            <i class="bi bi-exclamation-triangle-fill mt-1"></i>
+                            <div class="small">
+                                <strong>Données sensibles.</strong> L'export contient les comptes, les rôles,
+                                les secrets des service accounts et, sur option, les clés privées du Hub.
+                                Stockez vos exports au coffre — jamais dans un dossier partagé.
+                            </div>
+                        </div>
+
+                        <!-- Résumé de l'environnement -->
+                        <div class="row g-2 mb-3">
+                            <div class="col-6 col-md-3">
+                                <div class="card border-0 shadow-sm h-100"><div class="card-body py-2 text-center">
+                                    <div class="fs-5 fw-semibold" id="envSummaryUsers">–</div>
+                                    <div class="text-muted small text-uppercase">Utilisateurs</div>
+                                </div></div>
+                            </div>
+                            <div class="col-6 col-md-3">
+                                <div class="card border-0 shadow-sm h-100"><div class="card-body py-2 text-center">
+                                    <div class="fs-5 fw-semibold" id="envSummaryApps">–</div>
+                                    <div class="text-muted small text-uppercase">Applications</div>
+                                </div></div>
+                            </div>
+                            <div class="col-6 col-md-3">
+                                <div class="card border-0 shadow-sm h-100"><div class="card-body py-2 text-center">
+                                    <div class="fs-5 fw-semibold" id="envSummaryRoles">–</div>
+                                    <div class="text-muted small text-uppercase">Rôles user-app</div>
+                                </div></div>
+                            </div>
+                            <div class="col-6 col-md-3">
+                                <div class="card border-0 shadow-sm h-100"><div class="card-body py-2 text-center">
+                                    <div class="fs-5 fw-semibold" id="envSummarySA">–</div>
+                                    <div class="text-muted small text-uppercase">Service accounts</div>
+                                </div></div>
+                            </div>
+                        </div>
+
+                        <div class="row g-3">
+                            <!-- ==================== EXPORT ==================== -->
+                            <div class="col-lg-6">
+                                <div class="card border-0 shadow-sm h-100">
+                                    <div class="card-header bg-white border-bottom">
+                                        <strong><i class="bi bi-box-arrow-up me-1"></i>Exporter</strong>
+                                        <span class="text-muted small ms-2">format selon les options</span>
+                                    </div>
+                                    <div class="card-body">
+                                        <div class="d-flex justify-content-between align-items-center border-bottom py-2">
+                                            <div>
+                                                <div class="fw-semibold small">Inclure les clés JWT</div>
+                                                <div class="text-muted small">Privée + publique — désactivé par défaut, très sensible</div>
+                                            </div>
+                                            <div class="form-check form-switch mb-0">
+                                                <input class="form-check-input" type="checkbox" id="exportIncludeJwt">
+                                            </div>
+                                        </div>
+                                        <div class="d-flex justify-content-between align-items-center border-bottom py-2">
+                                            <div>
+                                                <div class="fw-semibold small">Secrets des service accounts</div>
+                                                <div class="text-muted small">Nécessaires pour que les apps se réauthentifient après import</div>
+                                            </div>
+                                            <div class="form-check form-switch mb-0">
+                                                <input class="form-check-input" type="checkbox" id="exportIncludeSaSecrets" checked>
+                                            </div>
+                                        </div>
+                                        <div class="d-flex justify-content-between align-items-center py-2">
+                                            <div>
+                                                <div class="fw-semibold small">Backups des applications (5 derniers par app)</div>
+                                                <div class="text-muted small">Produit une archive ZIP au lieu d'un JSON</div>
+                                            </div>
+                                            <div class="form-check form-switch mb-0">
+                                                <input class="form-check-input" type="checkbox" id="exportIncludeAppBackups" checked>
+                                            </div>
+                                        </div>
+                                        <div class="d-flex gap-2 mt-3">
+                                            <button type="button" class="btn btn-primary btn-sm flex-fill"
+                                                    data-action="downloadBackupExport" data-args="json">
+                                                <i class="bi bi-download me-1"></i>Exporter en JSON
+                                            </button>
+                                            <button type="button" class="btn btn-outline-primary btn-sm flex-fill"
+                                                    data-action="downloadBackupExport" data-args="zip">
+                                                <i class="bi bi-file-earmark-zip me-1"></i>Exporter en ZIP
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- ==================== IMPORT ==================== -->
+                            <div class="col-lg-6">
+                                <div class="card border-0 shadow-sm h-100">
+                                    <div class="card-header bg-white border-bottom">
+                                        <strong><i class="bi bi-box-arrow-in-down me-1"></i>Importer</strong>
+                                        <span class="text-muted small ms-2">environment.json ou archive .zip</span>
+                                    </div>
+                                    <div class="card-body">
+                                        <input type="file" class="form-control" id="importBackupFile"
+                                               accept=".json,.zip" data-action="previewBackupFile">
+
+                                        <!-- Preview du fichier sélectionné -->
+                                        <div id="backupPreview" class="d-none mt-3">
+                                            <div class="d-flex flex-wrap justify-content-between align-items-center mb-2 gap-1">
+                                                <span class="badge text-bg-secondary">Version <span id="previewVersion">–</span></span>
+                                                <span class="badge text-bg-light border">Par <span id="previewBy">–</span></span>
+                                                <span class="badge text-bg-light border">Le <span id="previewDate">–</span></span>
+                                                <span class="badge text-bg-light border">Clés JWT : <span id="previewJwt">Non</span></span>
+                                            </div>
+                                            <div class="row g-2 text-center">
+                                                <div class="col-3"><div class="border rounded py-1"><div class="fw-semibold" id="previewUsers">0</div><div class="text-muted small">users</div></div></div>
+                                                <div class="col-3"><div class="border rounded py-1"><div class="fw-semibold" id="previewApps">0</div><div class="text-muted small">apps</div></div></div>
+                                                <div class="col-3"><div class="border rounded py-1"><div class="fw-semibold" id="previewSA">0</div><div class="text-muted small">SA</div></div></div>
+                                                <div class="col-3"><div class="border rounded py-1"><div class="fw-semibold" id="previewBackups">0</div><div class="text-muted small">backups</div></div></div>
+                                            </div>
+
+                                            <div class="fw-semibold small mt-3 mb-1">Catégories à importer</div>
+                                            <div class="row g-1 small">
+                                                <div class="col-6">
+                                                    <div class="form-check">
+                                                        <input class="form-check-input" type="checkbox" id="importIncludeUsers" checked>
+                                                        <label class="form-check-label" for="importIncludeUsers">Utilisateurs (<span id="importCountUsers">–</span>)</label>
+                                                    </div>
+                                                    <div class="form-check">
+                                                        <input class="form-check-input" type="checkbox" id="importIncludeApps" checked>
+                                                        <label class="form-check-label" for="importIncludeApps">Applications (<span id="importCountApps">–</span>)</label>
+                                                    </div>
+                                                    <div class="form-check">
+                                                        <input class="form-check-input" type="checkbox" id="importIncludeRoles" checked>
+                                                        <label class="form-check-label" for="importIncludeRoles">Rôles user-app (<span id="importCountRoles">–</span>)</label>
+                                                    </div>
+                                                </div>
+                                                <div class="col-6">
+                                                    <div class="form-check">
+                                                        <input class="form-check-input" type="checkbox" id="importIncludeSA" checked>
+                                                        <label class="form-check-label" for="importIncludeSA">Service accounts (<span id="importCountSA">–</span>)</label>
+                                                    </div>
+                                                    <div class="form-check">
+                                                        <input class="form-check-input" type="checkbox" id="importIncludeBackups" checked>
+                                                        <label class="form-check-label" for="importIncludeBackups">Backups d'apps (<span id="importCountBackups">–</span>)</label>
+                                                    </div>
+                                                </div>
+                                            </div>
+
+                                            <div class="row g-2 mt-2">
+                                                <div class="col-sm-7">
+                                                    <label class="form-label small mb-1" for="importMode">Si un élément existe déjà</label>
+                                                    <select class="form-select form-select-sm" id="importMode">
+                                                        <option value="skip" selected>Ignorer (conserver l'existant)</option>
+                                                        <option value="update">Mettre à jour avec l'export</option>
+                                                        <option value="error">Bloquer l'import</option>
+                                                    </select>
+                                                </div>
+                                                <div class="col-sm-5 d-flex align-items-end">
+                                                    <div class="form-check form-switch">
+                                                        <input class="form-check-input" type="checkbox" id="importRestoreJwt">
+                                                        <label class="form-check-label small" for="importRestoreJwt">Restaurer les clés (redémarrage requis)</label>
+                                                    </div>
+                                                </div>
+                                            </div>
+
+                                            <button type="button" class="btn btn-danger btn-sm w-100 mt-3" id="importBackupBtn"
+                                                    disabled data-action="executeBackupImport">
+                                                <i class="bi bi-upload me-1"></i>Importer l'environnement
+                                            </button>
+                                        </div>
+
+                                        <!-- Résultat de l'import -->
+                                        <div class="card mt-3 d-none" id="importResultCard">
+                                            <div class="card-header" id="importResultHeader">—</div>
+                                            <div class="card-body">
+                                                <div class="row g-2" id="importResultStats"></div>
+                                                <div class="alert alert-warning py-2 mb-0 small mt-2 d-none" id="importResultWarnings">
+                                                    <strong>Avertissements</strong>
+                                                    <ul class="mb-0 ps-3" id="importWarningsList"></ul>
+                                                </div>
+                                                <div class="alert alert-danger py-2 mb-0 small mt-2 d-none" id="importResultErrors">
+                                                    <strong>Erreurs</strong>
+                                                    <ul class="mb-0 ps-3" id="importErrorsList"></ul>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <!-- ================= /Workspace Environnement ================= -->
 
                 <!-- VPN Panel -->
                 <div class="tab-pane fade" id="vpnPanel">
