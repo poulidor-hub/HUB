@@ -51,11 +51,16 @@ async function loadBackupInfo() {
 /**
  * Télécharge l'export du backup
  */
-async function downloadBackupExport() {
+async function downloadBackupExport(format) {
     try {
         const includeJwt = document.getElementById('exportIncludeJwt').checked;
         const includeSaSecrets = document.getElementById('exportIncludeSaSecrets').checked;
-        const includeAppBackups = document.getElementById('exportIncludeAppBackups').checked;
+        const includeAppBackupsInput = document.getElementById('exportIncludeAppBackups');
+        // format optionnel ('json' | 'zip') passé par data-args : aligne l'option
+        // « backups des apps » qui décide du format de téléchargement.
+        if (format === 'zip') includeAppBackupsInput.checked = true;
+        if (format === 'json') includeAppBackupsInput.checked = false;
+        const includeAppBackups = includeAppBackupsInput.checked;
         
         showToast('Export', 'Génération de l\'export en cours...', 'info');
         

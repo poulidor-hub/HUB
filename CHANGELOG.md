@@ -5,6 +5,21 @@
 
 ---
 
+## [3.70.0] - 7 octobre 2026
+
+### ⚡ Onglet « Environnement » dans la page Sauvegardes — export/import réactivé (look Ops Console)
+
+| Fonctionnalité | Description |
+|----------------|-------------|
+| **Contexte** | Les routes d'export/import d'environnement ont été réimplémentées en 3.69.0 (backend), mais l'écran UI correspondant avait disparu lors d'une refonte : le module `backup-import.js` restait chargé sans aucun point d'entrée. |
+| **`index.html`** | 3ᵉ onglet workspace « Environnement » dans la page Sauvegardes (à côté d'Applications et Snapshots) + `backupWorkspaceEnv` : avertissement « données sensibles », résumé de l'environnement en 4 stats, deux panneaux — Export (3 switches dont clés JWT désactivées par défaut ; boutons JSON / ZIP) et Import (fichier, preview compteurs + version/auteur/date/clés, catégories cochables avec compteurs, mode de conflit, restauration de clés, carte de résultat succès/avertissements/erreurs). Les 37 IDs DOM attendus par `backup-import.js` sont recâblés via le délégateur `data-action`. |
+| **`app-backups.js`** | `switchBackupWorkspace` gère `'env'` → `loadBackupInfo()` (résumé + reset formulaire). |
+| **`backup-import.js`** | `downloadBackupExport(format)` : `data-args="json\|zip"` aligne l'option « backups des apps » qui décide du format (JSON sinon ZIP). Rétro-compatible sans argument. |
+| **Validation** | Contrôle croisé 37/37 IDs présents sans doublon, toutes les `data-action` résolues, syntaxe JS vérifiée, frontend de test rebuilde (page servie avec le nouveau workspace). |
+| **Hors scope** | Aucune modif backend ; import réel non exécuté en prod (endpoints déjà validés en 3.69.0). |
+
+---
+
 ## [3.69.2] - 7 octobre 2026
 
 ### ⚡ Compteur de connectivité — les ateliers ne comptent plus comme offline
