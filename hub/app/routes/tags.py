@@ -6,10 +6,11 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, delete
 from sqlalchemy.orm import selectinload
+from datetime import timedelta
 import httpx
 
 from app.database import get_db
-from app.auth import get_current_admin, get_current_user, get_current_entity
+from app.auth import get_current_admin, get_current_user, get_current_entity, create_access_token
 from app.models import User, Application, TagCategory, UserTag, UserTagSeen
 from app.schemas import (
     TagCategoryCreate,
@@ -65,6 +66,22 @@ async def _get_user_seen(db: AsyncSession, user_id: int) -> list[str]:
 # ─── Découverte M2M (proxy vers l'app source) ─────────────────────
 
 
+def _m2m_headers(slug: str) -> dict[str, str]:
+    """Mint un token de service éphémère pour appeler l'app source en M2M.
+
+    Même pattern que app_socle_check.py : token court (5 min), périmètre
+    minimal (app cible, rôle admin). Les apps du socle exigent un Bearer
+    sur /api/hub/data/* (require_role("admin")).
+    """
+    token, _, _ = create_access_token(
+        username="hub-tags-sync",
+        apps={slug: "admin"},
+        expires_delta=timedelta(minutes=5),
+        is_service_account=True,
+    )
+    return {"Authorization": f"Bearer {token}"}
+
+
 @router.get("/discover/tables")
 async def discover_tables(
     app_id: int = Query(...),
@@ -79,7 +96,10 @@ async def discover_tables(
     import httpx
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
-            r = await client.get(f"{app.api_url.rstrip('/')}/api/hub/data/tables")
+            r = await client.get(
+                f"{app.api_url.rstrip('/')}/api/hub/data/tables",
+                headers=_m2m_headers(app.slug),
+            )
             r.raise_for_status()
             return r.json()
     except httpx.RequestError as e:
@@ -105,7 +125,8 @@ async def discover_columns(
         async with httpx.AsyncClient(timeout=10.0) as client:
             r = await client.get(
                 f"{app.api_url.rstrip('/')}/api/hub/data/columns",
-                params={"table": table}
+                params={"table": table},
+                headers=_m2m_headers(app.slug),
             )
             r.raise_for_status()
             return r.json()
@@ -280,15 +301,27 @@ async def import_m2m(
     try:
         target_url = f"{source_app.api_url.rstrip('/')}{(category.m2m_endpoint or '/api/tags/export')}"
         async with httpx.AsyncClient(timeout=10.0) as client:
-            response = await client.get(target_url)
+            response = await client.get(
+                target_url,
+                headers=_m2m_headers(source_app.slug),
+            )
             if response.status_code != 200:
                 raise HTTPException(
                     status_code=502,
                     detail=f"L'app source a retourné {response.status_code}"
                 )
-            exported_values = response.json()
-            if not isinstance(exported_values, list):
-                raise HTTPException(status_code=502, detail="Format de réponse M2M invalide (attendu: liste)")
+            exported = response.json()
+            # Formats tolérés : liste directe, ou objet {"values": [...]}
+            # (format des routes /api/hub/data/values des apps du socle)
+            if isinstance(exported, dict) and isinstance(exported.get("values"), list):
+                exported_values = exported["values"]
+            elif isinstance(exported, list):
+                exported_values = exported
+            else:
+                raise HTTPException(
+                    status_code=502,
+                    detail="Format de réponse M2M invalide (attendu: liste ou {values: [...]})"
+                )
             category.values = [str(v) for v in exported_values]
     except httpx.RequestError as e:
         raise HTTPException(status_code=502, detail=f"Erreur de connexion à l'app source: {e}")
