@@ -5,6 +5,19 @@
 
 ---
 
+## [3.70.1] - 8 octobre 2026
+
+### ⚡ Sync préférences M2M — authentification des appels vers les apps + tolérance de format
+
+| Fonctionnalité | Description |
+|----------------|-------------|
+| **Contexte** | La synchronisation d'une catégorie de préférences depuis une app source (ex. exemple-app-api-v3) échouait systématiquement : « L'application a retourné 401 » (découverte) / « L'app source a retourné 401 » (import). |
+| **`routes/tags.py`** | `discover_tables`, `discover_columns` et `import_m2m` mintent désormais un token de service éphémère (5 min, `apps={slug: "admin"}`, pattern `app_socle_check.py`) envoyé en `Authorization: Bearer` — les apps du socle exigent `require_role("admin")` sur `/api/hub/data/*`, l'appel nu donnait 401 → 502. |
+| **`import_m2m`** | Tolère le format objet `{"values": [...]}` retourné par les routes `/api/hub/data/values` des apps du socle, en plus de la liste JSON directe. |
+| **Dépendance côté apps** | À combiner avec le correctif app `hub_data.py` (session en `Depends(get_db)` au lieu de `async with`, sinon 500 une fois l'auth passée) — exemple-app-api-v3 v1.20.10. |
+
+---
+
 ## [3.70.0] - 7 octobre 2026
 
 ### ⚡ Onglet « Environnement » dans la page Sauvegardes — export/import réactivé (look Ops Console)
