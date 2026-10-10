@@ -5,6 +5,18 @@
 
 ---
 
+## [3.70.2] - 11 octobre 2026
+
+### ⚡ Déploiement — réconciliation subnet Hub ↔ réseau Docker vivant + anti-collision cross-host
+
+| Fonctionnalité | Description |
+|----------------|-------------|
+| **Réconciliation subnet au déploiement** | `docker_scanner.get_project_network_subnets()` lit les sous-réseaux des réseaux Docker du projet Compose (label `com.docker.compose.project`) ; `port_allocator.reconcile_subnet_with_docker()` aligne l'allocation DB sur le réseau vivant avant l'écriture du `.env` (règle : le réseau gagne). No-op si 0 ou 2+ réseaux, host distant, flag désactivé ; jamais de raise. Corrige l'échec `Échec (2) de 'make'` à l'étape `up` (exemple-app #14/#15) et le crash `network not found` (exemple-app-test #9) : Compose ne recrée plus jamais le réseau d'une app vivante. |
+| **Sous-réseaux non scopés par host** | `_used_subnets_for_host` → `_used_subnets` : le démon Docker est partagé et l'host détecté est instable (même machine, plusieurs IP) — supprime les collisions cross-host constatées (10.50.1.0/24 alloué à `exemple-app` ET `exemple-app-test`). |
+| **Tests** | 13 nouveaux tests (scanner, réconciliation, pipeline `.env` réconcilié, collision cross-host) + fixture autouse de neutralisation du scan Docker ; suite complète : 1362 (hôte) / 1321 (conteneur pouly-test) passed. |
+
+---
+
 ## [3.70.1] - 8 octobre 2026
 
 ### ⚡ Sync préférences M2M — authentification des appels vers les apps + tolérance de format
