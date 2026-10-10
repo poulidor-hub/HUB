@@ -2,11 +2,14 @@
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import JSONResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import get_current_admin
+from app.config import get_settings
 from app.database import get_db
+from app.deploy_precheck import run_deploy_precheck
 from app.deploy_service import has_active_deployment_for, start_deployment
 from app.models import AppDeployment, Application, User
 
@@ -41,7 +44,13 @@ async def deploy_app(
     db: AsyncSession = Depends(get_db),
     admin: User = Depends(get_current_admin),
 ):
-    """Déclenche le déploiement automatique (non-bloquant)."""
+    """Déclenche le déploiement automatique (non-bloquant).
+
+    Défense en profondeur : rejoue le precheck complet avant de lancer —
+    même un appel direct à l'API (hors UI) ne peut pas démarrer un
+    déploiement condamné. Le pipeline conserve ses échecs explicites en
+    dernier filet (fenêtre TOCTOU entre les deux évaluations).
+    """
     app = await _get_app_or_404(db, slug)
     if not app.git_repo_url:
         raise HTTPException(
@@ -53,9 +62,39 @@ async def deploy_app(
             status_code=409,
             detail=f"Un déploiement de '{slug}' est déjà en cours ou en file d'attente. Réessayez une fois terminé.",
         )
+    ready, checks = await run_deploy_precheck(db, slug, get_settings())
+    if not ready:
+        # JSONResponse direct (pas HTTPException) : le handler global
+        # stringifie `detail`, et un refus de validation n'a pas à polluer
+        # le journal d'erreurs — le client reçoit les checks complets.
+        return JSONResponse(
+            status_code=422,
+            content={
+                "message": f"Prérequis de déploiement non satisfaits pour '{slug}'",
+                "slug": slug,
+                "ready": False,
+                "checks": checks,
+            },
+        )
     deployment_id = await start_deployment(slug=slug, triggered_by=admin.username)
     logger.info(f"Déploiement #{deployment_id} lancé pour {slug} par {admin.username}")
     return {"deployment_id": deployment_id, "slug": slug, "status": "pending"}
+
+
+@router.get("/{slug}/deploy/precheck")
+async def get_deploy_precheck(
+    slug: str,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_admin),
+):
+    """Prérequis de déploiement de l'app : `{ready, checks}`.
+
+    L'UI n'ouvre la modale de mise en place que si `ready` est vrai ;
+    sinon elle affiche la liste des éléments manquants.
+    """
+    await _get_app_or_404(db, slug)
+    ready, checks = await run_deploy_precheck(db, slug, get_settings())
+    return {"slug": slug, "ready": ready, "checks": checks}
 
 
 @router.get("/{slug}/deploy/status")

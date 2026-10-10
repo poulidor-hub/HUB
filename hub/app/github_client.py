@@ -79,6 +79,19 @@ async def fetch_github_raw(url: str, db: Optional[AsyncSession] = None) -> Optio
         return None
 
 
+async def fetch_github_raw_with_status(url: str, db: Optional[AsyncSession] = None) -> tuple:
+    """Comme fetch_github_raw mais distingue l'absence (404) d'une panne
+    (status=0 : pas de réponse). Nécessaire au precheck (politique bloquant
+    strict : une panne réseau ne doit pas être confondue avec un fichier absent).
+    Retourne (texte|None, status)."""
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(10), verify=False) as client:
+            resp = await client.get(url, headers=await github_headers(db))
+            return (resp.text if 200 <= resp.status_code < 300 else None), resp.status_code
+    except Exception:
+        return None, 0
+
+
 def parse_github_url(git_repo_url: str) -> Optional[tuple[str, str]]:
     """Extrait (owner, repo) d'une URL GitHub. Retourne None si pas GitHub."""
     if not git_repo_url:
