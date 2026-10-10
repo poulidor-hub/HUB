@@ -219,17 +219,18 @@ async def _used_ports_for_host(
     return all_used, all_used
 
 
-async def _used_subnets_for_host(db: AsyncSession, host: str, cutoff=None) -> set[str]:
-    """Sous-réseaux déjà alloués (pool Hub) pour un host donné.
+async def _used_subnets(db: AsyncSession, cutoff=None) -> set[str]:
+    """Sous-réseaux déjà alloués (pool Hub), TOUS hosts confondus.
 
-    Scopé par host comme les ports : deux apps sur des machines différentes
-    peuvent réutiliser le même sous-réseau. Retourne les CIDR en chaîne
-    (ex: "10.50.0.0/24"). `cutoff` exclut les réservations expirées (sans app
-    associée et antérieures à la date limite).
+    Contrairement aux ports, les sous-réseaux ne sont PAS scopés par host :
+    le démon Docker est partagé par toutes les apps colocalisées, et l'host
+    détecté est instable (même machine vue sous plusieurs IP selon
+    l'interface/VPN). Le scoping par host a permis des collisions réelles
+    (10.50.1.0/24 alloué à exemple-app ET exemple-app-test — bug 2026-10-10).
+    Retourne les CIDR en chaîne (ex: "10.50.0.0/24"). `cutoff` exclut les
+    réservations expirées (sans app associée et antérieures à la date limite).
     """
-    allocs = (
-        await db.execute(select(PortAllocation).where(PortAllocation.host == host))
-    ).scalars().all()
+    allocs = (await db.execute(select(PortAllocation))).scalars().all()
     if cutoff is not None:
         app_slugs = set((await db.execute(select(Application.slug))).scalars())
         allocs = [
@@ -239,6 +240,59 @@ async def _used_subnets_for_host(db: AsyncSession, host: str, cutoff=None) -> se
             or a.allocated_at >= cutoff
         ]
     return {a.subnet for a in allocs if a.subnet}
+
+
+async def reconcile_subnet_with_docker(
+    db: AsyncSession, slug: str, allocation: PortAllocation, settings
+) -> str | None:
+    """Aligne l'allocation Hub sur le sous-réseau réel du réseau Docker vivant.
+
+    Le compose des apps épingle l'IPAM sur ${APP_SUBNET} : si l'allocation Hub
+    diverge du réseau existant (ré-allocation après purge / re-création /
+    host instable, pendant que le réseau persistait), tout `make up` tente de
+    recréer le réseau — refusé si des conteneurs tiers y sont attachés (exit 2,
+    exemple-app 2026-10-10), conteneurs de l'app cassés sinon
+    (« network not found », exemple-app-test #9).
+
+    Règle : le réseau vivant gagne. L'allocation DB est réécrite ; l'appelant
+    écrit ensuite APP_SUBNET réconcilié dans le .env (aucune divergence
+    restante → Compose ne touche plus au réseau).
+
+    - Ne s'applique qu'à l'hôte local (le scan ne reflète pas un démon distant).
+    - Un seul réseau attendu pour le projet : ambiguïté (0 ou 2+) → no-op.
+    - Best-effort : retourne le CIDR réconcilié, ou None si rien à faire.
+    """
+    if not getattr(settings, "subnet_scan_docker_enabled", True):
+        return None
+    if allocation.host != settings.get_hub_host():
+        return None
+    try:
+        subnets = await asyncio.to_thread(
+            docker_scanner.get_project_network_subnets, slug
+        )
+    except Exception as e:
+        logger.warning("Scan du réseau Docker du projet '%s' échoué : %s", slug, e)
+        return None
+    if len(subnets) != 1:
+        if len(subnets) > 1:
+            logger.warning(
+                "⚠️ Plusieurs réseaux Docker pour le projet '%s' (%s) : "
+                "réconciliation du sous-réseau ignorée.",
+                slug, ", ".join(sorted(subnets)),
+            )
+        return None
+    real = next(iter(subnets))
+    if allocation.subnet == real:
+        return None
+    logger.warning(
+        "🔄 Réconciliation subnet pour '%s' : allocation Hub %s → réseau Docker "
+        "vivant %s (le réseau gagne, sinon Compose le recrée et casse le déploiement)",
+        slug, allocation.subnet, real,
+    )
+    allocation.subnet = real
+    await db.commit()
+    await db.refresh(allocation)
+    return real
 
 
 def pick_free_subnet(
@@ -302,7 +356,7 @@ async def allocate_ports_for_app(
         if not existing.subnet:
             # Allocation antérieure à l'introduction du pool : remplir
             # paresseusement le sous-réseau (idempotent à partir d'ici).
-            used_subnets = await _used_subnets_for_host(db, host, cutoff=cutoff)
+            used_subnets = await _used_subnets(db, cutoff=cutoff)
             used_subnets |= await docker_occupied_subnets(settings, host)
             existing.subnet = pick_free_subnet(
                 used_subnets,
@@ -327,7 +381,7 @@ async def allocate_ports_for_app(
         api_range=(settings.app_port_api_start, settings.app_port_api_end),
         frontend_range=(settings.app_port_frontend_start, settings.app_port_frontend_end),
     )
-    used_subnets = await _used_subnets_for_host(db, host, cutoff=cutoff)
+    used_subnets = await _used_subnets(db, cutoff=cutoff)
     used_subnets |= await docker_occupied_subnets(settings, host)
     subnet = pick_free_subnet(
         used_subnets,

@@ -544,6 +544,38 @@ class DockerScanner:
             return set()
         return used
 
+    def get_project_network_subnets(self, project: str) -> set:
+        """Sous-réseaux des réseaux Docker du projet Compose `project`.
+
+        Filtre sur le label `com.docker.compose.project` posé par Docker
+        Compose — indépendant du nom du réseau (souvent épinglé en dur dans le
+        compose de l'app, ex. exemple-app-network).
+
+        Best-effort : renvoie set() si Docker est indisponible ou en cas
+        d'erreur ; ne lève jamais.
+        """
+        if not self.is_available:
+            logger.warning("Docker indisponible : scan réseau projet ignoré")
+            return set()
+
+        subnets: set = set()
+        try:
+            for net in self.client.networks.list():
+                labels = (net.attrs or {}).get("Labels") or {}
+                if not isinstance(labels, dict):
+                    continue
+                if labels.get("com.docker.compose.project") != project:
+                    continue
+                ipam = (net.attrs or {}).get("IPAM") or {}
+                for cfg in ipam.get("Config") or []:
+                    subnet = cfg.get("Subnet")
+                    if subnet:
+                        subnets.add(subnet)
+        except Exception as e:
+            logger.warning(f"Scan des réseaux du projet {project} échoué: {e}")
+            return set()
+        return subnets
+
     def get_docker_info(self) -> Dict[str, Any]:
         """Retourne des informations sur l'environnement Docker"""
         if not self.is_available:

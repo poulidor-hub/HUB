@@ -477,3 +477,41 @@ async def test_expired_reservation_same_slug_gets_clean_realloc(async_session, t
         select(PortAllocation).where(PortAllocation.app_slug == "back-later")
     )).scalars().all()
     assert len(rows) == 1
+
+
+# ===== Sous-réseaux : aucune collision cross-host (Docker partagé) =====
+# Bug 2026-10-10 : les sous-réseaux étaient scopés par host comme les ports,
+# mais le démon Docker est partagé par toutes les apps colocalisées et l'host
+# détecté est instable (même machine vue sous plusieurs IP selon
+# l'interface/VPN) : 10.50.1.0/24 s'est retrouvé alloué à deux apps en même
+# temps (exemple-app / exemple-app-test).
+
+@pytest.mark.asyncio
+async def test_subnets_not_scoped_by_host(async_session):
+    """Deux apps sur des hosts différents ne partagent jamais un sous-réseau."""
+    h1 = REMOTE_TEST_HOST          # hosts « distants » : scans Docker ignorés,
+    h2 = "10.99.99.99"             # la DB seule décide -> déterministe
+    a1, _ = await allocate_ports_for_app(async_session, "app-on-h1", h1, settings)
+    a2, _ = await allocate_ports_for_app(async_session, "app-on-h2", h2, settings)
+    assert a1.subnet and a2.subnet
+    assert a2.subnet != a1.subnet, "collision de sous-réseau entre deux hosts"
+
+
+@pytest.mark.asyncio
+async def test_backfill_subnet_avoids_cross_host_collision(async_session):
+    """Le remplissage paresseux d'une allocation ancienne (sans subnet) évite
+    aussi les sous-réseaux alloués à d'autres hosts."""
+    async_session.add(PortAllocation(
+        app_slug="taken", host="10.99.99.98",
+        api_port=9000, frontend_port=4200, frontend_https_port=4201,
+        subnet="10.50.0.0/24",
+    ))
+    async_session.add(PortAllocation(
+        app_slug="legacy-app", host=REMOTE_TEST_HOST,
+        api_port=9001, frontend_port=4202, frontend_https_port=4203,
+    ))
+    await async_session.commit()
+
+    alloc, reused = await allocate_ports_for_app(async_session, "legacy-app", REMOTE_TEST_HOST, settings)
+    assert reused is True
+    assert alloc.subnet and alloc.subnet != "10.50.0.0/24"
