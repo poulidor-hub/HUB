@@ -111,7 +111,7 @@ from app.config import get_settings
 from app.database import async_session_maker
 from app.github_client import normalize_github_url
 from app.models import AppDeployment, Application
-from app.port_allocator import allocate_ports_for_app
+from app.port_allocator import allocate_ports_for_app, reconcile_subnet_with_docker
 
 logger = logging.getLogger(__name__)
 
@@ -310,6 +310,11 @@ async def _run_deployment(deployment_id: int, slug: str, session_factory=None) -
                 repo_url = normalize_github_url(app.git_repo_url)
                 host = get_settings().get_hub_host()
                 allocation, _reused = await allocate_ports_for_app(db, slug, host, get_settings())
+                # Réconciliation subnet Hub ↔ réseau Docker vivant (le réseau
+                # gagne) : sinon Compose recrée le réseau au premier
+                # divergent APP_SUBNET et le déploiement échoue
+                # (bugs 2026-10-10 exemple-app / exemple-app-test).
+                await reconcile_subnet_with_docker(db, slug, allocation, get_settings())
                 token = await _get_github_token(db)
 
             app_dir = get_apps_dir() / slug

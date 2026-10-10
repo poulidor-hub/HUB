@@ -74,6 +74,21 @@ def _hub_host_locality_neutralized(monkeypatch):
     monkeypatch.setattr("app.config._is_local_ip", lambda ip: True)
 
 
+@pytest.fixture(autouse=True)
+def _project_network_scan_neutralized(monkeypatch):
+    """Par défaut, aucun réseau Docker de projet n'est visible des tests.
+
+    La réconciliation subnet du pipeline de déploiement lit le démon Docker
+    local : sans neutralisation, un réseau réel labellisé comme le slug d'un
+    test (ex. exemple-app) fausserait les assertions de manière dépendante de
+    l'environnement. Les tests de réconciliation surchargent ce patch.
+    """
+    monkeypatch.setattr(
+        "app.port_allocator.docker_scanner.get_project_network_subnets",
+        lambda project: set(),
+    )
+
+
 # Champs OIDC mutés par certains tests ; sauvegardés puis restaurés par la fixture `settings`.
 _OIDC_FIELDS_TO_SNAPSHOT = (
     "oidc_issuer",
