@@ -5,6 +5,20 @@
 
 ---
 
+## [3.71.0] - 11 octobre 2026
+
+### ⚡ Déploiement — precheck des prérequis avant la modale de mise en place
+
+| Fonctionnalité | Description |
+|----------------|-------------|
+| **Precheck de déploiement** | Nouveau module `deploy_precheck.py` + `GET /api/apps/{slug}/deploy/precheck` : URL git normalisable, dépôt accessible au PAT (API GitHub ; non-GitHub → `git ls-remote`), Makefile racine avec cibles `build:`/`up:` (via raw, sans clone), `.env`/`.env.example`, aucun déploiement en cours, ports + sous-réseau allouables, outils du conteneur (git/make/docker compose v2), démon Docker accessible, `APPS_HOST_PATH` réellement inscriptible (test d'écriture — cas hub tiers en PermissionError). |
+| **Bloquant strict** | API GitHub injoignable/timeout = `fail` (décision 2026-10-11), distingué de l'absence (404) grâce à `github_client.fetch_github_raw_with_status`. |
+| **UI** | `triggerDeploy` (bouton fusée + fin du formulaire d'ajout) : si `ready=false`, la modale de mise en place n'est PAS ouverte — une modale d'information liste chaque check (ok/fail/warn/skipped) avec le détail de correction. |
+| **Défense en profondeur** | Le `POST /{slug}/deploy` rejoue le precheck complet et refuse `422` (JSONResponse : le handler global stringifie `HTTPException.detail` dict ; un refus de validation ne pollue pas le journal d'erreurs). |
+| **Tests** | 16 nouveaux (`test_deploy_precheck.py`) + 2 tests du POST alignés sur la garde ; suite : 1378 (hôte) / 1337 (conteneur pouly-test) passed. |
+
+---
+
 ## [3.70.2] - 11 octobre 2026
 
 ### ⚡ Déploiement — réconciliation subnet Hub ↔ réseau Docker vivant + anti-collision cross-host
