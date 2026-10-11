@@ -127,7 +127,72 @@ async function openDeployModal(slug) {
     bootstrap.Modal.getOrCreateInstance(_deployModalEl()).show();
 }
 
+/**
+ * Precheck avant toute mise en place (feat 2026-10-11).
+ *
+ * Si un prérequis manque (repo inaccessible, Makefile/.env absent, outils ou
+ * droits d'écriture du conteneur, ports/subnet…), la modale de déploiement
+ * n'est PAS ouverte : une modale d'information liste les éléments en échec.
+ * Le POST serveur rejoue lui-même le precheck (défense en profondeur).
+ */
+function _precheckStatusIcon(status) {
+    if (status === 'ok') return '<i class="bi bi-check-circle-fill text-success me-2"></i>';
+    if (status === 'warn') return '<i class="bi bi-exclamation-triangle-fill text-warning me-2"></i>';
+    if (status === 'skipped') return '<i class="bi bi-dash-circle text-muted me-2"></i>';
+    return '<i class="bi bi-x-circle-fill text-danger me-2"></i>';
+}
+
+function _showDeployBlockersModal(slug, checks) {
+    let modalEl = document.getElementById('deployBlockersModal');
+    if (!modalEl) {
+        modalEl = document.createElement('div');
+        modalEl.className = 'modal fade';
+        modalEl.id = 'deployBlockersModal';
+        modalEl.tabIndex = -1;
+        modalEl.innerHTML = `
+            <div class="modal-dialog modal-lg modal-dialog-scrollable">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title"><i class="bi bi-shield-exclamation me-2"></i>Déploiement impossible</h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                    </div>
+                    <div class="modal-body" id="deployBlockersBody"></div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Fermer</button>
+                    </div>
+                </div>
+            </div>`;
+        document.body.appendChild(modalEl);
+    }
+    const body = modalEl.querySelector('#deployBlockersBody');
+    const rows = checks.map(c =>
+        '<div class="border rounded p-2 mb-2">' +
+            '<div class="d-flex align-items-start">' + _precheckStatusIcon(c.status) +
+                '<div><strong class="small">' + escapeHtml(c.label) + '</strong>' +
+                (c.detail ? '<div class="text-muted" style="font-size:12px;white-space:pre-wrap;">' + escapeHtml(c.detail) + '</div>' : '') +
+                '</div></div></div>').join('');
+    const failed = checks.filter(c => c.status === 'fail').length;
+    body.innerHTML =
+        '<p class="mb-2">Les prérequis de déploiement de <strong>' + escapeHtml(slug) +
+        '</strong> ne sont pas tous réunis (' + failed + ' en échec). ' +
+        'Corrigez les points ci-dessous puis relancez.</p>' + rows;
+    bootstrap.Modal.getOrCreateInstance(modalEl).show();
+}
+
 async function triggerDeploy(slug) {
+    // 1. Precheck : la modale de mise en place n'est proposée que si tout est prêt.
+    let pre;
+    try {
+        pre = await api.getAppDeployPrecheck(slug);
+    } catch (e) {
+        showToast('Déploiement', 'Precheck indisponible : ' + e.message + ' — déploiement non lancé.', 'warning');
+        return false;
+    }
+    if (pre && pre.ready === false) {
+        _showDeployBlockersModal(slug, pre.checks || []);
+        return false;
+    }
+    // 2. Prérequis OK : lancement + suivi.
     try {
         const resp = await api.deployApp(slug);
         await openDeployModal(slug);

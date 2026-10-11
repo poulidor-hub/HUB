@@ -457,6 +457,27 @@ async def test_deploy_400_without_repo(client, admin_token, async_session):
     assert r.status_code == 400
 
 
+def _patch_precheck_ok(monkeypatch):
+    """Environnement precheck satisfait pour les tests du POST /deploy
+    (le POST rejoue le precheck depuis feat 2026-10-11)."""
+    monkeypatch.setattr("app.deploy_precheck._detect_tools",
+                        lambda: [("git", True), ("make", True), ("docker compose", True)])
+    monkeypatch.setattr("app.deploy_precheck._docker_daemon_status", lambda: (True, ""))
+    monkeypatch.setattr("app.deploy_precheck._apps_dir_writable", lambda st: (True, ""))
+
+    async def _fake_json(url, db=None):
+        return {"default_branch": "main"}, 200
+    monkeypatch.setattr("app.deploy_precheck.fetch_github_json", _fake_json)
+
+    async def _fake_raw(url, db=None):
+        if url.endswith("/Makefile"):
+            return "build:\nup:\n", 200
+        if url.endswith("/.env.example"):
+            return "X=1\n", 200
+        return None, 404
+    monkeypatch.setattr("app.deploy_precheck.fetch_github_raw_with_status", _fake_raw)
+
+
 @pytest.mark.asyncio
 async def test_deploy_no_conflict_with_other_app(client, admin_token, app_with_repo, async_session, monkeypatch):
     """Un déploiement d'une AUTRE app ne bloque plus (pool, spec 2026-09-17 §3.5)."""
@@ -467,6 +488,7 @@ async def test_deploy_no_conflict_with_other_app(client, admin_token, app_with_r
     async def _fake_start(slug, triggered_by):
         return 43
     monkeypatch.setattr(route_mod, "start_deployment", _fake_start)
+    _patch_precheck_ok(monkeypatch)
     r = await client.post("/api/apps/exemple-app/deploy", headers=get_auth_header(admin_token))
     assert r.status_code == 201
 
@@ -496,6 +518,7 @@ async def test_deploy_starts_and_returns_pending(client, admin_token, app_with_r
         return 42
 
     monkeypatch.setattr(route_mod, "start_deployment", _fake_start)
+    _patch_precheck_ok(monkeypatch)
     r = await client.post("/api/apps/exemple-app/deploy", headers=get_auth_header(admin_token))
     assert r.status_code == 201
     body = r.json()

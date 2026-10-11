@@ -1800,6 +1800,10 @@ class HubAPI {
         return this.request(`/apps/${encodeURIComponent(slug)}/deploy/status`);
     }
 
+    async getAppDeployPrecheck(slug) {
+        return this.request(`/apps/${encodeURIComponent(slug)}/deploy/precheck`);
+    }
+
     // ===== Atelier (vue santé) =====
     async getWorkshopState(slug) {
         return this.request(`/apps/${encodeURIComponent(slug)}/workshop`);
