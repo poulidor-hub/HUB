@@ -5,6 +5,17 @@
 
 ---
 
+## [3.71.2] - 12 octobre 2026
+
+### ⚡ APPS_HOST_PATH : fallback automatique via le Makefile
+
+| Fonctionnalité | Description |
+|----------------|-------------|
+| **Mise à jour serveur automatique** | Le Makefile HUB_base calcule `APPS_HOST_PATH` (voisin `../APPS` de HUB_base, depuis son propre emplacement) et l'exporte pour `docker compose` quand le `.env` ne la définit pas. `hubctl update` (make down → git pull → make build → make up-prod) corrige donc les serveurs installés avant la 3.71.1 **sans retouche manuelle du `.env`**. |
+| **Priorité respectée** | Environnement du shell > `.env` (lu par compose) > calcul Makefile — une valeur personnalisée existante n'est jamais écrasée. |
+
+---
+
 ## [3.71.1] - 12 octobre 2026
 
 ### ⚡ APPS_HOST_PATH dynamique — fin du chemin de machine de dev en dur
