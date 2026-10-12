@@ -3,6 +3,21 @@ OVERRIDE := $(strip $(shell test -f docker-compose.override.yml && echo -f docke
 COMPOSE      = docker compose -f docker-compose.yml $(OVERRIDE)
 COMPOSE_DEV  = docker compose -f docker-compose.yml $(OVERRIDE) -f docker-compose.dev.yml
 
+# ── APPS_HOST_PATH (fallback automatique) ────────────────────────────────────
+# Source de vérité : APPS_HOST_PATH dans .env (écrit par install.sh depuis la
+# 3.71.1). Pour les serveurs installés AVANT (pas de clé dans .env), le
+# Makefile calcule le chemin réel de APPS/ — voisin de HUB_base — depuis son
+# propre emplacement et l'exporte pour docker compose : `hubctl update` (qui
+# passe par make build/up-prod) corrige le serveur sans retouche manuelle.
+# Priorité : environnement du shell > .env (lu par compose) > calcul ci-dessous.
+APPS_HOST_PATH_FROM_ENV := $(shell sed -n 's/^APPS_HOST_PATH=//p' .env 2>/dev/null | head -n1)
+ifeq ($(strip $(APPS_HOST_PATH_FROM_ENV)),)
+ifndef APPS_HOST_PATH
+HUB_BASE_DIR := $(patsubst %/,%,$(dir $(abspath $(lastword $(MAKEFILE_LIST)))))
+export APPS_HOST_PATH := $(abspath $(HUB_BASE_DIR)/../APPS)
+endif
+endif
+
 .PHONY: up-prod up-dev down logs ps build
 
 build:
