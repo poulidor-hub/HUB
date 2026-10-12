@@ -589,11 +589,29 @@ async def test_app_deployment_model_persists(async_session):
 
 @pytest.mark.asyncio
 async def test_apps_host_path_setting_default(settings):
-    """Le chemin APPS est configurable via APPS_HOST_PATH avec défaut utilisable."""
+    """Le chemin APPS est configurable via APPS_HOST_PATH avec défaut utilisable.
+
+    Non-régression (2026-10-12) : le défaut ne référence plus de chemin de
+    machine de dev (/home/<user>/...) — les installations réelles reçoivent
+    APPS_HOST_PATH via le .env (écrit par install.sh) injecté par compose.
+    """
     from app.config import get_settings
     st = get_settings()
     assert hasattr(st, "apps_host_path")
     assert st.apps_host_path  # non vide par défaut
+    assert not st.apps_host_path.startswith("/home/")
+
+
+@pytest.mark.asyncio
+async def test_apps_host_path_env_override(monkeypatch):
+    """APPS_HOST_PATH est lu depuis l'environnement (injecté par compose)."""
+    from app.config import get_settings
+    monkeypatch.setenv("APPS_HOST_PATH", "/srv/poulidor/APPS")
+    get_settings.cache_clear()
+    try:
+        assert get_settings().apps_host_path == "/srv/poulidor/APPS"
+    finally:
+        get_settings.cache_clear()
 
 
 @pytest.mark.asyncio

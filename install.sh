@@ -311,6 +311,13 @@ AUTO_KEYS="${AUTO_KEYS:-false}"
 
 say "${BOLD}3. Écriture du .env${NC}"
 
+# Chemin absolu du dossier APPS/ (au-dessus de HUB_base), détecté depuis
+# l'emplacement réel du script — jamais du cwd ni d'une valeur en dur.
+# Requis par docker-compose : APPS est monté au MÊME chemin côté hôte et côté
+# conteneur hub-api (résolution des bind mounts des apps par le daemon hôte).
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+APPS_HOST_PATH=$(cd "$SCRIPT_DIR/.." && pwd)/APPS
+
 if [ -f .env ]; then
     if $INTERACTIVE; then
         read -p "  .env existe. Écraser ? [o/N] : " OVERWRITE
@@ -407,6 +414,10 @@ APP_PORT_API_END=9499
 APP_PORT_FRONTEND_START=4200
 APP_PORT_FRONTEND_END=4699
 PORT_SCAN_DOCKER_ENABLED=true
+
+# Déploiement auto des apps — chemin absolu réel de APPS/ sur CE serveur
+# (montage hôte/conteneur au même chemin ; détecté automatiquement ci-dessus)
+APPS_HOST_PATH=${APPS_HOST_PATH}
 
 # CORS regex (optionnel)
 ALLOWED_ORIGIN_REGEX=
