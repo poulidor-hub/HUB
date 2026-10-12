@@ -1,3 +1,14 @@
+## [3.71.3] - 12 octobre 2026
+
+### ⚡ install.sh : fusion auto-réparatrice dans un .env conservé
+
+| Fonctionnalité | Description |
+|----------------|-------------|
+| **Fusion sans écrasement** | Relancer `install.sh` sur un serveur existant ajoute désormais les clés requises manquantes au `.env` conservé (au minimum `APPS_HOST_PATH`, calculée localement) au lieu de sortir sans rien faire. Les secrets non inventables manquants (`POSTGRES_PASSWORD`, `ADMIN_*`, `SECRETS_ENCRYPTION_KEY`) déclenchent une erreur explicite listant les clés. Une valeur existante n'est jamais écrasée. |
+| **Automatisation complète** | Avec le fallback Makefile (3.71.2) et `ensure_hub_env()` (hubctl 0.10.7), aucun point d'entrée du stack ne nécessite plus de retouche manuelle du `.env` sur les serveurs installés avant la 3.71.1. |
+
+---
+
 # Changelog - Hub d'Authentification
 
 > Ce fichier documente toutes les modifications apportées à la documentation et à l'API.
