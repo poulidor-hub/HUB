@@ -1196,16 +1196,12 @@ async function confirmExportPassword() {
         }
         const exportData = await exportResult.json();
 
-        // Télécharger le fichier chiffré
+        // Télécharger le fichier chiffré (résilient : tranches Range + reprise,
+        // survit à une coupure réseau en plein transfert ; cf. resilient-download.js)
         const url = `/api/apps/${slug}/backup/${backupId}/export/download`;
-        const response = await fetch(url, {
-            headers: { 'Authorization': `Bearer ${api.token}` }
+        const blob = await resilientDownload(url, { 'Authorization': `Bearer ${api.token}` }, {
+            label: exportData.encrypted_filename || `backup_${slug}_${backupId}.encrypted`
         });
-        if (!response.ok) {
-            throw new Error('Erreur lors du téléchargement');
-        }
-
-        const blob = await response.blob();
         const downloadUrl = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = downloadUrl;

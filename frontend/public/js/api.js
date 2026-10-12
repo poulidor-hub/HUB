@@ -1302,14 +1302,13 @@ class HubAPI {
         
         if (includeAppBackups) {
             // Retourne un Blob ZIP via l'endpoint download
-            const response = await fetch(`${API_BASE}/admin/backup/export/download?${params}`, {
-                headers: this.token ? { 'Authorization': `Bearer ${this.token}` } : {}
-            });
-            if (!response.ok) {
-                const err = await response.json().catch(() => ({ detail: response.statusText }));
-                throw new Error(err.detail || 'Erreur export');
-            }
-            return await response.blob();
+            // (résilient : tranches Range + reprise, cf. resilient-download.js)
+            const blob = await resilientDownload(
+                `${API_BASE}/admin/backup/export/download?${params}`,
+                this.token ? { 'Authorization': `Bearer ${this.token}` } : {},
+                { label: 'Export environnement (ZIP)' }
+            );
+            return blob;
         }
         
         return this.request(`/admin/backup/export?${params}`);
