@@ -390,7 +390,11 @@ class Settings(BaseSettings):
     # Chemin absolu du dossier APPS/ — doit être identique côté hôte et côté
     # conteneur hub-api (montage au même chemin) pour que les bind mounts des
     # docker compose des apps soient résolus correctement par le daemon hôte.
-    apps_host_path: str = "/home/kkleskk/MyCOMPANY/HUB_stack/POULIDOR/APPS"
+    # Obligatoire en runtime : injecté par docker-compose depuis APPS_HOST_PATH
+    # du .env (écrit par install.sh avec le chemin réel de l'installation).
+    # Le défaut ci-dessous n'est utilisé que hors compose (tests unitaires) :
+    # volontairement neutre, JAMAIS un chemin de machine de développement.
+    apps_host_path: str = "/data/apps"
 
     # Host du Hub (IP ou hostname accessible par les clients)
     # Si non défini, sera détecté automatiquement

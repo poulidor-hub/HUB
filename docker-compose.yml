@@ -66,7 +66,7 @@ services:
       - APP_SUBNET_POOL=${APP_SUBNET_POOL:-10.50.0.0/16}
       - APP_SUBNET_SIZE=${APP_SUBNET_SIZE:-24}
       - PORT_SCAN_DOCKER_ENABLED=${PORT_SCAN_DOCKER_ENABLED:-true}
-      - APPS_HOST_PATH=${APPS_HOST_PATH:-/home/kkleskk/MyCOMPANY/HUB_stack/POULIDOR/APPS}
+      - APPS_HOST_PATH=${APPS_HOST_PATH:?Définir APPS_HOST_PATH dans .env (écrit par install.sh, chemin réel de APPS/)}
       - AUTO_GENERATE_KEYS=${AUTO_GENERATE_KEYS:-false}
       - APP_WHITELIST_NETWORKS=${APP_WHITELIST_NETWORKS:-}
       - AUDIT_SSE_COOLDOWN=${AUDIT_SSE_COOLDOWN:-5.0}
@@ -133,7 +133,9 @@ services:
       # Déploiement auto : APPS/ monté au MÊME chemin que sur l'hôte —
       # les bind mounts relatifs des compose des apps sont résolus par le
       # daemon hôte, les chemins conteneur/hôte doivent coïncider.
-      - ${APPS_HOST_PATH:-/home/kkleskk/MyCOMPANY/HUB_stack/POULIDOR/APPS}:${APPS_HOST_PATH:-/home/kkleskk/MyCOMPANY/HUB_stack/POULIDOR/APPS}:rw
+      # APPS_HOST_PATH est obligatoire (aucun défaut : chemin propre à chaque
+      # installation, écrit par install.sh).
+      - ${APPS_HOST_PATH:?Définir APPS_HOST_PATH dans .env}:${APPS_HOST_PATH:?Définir APPS_HOST_PATH dans .env}:rw
       # Certificats PKI (CA + cert serveur), partagés avec le frontend
       - ./certs:/code/certs:rw
       # Configuration VPN WireGuard (volume partagé avec wireguard-server)
