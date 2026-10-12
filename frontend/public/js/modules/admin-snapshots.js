@@ -397,16 +397,12 @@ function confirmRestoreSnapshot(snapshotId) {
 async function downloadSnapshot(snapshotId) {
     showToast('Telechargement', 'Telechargement en cours...', 'info');
     try {
-        const response = await fetch(`/api/admin/snapshots/${snapshotId}/download`, {
-            headers: {
-                'Authorization': `Bearer ${api.token}`
-            }
-        });
-        if (!response.ok) {
-            const err = await response.json().catch(() => ({ detail: 'Erreur serveur' }));
-            throw new Error(err.detail || 'Erreur telechargement');
-        }
-        const blob = await response.blob();
+        // Résilient : tranches Range + reprise (cf. resilient-download.js)
+        const blob = await resilientDownload(
+            `/api/admin/snapshots/${snapshotId}/download`,
+            { 'Authorization': `Bearer ${api.token}` },
+            { label: `snapshot_${snapshotId}.tar.zst.enc` }
+        );
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
