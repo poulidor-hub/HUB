@@ -16,6 +16,18 @@
 
 ---
 
+## [3.71.4] - 12 octobre 2026
+
+### ⚡ Téléchargements résilients : tranches Range avec reprise
+
+| Fonctionnalité | Description |
+|----------------|-------------|
+| **Reprise sur coupure réseau** | Nouveau module frontend `resilient-download.js` : les gros fichiers sont téléchargés par tranches Range de 4 Mo (206 Partial Content, support natif de FileResponse Starlette). Une coupure TCP en plein transfert ne perd plus le téléchargement : la tranche manquante est retentée avec backoff exponentiel (0,5→8 s), timeout de 90 s par requête pour détecter les connexions pendantes, et la taille finale est vérifiée contre le `Content-Range` annoncé (impossible de livrer un fichier tronqué). Repli automatique en téléchargement simple si le serveur ignore les Range. Corrige l'incident « Failed to fetch » sur export chiffré (coupure à 12,6 Mo / 27 Mo). |
+| **Endpoints couverts** | Export chiffré d'un backup d'app (`/export/download`), export ZIP de l'environnement Hub (`/admin/backup/export/download?include_app_backups=true`), téléchargement de snapshot (`/api/admin/snapshots/{id}/download`). Pastille de progression fixe, mise à jour par tranche (aucune animation continue). |
+| **Test autonome** | `frontend/tests/test_resilient_download.mjs` (Node ≥ 18, zéro dépendance) : serveur HTTP Range-compliant qui coupe brutalement le socket TCP en pleine tranche ; vérifie la reprise et l'intégrité des 27 208 352 octets reconstitués. Cycle rouge/vert validé. |
+
+---
+
 ## [3.71.2] - 12 octobre 2026
 
 ### ⚡ APPS_HOST_PATH : fallback automatique via le Makefile
