@@ -318,19 +318,47 @@ say "${BOLD}3. Écriture du .env${NC}"
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 APPS_HOST_PATH=$(cd "$SCRIPT_DIR/.." && pwd)/APPS
 
+# Fusion idempotente des clés requises dans un .env EXISTANT conservé
+# (jamais d'écrasement) : APPS_HOST_PATH est calculable localement → ajoutée
+# automatiquement si absente ou vide. Les secrets (POSTGRES_PASSWORD,
+# ADMIN_*, SECRETS_ENCRYPTION_KEY) ne sont pas inventables → erreur explicite
+# s'ils manquent. Permet de réparer un serveur installé avant la 3.71.1 en
+# relançant simplement install.sh — sans retouche manuelle du .env.
+merge_required_env_keys() {
+    local key value missing=""
+    value=$(sed -n 's/^APPS_HOST_PATH=//p' .env 2>/dev/null | head -n1 | tr -d '[:space:]')
+    if [ -z "$value" ]; then
+        echo "APPS_HOST_PATH=${APPS_HOST_PATH}" >> .env
+        ok "APPS_HOST_PATH ajouté au .env existant : ${APPS_HOST_PATH}"
+    fi
+    for key in POSTGRES_PASSWORD ADMIN_USERNAME ADMIN_PASSWORD SECRETS_ENCRYPTION_KEY; do
+        value=$(sed -n "s/^${key}=//p" .env 2>/dev/null | head -n1 | tr -d '[:space:]')
+        [ -z "$value" ] && missing="${missing} ${key}"
+    done
+    if [ -n "$missing" ]; then
+        err "Clés requises absentes du .env conservé :${missing}
+  Reprenez un .env complet (.env.old, coffre hubctl) ou relancez avec
+  écrasement — ces secrets ne peuvent pas être régénérés sans perte."
+    fi
+}
+
 if [ -f .env ]; then
     if $INTERACTIVE; then
         read -p "  .env existe. Écraser ? [o/N] : " OVERWRITE
         if [ "$OVERWRITE" != "o" ] && [ "$OVERWRITE" != "O" ]; then
-            warn ".env conservé. Pour appliquer : nano .env && docker compose up -d"
+            ok ".env conservé — fusion des clés manquantes requises (aucun écrasement)"
+            merge_required_env_keys
+            warn "Pour appliquer : make up-prod (ou docker compose up -d)"
             exit 0
         fi
     elif $AUTO; then
         warn ".env existant écrasé (mode auto)"
     elif ! $FORCE; then
-        err ".env existe déjà. Le mode --profile refuse de l'écraser par sécurité.
-  Utilisez --force pour autoriser l'écrasement, ou supprimez .env manuellement
-  si vous voulez repartir d'une configuration vierge."
+        ok ".env conservé (mode profil sans --force) — fusion des clés manquantes requises"
+        merge_required_env_keys
+        err "Le mode --profile ne réécrit pas un .env existant (sécurité).
+  La fusion ci-dessus a complété les clés calculables sans écrasement.
+  Pour une régénération complète : relancez avec --force."
     else
         warn ".env existant écrasé (mode profil + --force)"
     fi
