@@ -5,6 +5,21 @@
 
 ---
 
+## [3.71.1] - 12 octobre 2026
+
+### ⚡ APPS_HOST_PATH dynamique — fin du chemin de machine de dev en dur
+
+| Fonctionnalité | Description |
+|----------------|-------------|
+| **install.sh dynamique** | Le `.env` généré écrit désormais `APPS_HOST_PATH` avec le chemin réel de `APPS/` détecté depuis l'emplacement du script (`SCRIPT_DIR/../APPS`) — plus aucun chemin de machine de dev propagé vers les serveurs déployés. Corrige le precheck « Écriture du dossier APPS » en fail (`PermissionError`) sur serveur distant : le défaut en dur du compose créait un dossier fantôme appartenant à root, non inscriptible par le conteneur hub-api. |
+| **Variable obligatoire** | `docker-compose.yml` : `APPS_HOST_PATH` passe en `${VAR:?}` (env du conteneur + bind mount même-chemin hôte/conteneur) — `docker compose up` échoue avec un message explicite si le `.env` ne la définit pas, au lieu de monter silencieusement un chemin faux. |
+| **Défaut backend neutre** | `config.py` : `apps_host_path` par défaut `/data/apps` (tests unitaires uniquement) au lieu du chemin de dev ; jamais affiché en runtime puisque le compose fournit toujours la valeur. `.env.example` : placeholder documenté. |
+| **Tests** | Non-régression `test_apps_host_path_setting_default` (défaut sans `/home/`) + nouveau `test_apps_host_path_env_override` (lecture env injectée par compose). |
+
+**Migration serveurs existants** : ajouter `APPS_HOST_PATH=<chemin absolu réel>/APPS` dans `HUB_base/.env` puis `docker compose up -d hub-api` (et supprimer l'éventuel dossier fantôme créé en root par le daemon).
+
+---
+
 ## [3.71.0] - 11 octobre 2026
 
 ### ⚡ Déploiement — precheck des prérequis avant la modale de mise en place
