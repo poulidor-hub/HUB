@@ -21,6 +21,20 @@ function clearPendingCallback() {
     sessionStorage.removeItem('sso_pending_callback');
 }
 
+/**
+ * Reprise de flow OIDC (/oidc/authorize) : la re-navigation vers cette URL
+ * s'appuie sur le cookie hub_oidc_session (posé au login / refresh token),
+ * PAS sur le JWT HUB. On ne doit donc JAMAIS y ajouter access_token (fuite
+ * du JWT dans l'historique navigateur, paramètre ignoré par l'endpoint).
+ */
+function isOidcResumeCallback(url) {
+    try {
+        return new URL(url).pathname.endsWith('/oidc/authorize');
+    } catch (e) {
+        return false;
+    }
+}
+
 // Initialize on DOM load
 
 // ===== Authentication =====
@@ -44,6 +58,14 @@ async function handleLogin(event) {
         const pendingCallback = getPendingCallback();
         if (pendingCallback) {
             clearPendingCallback();  // Nettoyer AVANT la redirection
+            if (isOidcResumeCallback(pendingCallback)) {
+                // Reprise OIDC : le login vient de (re)poser le cookie
+                // hub_oidc_session → relancer l'authorize tel quel.
+                console.log('Login: reprise du flow OIDC vers:', pendingCallback);
+                showToast('Connexion réussie', `Reprise de la connexion SSO...`, 'success');
+                window.location.href = pendingCallback;
+                return;
+            }
             const separator = pendingCallback.includes('?') ? '&' : '?';
             const redirectUrl = `${pendingCallback}${separator}access_token=${api.token}`;
             console.log('Redirection SSO vers:', redirectUrl);
@@ -93,6 +115,24 @@ async function loadCurrentUser() {
         // Si l'utilisateur est déjà connecté et qu'un callback SSO est en attente
         // Rediriger directement vers l'application externe
         const pendingCallback = getPendingCallback();
+        if (pendingCallback && isOidcResumeCallback(pendingCallback)) {
+            // Reprise OIDC : le cookie hub_oidc_session a un TTL de 8h alors que
+            // la session dashboard dure jusqu'à 7j (refresh token). Re-poser le
+            // cookie via un refresh token AVANT de relancer l'authorize, sinon
+            // l'authorize renvoie « Session HUB requise » malgré une session
+            // dashboard valide.
+            const refreshed = await api.tryRefreshToken().catch(() => false);
+            if (!refreshed) {
+                // Session dashboard réellement expirée : le callback reste en
+                // sessionStorage, handleLogin le consommera après reconnexion.
+                handleSessionExpired('Votre session a expiré. Veuillez vous reconnecter pour poursuivre vers l\'application.');
+                return;
+            }
+            clearPendingCallback();
+            console.log('Session valide (cookie OIDC re-posé), reprise du flow OIDC vers:', pendingCallback);
+            window.location.href = pendingCallback;
+            return;
+        }
         if (pendingCallback) {
             clearPendingCallback();  // Nettoyer AVANT la redirection
             const separator = pendingCallback.includes('?') ? '&' : '?';
