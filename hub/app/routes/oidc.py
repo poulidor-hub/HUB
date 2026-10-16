@@ -5,7 +5,7 @@ Réutilise settings.jwt_private_key, JWKS endpoint, hash_token(), get_password_h
 """
 from datetime import timedelta
 from typing import List, Optional
-from urllib.parse import urlencode, urlparse
+from urllib.parse import urlencode, urlparse, quote
 import logging
 import time
 
@@ -132,6 +132,45 @@ async def openid_configuration():
 # On lit le cookie hub_oidc_session (posé au login HUB) pour identifier l'user.
 # Si user valide + a accès à l'app → génère code → redirige vers redirect_uri.
 
+def _is_browser_request(request: Request) -> bool:
+    """True si la requête vient d'un navigateur (header Accept: text/html).
+
+    Les clients non-navigateur (curl, httpx des tests, intégrations) conservent
+    la réponse JSON 401 historique.
+    """
+    return "text/html" in request.headers.get("accept", "").lower()
+
+
+def _login_redirect_response(
+    request: Request, settings, authz_params: dict
+) -> RedirectResponse:
+    """302 vers le login dashboard avec reprise automatique du flow OIDC.
+
+    L'URL de reprise est /oidc/authorize RECONSTRUITE depuis les paramètres
+    déjà validés de la requête entrante (jamais depuis une URL externe :
+    anti open-redirect). Le dashboard stocke ce callback (?callback=...),
+    et après login — ou simple refresh token, qui re-pose le cookie
+    hub_oidc_session — redirige vers cette URL : l'authorize aboutit alors
+    (302 code vers l'app externe, ex. Vikunja).
+    """
+    resume_qs = {k: v for k, v in authz_params.items() if v}
+    resume_url = (
+        f"{settings.oidc_issuer.rstrip('/')}/oidc/authorize?{urlencode(resume_qs)}"
+    )
+    # Origine du dashboard : hostname demandé + port frontend public du HUB
+    # (port omis quand il est standard pour le schéma : 80/443).
+    scheme = request.url.scheme
+    hostname = request.url.hostname
+    port = settings.hub_frontend_port
+    netloc = (
+        hostname
+        if (scheme, port) in (("http", 80), ("https", 443))
+        else f"{hostname}:{port}"
+    )
+    login_url = f"{scheme}://{netloc}/?callback={quote(resume_url, safe='')}"
+    return RedirectResponse(url=login_url, status_code=302)
+
+
 @router.get("/oidc/authorize")
 async def authorize_oidc(
     request: Request,
@@ -176,8 +215,22 @@ async def authorize_oidc(
     final_scope = " ".join(allowed_scopes)
 
     # 5. Identifier l'user via le cookie de session OIDC
+    # Reprise du flow : les paramètres validés ci-dessus permettent de
+    # reconstruire l'authorize après login (voir _login_redirect_response).
+    authz_params = {
+        "client_id": client_id,
+        "redirect_uri": redirect_uri,
+        "response_type": response_type,
+        "scope": scope,
+        "state": state,
+        "nonce": nonce,
+        "code_challenge": code_challenge,
+        "code_challenge_method": code_challenge_method,
+    }
     cookie_value = request.cookies.get("hub_oidc_session")
     if not cookie_value:
+        if _is_browser_request(request):
+            return _login_redirect_response(request, settings, authz_params)
         raise HTTPException(
             401,
             "Session HUB requise. Connectez-vous au dashboard HUB d'abord, "
@@ -185,6 +238,8 @@ async def authorize_oidc(
         )
     username = decode_oidc_session_cookie(cookie_value, settings)
     if not username:
+        if _is_browser_request(request):
+            return _login_redirect_response(request, settings, authz_params)
         raise HTTPException(
             401,
             "Session HUB expirée ou invalide. Reconnectez-vous au dashboard HUB."

@@ -8,6 +8,7 @@ import time
 import jwt as pyjwt
 from sqlalchemy import select
 from httpx import AsyncClient
+from urllib.parse import parse_qs, urlparse
 from app.models import OAuthClient, OAuthAuthorizationCode
 from app.auth import get_password_hash
 from app.oidc_helpers import create_oidc_session_cookie, decode_oidc_session_cookie
@@ -196,6 +197,82 @@ class TestAuthorizeEndpoint:
             follow_redirects=False,
         )
         assert response.status_code == 403
+
+    # --- Redirect login (navigateur) : SSO transparent -------------------
+
+    @pytest.mark.asyncio
+    async def test_authorize_without_cookie_html_accept_redirects_to_login(
+        self, client: AsyncClient, vikunja_client, settings
+    ):
+        """Sans cookie, un navigateur (Accept: text/html) est redirigé vers le
+        login dashboard avec reprise du flow (callback=URL authorize encodée)."""
+        settings.oidc_issuer = "http://192.0.2.10:8000"
+        response = await client.get(
+            "/oidc/authorize",
+            params={
+                "client_id": "vikunja",
+                "redirect_uri": "http://192.0.2.10:3457/auth/openid/hub/callback",
+                "response_type": "code",
+                "scope": "openid",
+                "state": "my-state-123",
+                "nonce": "my-nonce-456",
+            },
+            headers={"accept": "text/html,application/xhtml+xml"},
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        location = response.headers["location"]
+        assert location.startswith("http://test/?callback=")
+        resume_url = parse_qs(urlparse(location).query)["callback"][0]
+        assert resume_url.startswith("http://192.0.2.10:8000/oidc/authorize?")
+        resume_qs = parse_qs(urlparse(resume_url).query)
+        assert resume_qs["client_id"] == ["vikunja"]
+        assert resume_qs["redirect_uri"] == [
+            "http://192.0.2.10:3457/auth/openid/hub/callback"
+        ]
+        assert resume_qs["state"] == ["my-state-123"]
+        assert resume_qs["nonce"] == ["my-nonce-456"]
+
+    @pytest.mark.asyncio
+    async def test_authorize_invalid_cookie_html_accept_redirects_to_login(
+        self, client: AsyncClient, vikunja_client, settings
+    ):
+        """Cookie invalide + navigateur → 302 vers le login dashboard aussi."""
+        settings.oidc_issuer = "http://192.0.2.10:8000"
+        client.cookies.set("hub_oidc_session", "invalid-jwt-token")
+        response = await client.get(
+            "/oidc/authorize",
+            params={
+                "client_id": "vikunja",
+                "redirect_uri": "http://192.0.2.10:3457/auth/openid/hub/callback",
+                "response_type": "code",
+                "scope": "openid",
+                "state": "st",
+            },
+            headers={"accept": "text/html"},
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert "callback=" in response.headers["location"]
+
+    @pytest.mark.asyncio
+    async def test_authorize_without_cookie_no_html_keeps_401_json(
+        self, client: AsyncClient, vikunja_client
+    ):
+        """Sans Accept: text/html (curl, client API, tests) → 401 JSON inchangé."""
+        response = await client.get(
+            "/oidc/authorize",
+            params={
+                "client_id": "vikunja",
+                "redirect_uri": "http://192.0.2.10:3457/auth/openid/hub/callback",
+                "response_type": "code",
+                "scope": "openid",
+            },
+            headers={"accept": "application/json"},
+            follow_redirects=False,
+        )
+        assert response.status_code == 401
+        assert "Session HUB requise" in response.json()["detail"]
 
 
 class TestOidcSessionCookie:
