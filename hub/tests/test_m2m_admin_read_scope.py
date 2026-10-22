@@ -114,3 +114,20 @@ async def test_admin_read_routes_param_sweep(client, admin_token, admin_user,
         service_account.can_admin_read = True
         await async_session.commit()
         assert (await client.get(path, headers={"Authorization": f"Bearer {user_token_non_admin}"})).status_code == 403, path
+
+
+@pytest.mark.asyncio
+async def test_apps_list_sa_flagged_full_list(client, service_account, async_session):
+    service_account.can_admin_read = True
+    await async_session.commit()
+    r = await client.get("/api/apps/", headers={"Authorization": f"Bearer {_sa_token(service_account)}"})
+    assert r.status_code == 200
+    body = r.json()
+    assert isinstance(body, list) and len(body) >= 1
+    assert all("slug" in app for app in body)
+
+
+@pytest.mark.asyncio
+async def test_apps_list_sa_unflagged_403(client, service_account, async_session):
+    r = await client.get("/api/apps/", headers={"Authorization": f"Bearer {_sa_token(service_account)}"})
+    assert r.status_code == 403

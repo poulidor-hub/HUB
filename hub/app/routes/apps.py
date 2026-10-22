@@ -615,7 +615,7 @@ async def _load_last_deployments(db: AsyncSession) -> dict[str, dict]:
 @router.get("/", response_model=List[AppResponseWithMyRole])
 async def list_apps(
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user = Depends(get_current_entity),
     workshop_filter: str = Query("false", description="Filtre atelier: 'false' (prod uniquement, défaut), 'true' (ateliers uniquement), 'all' (tout)"),
 ):
     """Liste les applications (admin voit tout, user voit les siennes)
@@ -629,22 +629,29 @@ async def list_apps(
     - true : apps atelier uniquement  
     - all : toutes les apps
     """
-    logger.debug(f"list_apps appelé par {current_user.username} (is_admin={current_user.is_admin})")
+    if isinstance(current_user, ServiceAccount) and not current_user.can_admin_read:
+        raise HTTPException(status_code=403,
+                            detail="Lecture admin requise pour ce service account")
+    logger.debug(f"list_apps appelé par {current_user.username if isinstance(current_user, User) else f'sa:{current_user.client_id}'} (is_admin={current_user.is_admin if isinstance(current_user, User) else False})")
     
-    # Charger les rôles de l'utilisateur courant
-    user_result = await db.execute(
-        select(User)
-        .options(selectinload(User.app_roles).selectinload(UserAppRole.application))
-        .where(User.id == current_user.id)
-    )
-    user = user_result.scalar_one()
-    user_roles_map = {ar.application.slug: ar.role for ar in user.app_roles}
+    # Charger les rôles et favoris de l'utilisateur courant (les SA n'en ont pas)
+    if isinstance(current_user, User):
+        user_result = await db.execute(
+            select(User)
+            .options(selectinload(User.app_roles).selectinload(UserAppRole.application))
+            .where(User.id == current_user.id)
+        )
+        user = user_result.scalar_one()
+        user_roles_map = {ar.application.slug: ar.role for ar in user.app_roles}
 
-    # Charger les favoris de l'utilisateur courant
-    fav_result = await db.execute(
-        select(UserFavorite.app_id).where(UserFavorite.user_id == current_user.id)
-    )
-    favorite_app_ids = {row[0] for row in fav_result}
+        # Charger les favoris de l'utilisateur courant
+        fav_result = await db.execute(
+            select(UserFavorite.app_id).where(UserFavorite.user_id == current_user.id)
+        )
+        favorite_app_ids = {row[0] for row in fav_result}
+    else:
+        user_roles_map = {}
+        favorite_app_ids = set()
 
     # Map des groupes pour hydratation (une seule requête, pas de N+1)
     groups_result = await db.execute(select(AppGroup))
@@ -665,13 +672,13 @@ async def list_apps(
         else query.where(Application.is_workshop == False)
     )
     
-    if current_user.is_admin:
+    if isinstance(current_user, ServiceAccount) or current_user.is_admin:
         # Tri alphabétique par nom pour un ordre stable et prévisible
         query = select(Application).where(Application.is_system_app == False)
         query = _apply_workshop_query(query)
         result = await db.execute(query.order_by(Application.name))
         apps = result.scalars().all()
-        logger.debug(f"Admin {current_user.username}: {len(apps)} applications trouvées (filter={workshop_filter})")
+        logger.debug(f"Admin {current_user.username if isinstance(current_user, User) else f'sa:{current_user.client_id}'}: {len(apps)} applications trouvées (filter={workshop_filter})")
         return [
             AppResponseWithMyRole.from_app_with_role(
                 app,
