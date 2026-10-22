@@ -1590,6 +1590,23 @@ class M2MUserSearchResponse(BaseModel):
     users: List[M2MUserSearchItem] = []
 
 
+class M2MUserListItem(BaseModel):
+    """Utilisateur retourné par le listing M2M (spec exemple-app §5.5)"""
+    id: int
+    username: str
+    # Lecture tolérante (str, non EmailStr) : ne pas 500 sur un email legacy
+    # invalide — cf. UserResponse pour le détail.
+    email: Optional[str] = None
+    is_active: bool = True
+    is_admin: bool = False
+
+
+class M2MUserListResponse(BaseModel):
+    """Réponse du listing M2M d'utilisateurs"""
+    users: List[M2MUserListItem] = []
+    total: int = 0
+
+
 # ─── CSV Import Schemas ───
 
 class CsvUserPreviewLine(BaseModel):
