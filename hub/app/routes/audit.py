@@ -25,8 +25,8 @@ import math
 import time
 
 from app.database import get_db
-from app.models import User, UserSession, AuditLog, Application, AppUsageSegment, utcnow
-from app.auth import get_current_user, get_admin_or_admin_sa, get_settings
+from app.models import User, UserSession, AuditLog, Application, AppUsageSegment, ServiceAccount, utcnow
+from app.auth import get_current_user, get_current_entity, get_admin_or_admin_sa, get_settings
 from app.usage_stats import (
     BASE_BUCKET_MINUTES,
     bucket_size_for_days,
@@ -1006,21 +1006,24 @@ async def get_audit_logs(
     ip: Optional[str] = Query(None, description="Filtrer par adresse IP exacte"),
     page: int = Query(1, ge=1, description="Numéro de page"),
     page_size: int = Query(50, ge=10, le=200, description="Éléments par page"),
-    current_user: User = Depends(get_current_user),
+    current_user = Depends(get_current_entity),
     db: AsyncSession = Depends(get_db)
 ):
     """
     Liste paginée des logs d'audit détaillés.
     Requiert: admin Hub (ou ses propres logs si user_id=self)
     """
-    # Vérification des droits
-    if not current_user.is_admin and user_id and user_id != current_user.id:
-        raise HTTPException(status_code=403, detail="Accès non autorisé")
-    
-    # Si non-admin, forcer à ses propres logs et ignorer le filtre username
-    if not current_user.is_admin:
-        user_id = current_user.id
-        username = None
+    if isinstance(current_user, ServiceAccount):
+        if not current_user.can_admin_read:
+            raise HTTPException(status_code=403,
+                                detail="Lecture admin requise pour ce service account")
+    else:
+        # Sémantique user inchangée : non-admin → ses propres logs
+        if not current_user.is_admin and user_id and user_id != current_user.id:
+            raise HTTPException(status_code=403, detail="Accès non autorisé")
+        if not current_user.is_admin:
+            user_id = current_user.id
+            username = None
     
     since = utcnow() - timedelta(days=days)
     

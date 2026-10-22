@@ -131,3 +131,18 @@ async def test_apps_list_sa_flagged_full_list(client, service_account, async_ses
 async def test_apps_list_sa_unflagged_403(client, service_account, async_session):
     r = await client.get("/api/apps/", headers={"Authorization": f"Bearer {_sa_token(service_account)}"})
     assert r.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_audit_logs_sa_flagged_full(client, service_account, async_session):
+    service_account.can_admin_read = True
+    await async_session.commit()
+    r = await client.get("/api/audit/logs", headers={"Authorization": f"Bearer {_sa_token(service_account)}"})
+    assert r.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_audit_logs_non_admin_cannot_read_others(client, user_token_non_admin):
+    r = await client.get("/api/audit/logs?user_id=999",
+                         headers={"Authorization": f"Bearer {user_token_non_admin}"})
+    assert r.status_code == 403
