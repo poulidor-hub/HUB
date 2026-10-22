@@ -146,3 +146,33 @@ async def test_audit_logs_non_admin_cannot_read_others(client, user_token_non_ad
     r = await client.get("/api/audit/logs?user_id=999",
                          headers={"Authorization": f"Bearer {user_token_non_admin}"})
     assert r.status_code == 403
+
+
+# ===== Task 6 : PUT can_admin_read + audit grant/revoke =====
+
+@pytest.mark.asyncio
+async def test_put_grant_audited(client, admin_token, service_account, async_session):
+    r = await client.put(f"/api/service-accounts/{service_account.id}",
+                         json={"can_admin_read": True},
+                         headers={"Authorization": f"Bearer {admin_token}"})
+    assert r.status_code == 200 and r.json()["can_admin_read"] is True
+    from sqlalchemy import select as sel
+    from app.models import AuditLog
+    rows = (await async_session.execute(
+        sel(AuditLog).where(AuditLog.action == "sa_admin_read_granted"))).scalars().all()
+    assert len(rows) == 1
+
+
+@pytest.mark.asyncio
+async def test_put_revoke_audited(client, admin_token, service_account, async_session):
+    service_account.can_admin_read = True
+    await async_session.commit()
+    r = await client.put(f"/api/service-accounts/{service_account.id}",
+                         json={"can_admin_read": False},
+                         headers={"Authorization": f"Bearer {admin_token}"})
+    assert r.status_code == 200 and r.json()["can_admin_read"] is False
+    from sqlalchemy import select as sel
+    from app.models import AuditLog
+    rows = (await async_session.execute(
+        sel(AuditLog).where(AuditLog.action == "sa_admin_read_revoked"))).scalars().all()
+    assert len(rows) == 1
