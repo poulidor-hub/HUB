@@ -38,7 +38,7 @@ from app.schemas import (
     DependencyOut, DependenciesGraph,
     SyncReport,
 )
-from app.auth import get_current_admin, get_current_user, get_password_hash, get_settings, verify_token_not_revoked, oauth2_scheme, optional_oauth2_scheme, get_current_entity
+from app.auth import get_admin_or_admin_sa, get_current_admin, get_current_user, get_password_hash, get_settings, verify_token_not_revoked, oauth2_scheme, optional_oauth2_scheme, get_current_entity
 from app.routes.service_accounts import save_service_account_credentials, delete_service_account_credentials
 from app.routes.audit import log_action
 from app.docker_scanner import docker_scanner
@@ -3209,7 +3209,7 @@ async def get_app_dependencies(
 async def get_app(
     app_id: int,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_admin)
+    _ = Depends(get_admin_or_admin_sa)
 ):
     """Récupère une application par ID (admin uniquement)"""
     result = await db.execute(

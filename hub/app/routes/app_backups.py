@@ -48,7 +48,7 @@ from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 
 from app.database import get_db
 from app.models import Application, AppBackup, ServiceAccount, User, ApprovalStatus, utcnow
-from app.auth import get_current_admin, get_current_entity, get_password_hash
+from app.auth import get_admin_or_admin_sa, get_current_admin, get_current_entity, get_password_hash
 from app.config import get_settings
 from app.routes.audit import log_action
 from app.schemas import (
@@ -1229,7 +1229,7 @@ async def delete_backup(
 async def get_backup_config(
     slug: str,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_admin)
+    current_user = Depends(get_admin_or_admin_sa)
 ):
     """
     Récupère la configuration de sauvegarde d'une application.
@@ -3053,7 +3053,7 @@ async def cancel_running_backup(
 @router.get("/api/admin/backups/stats")
 async def get_backup_storage_stats(
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_admin)
+    current_user = Depends(get_admin_or_admin_sa)
 ):
     """
     Statistiques de stockage des sauvegardes.

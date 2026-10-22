@@ -1,7 +1,7 @@
 """Reads M2M admin (phase 3) : flag can_admin_read, dépendance, endpoints ouverts."""
 import pytest
 from httpx import AsyncClient
-from app.models import ServiceAccount
+from app.models import ServiceAccount, User
 
 
 @pytest.mark.asyncio
@@ -25,7 +25,7 @@ async def test_sa_can_admin_read_persist_true(async_session):
     assert sa_can_admin_read(sa) is True
 
 
-from app.auth import create_access_token, get_admin_or_admin_sa
+from app.auth import create_access_token, get_admin_or_admin_sa, get_password_hash
 
 
 def _sa_token(sa):
@@ -63,3 +63,54 @@ async def test_dep_hot_revocation(service_account, async_session):
     with pytest.raises(Exception) as e:
         await get_admin_or_admin_sa(token=token, db=async_session)
     assert e.value.status_code == 403
+
+
+@pytest.fixture
+async def user_token_non_admin(async_session) -> str:
+    """Token d'un user non-admin (doit rester 403 sur les routes admin-read)."""
+    user = User(
+        username="nonadmin",
+        email="nonadmin@example.com",
+        hashed_password=get_password_hash("nonadmin123"),
+        is_active=True,
+        is_admin=False
+    )
+    async_session.add(user)
+    await async_session.commit()
+    await async_session.refresh(user)
+    token, _, _ = create_access_token(
+        username=user.username,
+        apps={}
+    )
+    return token
+
+
+@pytest.mark.asyncio
+async def test_admin_read_routes_param_sweep(client, admin_token, admin_user,
+                                             user_token_non_admin, service_account,
+                                             async_session, test_app):
+    """10 routes : admin 200, SA flaggé 200, SA sans flag 403, user non-admin 403."""
+    service_account.can_admin_read = True
+    await async_session.commit()
+    paths = [
+        f"/api/apps/{test_app.id}",
+        "/api/users/",
+        f"/api/users/{admin_user.id}",
+        "/api/messages/",
+        "/api/messages/stats",
+        "/api/admin/backups/stats",
+        f"/api/apps/{test_app.slug}/backup/config",
+        "/api/audit/stats",
+        "/api/audit/sessions/active",
+        "/api/audit/errors",
+    ]
+    sa_headers = {"Authorization": f"Bearer {_sa_token(service_account)}"}
+    for path in paths:
+        assert (await client.get(path, headers={"Authorization": f"Bearer {admin_token}"})).status_code == 200, path
+        assert (await client.get(path, headers=sa_headers)).status_code == 200, path
+        service_account.can_admin_read = False
+        await async_session.commit()
+        assert (await client.get(path, headers=sa_headers)).status_code == 403, path
+        service_account.can_admin_read = True
+        await async_session.commit()
+        assert (await client.get(path, headers={"Authorization": f"Bearer {user_token_non_admin}"})).status_code == 403, path
