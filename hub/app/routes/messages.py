@@ -23,7 +23,7 @@ import logging
 
 from app.database import get_db
 from app.models import User, UserMessage, MessageReadReceipt, MessageTemplate, ServiceAccount, Application, AppSetting, utcnow
-from app.auth import get_current_user, get_current_entity, get_current_admin, get_settings
+from app.auth import get_current_user, get_current_entity, get_current_admin, get_admin_or_admin_sa, get_settings
 from app.schemas import (
     MessageCreate, MessageM2MCreate, MessageBadgePrioritiesUpdate, MessageResponse, MessageBrief,
     PaginatedMessagesResponse,
@@ -290,7 +290,7 @@ async def list_messages(
     hours: Optional[int] = Query(None, ge=1, le=8760),
     status: Optional[str] = Query(None, description="Filtre cycle de vie : active | archived | expired | all (défaut: all)"),
     expiring_within_hours: Optional[int] = Query(None, ge=1, le=8760),
-    current_user: User = Depends(get_current_admin),
+    current_user = Depends(get_admin_or_admin_sa),
     db: AsyncSession = Depends(get_db)
 ):
     """Liste paginée des messages avec filtres (admin)."""
@@ -424,7 +424,7 @@ async def list_messages(
 async def get_message_stats(
     hours: Optional[int] = Query(None, ge=1, le=8760),
     target_type: Optional[str] = Query(None),
-    current_user: User = Depends(get_current_admin),
+    current_user = Depends(get_admin_or_admin_sa),
     db: AsyncSession = Depends(get_db)
 ):
     """Statistiques agrégées des messages (admin)."""

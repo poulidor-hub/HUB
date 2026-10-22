@@ -13,6 +13,7 @@ import base64
 
 from app.database import get_db
 from app.routes.events import notify_event, notify_stats_update
+from app.routes.audit import log_action
 from app.m2m_scope import grant_shared_apps_to_sa
 from app.models import ServiceAccount, Application, utcnow
 from app.schemas import (
@@ -375,6 +376,7 @@ async def create_service_account(
         client_secret=client_secret,
         secrets_file=secrets_file,  # 📁 Indique où les credentials sont sauvegardés
         is_active=sa.is_active,
+        can_admin_read=sa.can_admin_read,
         created_at=sa.created_at,
         last_used_at=sa.last_used_at,
         applications=[
@@ -389,7 +391,7 @@ async def update_service_account(
     service_account_id: int,
     sa_data: ServiceAccountUpdate,
     db: AsyncSession = Depends(get_db),
-    _admin = Depends(get_current_admin)
+    admin = Depends(get_current_admin)
 ):
     """Met à jour un service account (admin uniquement)"""
     result = await db.execute(
@@ -406,11 +408,23 @@ async def update_service_account(
         )
     
     update_data = sa_data.model_dump(exclude_unset=True)
+    old_admin_read = bool(sa.can_admin_read)
     for field, value in update_data.items():
         setattr(sa, field, value)
     
     await db.commit()
-    await db.refresh(sa)
+    # Refresh ciblé sur les colonnes : un refresh complet expirerait la relation
+    # `applications` (lazy="raise") chargée par selectinload et casserait la sérialisation.
+    await db.refresh(sa, attribute_names=["name", "description", "is_active", "can_admin_read"])
+    
+    # Audit grant/revoke du lecture admin M2M
+    if "can_admin_read" in update_data and bool(sa.can_admin_read) != old_admin_read:
+        await log_action(
+            db=db, user_id=admin.id,
+            action="sa_admin_read_granted" if sa.can_admin_read else "sa_admin_read_revoked",
+            target=sa.name, service_account_id=sa.id,
+        )
+        await db.commit()
     
     # Notifier les clients SSE de la modification
     notify_event("service_accounts_updated", {"action": "updated", "sa_id": sa.id, "sa_name": sa.name})
@@ -499,6 +513,7 @@ async def regenerate_client_secret(
         client_secret=new_secret,  # ⚠️ Affiché une seule fois!
         secrets_file=secrets_file,  # 📁 Fichier mis à jour
         is_active=sa.is_active,
+        can_admin_read=sa.can_admin_read,
         created_at=sa.created_at,
         last_used_at=sa.last_used_at,
         applications=[

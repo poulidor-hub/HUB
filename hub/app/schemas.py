@@ -726,12 +726,14 @@ class ServiceAccountUpdate(BaseModel):
     name: Optional[str] = Field(None, min_length=2, max_length=100)
     description: Optional[str] = None
     is_active: Optional[bool] = None
+    can_admin_read: Optional[bool] = None
 
 
 class ServiceAccountResponse(ServiceAccountBase):
     id: int
     client_id: str
     is_active: bool
+    can_admin_read: bool
     created_at: datetime
     last_used_at: Optional[datetime] = None
     applications: List["AppBrief"] = []

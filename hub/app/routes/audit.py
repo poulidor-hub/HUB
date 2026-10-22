@@ -25,8 +25,8 @@ import math
 import time
 
 from app.database import get_db
-from app.models import User, UserSession, AuditLog, Application, AppUsageSegment, utcnow
-from app.auth import get_current_user, get_settings
+from app.models import User, UserSession, AuditLog, Application, AppUsageSegment, ServiceAccount, utcnow
+from app.auth import get_current_user, get_current_entity, get_admin_or_admin_sa, get_settings
 from app.usage_stats import (
     BASE_BUCKET_MINUTES,
     bucket_size_for_days,
@@ -459,7 +459,7 @@ async def cleanup_stale_sessions(db: AsyncSession) -> int:
 
 @router.get("/sessions/active")
 async def get_active_sessions(
-    current_user: User = Depends(get_current_user),
+    current_user = Depends(get_admin_or_admin_sa),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -473,8 +473,6 @@ async def get_active_sessions(
     - current_app_slug, current_app_name (application active)
     - ip_address
     """
-    if not current_user.is_admin:
-        raise HTTPException(status_code=403, detail="Accès admin requis")
     
     # Nettoyer les sessions expirées d'abord
     cleaned = await cleanup_stale_sessions(db)
@@ -639,15 +637,13 @@ async def get_session_history(
 @router.get("/stats")
 async def get_connection_stats(
     days: int = Query(7, ge=1, le=365, description="Période en jours"),
-    current_user: User = Depends(get_current_user),
+    current_user = Depends(get_admin_or_admin_sa),
     db: AsyncSession = Depends(get_db)
 ):
     """
     Statistiques globales de connexion.
     Requiert: admin Hub
     """
-    if not current_user.is_admin:
-        raise HTTPException(status_code=403, detail="Accès admin requis")
     
     since = utcnow() - timedelta(days=days)
     
@@ -1010,21 +1006,24 @@ async def get_audit_logs(
     ip: Optional[str] = Query(None, description="Filtrer par adresse IP exacte"),
     page: int = Query(1, ge=1, description="Numéro de page"),
     page_size: int = Query(50, ge=10, le=200, description="Éléments par page"),
-    current_user: User = Depends(get_current_user),
+    current_user = Depends(get_current_entity),
     db: AsyncSession = Depends(get_db)
 ):
     """
     Liste paginée des logs d'audit détaillés.
     Requiert: admin Hub (ou ses propres logs si user_id=self)
     """
-    # Vérification des droits
-    if not current_user.is_admin and user_id and user_id != current_user.id:
-        raise HTTPException(status_code=403, detail="Accès non autorisé")
-    
-    # Si non-admin, forcer à ses propres logs et ignorer le filtre username
-    if not current_user.is_admin:
-        user_id = current_user.id
-        username = None
+    if isinstance(current_user, ServiceAccount):
+        if not current_user.can_admin_read:
+            raise HTTPException(status_code=403,
+                                detail="Lecture admin requise pour ce service account")
+    else:
+        # Sémantique user inchangée : non-admin → ses propres logs
+        if not current_user.is_admin and user_id and user_id != current_user.id:
+            raise HTTPException(status_code=403, detail="Accès non autorisé")
+        if not current_user.is_admin:
+            user_id = current_user.id
+            username = None
     
     since = utcnow() - timedelta(days=days)
     
@@ -1472,7 +1471,7 @@ async def get_error_logs(
     source_app: Optional[str] = Query(None, description="Filtrer par application source (X-Slug)"),
     path: Optional[str] = Query(None, description="Filtrer par chemin (contient)"),
     hours: int = Query(24, ge=1, le=168, description="Heures d'historique (max 7 jours)"),
-    current_user: User = Depends(get_current_user),
+    current_user = Depends(get_admin_or_admin_sa),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -1480,9 +1479,6 @@ async def get_error_logs(
     Requiert: admin Hub
     """
     from app.models import ErrorLog
-    
-    if not current_user.is_admin:
-        raise HTTPException(status_code=403, detail="Accès admin requis")
     
     since = utcnow() - timedelta(hours=hours)
     

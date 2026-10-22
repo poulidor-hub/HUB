@@ -174,3 +174,8 @@ async def purge_workshop_leaks(db: AsyncSession) -> dict:
             removed.append(f"{sa.name} ({sa.client_id}): -{app.slug}")
 
     return {"removed": removed, "skipped_ambiguous": skipped_ambiguous}
+
+
+def sa_can_admin_read(service_account: ServiceAccount) -> bool:
+    """Flag « lecture admin » d'un SA (phase 3). Autorité : DB, re-vérifiée à chaque requête."""
+    return bool(service_account.can_admin_read)

@@ -28,7 +28,7 @@ from app.schemas import (
     M2MObservedUsersRolesRequest, M2MObservedAppRole, M2MObservedUserData,
     M2MUserSearchItem, M2MUserSearchResponse, M2MUserListItem, M2MUserListResponse
 )
-from app.auth import get_current_admin, get_current_entity, get_password_hash, revoke_all_user_tokens, generate_oidc_sub
+from app.auth import get_admin_or_admin_sa, get_current_admin, get_current_entity, get_password_hash, revoke_all_user_tokens, generate_oidc_sub
 from app.routes.audit import log_action
 
 router = APIRouter(prefix="/api/users", tags=["Users"])
@@ -244,7 +244,7 @@ async def list_users(
     is_active: Optional[bool] = Query(default=None, description="Filtrer par statut actif"),
     app_role_override: Optional[bool] = Query(default=None, description="Filtrer sur les droits modifiés vs profil"),
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_admin)
+    _ = Depends(get_admin_or_admin_sa)
 ):
     """
     Liste les utilisateurs avec pagination et filtres.
@@ -614,7 +614,7 @@ async def preview_csv_import(
 async def get_user(
     user_id: int,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_admin)
+    _ = Depends(get_admin_or_admin_sa)
 ):
     """Récupère un utilisateur par ID (admin uniquement)"""
     result = await db.execute(
