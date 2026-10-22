@@ -26,7 +26,7 @@ from app.schemas import (
     BulkRemoveAppAccessRequest, BulkRemoveAppAccessResponse, BulkRemoveAppAccessResult,
     CsvUserPreviewLine, CsvPreviewResponse, ProfileBriefResponse,
     M2MObservedUsersRolesRequest, M2MObservedAppRole, M2MObservedUserData,
-    M2MUserSearchItem, M2MUserSearchResponse
+    M2MUserSearchItem, M2MUserSearchResponse, M2MUserListItem, M2MUserListResponse
 )
 from app.auth import get_current_admin, get_current_entity, get_password_hash, revoke_all_user_tokens, generate_oidc_sub
 from app.routes.audit import log_action
@@ -189,6 +189,48 @@ async def m2m_search_users(
             break
 
     return M2MUserSearchResponse(count=len(items), users=items)
+
+
+@router.get("/m2m/list", response_model=M2MUserListResponse)
+async def m2m_list_users(
+    db: AsyncSession = Depends(get_db),
+    current_entity: Union[User, ServiceAccount] = Depends(get_current_entity)
+):
+    """
+    Listing de tous les utilisateurs Hub pour les Service Accounts.
+
+    Cas d'usage (spec exemple-app §5.5) : résoudre localement les user_id
+    en usernames (et inversement) pour l'affichage. Contrairement à
+    /m2m/search (filtrée sur les apps autorisées du SA), cette liste n'est
+    PAS filtrée par application : les messages M2M synchronisés via
+    /api/messages/m2m/sync peuvent référencer n'importe quel user du Hub
+    (expéditeur admin, destinataires d'autres apps).
+
+    Les users inactifs sont inclus (flag is_active) pour permettre la
+    résolution d'identifiants présents dans d'anciens messages.
+    """
+    if isinstance(current_entity, User):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Cet endpoint est réservé aux Service Accounts (authentification M2M)"
+        )
+
+    result = await db.execute(select(User).order_by(User.id))
+    users = result.scalars().all()
+
+    return M2MUserListResponse(
+        users=[
+            M2MUserListItem(
+                id=u.id,
+                username=u.username,
+                email=u.email,
+                is_active=u.is_active,
+                is_admin=u.is_admin,
+            )
+            for u in users
+        ],
+        total=len(users),
+    )
 
 
 @router.get("/")

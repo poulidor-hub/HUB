@@ -700,6 +700,79 @@ class TestM2MSearchUsers:
         assert response.status_code == 403
 
 
+class TestM2MUsersList:
+    """Tests pour GET /api/users/m2m/list (spec exemple-app §5.5)"""
+
+    async def _get_service_account_token(self, client: AsyncClient, service_account) -> str:
+        response = await client.post(
+            "/api/auth/token",
+            data={
+                "grant_type": "client_credentials",
+                "client_id": service_account.client_id,
+                "client_secret": "secret123"
+            }
+        )
+        assert response.status_code == 200
+        return response.json()["access_token"]
+
+    @pytest.mark.asyncio
+    async def test_m2m_list_returns_all_users_with_ids(
+        self,
+        client: AsyncClient,
+        async_session,
+        service_account,
+        admin_user: User,
+        test_user: User,
+    ):
+        """Le SA obtient tous les users (actifs ET inactifs) avec id/username/email/is_active/is_admin."""
+        inactive_user = User(
+            username="old.guy",
+            email="old.guy@example.com",
+            hashed_password=get_password_hash("testpass123"),
+            is_active=False,
+            is_admin=False,
+        )
+        async_session.add(inactive_user)
+        await async_session.commit()
+
+        token = await self._get_service_account_token(client, service_account)
+        response = await client.get(
+            "/api/users/m2m/list",
+            headers=get_auth_header(token),
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["total"] == len(data["users"])
+        by_username = {u["username"]: u for u in data["users"]}
+        # Les users inactifs sont inclus : l'app doit pouvoir résoudre des
+        # user_id référencés par d'anciens messages (flag is_active pour filtrer).
+        assert "old.guy" in by_username
+        for username in (admin_user.username, test_user.username):
+            assert username in by_username
+        entry = by_username[test_user.username]
+        assert set(entry.keys()) == {"id", "username", "email", "is_active", "is_admin"}
+        assert entry["id"] == test_user.id
+        assert entry["is_active"] is True
+        assert by_username[admin_user.username]["is_admin"] is True
+        assert by_username["old.guy"]["is_active"] is False
+
+    @pytest.mark.asyncio
+    async def test_m2m_list_forbidden_for_human_user(
+        self, client: AsyncClient, test_user: User
+    ):
+        """Un token user (non-SA) reçoit 403."""
+        token, _, _ = create_access_token(
+            username=test_user.username,
+            apps={},
+        )
+        response = await client.get(
+            "/api/users/m2m/list",
+            headers=get_auth_header(token),
+        )
+        assert response.status_code == 403
+
+
 class TestCsvImport:
     """Tests pour les endpoints CSV d'import d'utilisateurs"""
 

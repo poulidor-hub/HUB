@@ -16,6 +16,25 @@
 
 ---
 
+## [3.72.0] - 22 octobre 2026
+
+### ⚡ M2M : `GET /api/users/m2m/list` — listing users pour Service Accounts
+
+| Fonctionnalité | Description |
+|----------------|-------------|
+| **Nouvel endpoint M2M** | `GET /api/users/m2m/list` (spec exemple-app §5.5) : permet aux apps clientes de résoudre localement les user_id en usernames (et inversement) pour leur affichage — endpoint documenté mais jamais implémenté jusqu'ici (les apps appelantes recevaient un 404). |
+| **Réservé Service Accounts** | Auth M2M obligatoire : token utilisateur humain → 403 (pattern `m2m/search`) ; sans token → 401. |
+| **Non filtré par app** | Contrairement à `/api/users/m2m/search` (filtrée sur les apps autorisées du SA), la liste n'est pas restreinte : les messages M2M synchronisés via `/api/messages/m2m/sync` peuvent référencer n'importe quel user (expéditeur admin, destinataires cross-apps). |
+| **Users inactifs inclus** | Flag `is_active` dans la réponse : une app peut résoudre des identifiants d'anciens messages même si le compte a été désactivé depuis. |
+| **Contrat** | Réponse `{users: [{id, username, email, is_active, is_admin}], total}` — conforme à la spec §5.5 ; doc `exemple-app.md` mise à jour (§5.5 et plan d'implémentation). |
+| **Tests** | TDD : 2 tests (`TestM2MUsersList` — contrat SA 200 + 403 humain) dans `test_api_users.py` ; suite complète 1382 passed (hôte) et vérification runtime Docker `pouly-test` : 401 sans auth, flow `client_credentials` → 200 conforme. |
+
+| Fonctionnalité | Description |
+|----------------|-------------|
+| **À compléter** | Décrivez les changements de cette version |
+
+---
+
 ## [3.71.4] - 12 octobre 2026
 
 ### ⚡ Téléchargements résilients : tranches Range avec reprise
