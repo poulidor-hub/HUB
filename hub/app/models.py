@@ -516,6 +516,7 @@ class ServiceAccount(Base):
     created_at = Column(DateTime, default=utcnow)
     updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
     last_used_at = Column(DateTime, nullable=True)
+    can_admin_read = Column(Boolean, nullable=False, default=False, server_default="false")
     
     # Relations
     applications = relationship("Application", secondary=service_account_app_access, back_populates="service_accounts", lazy="raise")
