@@ -566,3 +566,57 @@ async def get_current_service_account(
             detail="Aucune application active dans le périmètre du service account"
         )
     return sa, apps
+
+
+async def get_admin_or_admin_sa(
+    token: str = Depends(oauth2_scheme),
+    db: AsyncSession = Depends(get_db)
+) -> Union[User, ServiceAccount]:
+    """User admin OU ServiceAccount porteur de can_admin_read (reads M2M, phase 3).
+
+    - User : identique à get_current_admin (403 si non-admin).
+    - SA : actif + can_admin_read, re-vérifiés en DB à chaque requête
+      (révocation instantanée). Aucun claim JWT consulté.
+    """
+    from app.m2m_scope import sa_can_admin_read
+
+    payload = await verify_token_not_revoked(token, db)
+    identifier = payload.get("sub")
+    if identifier is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token invalide")
+
+    if payload.get("type") == "service_account":
+        result = await db.execute(
+            select(ServiceAccount)
+            .options(selectinload(ServiceAccount.applications))
+            .where(ServiceAccount.client_id == identifier)
+        )
+        sa = result.scalar_one_or_none()
+        if not sa or not sa.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Service account non trouvé ou désactivé")
+        if not sa_can_admin_read(sa):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Lecture admin requise pour ce service account")
+        return sa
+
+    result = await db.execute(
+        select(User)
+        .options(
+            selectinload(User.app_roles).selectinload(UserAppRole.application),
+            selectinload(User.tags).selectinload(UserTag.category),
+        )
+        .where(User.username == identifier)
+    )
+    user = result.scalar_one_or_none()
+    if not user or not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Utilisateur non trouvé ou désactivé")
+    if not user.is_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Accès administrateur requis")
+    return user
