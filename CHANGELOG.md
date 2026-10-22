@@ -16,6 +16,21 @@
 
 ---
 
+## [3.73.0] - 22 octobre 2026
+
+### ⚡ Reads M2M admin : lectures admin ouvertes aux Service Accounts autorisés (`can_admin_read`)
+
+| Fonctionnalité | Description |
+|----------------|-------------|
+| **Flag `can_admin_read`** | Nouvelle colonne `service_accounts.can_admin_read` (booléen, défaut `false` — deny par défaut, migration 060 `ADD COLUMN IF NOT EXISTS`). Aucun SA existant ne change de comportement après déploiement. |
+| **Dépendance `get_admin_or_admin_sa`** | Nouvelle garde d'auth (`auth.py`) : user admin OU SA actif porteur du flag, re-vérifiés en base à chaque requête (révocation instantanée, aucun claim JWT consulté). |
+| **12 routes GET admin-read ouvertes** | `GET /api/apps/`, `GET /api/apps/{id}`, `GET /api/users/`, `GET /api/users/{id}`, `GET /api/messages/`, `GET /api/messages/stats`, `GET /api/admin/backups/stats`, `GET /api/apps/{slug}/backup/config`, `GET /api/audit/stats`, `GET /api/audit/sessions/active`, `GET /api/audit/errors`, `GET /api/audit/logs` — payloads identiques à ceux d'un admin user. `GET /api/apps/` et `/api/audit/logs` en entity-based : sémantique user (apps propres / own logs) strictement préservée. Aucune route d'écriture ouverte. |
+| **Attribution audité** | `PUT /api/service-accounts/{id}` accepte `can_admin_read` ; hook d'audit `sa_admin_read_granted` / `sa_admin_read_revoked`. Champ exposé dans `ServiceAccountResponse`/`ServiceAccountCreated`. |
+| **Corrigé au passage** | `PUT /api/service-accounts/{id}` ne renvoie plus 500 (`ResponseValidationError`) : refresh scopé `attribute_names` au lieu du refresh plein (relation `lazy="raise"`). |
+| **Tests** | `hub/tests/test_m2m_admin_read_scope.py` : 12 tests (flag/défaut, dépendance, révocation à chaud, sweep paramétré 10 routes × 4 rôles, parité admin `list_apps`, sémantique own-logs, audit grant/revoke). Suite : 1393 passed / 0 failed. Migration 060 vérifiée sur PostgreSQL 16 jetable (colonne + idempotence). |
+
+---
+
 ## [3.72.0] - 22 octobre 2026
 
 ### ⚡ M2M : `GET /api/users/m2m/list` — listing users pour Service Accounts
