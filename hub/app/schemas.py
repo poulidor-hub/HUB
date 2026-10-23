@@ -665,6 +665,7 @@ class AppLaunchResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
     expires_at: datetime
+    refresh_token: Optional[str] = None  # Refresh token dédié à la session de l'app
     launch_url: str
     app_slug: str
     role: str

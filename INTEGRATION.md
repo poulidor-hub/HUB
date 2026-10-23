@@ -1172,10 +1172,15 @@ Quand un utilisateur clique sur une application dans le dashboard, le Hub prépa
 
 - il vérifie que l'utilisateur a accès à l'application ;
 - il crée un JWT frais contenant \`apps[slug]\` avec le rôle applicatif ;
+- il crée un **refresh token dédié à la session de l'app** (7 jours, rotation à chaque usage) ;
 - il redirige l'onglet app vers \`callback_url\` si elle est configurée, sinon vers \`frontend_url\` ;
-- il ajoute le token dans l'URL sous la forme \`?access_token=...\`.
+- il ajoute les tokens dans l'URL sous la forme \`?access_token=...&refresh_token=...\`.
 
 Votre frontend doit donc accepter le token sur sa route \`callback_url\`, généralement \`/callback\`. Cette route est l'entrée recommandée pour initialiser la session applicative.
+
+Le \`refresh_token\` permet à l'application de renouveler son accès via \`POST /api/auth/token/refresh\` (body JSON \`{"refresh_token": ...}\`) **sans repasser par le portail** quand le JWT expire (défaut : 8 h). Le template d'app (\`AuthContext\`) lit déjà ce paramètre, le stocke puis **purge l'URL** (\`history.replaceState\`) pour ne pas le laisser dans l'historique navigateur. À chaque refresh, le Hub **rotue** le refresh token : l'ancien est révoqué (grâce de 60 s pour les courses inter-onglets) et un nouveau est retourné dans la réponse.
+
+> ℹ️ Les flux SSO legacy (login formulaire \`POST /api/auth/sso\`, reprise \`?callback=\` du dashboard) ne transmettent pas de refresh token : ces apps restent limitées à la durée du JWT de lancement.
 
 #### ⚠️ Éviter la reconnexion automatique après déconnexion
 

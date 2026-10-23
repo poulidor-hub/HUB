@@ -467,9 +467,14 @@ async function openApp(slug) {
             throw new Error('Réponse de lancement invalide');
         }
 
-        // 4. Naviguer vers l'URL d'entrée de l'app, callback_url en priorité côté API
+        // 4. Naviguer vers l'URL d'entrée de l'app, callback_url en priorité côté API.
+        // Le refresh_token de session permet à l'app de renouveler son accès
+        // sans repasser par le portail (les apps du template le consomment déjà).
         const separator = launch.launch_url.includes('?') ? '&' : '?';
-        appWindow.location.href = `${launch.launch_url}${separator}access_token=${encodeURIComponent(launch.access_token)}`;
+        const refreshParam = launch.refresh_token
+            ? `&refresh_token=${encodeURIComponent(launch.refresh_token)}`
+            : '';
+        appWindow.location.href = `${launch.launch_url}${separator}access_token=${encodeURIComponent(launch.access_token)}${refreshParam}`;
         console.log(`Application ${slug} ouverte dans l'onglet ${windowName}`);
     } catch (e) {
         // En cas d'échec du lancement, garder une page explicite au lieu de fermer brutalement l'onglet
