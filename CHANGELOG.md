@@ -57,10 +57,6 @@
 | **Contrat** | Réponse `{users: [{id, username, email, is_active, is_admin}], total}` — conforme à la spec §5.5 ; doc `exemple-app.md` mise à jour (§5.5 et plan d'implémentation). |
 | **Tests** | TDD : 2 tests (`TestM2MUsersList` — contrat SA 200 + 403 humain) dans `test_api_users.py` ; suite complète 1382 passed (hôte) et vérification runtime Docker `pouly-test` : 401 sans auth, flow `client_credentials` → 200 conforme. |
 
-| Fonctionnalité | Description |
-|----------------|-------------|
-| **À compléter** | Décrivez les changements de cette version |
-
 ---
 
 ## [3.71.4] - 12 octobre 2026
