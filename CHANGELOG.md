@@ -16,6 +16,18 @@
 
 ---
 
+## [3.74.1] - 23 octobre 2026
+
+### ⚡ make test-docker : indépendance du .env hôte + hygiène CHANGELOG
+
+| Fonctionnalité | Description |
+|----------------|-------------|
+| **Tests Docker indépendants du .env prod** | `APPS_HOST_PATH` du `.env` hôte (chemin réel `APPS/`, ex. `/home/<user>/...`) fuyait dans le conteneur de test via l'interpolation compose → 3 tests en échec à tort, dont la non-régression du défaut `apps_host_path`. Surcharge au défaut canonique `/data/apps` dans `docker-compose.test.yml` (le reset par clé `!reset` est ignoré par compose v5) ; le défaut authentique reste couvert par la suite hôte. |
+| **Build de test sans entitlement** | `build: network: host` + compose v5 → « additional privileges requested » : l'entitlement buildkit `network.host` n'est pas transmissible à `up --build`. Build redéclaré sans `network: host` dans l'override de test. `make test-docker` complet vert (1358 passed, 1 skipped) avec le `.env` prod en place. |
+| **Hygiène CHANGELOG** | Purge d'une table « À compléter » orpheline (vestige du bump 3.72.0 OIDC, sans en-tête de version) et rejet du hunk non commité `[3.72.0] - 17 octobre` (doublon de l'entrée `[3.72.0] - 22 octobre` déjà commitée). |
+
+---
+
 ## [3.74.0] - 23 octobre 2026
 
 ### ⚡ Launch apps : refresh_token dédié à la session de l'application
