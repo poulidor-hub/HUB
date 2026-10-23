@@ -1089,6 +1089,15 @@ async def create_app_launch_token(
         nom=current_user.nom,
     )
 
+    # Refresh token dédié à la session de l'app : l'app peut renouveler l'accès
+    # via POST /api/auth/token/refresh (rotation) sans repasser par le portail.
+    app_refresh_token = await create_refresh_token(
+        db,
+        user_id=current_user_id,
+        ip_address=_get_client_ip(request),
+        user_agent=request.headers.get("user-agent", "")
+    )
+
     from app.routes.audit import update_session_activity
     await update_session_activity(db, current_user_id, app_slug=app_slug)
     await log_action(
@@ -1104,6 +1113,7 @@ async def create_app_launch_token(
 
     return AppLaunchResponse(
         access_token=token,
+        refresh_token=app_refresh_token,
         expires_at=expire,
         launch_url=launch_url,
         app_slug=app_slug_value,

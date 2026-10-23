@@ -460,6 +460,51 @@ class TestAppLaunch:
         assert response.status_code == 400
 
     @pytest.mark.asyncio
+    async def test_app_launch_returns_refresh_token(
+        self, client: AsyncClient, user_with_app_access
+    ):
+        """Le launch fournit un refresh_token dédié à la session de l'app."""
+        user, app = user_with_app_access
+        token, _, _ = create_access_token(username=str(user.username), apps={})
+
+        response = await client.post(
+            f"/api/auth/apps/{app.slug}/launch",
+            headers=get_auth_header(token)
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["refresh_token"]
+        assert data["refresh_token"] != data["access_token"]
+
+    @pytest.mark.asyncio
+    async def test_app_launch_refresh_token_is_usable(
+        self, client: AsyncClient, user_with_app_access
+    ):
+        """Le refresh_token du launch permet un refresh complet (rotation + rôles conservés)."""
+        user, app = user_with_app_access
+        token, _, _ = create_access_token(username=str(user.username), apps={})
+
+        launch = await client.post(
+            f"/api/auth/apps/{app.slug}/launch",
+            headers=get_auth_header(token)
+        )
+        assert launch.status_code == 200
+        refresh_token = launch.json()["refresh_token"]
+
+        response = await client.post(
+            "/api/auth/token/refresh",
+            json={"refresh_token": refresh_token}
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["refresh_token"]  # rotation : un nouveau refresh_token est émis
+        payload = decode_jwt_payload(data["access_token"])
+        assert payload["sub"] == user.username
+        assert payload["apps"][app.slug] == "user"
+
+    @pytest.mark.asyncio
     async def test_json_refresh_token_includes_apps_and_beacon_token(
         self, client: AsyncClient, user_with_app_access
     ):
