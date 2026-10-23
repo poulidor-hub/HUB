@@ -17,6 +17,23 @@ services:
   hub-api:
     container_name: hub-test-api
     ports: !override []
+    # Indépendance du .env hôte (prod) : APPS_HOST_PATH y pointe vers le vrai
+    # chemin APPS/ (ex. /home/<user>/...) et polluait les tests qui valident
+    # la configuration (test_apps_host_path_setting_default et voisins —
+    # non-régression 3.71.x). Valeur forcée au défaut canonique de config.py ;
+    # le défaut AUTHENTIQUE reste couvert par la suite hôte (pas de .env).
+    # NB : le reset par clé (`APPS_HOST_PATH: !reset null`) est ignoré par
+    # compose v5 — on surcharge explicitement.
+    # Le build est redéclaré sans network:host : compose v5 ne transmet pas
+    # l'entitlement buildkit network.host à `up --build` ("additional
+    # privileges requested").
+    environment:
+      APPS_HOST_PATH: /data/apps
+    build: !override
+      context: ./hub
+      args:
+        HOST_UID: ${HOST_UID:-1000}
+        HOST_GID: ${HOST_GID:-1000}
 
   hub-frontend:
     container_name: hub-test-frontend
