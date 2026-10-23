@@ -16,6 +16,19 @@
 
 ---
 
+## [3.74.0] - 23 octobre 2026
+
+### ⚡ Launch apps : refresh_token dédié à la session de l'application
+
+| Fonctionnalité | Description |
+|----------------|-------------|
+| **Refresh token au launch** | `POST /api/auth/apps/{slug}/launch` crée désormais un refresh token utilisateur dédié (7 j, rotation à chaque usage, grâce inter-onglets 60 s) en plus du JWT, tracé en base (`refresh_tokens`, IP + user-agent). Nouveau champ `AppLaunchResponse.refresh_token` (optionnel — absent des flux SSO legacy, comportement inchangé). |
+| **Transmission par le portail** | `dashboard.js` (`openApp`) ajoute `&refresh_token=` (URL-encodé) à l'URL de lancement quand le backend en fournit un. Les apps dérivées du template le consomment déjà : `AuthContext` lit `?refresh_token=`, le stocke puis purge l'URL (`history.replaceState`). |
+| **Fin des 401 « Token expiré » en impasse** | Quand le JWT de session expire (défaut 8 h), l'app renouvelle silencieusement l'accès via `POST /api/auth/token/refresh` (rotation) sans repasser par le portail — plus besoin de relancer l'app depuis le dashboard après une expiration. |
+| **Tests** | TDD : 2 tests (`TestAppLaunch` — champ présent et distinct du JWT + refresh utilisable avec rotation et rôles conservés). Suite : 1400 passed (hôte), 1358 passed + 1 skipped (Docker `pouly-test`). Doc `INTEGRATION.md` § « Ouverture depuis le dashboard Hub » mise à jour. |
+
+---
+
 ## [3.73.0] - 22 octobre 2026
 
 ### ⚡ Reads M2M admin : lectures admin ouvertes aux Service Accounts autorisés (`can_admin_read`)
