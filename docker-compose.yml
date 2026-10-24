@@ -37,8 +37,10 @@ services:
   # ===== HUB API (FastAPI) =====
   hub-api:
     build:
+      # NB : pas de `network: host` ici — compose v5/buildx 0.38 exige
+      # l'entitlement network.host qu'il ne transmet plus ("additional
+      # privileges requested").
       context: ./hub
-      network: host
       args:
         # UID de l'utilisateur hôte pour accéder aux fichiers montés (certs/ca/ca.key)
         # Définir HOST_UID=$(id -u) dans .env ou exporter avant docker compose up
@@ -178,8 +180,8 @@ services:
   # ===== FRONTEND (Nginx) =====
   hub-frontend:
     build:
+      # Pas de `network: host` (voir hub-api : entitlement buildx 0.38).
       context: ./frontend
-      network: host
     container_name: hub-frontend
     restart: unless-stopped
     ports:
