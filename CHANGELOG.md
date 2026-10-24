@@ -16,6 +16,17 @@
 
 ---
 
+## [3.74.2] - 24 octobre 2026
+
+### ⚡ build : plus de `network: host` dans les sections build (compose v5/buildx 0.38)
+
+| Fonctionnalité | Description |
+|----------------|-------------|
+| **make build / up --build débloqués** | compose v5.6.1 + buildx 0.38.1 ne transmettent plus l'entitlement buildkit `network.host` : tout `docker compose build` échouait (« additional privileges requested: pass --allow=network.host »). `network: host` est retiré à la source des sections `build:` (hub-api, hub-frontend) — aucune étape de build n'a besoin du réseau hôte. |
+| **Override de test simplifié** | Le `build: !override` de `docker-compose.test.yml` (contournement 3.74.1) devient inutile et est supprimé : il masquait tout futur build arg ajouté au compose principal. Commentaire dans `docker-compose.yml` pour éviter la régression. |
+
+---
+
 ## [3.74.1] - 23 octobre 2026
 
 ### ⚡ make test-docker : indépendance du .env hôte + hygiène CHANGELOG
