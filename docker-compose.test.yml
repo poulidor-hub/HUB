@@ -24,16 +24,10 @@ services:
     # le défaut AUTHENTIQUE reste couvert par la suite hôte (pas de .env).
     # NB : le reset par clé (`APPS_HOST_PATH: !reset null`) est ignoré par
     # compose v5 — on surcharge explicitement.
-    # Le build est redéclaré sans network:host : compose v5 ne transmet pas
-    # l'entitlement buildkit network.host à `up --build` ("additional
-    # privileges requested").
+    # (Le `build: !override` qui contournait l'entitlement buildx network.host
+    # est retiré : docker-compose.yml ne déclare plus network:host.)
     environment:
       APPS_HOST_PATH: /data/apps
-    build: !override
-      context: ./hub
-      args:
-        HOST_UID: ${HOST_UID:-1000}
-        HOST_GID: ${HOST_GID:-1000}
 
   hub-frontend:
     container_name: hub-test-frontend
