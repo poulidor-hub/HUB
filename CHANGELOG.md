@@ -1,18 +1,21 @@
-## [3.71.3] - 12 octobre 2026
-
-### ⚡ install.sh : fusion auto-réparatrice dans un .env conservé
-
-| Fonctionnalité | Description |
-|----------------|-------------|
-| **Fusion sans écrasement** | Relancer `install.sh` sur un serveur existant ajoute désormais les clés requises manquantes au `.env` conservé (au minimum `APPS_HOST_PATH`, calculée localement) au lieu de sortir sans rien faire. Les secrets non inventables manquants (`POSTGRES_PASSWORD`, `ADMIN_*`, `SECRETS_ENCRYPTION_KEY`) déclenchent une erreur explicite listant les clés. Une valeur existante n'est jamais écrasée. |
-| **Automatisation complète** | Avec le fallback Makefile (3.71.2) et `ensure_hub_env()` (hubctl 0.10.7), aucun point d'entrée du stack ne nécessite plus de retouche manuelle du `.env` sur les serveurs installés avant la 3.71.1. |
-
----
-
 # Changelog - Hub d'Authentification
 
 > Ce fichier documente toutes les modifications apportées à la documentation et à l'API.
 > Les agents IA peuvent utiliser `/api/docs/changelog` pour consulter cet historique.
+
+---
+
+## [3.74.3] - 26 octobre 2026
+
+### ⚡ Sécurité — durcissements P0 de l'audit d'octobre 2026
+
+| Fonctionnalité | Description |
+|----------------|-------------|
+| **Restore du hub verrouillé (B-1)** | `POST /api/admin/restore` n'accepte plus n'importe quel service account : un SA applicatif pouvait restaurer l'environnement complet du hub (création de comptes admin, écrasement de mots de passe et de clés). Désormais seuls un utilisateur admin et le SA système interne (`HUB_INTERNAL_SA_CLIENT_ID`) passent — refus fail-closed si la variable n'est pas configurée. |
+| **Path traversal backup éliminé (B-2)** | `backup_id` (formulaire, query, ou réponse d'une app distante) alimentait directement le nom de fichier de stockage : un id contenant `../` permettait d'écrire hors du dossier de backups. Nouveau helper `safe_backup_filename()` (identifiant atomique strict) appliqué à la réception de backup et à l'import depuis une app distante — un id invalide est rejeté en 400 avant toute écriture. |
+| **Open redirect login fermé (B-3)** | `redirect_to` du `POST /api/auth/login` n'était pas validé : une URL externe recevait l'access_token (durée 480 min) en query string. Seuls les chemins relatifs même-origine sont acceptés (rejet de `//`, `\`, backslash et caractères de contrôle), validation fail-fast avant toute écriture en base. |
+| **Auto-approbation `/me/shared` supprimée (#6)** | `PUT /api/apps/me/shared` basculait une app `pending` en `approved` (et activait app + SA) dès `is_shared=true`, sur un endpoint accessible par IP+`X-Slug` sans token. Le partage ne change plus le statut : l'approbation reste un acte admin, la propagation aux SA ne concerne que les apps déjà approuvées. |
+| **Tests** | 15 nouveaux tests (`hub/tests/test_audit_p0_hardening.py`) + adaptation de `test_endpoint_restore_m2m_auth` qui assertait l'ancien comportement vulnérable. Suite complète : 1415 tests verts. |
 
 ---
 
@@ -91,6 +94,17 @@
 | **Reprise sur coupure réseau** | Nouveau module frontend `resilient-download.js` : les gros fichiers sont téléchargés par tranches Range de 4 Mo (206 Partial Content, support natif de FileResponse Starlette). Une coupure TCP en plein transfert ne perd plus le téléchargement : la tranche manquante est retentée avec backoff exponentiel (0,5→8 s), timeout de 90 s par requête pour détecter les connexions pendantes, et la taille finale est vérifiée contre le `Content-Range` annoncé (impossible de livrer un fichier tronqué). Repli automatique en téléchargement simple si le serveur ignore les Range. Corrige l'incident « Failed to fetch » sur export chiffré (coupure à 12,6 Mo / 27 Mo). |
 | **Endpoints couverts** | Export chiffré d'un backup d'app (`/export/download`), export ZIP de l'environnement Hub (`/admin/backup/export/download?include_app_backups=true`), téléchargement de snapshot (`/api/admin/snapshots/{id}/download`). Pastille de progression fixe, mise à jour par tranche (aucune animation continue). |
 | **Test autonome** | `frontend/tests/test_resilient_download.mjs` (Node ≥ 18, zéro dépendance) : serveur HTTP Range-compliant qui coupe brutalement le socket TCP en pleine tranche ; vérifie la reprise et l'intégrité des 27 208 352 octets reconstitués. Cycle rouge/vert validé. |
+
+---
+
+## [3.71.3] - 12 octobre 2026
+
+### ⚡ install.sh : fusion auto-réparatrice dans un .env conservé
+
+| Fonctionnalité | Description |
+|----------------|-------------|
+| **Fusion sans écrasement** | Relancer `install.sh` sur un serveur existant ajoute désormais les clés requises manquantes au `.env` conservé (au minimum `APPS_HOST_PATH`, calculée localement) au lieu de sortir sans rien faire. Les secrets non inventables manquants (`POSTGRES_PASSWORD`, `ADMIN_*`, `SECRETS_ENCRYPTION_KEY`) déclenchent une erreur explicite listant les clés. Une valeur existante n'est jamais écrasée. |
+| **Automatisation complète** | Avec le fallback Makefile (3.71.2) et `ensure_hub_env()` (hubctl 0.10.7), aucun point d'entrée du stack ne nécessite plus de retouche manuelle du `.env` sur les serveurs installés avant la 3.71.1. |
 
 ---
 
