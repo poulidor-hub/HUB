@@ -1,7 +1,9 @@
 """
 Restauration self-backup du HUB : import d'un fichier environment.json.
 
-Endpoint POST /api/admin/restore — accepte admin et service accounts (M2M).
+Endpoint POST /api/admin/restore — accepte les admins et le service account
+système interne du hub uniquement (durcissement B-1, audit 10/2026 : un
+service account d'application est refusé).
 La logique d'import est isolée dans import_environment() pour être testable
 sans couche HTTP.
 """
@@ -18,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.database import get_db
+from app.config import get_settings
 from app.models import User, Application, UserAppRole, ServiceAccount, utcnow
 from app.schemas import (
     BackupExport,
@@ -332,6 +335,18 @@ async def restore_hub_environment(
         actor_id = current_entity.id
         actor_sa_id = None
     elif isinstance(current_entity, ServiceAccount):
+        # Durcissement B-1 (audit 10/2026) : ce endpoint crée/écrase des comptes
+        # (y compris admin) et des clés. Un service account d'application ne doit
+        # JAMAIS pouvoir y accéder — seul le SA système interne du hub passe.
+        internal_client_id = get_settings().hub_internal_sa_client_id
+        if not internal_client_id or current_entity.client_id != internal_client_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=(
+                    "Restauration réservée à un administrateur ou au service "
+                    "account système du hub"
+                ),
+            )
         actor_id = None
         actor_sa_id = current_entity.id
     else:
