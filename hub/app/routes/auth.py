@@ -118,6 +118,31 @@ def verify_beacon_token(user_id: int, token: str) -> bool:
     return hmac.compare_digest(expected, token)
 
 
+def safe_relative_redirect(raw: Optional[str]) -> Optional[str]:
+    """Valide un `redirect_to` fourni par le client (durcissement B-3, audit 10/2026).
+
+    Seuls les chemins relatifs de la même origine sont acceptés : ils doivent
+    commencer par un unique « / » (jamais « // » ni « /\\ »), ne contenir aucun
+    backslash ni caractère de contrôle, ce qui exclut par construction les URL
+    absolues et les schémas (https:, javascript:). Toute autre valeur lève une
+    HTTPException 400 — empêche l'open redirect avec access_token en query.
+    """
+    if raw is None:
+        return None
+    if (
+        not raw.startswith("/")
+        or raw.startswith("//")
+        or raw.startswith("/\\")
+        or "\\" in raw
+        or any(ord(c) < 0x20 for c in raw)
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="redirect_to doit être un chemin relatif (même origine)",
+        )
+    return raw
+
+
 @router.post("/token", response_model=Token)
 async def login_for_token(
     request: Request,
@@ -417,7 +442,12 @@ async def login_with_redirect(
     # Rate limiting
     client_ip = _get_client_ip(request)
     _check_rate_limit(client_ip)
-    
+
+    # Durcissement B-3 : refuser tout redirect_to qui n'est pas un chemin
+    # relatif sûr (open redirect avec access_token en query). Fail-fast,
+    # avant toute écriture en base.
+    redirect_to = safe_relative_redirect(login_data.redirect_to)
+
     result = await db.execute(
         select(User)
         .options(
@@ -494,17 +524,17 @@ async def login_with_redirect(
         db,
         user_id=user.id,
         action="login",
-        target=login_data.redirect_to,
+        target=redirect_to,
         request=request,
         response_status=200
     )
     await db.commit()
     
     # Si redirection demandée
-    if login_data.redirect_to:
-        separator = "&" if "?" in login_data.redirect_to else "?"
+    if redirect_to:
+        separator = "&" if "?" in redirect_to else "?"
         return RedirectResponse(
-            url=f"{login_data.redirect_to}{separator}access_token={token}",
+            url=f"{redirect_to}{separator}access_token={token}",
             status_code=303
         )
     

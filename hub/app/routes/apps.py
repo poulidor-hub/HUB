@@ -2663,26 +2663,11 @@ async def update_app_shared(
     old_shared = app.is_shared_service
     app.is_shared_service = is_shared
 
+    # Durcissement #6 (audit 10/2026) : devenir service partagé n'auto-approuve
+    # PLUS l'application. Une app pending le reste jusqu'à validation admin ;
+    # sa propagation aux SA (bloc suivant) ne concerne que les apps déjà
+    # approuvées, donc une app pending ne devient jamais active via ce endpoint.
     auto_approved = False
-    if is_shared and not old_shared and app.approval_status == ApprovalStatus.pending:
-        app.approval_status = ApprovalStatus.approved
-        app.approved_at = utcnow()
-        app.is_active = True
-        if app.description:
-            app.description = app.description.replace(" (en attente d'approbation)", "")
-
-        sa_result_inner = await db.execute(
-            select(ServiceAccount)
-            .join(service_account_app_access)
-            .where(service_account_app_access.c.app_id == app.id)
-        )
-        for sa_inner in sa_result_inner.scalars().all():
-            sa_inner.is_active = True
-            if sa_inner.description:
-                sa_inner.description = sa_inner.description.replace(" (en attente d'approbation)", "")
-
-        auto_approved = True
-        logger.info(f"Application '{app_slug}' auto-approuvée car devenue service partagé (M2M)")
 
     db.add(app)
     await db.commit()

@@ -23,6 +23,7 @@ Endpoints:
 """
 import os
 import io
+import re
 import uuid
 import json
 import hashlib
@@ -104,6 +105,31 @@ _VALID_BACKUP_MODES = {"disabled", "manual", "scheduled"}
 def _safe_backup_mode(raw: Optional[str]) -> BackupModeEnum:
     """Normalise la valeur de backup_mode : fallback "manual" si la valeur est invalide ou absente."""
     return BackupModeEnum(raw if raw in _VALID_BACKUP_MODES else "manual")
+
+
+# Durcissement B-2 (audit 10/2026) : backup_id est utilisé tel quel dans les
+# noms de fichiers (`f"backup_{backup_id}.zip"`) à partir de valeurs fournies
+# par l'application appelante ou par une app distante → il doit rester
+# strictement atomique (aucun séparateur, aucune traversal).
+_BACKUP_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+
+
+def safe_backup_filename(backup_id: str) -> str:
+    """Valide un backup_id et retourne le nom de fichier de stockage associé.
+
+    Lève HTTPException 400 si le backup_id n'est pas atomique (vide, trop long,
+    séparateur de chemin, traversal `..`). À utiliser partout où un backup_id
+    externe contribue à construire un chemin sur disque.
+    """
+    if not backup_id or ".." in backup_id or not _BACKUP_ID_RE.fullmatch(backup_id):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "backup_id invalide : caractères autorisés : lettres, chiffres, "
+                "'.' , '_' , '-' (pas de séparateur de chemin)"
+            ),
+        )
+    return f"backup_{backup_id}.zip"
 
 
 def _naive_utc(dt: Optional[datetime]) -> Optional[datetime]:
@@ -866,7 +892,9 @@ async def receive_backup(
     # Générer un backup_id si non fourni
     if not backup_id:
         backup_id = str(uuid.uuid4())
-    
+    # Durcissement B-2 : valider avant toute écriture disque (path traversal)
+    filename = safe_backup_filename(backup_id)
+
     # Lire le contenu du fichier
     content = await file.read()
     file_size = len(content)
@@ -907,8 +935,7 @@ async def receive_backup(
     # Créer le dossier de stockage
     app_dir = ensure_storage_dir(slug)
     
-    # Nom du fichier: backup_{backup_id}.zip
-    filename = f"backup_{backup_id}.zip"
+    # Nom du fichier: backup_{backup_id}.zip (backup_id validé par safe_backup_filename)
     storage_path = f"{slug}/{filename}"
     full_path = app_dir / filename
     
@@ -1739,7 +1766,15 @@ async def perform_app_backup(
         checksum = compute_checksum(zip_content)
 
         app_dir = ensure_storage_dir(slug)
-        filename = f"backup_{backup_id}.zip"
+        # Durcissement B-2 : le backup_id distant vient de la réponse de l'app —
+        # ne jamais l'utiliser tel quel dans un chemin.
+        try:
+            filename = safe_backup_filename(backup_id)
+        except HTTPException:
+            await _fail(
+                f"backup_id distant invalide reçu de l'application {slug}: {backup_id!r}",
+                status_code=400,
+            )
         storage_path = f"{slug}/{filename}"
         full_path = app_dir / filename
 
