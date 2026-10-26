@@ -490,7 +490,10 @@ async def test_endpoint_restore_admin_auth(client, admin_token, monkeypatch, tmp
 
 
 @pytest.mark.asyncio
-async def test_endpoint_restore_m2m_auth(client, service_account):
+async def test_endpoint_restore_rejete_sa_applicatif(client, service_account):
+    """Durcissement B-1 (audit 10/2026) : le SA d'une application ne doit plus
+    pouvoir restaurer l'environnement du hub — seul le SA système interne passe
+    (cf. test_audit_p0_hardening.py::TestRestoreAccessControl)."""
     sa_token, _, _ = create_access_token(
         username=service_account.client_id,
         apps={"test-app": "admin"},
@@ -504,7 +507,7 @@ async def test_endpoint_restore_m2m_auth(client, service_account):
         headers={"Authorization": f"Bearer {sa_token}"},
         files={"file": ("backup.zip", zip_bytes, "application/zip")},
     )
-    assert resp.status_code == 200, resp.text
+    assert resp.status_code == 403, resp.text
 
 
 @pytest.mark.asyncio
