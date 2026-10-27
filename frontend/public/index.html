@@ -1060,6 +1060,9 @@
                             <i class="bi bi-hdd-network me-1"></i>Réseau
                             <span id="networkPendingBadge" class="badge bg-warning text-dark ms-1 d-none">0</span>
                         </button>
+                        <button class="nav-link" id="atelier-tab" data-bs-toggle="tab" data-bs-target="#tabAteliers">
+                            <i class="bi bi-tools me-1"></i>Ateliers
+                        </button>
                     </div>
                 </li>
             </ul>
@@ -1253,6 +1256,34 @@
                         </button>
                     </div>
                     <div id="oidcClientsTable" class="table-responsive"></div>
+                </div>
+                <!-- Ateliers (workshops) Tab -->
+                <div class="tab-pane fade" id="tabAteliers">
+                    <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+                        <div>
+                            <h5 class="mb-0"><i class="bi bi-tools me-2"></i>Ateliers (workshops)</h5>
+                            <small class="text-muted">Clones de travail <code>-ws</code> détectés par marqueurs <code>.workshop.env</code> — état des conteneurs lu via Docker</small>
+                        </div>
+                        <div class="btn-group">
+                            <button class="btn btn-outline-secondary btn-sm" data-action="refreshAteliers">
+                                <i class="bi bi-arrow-clockwise me-1"></i>Actualiser
+                            </button>
+                            <button class="btn btn-outline-danger btn-sm" data-action="closeAllAteliers">
+                                <i class="bi bi-x-octagon me-1"></i>Fermer tous les ateliers
+                            </button>
+                        </div>
+                    </div>
+                    <div id="ateliersLoading" class="text-muted d-none">
+                        <div class="d-flex align-items-center">
+                            <div class="spinner-border spinner-border-sm me-2" role="status"></div>
+                            Chargement des ateliers...
+                        </div>
+                    </div>
+                    <div id="ateliersError" class="alert alert-danger d-none"></div>
+                    <div id="ateliersActionResult" class="d-none"></div>
+                    <div id="ateliersTable" class="table-responsive">
+                        <!-- Table loaded dynamically -->
+                    </div>
                 </div>
                 <!-- GitHub Apps Tab -->
                 <div class="tab-pane fade" id="tabGithubApps" role="tabpanel">
@@ -3512,6 +3543,35 @@
         </div>
     </div>
 
+    <!-- Confirm Close All Ateliers Modal -->
+    <div class="modal fade" id="confirmCloseAteliersModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header bg-danger text-white">
+                    <h5 class="modal-title"><i class="bi bi-exclamation-triangle me-2"></i>Fermer tous les ateliers ?</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <p class="mb-2">
+                        La fermeture exécute un <code>down -v</code> sur chaque atelier :
+                        les volumes <code>-ws</code> sont <strong>détruits</strong> — les
+                        données des clones (bases de données, fichiers) sont
+                        <strong>définitivement perdues</strong>.
+                    </p>
+                    <p class="mb-0 text-muted small">
+                        Ateliers actuellement listés : <span id="confirmCloseAteliersCount">?</span>
+                    </p>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuler</button>
+                    <button type="button" class="btn btn-danger" id="confirmCloseAteliersBtn" data-action="confirmCloseAllAteliers">
+                        <i class="bi bi-x-octagon me-1"></i>Tout fermer
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Change Password Modal -->
     <div class="modal fade" id="changePasswordModal" tabindex="-1">
         <div class="modal-dialog modal-dialog-centered">
@@ -4584,6 +4644,7 @@
     <script src="js/modules/audit.js?v=3.74.3"></script>
     <script src="js/modules/audit-charts.js?v=3.74.3"></script>
     <script src="js/modules/admin-docker-scanner.js?v=3.74.3"></script>
+    <script src="js/modules/admin-atelier.js?v=3.74.3"></script>
     <script src="js/modules/admin-ports.js?v=3.74.3"></script>
     <script src="js/modules/audit-page.js?v=3.74.3"></script>
     <script src="js/modules/admin-users-profiles.js?v=3.74.3"></script>
