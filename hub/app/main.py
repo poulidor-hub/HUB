@@ -23,7 +23,7 @@ from app.outbox import outbox_service
 from app.models import User, ErrorLog, utcnow
 from app.auth import get_password_hash, cleanup_expired_tokens, get_current_admin, generate_oidc_sub
 from app.config import get_settings, build_cors_config, get_instance_id
-from app.routes import auth, users, apps, service_accounts, audit, docs, events, app_backups, profiles, apps_health, messages, account_requests, snapshots, vpn, oidc, github_catalog, hub_restore, tags, app_groups, app_deploy, workshop, jwt_keys, app_certs, pki_ca, admin_backup
+from app.routes import auth, users, apps, service_accounts, audit, docs, events, app_backups, profiles, apps_health, messages, account_requests, snapshots, vpn, oidc, github_catalog, hub_restore, tags, app_groups, app_deploy, workshop, jwt_keys, app_certs, pki_ca, admin_backup, atelier
 from app.routes import settings as settings_routes
 from app.routes import network as network_routes
 from app.routes import app_recreate
@@ -884,6 +884,7 @@ app.include_router(oidc.router)
 app.include_router(github_catalog.router)
 app.include_router(app_deploy.router)
 app.include_router(workshop.router)
+app.include_router(atelier.router)
 app.include_router(hub_restore.router)
 app.include_router(admin_backup.router)
 app.include_router(tags.router)
