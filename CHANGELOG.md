@@ -5,6 +5,29 @@
 
 ---
 
+## [3.75.0] - 27 octobre 2026
+
+### 🆕 Nouvelle version
+
+> ⚠️ Cette entrée a été créée automatiquement par `sync_version.py`.
+> Veuillez compléter les détails des modifications.
+
+| Fonctionnalité | Description |
+|----------------|-------------|
+| **À compléter** | Décrivez les changements de cette version |
+
+---
+
+## [3.75.0] - 27 octobre 2026
+
+### ✨ Ateliers (workshops) — pilotage depuis l'admin Hub et l'agent exemple-app
+
+- **Ajouté** : `GET /api/admin/atelier` — liste native des ateliers actifs (scan `${APPS_HOST_PATH}/*/.workshop.env` + état des conteneurs `-ws` via le socket Docker **read-only** ; Docker injoignable → état « inconnu », jamais 500). Admin-only, audit standard
+- **Ajouté** : `POST /api/admin/atelier/close-all` — proxy authentifié vers `hubctl atelier serve` (hôte, localhost:8777, token fichier) ; **600 s** de timeout (`atelier_close_timeout`), 200/207 passthrough, **503 verbatim** si service hôte injoignable
+- **Ajouté** : section admin **« Ateliers »** (module `admin-atelier.js`) — tableau des ateliers actifs, actualisation, bouton « Fermer tous les ateliers » avec modale de confirmation (destruction des volumes `-ws`) et résumé closed/failed
+- **Config** : `atelier_service_url`, `atelier_service_token_file`, `atelier_close_timeout` ; secret `secrets/atelier_token` (produit par hubctl install)
+- Tests : 20 nouveaux (routes admin-only, passthrough, 503, audit) ; suite : 1436 passed
+
 ## [3.74.3] - 26 octobre 2026
 
 ### ⚡ Sécurité — durcissements P0 de l'audit d'octobre 2026
