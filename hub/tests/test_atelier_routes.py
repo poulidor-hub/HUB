@@ -1,20 +1,29 @@
-"""Tests de la route native GET /api/admin/atelier (liste des ateliers).
+"""Tests des routes admin atelier.
 
-Découverte par marqueurs : tout dossier de apps_host_path contenant un
-.workshop.env (contrat hubctl v0.6.1, cf. workshop_service.WS_ENV_KEYS) est un
-atelier. L'état des conteneurs (projet compose = ws_slug) est lu via le client
-Docker socket :ro de docker_scanner — Docker injoignable ⇒
-containers_state="inconnu", la route ne lève jamais 500.
+GET /api/admin/atelier — découverte par marqueurs : tout dossier de
+apps_host_path contenant un .workshop.env (contrat hubctl v0.6.1, cf.
+workshop_service.WS_ENV_KEYS) est un atelier. L'état des conteneurs (projet
+compose = ws_slug) est lu via le client Docker socket :ro de docker_scanner —
+Docker injoignable ⇒ containers_state="inconnu", la route ne lève jamais 500.
 
-Shape de sortie (contrat consommé par l'agent exemple-app et l'UI admin) :
+POST /api/admin/atelier/close-all — proxy admin vers le service atelier hôte
+(`hubctl atelier serve`, 127.0.0.1:8777) : passthrough strict de la réponse
+(200 ou 207 — la shape est decided par hubctl), 503 verbalisable si le service
+est injoignable (ConnectError/timeout), token partagé X-Atelier-Token lu du
+fichier monté :ro. Mocké via respx (httpx intercepté au niveau httpcore).
+
+Shape de sortie du GET (contrat consommé par l'agent exemple-app et l'UI admin) :
 {"ateliers": [{app, ws_slug, api_port, frontend_port, containers_state}]}
 """
+import httpx
 import pytest
+import respx
+from sqlalchemy import select
 
 import app.routes.atelier as route_mod
 from app.auth import get_password_hash
-from app.config import get_settings
-from app.models import User
+from app.config import Settings, get_settings
+from app.models import AuditLog, User
 from tests.conftest import get_auth_header
 
 
@@ -200,3 +209,134 @@ def test_scan_workshops_missing_slug_and_bad_ports(tmp_path):
         "frontend_port": None,
         "containers_state": "inconnu",
     }]
+
+
+# ── POST /close-all — proxy vers hubctl atelier serve (127.0.0.1:8777) ──
+
+ATELIER_HOST = "http://test-atelier:8777"
+CLOSE_ALL_PATH = "/api/admin/atelier/close-all"
+
+# Message 503 verbatim (contrat) — toute divergence ici est une régression.
+SERVICE_DOWN_DETAIL = (
+    "Service atelier hôte injoignable — hubctl atelier serve est-il actif ?"
+)
+
+
+def _use_atelier_service(monkeypatch, tmp_path, token="token-secret-123"):
+    """Pointe settings vers un service hôte fictif + un fichier token."""
+    token_file = tmp_path / "atelier_token"
+    token_file.write_text(f"{token}\n")
+    monkeypatch.setattr(get_settings(), "atelier_service_url", ATELIER_HOST)
+    monkeypatch.setattr(get_settings(), "atelier_service_token_file",
+                        str(token_file))
+
+
+def test_close_timeout_default_is_600s():
+    """Un `down -v` peut être long : le timeout proxy doit valoir 600 s."""
+    assert Settings.model_fields["atelier_close_timeout"].default == 600.0
+
+
+async def test_close_all_requires_auth(client, tmp_path, monkeypatch):
+    _use_atelier_service(monkeypatch, tmp_path)
+    r = await client.post(CLOSE_ALL_PATH)
+    assert r.status_code == 401
+
+
+async def test_close_all_admin_only(client, user_token, tmp_path, monkeypatch):
+    _use_atelier_service(monkeypatch, tmp_path)
+    r = await client.post(CLOSE_ALL_PATH, headers=get_auth_header(user_token))
+    assert r.status_code == 403
+
+
+async def test_close_all_passthrough_200(client, admin_token, tmp_path,
+                                         monkeypatch):
+    """200 du service → 200 + corps identique + header token transmis."""
+    _use_atelier_service(monkeypatch, tmp_path)
+    payload = {"closed": [{"slug": "a-ws"}, {"slug": "b-ws"}], "failed": []}
+    with respx.mock(assert_all_called=False) as mock:
+        route = mock.post(f"{ATELIER_HOST}/atelier/close-all").respond(
+            200, json=payload)
+        r = await client.post(CLOSE_ALL_PATH,
+                              headers=get_auth_header(admin_token))
+    assert r.status_code == 200
+    assert r.json() == payload
+    assert route.called
+    sent = route.calls.last.request
+    assert sent.headers["X-Atelier-Token"] == "token-secret-123"
+
+
+async def test_close_all_passthrough_207(client, admin_token, tmp_path,
+                                         monkeypatch):
+    """207 (échec partiel) → 207 passthrough, shape hubctl intacte."""
+    _use_atelier_service(monkeypatch, tmp_path)
+    payload = {"closed": [{"slug": "a-ws"}],
+               "failed": [{"slug": "b-ws", "rc": 1, "output": "boom"}]}
+    with respx.mock(assert_all_called=False) as mock:
+        route = mock.post(f"{ATELIER_HOST}/atelier/close-all").respond(
+            207, json=payload)
+        r = await client.post(CLOSE_ALL_PATH,
+                              headers=get_auth_header(admin_token))
+    assert r.status_code == 207
+    assert r.json() == payload  # passthrough : on ne déduit pas la structure
+    assert route.called
+
+
+async def test_close_all_service_down_503(client, admin_token, tmp_path,
+                                          monkeypatch):
+    """ConnectError → 503 avec le message verbalisable verbatim."""
+    _use_atelier_service(monkeypatch, tmp_path)
+    with respx.mock(assert_all_called=False) as mock:
+        mock.post(f"{ATELIER_HOST}/atelier/close-all").mock(
+            side_effect=httpx.ConnectError("Connection refused"))
+        r = await client.post(CLOSE_ALL_PATH,
+                              headers=get_auth_header(admin_token))
+    assert r.status_code == 503
+    # NB : le handler global du Hub enrichit le corps avec "request_id" —
+    # le contrat verbatim porte sur le message "detail".
+    assert r.json()["detail"] == SERVICE_DOWN_DETAIL
+
+
+async def test_close_all_timeout_503(client, admin_token, tmp_path,
+                                     monkeypatch):
+    """Timeout (un down -v trop long) → même 503 verbalisable."""
+    _use_atelier_service(monkeypatch, tmp_path)
+    with respx.mock(assert_all_called=False) as mock:
+        mock.post(f"{ATELIER_HOST}/atelier/close-all").mock(
+            side_effect=httpx.ReadTimeout("timed out"))
+        r = await client.post(CLOSE_ALL_PATH,
+                              headers=get_auth_header(admin_token))
+    assert r.status_code == 503
+    assert r.json()["detail"] == SERVICE_DOWN_DETAIL
+
+
+async def test_close_all_other_service_error_passthrough(
+        client, admin_token, tmp_path, monkeypatch):
+    """Autre code service (ex. 401 token rejeté) → passthrough du code+corps."""
+    _use_atelier_service(monkeypatch, tmp_path)
+    with respx.mock(assert_all_called=False) as mock:
+        mock.post(f"{ATELIER_HOST}/atelier/close-all").respond(
+            401, json={"detail": "unauthorized"})
+        r = await client.post(CLOSE_ALL_PATH,
+                              headers=get_auth_header(admin_token))
+    assert r.status_code == 401
+    assert r.json() == {"detail": "unauthorized"}
+
+
+async def test_close_all_audit_emitted(client, admin_token, admin_user,
+                                       async_session, tmp_path, monkeypatch):
+    """L'action destructive est tracée dans l'audit Hub (comme routes admin)."""
+    _use_atelier_service(monkeypatch, tmp_path)
+    with respx.mock(assert_all_called=False) as mock:
+        mock.post(f"{ATELIER_HOST}/atelier/close-all").respond(
+            200, json={"closed": [{"slug": "a-ws"}], "failed": []})
+        r = await client.post(CLOSE_ALL_PATH,
+                              headers=get_auth_header(admin_token))
+    assert r.status_code == 200
+    rows = (await async_session.execute(
+        select(AuditLog).where(AuditLog.action == "ATELIER_CLOSE_ALL")
+    )).scalars().all()
+    assert len(rows) == 1
+    entry = rows[0]
+    assert entry.user_id == admin_user.id
+    assert entry.target == "atelier"
+    assert entry.response_status == 200

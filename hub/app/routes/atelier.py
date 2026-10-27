@@ -16,10 +16,13 @@ import logging
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, Depends
+import httpx
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import get_current_admin
 from app.config import get_settings
+from app.database import get_db
 from app.docker_scanner import docker_scanner
 from app.models import User
 
@@ -124,3 +127,86 @@ async def list_ateliers(_: User = Depends(get_current_admin)):
         docker_client = None
     apps_path = Path(get_settings().apps_host_path)
     return {"ateliers": scan_workshops(apps_path, docker_client)}
+
+
+def _read_atelier_token(token_file: str) -> str:
+    """Lit le token partagé du service atelier hôte (fichier monté :ro).
+
+    Fichier absent/illisible ⇒ chaîne vide (le service répondra 401,
+    passthrough) : on logue mais on ne bloque pas le proxy ici.
+    """
+    try:
+        return Path(token_file).read_text().strip()
+    except OSError as e:
+        logger.warning(f"lecture du token atelier impossible "
+                       f"({token_file}) : {e}")
+        return ""
+
+
+@router.post("/close-all")
+async def close_all_ateliers(
+    request: Request,
+    current_admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Ferme TOUS les ateliers — proxy vers le service hôte `hubctl atelier
+    serve` (127.0.0.1:8777, cf. settings.atelier_service_url).
+
+    Passthrough strict de la réponse du service (200 « tout fermé » ou 207
+    « échec partiel » — la shape est décidée par hubctl, on ne la déduit pas).
+    Service injoignable (ConnectError/timeout) ⇒ 503 verbalisable : un
+    `down -v` peut être long, le timeout est réglé par
+    settings.atelier_close_timeout (600 s par défaut).
+    """
+    settings = get_settings()
+    base_url = settings.atelier_service_url.rstrip("/")
+    headers = {}
+    token = _read_atelier_token(settings.atelier_service_token_file)
+    if token:
+        headers["X-Atelier-Token"] = token
+    try:
+        async with httpx.AsyncClient(
+                timeout=settings.atelier_close_timeout) as http:
+            resp = await http.post(f"{base_url}/atelier/close-all",
+                                   headers=headers)
+    except (httpx.ConnectError, httpx.TimeoutException) as e:
+        logger.warning(f"service atelier hôte injoignable : {e}")
+        raise HTTPException(
+            status_code=503,
+            detail=("Service atelier hôte injoignable — "
+                    "hubctl atelier serve est-il actif ?"))
+    except httpx.HTTPError as e:
+        logger.warning(f"erreur HTTP vers le service atelier hôte : {e}")
+        raise HTTPException(
+            status_code=502,
+            detail="Erreur de communication avec le service atelier hôte.")
+    try:
+        payload = resp.json()
+    except ValueError:
+        logger.warning(f"réponse non JSON du service atelier "
+                       f"(HTTP {resp.status_code})")
+        raise HTTPException(
+            status_code=502,
+            detail="Réponse invalide du service atelier hôte.")
+
+    # Audit Hub standard (action destructive, comme les routes admin).
+    try:
+        closed = failed = None
+        if isinstance(payload, dict):
+            closed = len(payload.get("closed") or [])
+            failed = len(payload.get("failed") or [])
+        from app.routes.audit import log_action
+        await log_action(
+            db, current_admin.id, "ATELIER_CLOSE_ALL", target="atelier",
+            details=f"fermeture ateliers via service hôte "
+                    f"(closed={closed}, failed={failed})",
+            notify_sse=False, request=request,
+            response_status=resp.status_code)
+        await db.commit()
+    except Exception as e:
+        logger.warning(f"audit close-all impossible : {e}")
+
+    # Passthrough code + corps (bytes) — y compris 207 et codes d'erreur.
+    return Response(content=resp.content, status_code=resp.status_code,
+                    media_type=resp.headers.get(
+                        "content-type", "application/json"))

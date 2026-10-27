@@ -401,6 +401,9 @@ class Settings(BaseSettings):
     # service atelier hôte (hubctl) + fichier du token partagé (monté ro).
     atelier_service_url: str = "http://host.docker.internal:8777"
     atelier_service_token_file: str = "/code/secrets/atelier_token"
+    # Timeout du proxy close-all : un `docker compose down -v` d'atelier peut
+    # être très long (volumes volumineux) → 10 minutes par défaut.
+    atelier_close_timeout: float = 600.0
 
     # Host du Hub (IP ou hostname accessible par les clients)
     # Si non défini, sera détecté automatiquement
