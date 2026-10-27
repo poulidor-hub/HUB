@@ -396,6 +396,12 @@ class Settings(BaseSettings):
     # volontairement neutre, JAMAIS un chemin de machine de développement.
     apps_host_path: str = "/data/apps"
 
+    # === Atelier (pilotage par l'agent exemple-app) ===
+    # Réservés à la route proxy /api/admin/atelier/proxy (Task 4) : URL du
+    # service atelier hôte (hubctl) + fichier du token partagé (monté ro).
+    atelier_service_url: str = "http://host.docker.internal:8777"
+    atelier_service_token_file: str = "/code/secrets/atelier_token"
+
     # Host du Hub (IP ou hostname accessible par les clients)
     # Si non défini, sera détecté automatiquement
     hub_host: str = ""
