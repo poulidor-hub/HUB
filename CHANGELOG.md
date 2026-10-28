@@ -5,6 +5,19 @@
 
 ---
 
+## [3.75.1] - 28 octobre 2026
+
+### 🆕 Nouvelle version
+
+> ⚠️ Cette entrée a été créée automatiquement par `sync_version.py`.
+> Veuillez compléter les détails des modifications.
+
+| Fonctionnalité | Description |
+|----------------|-------------|
+| **À compléter** | Décrivez les changements de cette version |
+
+---
+
 ## [3.75.0] - 27 octobre 2026
 
 ### 🆕 Nouvelle version
