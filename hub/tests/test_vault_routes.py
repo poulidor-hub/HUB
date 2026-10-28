@@ -98,6 +98,9 @@ async def test_status_passthrough_200(client, admin_token, tmp_path,
                              headers=get_auth_header(admin_token))
     assert r.status_code == 200
     assert route.called
+    # Le token partagé du coffre est transmis au service hôte (comme le POST).
+    sent = route.calls.last.request
+    assert sent.headers["X-Atelier-Token"] == "token-secret-123"
     assert r.json() == {**unlocked, "service": "ok"}
     # Verrouillé : pas de clés entries/divergences — passthrough intact.
     locked = {
@@ -139,7 +142,29 @@ async def test_status_timeout_200_flag(client, admin_token, tmp_path,
     assert r.json() == UNREACHABLE_BODY
 
 
+async def test_status_service_error_502(client, admin_token, tmp_path,
+                                        monkeypatch):
+    """Code HTTP != 200 du service (401/403/500 JSON) → 502, jamais fusionné
+    avec {"service": "ok"} — l'UI ne doit pas afficher un faux état sain."""
+    _use_vault_service(monkeypatch, tmp_path)
+    with respx.mock(assert_all_called=False) as mock:
+        mock.get(f"{ATELIER_HOST}/vault/status").respond(
+            500, json={"erreur": "boom interne"})
+        r = await client.get(STATUS_PATH,
+                             headers=get_auth_header(admin_token))
+    assert r.status_code == 502
+    assert r.json()["detail"] == "Réponse invalide du service atelier hôte."
+
+
 # ── POST /backup — proxy avec passthrough intégral ──
+
+
+async def test_backup_requires_auth(client, user_token, tmp_path, monkeypatch):
+    _use_vault_service(monkeypatch, tmp_path)
+    r = await client.post(BACKUP_PATH)
+    assert r.status_code == 401
+    r = await client.post(BACKUP_PATH, headers=get_auth_header(user_token))
+    assert r.status_code == 403
 
 
 async def test_backup_passthrough_200(client, admin_token, tmp_path,
@@ -162,7 +187,9 @@ async def test_backup_passthrough_200(client, admin_token, tmp_path,
 
 async def test_backup_passthrough_409(client, admin_token, tmp_path,
                                       monkeypatch):
-    """409 (backup déjà en cours) → 409 passthrough, shape hubctl intacte."""
+    """409 (backup déjà en cours) → 409 conservé, {"erreur": …} réencapsulé
+    en {"detail": …} : le client api.js ne lit que error.detail, sans ça le
+    toast serait générique au lieu de « backup déjà en cours »."""
     _use_vault_service(monkeypatch, tmp_path)
     payload = {"erreur": "backup déjà en cours"}
     with respx.mock(assert_all_called=False) as mock:
@@ -170,7 +197,7 @@ async def test_backup_passthrough_409(client, admin_token, tmp_path,
         r = await client.post(BACKUP_PATH,
                               headers=get_auth_header(admin_token))
     assert r.status_code == 409
-    assert r.json() == payload  # passthrough : on ne déduit pas la structure
+    assert r.json() == {"detail": "backup déjà en cours"}
 
 
 async def test_backup_timeout_503(client, admin_token, tmp_path,

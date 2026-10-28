@@ -212,6 +212,8 @@ async function backupVaultNow() {
         const result = await api.vaultBackup();
         if (result?.status === 'locked') {
             showToast('Coffre verrouillé', 'Déverrouillez le coffre (clé parc.vault.key ou CLI hubctl) avant de sauvegarder.', 'warning');
+        } else if (result?.pra?.error) {
+            showToast('Coffre', 'Sauvegarde réussie mais réplication PRA en échec', 'warning');
         } else {
             const envCount = Number(result?.env) || 0;
             const filesCount = Number(result?.files) || 0;
@@ -224,6 +226,7 @@ async function backupVaultNow() {
         } else {
             showToast('Erreur', e?.message || 'Échec de la sauvegarde du coffre', 'danger');
         }
+        loadVaultStatus();
     } finally {
         progressModal.hide();
         progressEl.addEventListener('hidden.bs.modal', () => progressEl.remove(), { once: true });

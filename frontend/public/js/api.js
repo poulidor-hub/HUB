@@ -1260,7 +1260,12 @@ class HubAPI {
      * 409 "déjà en cours" => le client lève une Error avec le détail backend.
      */
     async vaultBackup() {
-        return this.request('/admin/vault/backup', { method: 'POST' });
+        // Le backup hôte peut durer ~110 s (vault_backup_timeout=120 s côté
+        // route) : timeout client porté à 130 s au lieu du défaut 30 s.
+        return this.request('/admin/vault/backup', {
+            method: 'POST',
+            timeout: 130000
+        });
     }
 
     /**
