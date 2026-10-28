@@ -405,6 +405,13 @@ class Settings(BaseSettings):
     # être très long (volumes volumineux) → 10 minutes par défaut.
     atelier_close_timeout: float = 600.0
 
+    # === Vault (coffre hubctl) ===
+    # Servi par le MÊME service hôte que l'atelier : l'URL et le fichier token
+    # sont RÉUTILISÉS (atelier_service_url / atelier_service_token_file). Seul
+    # ce timeout est propre au vault : un backup est borné côté hôte (~110 s)
+    # mais on laisse de la marge avant d'abandonner la réponse au client.
+    vault_backup_timeout: float = 120.0
+
     # Host du Hub (IP ou hostname accessible par les clients)
     # Si non défini, sera détecté automatiquement
     hub_host: str = ""
