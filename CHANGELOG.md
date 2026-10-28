@@ -5,6 +5,16 @@
 
 ---
 
+## [3.75.2] - 28 octobre 2026
+
+### ⚡ Recréation d'app (propagation IP) — overlays https/gpu injectés
+
+- **Corrigé** : `_op_recreate` (propagation d'IP, bouton « Recréer ») lançait `docker compose -f docker-compose.yml up -d --force-recreate` — les conteneurs étaient recréés **sans l'overlay HTTPS de l'app**, qui perdait son port HTTPS (incident exemple-app 27-28/10/2026 : 4231 injoignable après propagation)
+- **Nouveau** : `_prod_overlay_files()` injecte `docker-compose.https.yml` (sauf `HTTPS_ENABLED=false` dans le .env de l'app) et `docker-compose.gpu.yml` (si `DOCKER_GPU`), chacun seulement si le fichier existe — parité avec `make up`, `--force-recreate` conservé (indispensable aux variables .env non référencées)
+- Tests : 2 nouveaux (overlay injecté / respect de `HTTPS_ENABLED=false`) — 54 passés (workshop + propagation réseau)
+
+---
+
 ## [3.75.1] - 28 octobre 2026
 
 ### 🆕 Nouvelle version
