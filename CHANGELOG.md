@@ -5,6 +5,20 @@
 
 ---
 
+## [3.76.0] - 28 octobre 2026
+
+### 📣 Pour les utilisateurs
+
+- **Ajouté** : bouton « ⬆ Mettre à jour » dans la vue santé des applications — l'admin peut mettre à jour une app (récupération du code, rebuild, redémarrage, vérification de santé) directement depuis l'interface du Hub, avec suivi de progression et confirmation. La mise à jour rejoue aussi l'allocation des ports/IP de l'app.
+
+### ⚡ Vue santé — pilotage du pipeline de déploiement
+
+- **Ajouté** : `updateApp`/`pollDeployStatus` (frontend/public/js/modules/apps-health.js) — branchés sur le pipeline existant `POST /api/apps/{slug}/deploy` (pull `--ff-only` + PAT → réécriture `.env` → `make build` → `make up` → health) ; polling 2 s plafonné à 600 s **évalué en tête de tick** (aucune sortie anticipée ne contourne le plafond), conclusion uniquement sur `current.id === deployment_id`, `clearInterval` garanti sur toutes les sorties
+- **Gestion d'erreurs** : 409 affiché tel quel sans re-precheck (pas de latence réseau), 422 (body sans `detail` → `'Erreur serveur'`) re-interrogé via `/deploy/precheck` avec liste des checks `fail` (label + détail) et hint transitoire
+- **Sécurité** : messages serveur rendus via `textContent` (aucune injection HTML) ; confirmation avant déploiement ; bouton désactivé pendant le cycle
+
+---
+
 ## [3.75.3] - 28 octobre 2026
 
 ### ⚡ Admin : badge « apps en attente » explicable et actionnable
