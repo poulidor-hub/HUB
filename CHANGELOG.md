@@ -5,6 +5,20 @@
 
 ---
 
+## [3.77.0] - 28 octobre 2026
+
+### 📣 Pour les utilisateurs
+
+- **Ajouté** : pilotage du coffre de sauvegarde hubctl depuis l'interface (Admin → Sauvegardes → Coffre) : état du coffre, divergences par app, sauvegarde en un clic (le disque n'est jamais modifié ; restauration toujours en CLI).
+
+### ⚡ Coffre hubctl pilotable depuis l'UI
+
+- **Ajouté** : router `/api/admin/vault/{status,backup}` (admin-only) — proxy vers le service hôte hubctl-atelier, audit `VAULT_BACKUP`, timeout configurable `vault_backup_timeout` (défaut 120 s)
+- **Ajouté** : workspace « Coffre » (4e workspace de l'onglet Sauvegardes) — état du coffre, divergences par app cliquables, répartition du contenu, sauvegarde avec confirmation + spinner, dégradations propres (service down / coffre verrouillé)
+- **Périmètre** : la restauration, l'import et la passphrase restent en CLI
+
+---
+
 ## [3.76.0] - 28 octobre 2026
 
 ### 📣 Pour les utilisateurs
