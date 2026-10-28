@@ -5,6 +5,33 @@
 
 ---
 
+## [3.75.3] - 28 octobre 2026
+
+### ⚡ Admin : badge « apps en attente » explicable et actionnable
+
+Incident : le badge « 1 » de l'onglet Applications restait affiché alors qu'aucune
+approbation n'était visible. Cause racine : un atelier enregistré avant son app de
+base (ex. `exemple-app-ws` vs `exemple-app` — dérivation de slug divergente) reste
+`approval_status=pending` à vie ; le badge le compte alors qu'il est invisible
+(liste d'approbation dédiée retirée de l'HTML, ateliers masqués par défaut dans le
+tableau admin).
+
+- Badge `#pendingAppsBadge` cliquable (`focusPendingApps`) : filtre le tableau
+  admin sur « En attente » avec les ateliers rendus visibles — le compteur est
+  toujours explicable et actionnable.
+- Sémantique unifiée : `updatePendingAppsBadge(count)` devient la source unique
+  (SSE/login via `loadPendingAppsCount` ET tableau via `renderAppsTable`),
+  comptant les `pending` uniquement (les apps `rejected` ne gonflent plus le
+  badge côté tableau — divergence de sémantique entre les deux writers supprimée).
+- Purge du code mort `loadPendingApps()` (éléments `pendingAppsTable` /
+  `pendingAppsAlert` absents de l'HTML — la fonction aurait levé sur `null`).
+- Bouton Supprimer exposé sur les lignes `pending` du tableau admin
+  (`DELETE /api/apps/{slug}/pending` déjà fonctionnel : cascade SA + credentials,
+  audit log, notification SSE) — permet de nettoyer les fiches d'ateliers
+  fantômes sans passer par « Rejeter » d'abord.
+
+---
+
 ## [3.75.2] - 28 octobre 2026
 
 ### ⚡ Recréation d'app (propagation IP) — overlays https/gpu injectés
