@@ -5,6 +5,31 @@
 
 ---
 
+## [3.77.1] - 28 octobre 2026
+
+### 🐛 Fix — pilotage du coffre depuis l'UI
+
+- **Timeout du backup côté frontend** : `vaultBackup()` porte désormais un
+  timeout de 130 s (au lieu du défaut 30 s de `request()`) — l'opération peut
+  durer ~110 s côté hôte, le client abortait avant la fin.
+- **409/500 du service réencapsulés** : POST /backup renvoie
+  `{"detail": payload["erreur"]}` avec le même code HTTP — le client api.js ne
+  lit que `error.detail`, le toast affiche désormais « backup déjà en cours »
+  au lieu d'un message générique. Les shapes 200 restent des passthrough bytes
+  stricts.
+- **GET /status : code HTTP du service vérifié** : un 401/403/405/500 JSON du
+  service hôte n'est plus fusionné avec `{"service": "ok"}` (faux état sain)
+  ⇒ 502 « Réponse invalide du service atelier hôte. ».
+- **Échec PRA visible** : après un backup 200 avec `pra.error`, toast warning
+  « Sauvegarde réussie mais réplication PRA en échec » au lieu du success ;
+  statut du coffre rafraîchi aussi en cas d'échec du backup (catch).
+
+| Fonctionnalité | Description |
+|----------------|-------------|
+| **Pilotage du coffre plus fiable** | Sauvegarde du coffre : plus d'interruption prématurée sur les opérations longues (timeout aligné sur la durée réelle), message clair quand une sauvegarde est déjà en cours, état du coffre toujours exact même si le service hôte répond une erreur, et échec de réplication PRA désormais signalé. |
+
+---
+
 ## [3.77.0] - 28 octobre 2026
 
 ### 📣 Pour les utilisateurs

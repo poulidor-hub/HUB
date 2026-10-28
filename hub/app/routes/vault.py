@@ -20,6 +20,7 @@ from pathlib import Path
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import get_current_admin
@@ -86,6 +87,14 @@ async def vault_status(_: User = Depends(get_current_admin)):
     if not isinstance(payload, dict):
         logger.warning(f"réponse non-objet du service atelier "
                        f"(HTTP {resp.status_code})")
+        raise HTTPException(
+            status_code=502,
+            detail="Réponse invalide du service atelier hôte.")
+    # 401/403/405/500 JSON du service : ne JAMAIS fusionner avec
+    # {"service": "ok"} — l'UI afficherait un faux état sain.
+    if resp.status_code != 200:
+        logger.warning(f"code HTTP inattendu du service atelier "
+                       f"(vault status : HTTP {resp.status_code})")
         raise HTTPException(
             status_code=502,
             detail="Réponse invalide du service atelier hôte.")
@@ -162,7 +171,17 @@ async def vault_backup(
     except Exception as e:
         logger.warning(f"audit vault backup impossible : {e}")
 
-    # Passthrough code + corps (bytes) — y compris 409 et codes d'erreur.
+    # 409/500 du service : le client api.js (request()) ne lit que
+    # "error.detail" — on réencapsule {"erreur": …} en {"detail": …} pour que
+    # le toast affiche le vrai motif (« backup déjà en cours »…) au lieu d'un
+    # message générique. Les shapes 200 restent des passthrough bytes stricts.
+    if (resp.status_code != 200 and isinstance(payload, dict)
+            and "erreur" in payload):
+        return JSONResponse(content={"detail": payload["erreur"]},
+                            status_code=resp.status_code,
+                            media_type="application/json")
+
+    # Passthrough code + corps (bytes) — y compris les codes d'erreur restants.
     return Response(content=resp.content, status_code=resp.status_code,
                     media_type=resp.headers.get(
                         "content-type", "application/json"))
