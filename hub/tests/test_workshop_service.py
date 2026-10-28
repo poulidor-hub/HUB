@@ -593,6 +593,54 @@ async def test_op_recreate_env_sans_fuite_hub(tmp_path, monkeypatch, async_sessi
     assert "HUB_HTTPS_ENABLED" not in up_calls[0]["env"]
 
 
+@pytest.mark.asyncio
+async def test_op_recreate_inclut_overlay_https(tmp_path, monkeypatch, async_session):
+    """La recréation (propagation IP, bouton « Recréer ») doit injecter
+    l'overlay HTTPS de l'app comme le fait son `make up` — sinon les
+    conteneurs sont recréés sans le port HTTPS (incident exemple-app
+    27-28/10/2026 : 4231 injoignable après propagation)."""
+    app = _mk_app(tmp_path, monkeypatch)
+    (app / "docker-compose.https.yml").write_text("services: {}\n")
+    (app / ".env").write_text(
+        "API_PORT=9001\nFRONTEND_PORT=4201\nAPP_VERSION=0.8.2\nHTTPS_ENABLED=true\n")
+    op = await _mk_op(async_session, op="recreate")
+
+    async def _fake_healthy(port, timeout=60):
+        return True
+
+    monkeypatch.setattr(ws, "_wait_healthy", _fake_healthy)
+    calls = _install_exec(monkeypatch, [(0, b"")])
+    await ws._run_workshop_operation(op.id, "wstest", "recreate")
+    up_calls = [c for c in calls if list(c["cmd"][:1]) == ["docker"] and "up" in c["cmd"]]
+    assert up_calls, calls
+    cmd = up_calls[0]["cmd"]
+    assert str(app / "docker-compose.https.yml") in cmd
+    # --force-recreate reste indispensable (variables .env non référencées)
+    assert "--force-recreate" in cmd
+
+
+@pytest.mark.asyncio
+async def test_op_recreate_https_desactive_sans_overlay(tmp_path, monkeypatch,
+                                                        async_session):
+    """HTTPS_ENABLED=false dans le .env de l'app : pas d'overlay injecté,
+    même si le fichier traîne."""
+    app = _mk_app(tmp_path, monkeypatch)
+    (app / "docker-compose.https.yml").write_text("services: {}\n")
+    (app / ".env").write_text(
+        "API_PORT=9001\nFRONTEND_PORT=4201\nAPP_VERSION=0.8.2\nHTTPS_ENABLED=false\n")
+    op = await _mk_op(async_session, op="recreate")
+
+    async def _fake_healthy(port, timeout=60):
+        return True
+
+    monkeypatch.setattr(ws, "_wait_healthy", _fake_healthy)
+    calls = _install_exec(monkeypatch, [(0, b"")])
+    await ws._run_workshop_operation(op.id, "wstest", "recreate")
+    up_calls = [c for c in calls if list(c["cmd"][:1]) == ["docker"] and "up" in c["cmd"]]
+    assert up_calls, calls
+    assert str(app / "docker-compose.https.yml") not in up_calls[0]["cmd"]
+
+
 async def _mk_ws_app_row(async_session, slug="wstest-ws", is_workshop=True):
     from app.models import Application
     row = Application(name=slug, slug=slug, api_url="http://192.0.2.10:10000",
