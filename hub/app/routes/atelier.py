@@ -132,8 +132,8 @@ async def list_ateliers(_: User = Depends(get_current_admin)):
 def _read_atelier_token(token_file: str) -> str:
     """Lit le token partagé du service atelier hôte (fichier monté :ro).
 
-    Fichier absent/illisible ⇒ chaîne vide (le service répondra 401,
-    passthrough) : on logue mais on ne bloque pas le proxy ici.
+    Fichier absent/illisible ⇒ chaîne vide : la route close-all répond
+    alors 503 dédié (token à resynchroniser, pas un 401 du service).
     """
     try:
         return Path(token_file).read_text().strip()
@@ -162,14 +162,25 @@ async def close_all_ateliers(
     base_url = settings.atelier_service_url.rstrip("/")
     headers = {}
     token = _read_atelier_token(settings.atelier_service_token_file)
-    if token:
-        headers["X-Atelier-Token"] = token
+    if not token:
+        raise HTTPException(
+            status_code=503,
+            detail=("Token atelier absent/illisible côté Hub "
+                    "(secrets/atelier_token) — resynchronisez-le depuis "
+                    "~/.config/hubctl/atelier_token"))
+    headers["X-Atelier-Token"] = token
     try:
         async with httpx.AsyncClient(
                 timeout=settings.atelier_close_timeout) as http:
             resp = await http.post(f"{base_url}/atelier/close-all",
                                    headers=headers)
-    except (httpx.ConnectError, httpx.TimeoutException) as e:
+    except httpx.TimeoutException as e:
+        logger.warning(f"fermeture ateliers toujours en cours côté hôte : {e}")
+        raise HTTPException(
+            status_code=503,
+            detail=("Fermeture toujours en cours côté hôte — consultez "
+                    "journalctl -u hubctl-atelier avant de relancer"))
+    except httpx.ConnectError as e:
         logger.warning(f"service atelier hôte injoignable : {e}")
         raise HTTPException(
             status_code=503,

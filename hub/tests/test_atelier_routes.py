@@ -216,9 +216,17 @@ def test_scan_workshops_missing_slug_and_bad_ports(tmp_path):
 ATELIER_HOST = "http://test-atelier:8777"
 CLOSE_ALL_PATH = "/api/admin/atelier/close-all"
 
-# Message 503 verbatim (contrat) — toute divergence ici est une régression.
+# Messages 503 verbatim (contrat) — toute divergence ici est une régression.
 SERVICE_DOWN_DETAIL = (
     "Service atelier hôte injoignable — hubctl atelier serve est-il actif ?"
+)
+TOKEN_MISSING_DETAIL = (
+    "Token atelier absent/illisible côté Hub (secrets/atelier_token) — "
+    "resynchronisez-le depuis ~/.config/hubctl/atelier_token"
+)
+CLOSE_TIMEOUT_DETAIL = (
+    "Fermeture toujours en cours côté hôte — consultez "
+    "journalctl -u hubctl-atelier avant de relancer"
 )
 
 
@@ -281,6 +289,18 @@ async def test_close_all_passthrough_207(client, admin_token, tmp_path,
     assert route.called
 
 
+async def test_close_all_token_missing_503(client, admin_token, tmp_path,
+                                           monkeypatch):
+    """Fichier token inexistant → 503 dédié (pas un 401 générique)."""
+    monkeypatch.setattr(get_settings(), "atelier_service_url", ATELIER_HOST)
+    monkeypatch.setattr(get_settings(), "atelier_service_token_file",
+                        str(tmp_path / "atelier_token_absent"))
+    r = await client.post(CLOSE_ALL_PATH,
+                          headers=get_auth_header(admin_token))
+    assert r.status_code == 503
+    assert r.json()["detail"] == TOKEN_MISSING_DETAIL
+
+
 async def test_close_all_service_down_503(client, admin_token, tmp_path,
                                           monkeypatch):
     """ConnectError → 503 avec le message verbalisable verbatim."""
@@ -298,7 +318,7 @@ async def test_close_all_service_down_503(client, admin_token, tmp_path,
 
 async def test_close_all_timeout_503(client, admin_token, tmp_path,
                                      monkeypatch):
-    """Timeout (un down -v trop long) → même 503 verbalisable."""
+    """Timeout (un down -v trop long) → 503 dédié, distinct du ConnectError."""
     _use_atelier_service(monkeypatch, tmp_path)
     with respx.mock(assert_all_called=False) as mock:
         mock.post(f"{ATELIER_HOST}/atelier/close-all").mock(
@@ -306,7 +326,7 @@ async def test_close_all_timeout_503(client, admin_token, tmp_path,
         r = await client.post(CLOSE_ALL_PATH,
                               headers=get_auth_header(admin_token))
     assert r.status_code == 503
-    assert r.json()["detail"] == SERVICE_DOWN_DETAIL
+    assert r.json()["detail"] == CLOSE_TIMEOUT_DETAIL
 
 
 async def test_close_all_other_service_error_passthrough(
