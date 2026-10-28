@@ -508,12 +508,32 @@ async def _origin_main(app_dir: Path) -> str | None:
 
 # ── RECREATE (recréation des conteneurs d'une app — ex. après propagation IP) ──
 
+def _prod_overlay_files(app_dir: Path, env: dict) -> list[str]:
+    """Overlays compose de prod à injecter, parité avec `make up` : HTTPS
+    (sauf si HTTPS_ENABLED=false dans le .env de l'app) et GPU (si
+    DOCKER_GPU). Chaque overlay n'est pris que si le fichier existe dans
+    l'app — les anciennes apps sans overlay ne sont pas impactées."""
+    files: list[str] = []
+    if (env.get("HTTPS_ENABLED") or "true").strip().lower() != "false":
+        p = app_dir / "docker-compose.https.yml"
+        if p.exists():
+            files.append(str(p))
+    if (env.get("DOCKER_GPU") or "").strip():
+        p = app_dir / "docker-compose.gpu.yml"
+        if p.exists():
+            files.append(str(p))
+    return files
+
+
 async def _op_recreate(op_id: int, slug: str) -> None:
     """`docker compose -p <slug> up -d --force-recreate` + health-check API.
 
     --force-recreate est indispensable : un simple up -d ne recrée pas un
     conteneur dont seule une variable du .env (non référencée au moment du run
-    précédent) a changé."""
+    précédent) a changé.
+    Les overlays HTTPS/GPU de l'app sont injectés comme le fait son
+    `make up` — sinon la recréation (ex. propagation d'IP) fait perdre le
+    port HTTPS de l'app (incident exemple-app 27-28/10/2026)."""
     app_dir = _app_dir(slug)
     compose_file = app_dir / "docker-compose.yml"
     if not compose_file.exists():
@@ -525,12 +545,13 @@ async def _op_recreate(op_id: int, slug: str) -> None:
     except ValueError:
         api_port = None
 
-    await _step(op_id, "recreate", f"docker compose -p {slug} up -d --force-recreate")
-    await _run_cmd(
-        ["docker", "compose", "-p", slug, "-f", str(compose_file),
-         "up", "-d", "--force-recreate"],
-        app_dir, T_UP, env_base=_compose_base_env(),
-    )
+    cmd = ["docker", "compose", "-p", slug, "-f", str(compose_file)]
+    for f in _prod_overlay_files(app_dir, env):
+        cmd += ["-f", f]
+    cmd += ["up", "-d", "--force-recreate"]
+
+    await _step(op_id, "recreate", " ".join(cmd))
+    await _run_cmd(cmd, app_dir, T_UP, env_base=_compose_base_env())
 
     if api_port:
         await _step(op_id, "health", f"Santé app (port {api_port}, {T_HEALTH} s)")
