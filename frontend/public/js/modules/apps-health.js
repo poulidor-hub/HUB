@@ -200,6 +200,7 @@ function renderAppCard(app) {
                 '<button data-action="restartApp" data-arg1="' + slug + '" id="restartBtn_' + slug + '" style="' + btnCss + '" title="Redemarrer">⟳</button>' +
                 '<button data-action="showLogs" data-arg1="' + slug + '" style="' + btnCss + '" title="Logs">📋</button>' +
                 '<button data-action="socleCheck" data-arg1="' + slug + '" id="socleCheckBtn_' + slug + '" style="' + btnCss + '" title="Contrôler le socle">🩺</button>' +
+                '<button data-action="updateApp" data-arg1="' + slug + '" id="updateBtn_' + slug + '" style="' + btnCss + '" title="Mettre à jour (pull + build + up)">⬆</button>' +
                 '<button data-action="toggleBranches" data-arg1="' + slug + '" id="branchBtn_' + slug + '" style="' + btnCss.replace('border-right:1px solid #e2e8f0;', '') + 'color:#7c3aed;background:#f5f3ff;" title="Déployer une branche (via l\'atelier)">🌿</button>' +
             '</div>';
     }
@@ -352,6 +353,86 @@ async function restartApp(slug) {
         showToast('Erreur', error.message, 'danger');
         btn.disabled = false;
         btn.innerHTML = '⟳';
+    }
+}
+
+// ─── Mise à jour (pipeline deploy : pull --ff-only → .env → build → up → health) ───
+
+var POLL_MS = 2000;
+var POLL_TIMEOUT_MS = 600000;
+var STEP_LABELS = {
+    clone: 'Récupération du code',
+    env: 'Mise à jour de la configuration',
+    build: 'Build des images',
+    up: 'Démarrage',
+    health: 'Vérification santé',
+    done: 'Terminé'
+};
+
+function pollDeployStatus(slug, deploymentId) {
+    return new Promise(function (resolve) {
+        var lastStep = null;
+        var started = Date.now();
+        var timer = setInterval(async function () {
+            var st;
+            try {
+                st = await api.getAppDeployStatus(slug);
+            } catch (e) {
+                return; // erreur transitoire : on retente au prochain tick
+            }
+            var cur = st && st.current;
+            // Ne conclure que sur LE déploiement qu'on a lancé (un autre peut passer devant)
+            if (!cur || cur.id !== deploymentId) return;
+            if (cur.current_step && cur.current_step !== lastStep) {
+                lastStep = cur.current_step;
+                showToast('Mise à jour', slug + ' — ' + (STEP_LABELS[cur.current_step] || cur.current_step), 'info');
+            }
+            if (cur.status === 'success') {
+                clearInterval(timer);
+                showToast('Mise à jour', slug + ' est à jour', 'success');
+                loadAppsHealth();
+                resolve(true);
+            } else if (cur.status === 'failed') {
+                clearInterval(timer);
+                var logs = (cur.logs || '').slice(-300);
+                showToast('Mise à jour', slug + ' : déploiement échoué (' + (STEP_LABELS[cur.current_step] || cur.current_step || '?') + ')' + (logs ? '\n' + logs : ''), 'danger');
+                resolve(false);
+            } else if (Date.now() - started > POLL_TIMEOUT_MS) {
+                clearInterval(timer);
+                showToast('Mise à jour', 'Délai dépassé pour ' + slug + ' — vérifiez le statut du déploiement', 'danger');
+                resolve(false);
+            }
+        }, POLL_MS);
+    });
+}
+
+async function updateApp(slug) {
+    var btn = document.getElementById('updateBtn_' + slug);
+    if (btn && btn.disabled) return; // anti double-clic
+    if (!confirm('Mettre à jour ' + slug + " ? L'application va être mise à jour, reconstruite puis redémarrée.")) return;
+    if (btn) btn.disabled = true;
+    try {
+        var res = await api.deployApp(slug); // 201 ; 400/409/422 → throw (message = detail)
+        showToast('Mise à jour', 'Déploiement #' + res.deployment_id + ' lancé pour ' + slug, 'info');
+        await pollDeployStatus(slug, res.deployment_id);
+    } catch (e) {
+        // api.request jette sur tout non-2xx sans exposer le statut ni le body :
+        // 409/400 sont lisibles tels quels ; le 422 perd ses checks → re-precheck pour lister ce qui manque.
+        var msg = e.message || 'Erreur inconnue';
+        try {
+            var pre = await api.getAppDeployPrecheck(slug);
+            if (pre && pre.ready === false && Array.isArray(pre.checks)) {
+                var ko = pre.checks.filter(function (c) { return c.status === 'fail'; })
+                    .map(function (c) { return c.label + ' : ' + (c.detail || 'KO'); })
+                    .join('\n');
+                if (ko) msg = msg + '\n' + ko;
+            }
+        } catch (_) { /* precheck indisponible : message d'origine */ }
+        showToast('Mise à jour', msg, 'danger');
+    } finally {
+        // En succès la vue est re-rendue (boutons neufs) ; en échec on réactive l'existant.
+        var b = document.getElementById('updateBtn_' + slug);
+        if (b) b.disabled = false;
     }
 }
 
