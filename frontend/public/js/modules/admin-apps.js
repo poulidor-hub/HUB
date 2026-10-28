@@ -153,6 +153,22 @@ function filterAdminApps() {
     renderAppsTable(getFilteredAdminApps());
 }
 
+/**
+ * Clic sur le badge « apps en attente » de l'onglet : filtre le tableau sur
+ * les pending AVEC les ateliers visibles (masqués par défaut). Sans cela, un
+ * atelier pending (ex. fantôme après suppression hors API) est compté par le
+ * badge sans jamais être visible ni actionnable — faux « à approuver » permanent.
+ * L'activation de l'onglet Applications reste assurée par le bouton parent
+ * (data-bs-toggle="tab"), le clic du badge bouillonnant vers lui.
+ */
+function focusPendingApps() {
+    const statusSelect = document.getElementById('adminAppsStatusFilter');
+    const workshopSelect = document.getElementById('adminAppsWorkshopFilter');
+    if (statusSelect) statusSelect.value = 'pending';
+    if (workshopSelect) workshopSelect.value = 'all';
+    filterAdminApps();
+}
+
 function clearAdminAppsSearch() {
     adminAppsSearchQuery = '';
     const searchInput = document.getElementById('adminAppsSearch');
@@ -435,17 +451,10 @@ function renderAppsTable(apps) {
 
     syncAdminAppsFilterControls();
 
-    // Compter les apps pending pour le badge
-    const pendingCount = allApps.filter(a => a.approval_status === 'pending' || a.approval_status === 'rejected').length;
-    const badge = document.getElementById('pendingAppsBadge');
-    if (badge) {
-        if (pendingCount > 0) {
-            badge.textContent = pendingCount;
-            badge.classList.remove('d-none');
-        } else {
-            badge.classList.add('d-none');
-        }
-    }
+    // Badge « en attente » : pending uniquement, via l'updater unifié
+    // (même sémantique que loadPendingAppsCount côté SSE/login).
+    // Les apps rejetées ne gonflent pas le badge : filtre « Rejetées » dédié.
+    updatePendingAppsBadge(allApps.filter(a => a.approval_status === 'pending').length);
 
     const countLabel = hasActiveFilters
         ? `${sortedApps.length} application(s) sur ${totalApps}`
@@ -509,6 +518,9 @@ function renderAppsTable(apps) {
                             </button>
                             <button class="btn btn-sm btn-outline-danger me-1" data-app-name="${escapeHtml(app.name)}" data-action="showRejectAppModal" data-arg1="${escapeHtml(app.slug)}" data-arg2="$el" title="Rejeter">
                                 <i class="bi bi-x-lg"></i>
+                            </button>
+                            <button class="btn btn-sm btn-outline-secondary" data-action="deletePendingApp" data-arg1="${escapeHtml(app.slug)}" title="Supprimer">
+                                <i class="bi bi-trash"></i>
                             </button>
                         `;
                     } else if (approvalStatus === 'rejected') {
