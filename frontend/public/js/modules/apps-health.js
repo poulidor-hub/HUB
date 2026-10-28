@@ -374,6 +374,14 @@ function pollDeployStatus(slug, deploymentId) {
         var lastStep = null;
         var started = Date.now();
         var timer = setInterval(async function () {
+            // Plafond temporel évalué EN TÊTE de tick : aucune sortie anticipée
+            // (erreur réseau, id étranger) ne peut contourner le timeout.
+            if (Date.now() - started > POLL_TIMEOUT_MS) {
+                clearInterval(timer);
+                showToast('Mise à jour', 'Délai dépassé pour ' + slug + ' — vérifiez le statut du déploiement', 'danger');
+                resolve(false);
+                return;
+            }
             var st;
             try {
                 st = await api.getAppDeployStatus(slug);
@@ -397,10 +405,6 @@ function pollDeployStatus(slug, deploymentId) {
                 var logs = (cur.logs || '').slice(-300);
                 showToast('Mise à jour', slug + ' : déploiement échoué (' + (STEP_LABELS[cur.current_step] || cur.current_step || '?') + ')' + (logs ? '\n' + logs : ''), 'danger');
                 resolve(false);
-            } else if (Date.now() - started > POLL_TIMEOUT_MS) {
-                clearInterval(timer);
-                showToast('Mise à jour', 'Délai dépassé pour ' + slug + ' — vérifiez le statut du déploiement', 'danger');
-                resolve(false);
             }
         }, POLL_MS);
     });
@@ -416,18 +420,22 @@ async function updateApp(slug) {
         showToast('Mise à jour', 'Déploiement #' + res.deployment_id + ' lancé pour ' + slug, 'info');
         await pollDeployStatus(slug, res.deployment_id);
     } catch (e) {
-        // api.request jette sur tout non-2xx sans exposer le statut ni le body :
-        // 409/400 sont lisibles tels quels ; le 422 perd ses checks → re-precheck pour lister ce qui manque.
-        var msg = e.message || 'Erreur inconnue';
-        try {
-            var pre = await api.getAppDeployPrecheck(slug);
-            if (pre && pre.ready === false && Array.isArray(pre.checks)) {
-                var ko = pre.checks.filter(function (c) { return c.status === 'fail'; })
-                    .map(function (c) { return c.label + ' : ' + (c.detail || 'KO'); })
-                    .join('\n');
-                if (ko) msg = msg + '\n' + ko;
-            }
-        } catch (_) { /* precheck indisponible : message d'origine */ }
+        // api.request jette sur tout non-2xx sans exposer le statut ni le body.
+        // 'Erreur serveur' = body sans champ detail = le format 422 du backend
+        // (message + checks) → re-precheck pour lister les blocages. Les 400/409
+        // ont un detail lisible : affichés tels quels, sans precheck (latence).
+        var msg = (e && e.message) || 'Erreur inconnue';
+        if (msg === 'Erreur serveur') {
+            try {
+                var pre = await api.getAppDeployPrecheck(slug);
+                if (pre && Array.isArray(pre.checks)) {
+                    var ko = pre.checks.filter(function (c) { return c.status === 'fail'; })
+                        .map(function (c) { return c.label + ' : ' + (c.detail || 'KO'); })
+                        .join('\n');
+                    msg = 'Prérequis de déploiement non satisfaits pour ' + slug + (ko ? '\n' + ko : '\nCause possiblement transitoire — réessayez.');
+                }
+            } catch (_) { /* precheck indisponible : message d'origine */ }
+        }
         showToast('Mise à jour', msg, 'danger');
     } finally {
         // En succès la vue est re-rendue (boutons neufs) ; en échec on réactive l'existant.
