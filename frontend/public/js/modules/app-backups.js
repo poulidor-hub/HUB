@@ -63,7 +63,7 @@ const BACKUP_STEP_LABELS = {
 };
 
 function switchBackupWorkspace(tab) {
-    const tabs = ['apps', 'snapshots', 'env'];
+    const tabs = ['apps', 'snapshots', 'env', 'vault'];
     tabs.forEach(name => {
         document.getElementById(`backupWorkspace${capitalizeBackupTab(name)}Tab`)?.classList.toggle('btn-primary', name === tab);
         document.getElementById(`backupWorkspace${capitalizeBackupTab(name)}Tab`)?.classList.toggle('btn-outline-primary', name !== tab);
@@ -80,6 +80,9 @@ function switchBackupWorkspace(tab) {
     } else if (tab === 'env') {
         // Export/import d'environnement (module backup-import.js)
         if (typeof loadBackupInfo === 'function') loadBackupInfo();
+    } else if (tab === 'vault') {
+        // Coffre hubctl (module admin-vault.js)
+        if (typeof loadVaultStatus === 'function') loadVaultStatus();
     }
 }
 
