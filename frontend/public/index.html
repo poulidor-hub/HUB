@@ -1358,6 +1358,9 @@
                         <button type="button" class="btn btn-outline-primary btn-sm" id="backupWorkspaceEnvTab" data-action="switchBackupWorkspace" data-args="env">
                             <i class="bi bi-shield-lock me-1"></i>Environnement
                         </button>
+                        <button type="button" class="btn btn-outline-primary btn-sm" id="backupWorkspaceVaultTab" data-action="switchBackupWorkspace" data-args="vault">
+                            <i class="bi bi-safe me-1"></i>Coffre hubctl
+                        </button>
                     </div>
 
                     <div id="backupWorkspaceApps">
@@ -1537,6 +1540,72 @@
                                 </div>
                             </div>
                         </div>
+                    </div>
+
+                    <!-- ================= Workspace Coffre hubctl ================= -->
+                    <div id="backupWorkspaceVault" class="d-none">
+                        <!-- Toolbar -->
+                        <div class="d-flex justify-content-between align-items-center mb-3">
+                            <div>
+                                <h6 class="mb-0"><i class="bi bi-safe me-2"></i>Coffre hubctl</h6>
+                                <small class="text-muted">Coffre chiffré : .env, secrets, dump DB et réplication PRA</small>
+                            </div>
+                            <div class="d-flex gap-2">
+                                <button class="btn btn-outline-secondary btn-sm" data-action="loadVaultStatus" title="Actualiser" aria-label="Actualiser">
+                                    <i class="bi bi-arrow-clockwise"></i>
+                                </button>
+                                <button class="btn btn-primary btn-sm" id="vaultBackupBtn" data-action="confirmVaultBackup">
+                                    <i class="bi bi-shield-lock me-1"></i>Sauvegarder maintenant
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Service hubctl injoignable -->
+                        <div id="vaultServiceAlert" class="alert alert-warning d-none py-2 mb-3">
+                            <i class="bi bi-unplugged me-2"></i>
+                            Service hubctl injoignable — <span id="vaultServiceHint">vérifier hubctl-atelier.service (systemctl status hubctl-atelier)</span>
+                        </div>
+
+                        <!-- Coffre verrouillé -->
+                        <div id="vaultLockedAlert" class="alert alert-warning d-none py-2 mb-3">
+                            <i class="bi bi-lock-fill me-2"></i>
+                            Coffre verrouillé — restaurez la clé <code>parc.vault.key</code> ou déverrouillez via CLI hubctl
+                        </div>
+
+                        <!-- Badges d'état -->
+                        <div id="vaultStatusLine" class="d-flex flex-wrap gap-2 align-items-center mb-3">
+                            <span class="text-muted small">Chargement…</span>
+                        </div>
+
+                        <!-- Contenu du coffre -->
+                        <div class="card border-0 shadow-sm mb-3">
+                            <div class="card-header bg-transparent">
+                                <h6 class="mb-0"><i class="bi bi-box-seam me-2"></i>Contenu du coffre</h6>
+                            </div>
+                            <div class="card-body">
+                                <div id="vaultEntries" class="d-flex flex-wrap gap-1">
+                                    <span class="text-muted small">—</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Divergences -->
+                        <div class="card border-0 shadow-sm mb-3">
+                            <div class="card-header bg-transparent">
+                                <h6 class="mb-0"><i class="bi bi-arrow-left-right me-2"></i>Divergences apps</h6>
+                            </div>
+                            <div class="card-body">
+                                <div id="vaultDivergences" class="mb-2">
+                                    <span class="text-muted small">—</span>
+                                </div>
+                                <small class="text-muted">Cliquez sur une app pour ouvrir la vue Santé des applications.</small>
+                            </div>
+                        </div>
+
+                        <!-- Note permanente -->
+                        <small class="text-muted d-block">
+                            <i class="bi bi-terminal me-1"></i>Restauration, import et changement de passphrase : CLI hubctl uniquement (<code>./hubctl vault --help</code>)
+                        </small>
                     </div>
                 </div>
 
@@ -4659,6 +4728,7 @@
     <script src="js/modules/backup-import.js?v=3.76.0"></script>
     <script src="js/modules/app-backups.js?v=3.76.0"></script>
     <script src="js/modules/admin-snapshots.js?v=3.76.0"></script>
+    <script src="js/modules/admin-vault.js?v=3.76.0"></script>
     <script src="js/modules/bulk-users-csv.js?v=3.76.0"></script>
     <script src="js/modules/messages-inbox.js?v=3.76.0"></script>
     <script src="js/modules/account-requests.js?v=3.76.0"></script>

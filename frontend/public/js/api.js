@@ -1247,6 +1247,23 @@ class HubAPI {
     }
 
     /**
+     * Statut du coffre hubctl (payload hubctl fusionné par le backend).
+     * service: "unreachable" => seulement {service, hint} garantis.
+     * status: "locked" => ni entries ni divergences (payload défensif).
+     */
+    async getVaultStatus() {
+        return this.request('/admin/vault/status');
+    }
+
+    /**
+     * Déclenche une sauvegarde vers le coffre (env + secrets + dump DB + PRA).
+     * 409 "déjà en cours" => le client lève une Error avec le détail backend.
+     */
+    async vaultBackup() {
+        return this.request('/admin/vault/backup', { method: 'POST' });
+    }
+
+    /**
      * Annule (kill-switch manuel) un backup bloqué en pending/running.
      * @param {string} backupId - identifiant du backup à annuler
      */
