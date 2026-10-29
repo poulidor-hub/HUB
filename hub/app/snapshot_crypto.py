@@ -19,8 +19,13 @@ from pathlib import Path
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
 logger = logging.getLogger(__name__)
+
+# Chunks de chiffrement : les snapshots multi-Go ne transitent JAMAIS entiers
+# en RAM (OOM kill du container hub-api, memcg 2 Go — incident 29/10/2026).
+_ENCRYPT_CHUNK = 4 * 1024 * 1024
 
 _SECRETS_DIR: Path | None = None  # injectable pour les tests
 
@@ -57,22 +62,37 @@ def list_candidate_private_keys(secrets_dir: Path | None = None) -> list[tuple[s
 
 
 def encrypt_file(input_path: Path, output_path: Path, *, secrets_dir: Path | None = None) -> None:
-    """Chiffre `input_path` vers `output_path` avec la clé publique backup."""
+    """Chiffre `input_path` vers `output_path` avec la clé publique backup.
+
+    Streaming (chunks de 4 Mo) : le plaintext et le ciphertext ne sont jamais
+    chargés entièrement en RAM. La sortie est BYTE-IDENTIQUE à l'ancienne
+    implémentation one-shot (``AESGCM.encrypt`` = ciphertext‖tag 16 o) :
+    ``decrypt_snapshot_bytes`` et restore_snapshot.py restent compatibles sans
+    migration de format.
+    """
     base = _resolve_secrets_dir(secrets_dir)
     with open(base / "backup_public_key.pem", "rb") as f:
         public_key = serialization.load_pem_public_key(f.read())
 
     aes_key = AESGCM.generate_key(bit_length=256)
     nonce = os.urandom(12)
-    ciphertext = AESGCM(aes_key).encrypt(nonce, input_path.read_bytes(), None)
     encrypted_key = public_key.encrypt(
         aes_key,
         padding.OAEP(mgf=padding.MGF1(algorithm=hashes.SHA256()),
                      algorithm=hashes.SHA256(), label=None),
     )
-    output_path.write_bytes(
-        len(encrypted_key).to_bytes(4, "big") + encrypted_key + nonce + ciphertext
-    )
+
+    encryptor = Cipher(algorithms.AES(aes_key), modes.GCM(nonce)).encryptor()
+    buffer = bytearray(_ENCRYPT_CHUNK + 16)
+    with open(input_path, "rb") as src, open(output_path, "wb") as dst:
+        dst.write(len(encrypted_key).to_bytes(4, "big"))
+        dst.write(encrypted_key)
+        dst.write(nonce)
+        while chunk := src.read(_ENCRYPT_CHUNK):
+            written = encryptor.update_into(chunk, buffer)
+            dst.write(buffer[:written])
+        encryptor.finalize()
+        dst.write(encryptor.tag)
 
 
 def decrypt_snapshot_bytes(data: bytes, *, secrets_dir: Path | None = None) -> tuple[bytes, str]:

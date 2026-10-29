@@ -35,11 +35,58 @@ SECRETS_DIR = Path("/code/secrets")
 SNAPSHOT_STORAGE_DIR = Path("/code/storage/snapshots")  # monkeypatchable en test
 SETTINGS = get_settings()
 
+# Chunks du pipeline d'assemblage : payload multi-Go jamais entier en RAM
+# (incident OOM 29/10/2026 : cctx.compress(src.read()) + read_bytes() ont
+# OOM-killé le container hub-api, memcg 2 Go, sur un snapshot de 4,4 Go).
+_ARCHIVE_CHUNK = 4 * 1024 * 1024
+
 
 class SnapshotCreationError(Exception):
     def __init__(self, message: str):
         self.message = message
         super().__init__(message)
+
+
+def _assemble_and_compress(temp_dir: Path, archive_path: Path) -> int:
+    """Assemble le contenu de temp_dir en tar puis compresse en zstd, en streaming.
+
+    - Le tar est écrit fichier par fichier (``tarfile.add`` lit depuis le disque).
+    - La compression lit le tar par chunks (``copy_stream``) : RAM constante.
+    - La taille source est « pledged » à zstd pour que le frame embarque le
+      content-size — requis par la décompression one-shot de restore_snapshot.py
+      (``dctx.decompress(data)`` sans max_output_size).
+
+    Retourne la taille de l'archive .tar.zst produite.
+    """
+    files_to_add = []
+    for root, dirs, filenames in os.walk(temp_dir):
+        for fn in filenames:
+            full = Path(root) / fn
+            if full.suffix != ".enc":
+                files_to_add.append(full)
+
+    tmp_tar = tempfile.NamedTemporaryFile(suffix=".tar", delete=False)
+    tmp_tar.close()
+    tar_path = Path(tmp_tar.name)
+    try:
+        with tarfile.open(tar_path, "w") as tar:
+            for f in files_to_add:
+                tar.add(str(f), arcname=str(f.relative_to(temp_dir)))
+        cctx = zstd.ZstdCompressor(level=3)
+        with open(tar_path, "rb") as src, open(archive_path, "wb") as dst:
+            cctx.copy_stream(src, dst, size=tar_path.stat().st_size)
+    finally:
+        tar_path.unlink(missing_ok=True)
+    return archive_path.stat().st_size
+
+
+def _sha256_file(path: Path) -> str:
+    """SHA-256 d'un fichier par chunks de 4 Mo (jamais read_bytes())."""
+    digest = hashlib.sha256()
+    with open(path, "rb") as f:
+        while chunk := f.read(_ARCHIVE_CHUNK):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 async def create_snapshot(
@@ -152,31 +199,10 @@ async def create_snapshot(
         }
         manifest_path.write_text(json.dumps(manifest, indent=2, default=str))
 
-        # Assemble tar
-        files_to_add = []
-        for root, dirs, filenames in os.walk(temp_dir):
-            for fn in filenames:
-                full = Path(root) / fn
-                if full.suffix != ".enc":
-                    files_to_add.append(full)
-
-        tmp_tar = tempfile.NamedTemporaryFile(suffix=".tar", delete=False)
-        tar_path = Path(tmp_tar.name)
-        try:
-            with tarfile.open(tar_path, "w") as tar:
-                for f in files_to_add:
-                    arcname = str(f.relative_to(temp_dir))
-                    tar.add(str(f), arcname=arcname)
-        finally:
-            pass
-
+        # Assemble tar + compression zstd en streaming, hors event loop
+        # (to_thread) : Hub réactif pendant l'assemblage, RAM constante.
         archive_path = temp_dir / f"snapshot_{snapshot_id}.tar.zst"
-        cctx = zstd.ZstdCompressor(level=3)
-        with open(tar_path, "rb") as src, open(archive_path, "wb") as dst:
-            dst.write(cctx.compress(src.read()))
-        tar_path.unlink()
-
-        archive_size = archive_path.stat().st_size
+        archive_size = await asyncio.to_thread(_assemble_and_compress, temp_dir, archive_path)
         logger.info(f"[SNAPSHOT] {snapshot_id}: archive .tar.zst = {archive_size} bytes")
 
         # Encrypt
@@ -184,10 +210,10 @@ async def create_snapshot(
         await db.commit()
 
         encrypted_path = temp_dir / f"snapshot_{snapshot_id}.tar.zst.enc"
-        _encrypt_file(archive_path, encrypted_path)
+        await asyncio.to_thread(_encrypt_file, archive_path, encrypted_path)
         archive_path.unlink()
 
-        checksum = hashlib.sha256(encrypted_path.read_bytes()).hexdigest()
+        checksum = await asyncio.to_thread(_sha256_file, encrypted_path)
 
         # Sauvegarde locale
         storage_dir = SNAPSHOT_STORAGE_DIR
