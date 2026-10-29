@@ -5,6 +5,19 @@
 
 ---
 
+## [3.77.4] - 29 octobre 2026
+
+### 🐛 Fix — `make test-docker` : INTERNALERROR pytest avec pytest 9.2
+
+- `pytest.ini` : `asyncio_default_fixture_loop_scope = function` — le rebuild
+  de l'image (pour `respx`) a remonté pytest 9.1.1 → 9.2.0 et pytest-asyncio
+  1.4.0 → 1.4.1 (déps non épinglées) ; l'avertissement « fixture loop scope
+  unset » devient une `PytestDeprecationWarning` émise au configure, fatale
+  via `filterwarnings = error::DeprecationWarning` → INTERNALERROR avant tout
+  test. Clé recommandée posée explicitement (défaut futur de pytest-asyncio).
+
+---
+
 ## [3.77.3] - 29 octobre 2026
 
 ### 🐛 Fix — gate `make test-docker` vert
