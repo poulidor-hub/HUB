@@ -5,6 +5,46 @@
 
 ---
 
+## [3.77.2] - 29 octobre 2026
+
+### 📣 Pour les utilisateurs
+- **Corrigé** : la création d'un snapshot complet du Hub échouait (« Snapshot
+  interrompu ») dès que le parc dépasse ~2 Go de données — le Hub manquait de
+  mémoire pendant la compression et redémarrait. Les snapshots fonctionnent à
+  nouveau quelle que soit la taille du parc, sans ralentir le Hub pendant
+  l'opération.
+
+### 🐛 Fix — pipeline d'assemblage des snapshots streaming (OOM memcg 2 Go)
+
+- **Incident 29/10/2026** (snapshot `bc438ade`, 26 apps ≈ 4,4 Go) : OOM kill
+  kernel d'uvicorn à ~1,9 Go RSS pendant l'étape `assembling` (dmesg,
+  `Memory cgroup out of memory`, memcg du container hub-api, `mem_limit: 2g`)
+  → redémarrage du Hub → kill-switch au boot → snapshot marqué
+  « Snapshot interrompu (redemarrage du Hub) ». Les logs sont restés muets
+  ~60 s avant l'OOM : l'event loop était bloquée par la compression synchrone.
+- **Trois chargements entiers du payload en RAM corrigés en streaming** :
+  - `snapshot_engine` : `cctx.compress(src.read())` → `copy_stream(...,
+    size=<taille du tar>)` — la taille pledged fait embarquer le content-size
+    au frame zstd, requis par le `dctx.decompress()` one-shot de
+    `restore_snapshot.py` (compat restore vérifiée par test).
+  - `snapshot_crypto.encrypt_file` : `AESGCM.encrypt(nonce, read_bytes())` →
+    GCM streaming par chunks de 4 Mo (`Cipher`/`update_into`), sortie
+    **byte-identique** à l'ancienne enveloppe (ciphertext‖tag) —
+    `decrypt_snapshot_bytes` et les snapshots existants restent lisibles sans
+    migration.
+  - checksum : `sha256(read_bytes())` → `_sha256_file` par chunks.
+- **Event loop dégagée** : tar+compress, encrypt et checksum passent par
+  `asyncio.to_thread` — le Hub reste réactif (health checks, UI) pendant
+  l'assemblage d'un snapshot multi-Go.
+- **Tests** : `hub/tests/test_snapshot_streaming.py` reproduit l'OOM sous
+  `RLIMIT_AS` dans un subprocess (payload 512 Mo / limite 320 Mo) — l'ancien
+  code y échoue en `MemoryError`, le streaming passe ; compatibilité
+  déchiffrement one-shot et frame zstd couverte. Suites snapshot/crypto/
+  restore : 33/33. Suite complète : 1454 passed — 3 échecs OIDC préexistants
+  (identiques sur la base sans le fix, flakiness d'ordre).
+
+---
+
 ## [3.77.1] - 28 octobre 2026
 
 ### 🐛 Fix — pilotage du coffre depuis l'UI
