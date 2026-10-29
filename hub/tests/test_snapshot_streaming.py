@@ -11,8 +11,8 @@ Un snapshot de 26 apps ≈ 4,4 Go →  OOM kill du container par le kernel
 → redémarrage du Hub → snapshot marqué « interrompu ».
 
 Ici on reproduit la contrainte mémoire avec ``RLIMIT_AS`` dans un subprocess :
-tout code qui charge le payload (512 Mo) d'un bloc explose sous la limite
-(320 Mo), le code en streaming (chunks de 4 Mo) passe.
+tout code qui charge le payload (256 Mo) d'un bloc explose sous la limite
+(160 Mo), le code en streaming (chunks de 4 Mo) passe.
 
 Compatibilité : le format de l'enveloppe chiffrée et le frame zstd doivent
 rester BYTE-COMPATIBLE avec l'existant (``decrypt_snapshot_bytes`` one-shot
@@ -28,8 +28,8 @@ from pathlib import Path
 
 HUB_ROOT = Path(__file__).resolve().parents[1]
 
-PAYLOAD_MB = 512
-RLIMIT_AS_MB = 320
+PAYLOAD_MB = 256
+RLIMIT_AS_MB = 160
 
 CHILD = textwrap.dedent(
     """
