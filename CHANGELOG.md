@@ -5,6 +5,23 @@
 
 ---
 
+## [3.77.3] - 29 octobre 2026
+
+### 🐛 Fix — gate `make test-docker` vert
+
+- **`test_snapshot_streaming`** : gabarit mémoire 256 Mo / limite 160 Mo
+  (au lieu de 512/320) — sous `make test-docker` (xdist `-n 4`, container de
+  test plafonné à 2 Go), les enfants de test s'ajoutaient aux 4 workers pytest
+  → pression memcg → enfant tué → faux échec. Le nouveau gabarit démontre la
+  même propriété (chargement whole-file > limite → MemoryError ; streaming →
+  passe) avec ~3× moins de pression. Hôte inchangé : 3/3 vert.
+- **`respx>=0.22` ajouté à `hub/requirements.txt`** : importé par
+  `test_atelier_routes` et `test_vault_routes` (présent sur l'hôte de dev,
+  absent de l'image → 2 erreurs d'import à chaque `make test-docker`,
+  préexistantes au 3.77.2).
+
+---
+
 ## [3.77.2] - 29 octobre 2026
 
 ### 📣 Pour les utilisateurs
