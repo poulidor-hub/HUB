@@ -12,7 +12,11 @@ PHILIA_KEY=/etc/nginx/ssl/server/philia-ng/server.key
 
 if [ "${HUB_HTTPS_ENABLED:-true}" = "true" ] && [ -f "$SSL_CRT" ] && [ -f "$SSL_KEY" ]; then
     echo "🚀 Démarrage de Nginx (HTTP + HTTPS)..."
-    cp /etc/nginx/templates/nginx-ssl.conf /etc/nginx/conf.d/default.conf
+    # HUB_HTTPS_PORT = port PUBLIÉ (docker-compose "${HUB_HTTPS_PORT}:443") ;
+    # le nginx interne écoute toujours 443 — le placeholder ${HTTPS_PORT} du
+    # template construit l'URL de redirection du bloc 80 (301).
+    sed -e "s/\${HTTPS_PORT}/${HUB_HTTPS_PORT:-443}/g" \
+        /etc/nginx/templates/nginx-ssl.conf > /etc/nginx/conf.d/default.conf
     # PhiliaNG : inclus uniquement si les certificats sont présents
     if [ -f "$PHILIA_CRT" ] && [ -f "$PHILIA_KEY" ]; then
         echo "   → PhiliaNG (service.example.org) activé"
