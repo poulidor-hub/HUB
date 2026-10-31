@@ -189,6 +189,9 @@ services:
       - "${HUB_HTTPS_PORT:-443}:443"
     environment:
       - HUB_HTTPS_ENABLED=${HUB_HTTPS_ENABLED:-true}
+      # Port publié du HTTPS (docker-entrypoint.sh : URL de redirection du
+      # bloc 80 — nginx interne écoute 443, le mapping peut différer).
+      - HUB_HTTPS_PORT=${HUB_HTTPS_PORT:-443}
     volumes:
       - ./certs:/etc/nginx/ssl:ro
     # Permet au conteneur nginx de joindre l'hôte Docker (pour le SNI PhiliaNG
