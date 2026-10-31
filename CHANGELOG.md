@@ -5,6 +5,30 @@
 
 ---
 
+## [3.77.5] - 31 octobre 2026
+
+### 🔐 Fix — redirection HTTP → HTTPS sur le frontend du Hub
+
+- **Corrigé** : avec `HUB_HTTPS_ENABLED=true`, le bloc `:80` de
+  `nginx-ssl.conf` servait encore le front et le proxy `/api/` en clair
+  (dual-stack hérité) — `curl http://<hub>/` répondait `200` au lieu de
+  renvoyer vers HTTPS. Le bloc 80 devient un simple
+  `return 301 https://$host:${HTTPS_PORT}$request_uri` : tout le service
+  (front, `/api/`, SSE, uploads 1G) existe déjà sur le 443.
+- `${HTTPS_PORT}` est substitué par `docker-entrypoint.sh` avec
+  `HUB_HTTPS_PORT` (port **publié**, cf. compose) — même mécanisme que le
+  socle ; nginx interne écoute toujours 443.
+- `docker-compose.yml` : `HUB_HTTPS_PORT` désormais passé au conteneur
+  `hub-frontend` (l'entrypoint en a besoin pour construire l'URL).
+- **Non-cassage vérifié** : les appels machine passent par l'API `:8000`
+  (réseau interne) ou par `:443` (`ALLOWED_ORIGINS` déjà https-only) ;
+  le vhost PhiliaNG (`service.example.org`, `listen 80` sans `default_server`)
+  garde son comportement propre.
+- Syntaxe validée par `nginx -t` dans un conteneur jetable sur le réseau
+  compose (upstream `hub-api` résolu).
+
+---
+
 ## [3.77.4] - 29 octobre 2026
 
 ### 🐛 Fix — `make test-docker` : INTERNALERROR pytest avec pytest 9.2
