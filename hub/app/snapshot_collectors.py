@@ -182,6 +182,8 @@ async def run_app_backups(db: AsyncSession, temp_dir: Path, snapshot: HubSnapsho
         .where(Application.is_active == True)
         .where(Application.backup_mode != "disabled")
         .where(Application.is_unmanaged == False)
+        # Les ateliers ({slug}-ws) ne sont jamais sauvegardés.
+        .where(~Application.slug.endswith("-ws"))
         .options(selectinload(Application.backups))
     )
     apps = result.scalars().all()
