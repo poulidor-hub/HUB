@@ -5,6 +5,23 @@
 
 ---
 
+## [3.77.6] - 1er novembre 2026
+
+### ⚡ Sauvegardes : les ateliers {slug}-ws ne sont plus sauvegardés
+
+| Élément | Détail |
+|---|---|
+| Vue admin Sauvegardes | GET /api/admin/backups : les ateliers (`{slug}-ws`) n'apparaissent plus — ni la liste, ni les compteurs (Applications, Sauvegardes, Stockage total) |
+| Stats | GET /api/admin/backups/stats : compteurs hors backups d'ateliers |
+| Gardes endpoints | POST /api/apps/{slug}/backup/trigger et POST /api/apps/{slug}/backup (push M2M) → 400 « Les ateliers (...) ne sont pas sauvegardés » pour un slug `-ws` |
+| Choke-point | `perform_app_backup` lève `BackupExecutionError` sur slug `-ws` : aucun chemin (scheduler, snapshot, trigger) ne peut créer un backup d'atelier |
+| Scheduler + Snapshots | Filtre SQL `~slug.endswith("-ws")` dans `periodic_backup_scheduler` (main.py) et `run_app_backups` (snapshot_collectors.py) |
+| Tests | hub/tests/test_backups_workshop_exclusion.py (6 tests TDD rouge→vert) — suite verte : 1463 (hôte) / 1419 + 1 skip (Docker, Postgres) |
+| Convention | `{slug}-ws` réservée aux ateliers (hubctl + workshop_service) — même convention que l'exclusion audit usage |
+
+---
+
+
 ## [3.77.5] - 31 octobre 2026
 
 ### 🔐 Fix — redirection HTTP → HTTPS sur le frontend du Hub
