@@ -236,6 +236,8 @@ async def periodic_backup_scheduler():
                     .where(Application.backup_cron.isnot(None))
                     .where(Application.is_active == True)
                     .where(Application.is_unmanaged == False)
+                    # Les ateliers ({slug}-ws) ne sont jamais sauvegardés.
+                    .where(~Application.slug.endswith("-ws"))
                 )
                 apps = result.scalars().all()
                 

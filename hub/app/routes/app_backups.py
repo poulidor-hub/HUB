@@ -865,6 +865,14 @@ async def receive_backup(
     app = await get_app_or_404(db, slug)
     await check_backup_entity_access(slug, current_user, db)
 
+    # Garde atelier : la convention {slug}-ws est réservée aux ateliers
+    # (hubctl + workshop_service) — clones éphémères, jamais sauvegardés.
+    if slug.endswith("-ws"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Les ateliers ({slug}) ne sont pas sauvegardés",
+        )
+
     if hasattr(current_user, 'client_id'):
         created_by = current_user.name
         created_by_type = "app"
@@ -1480,6 +1488,16 @@ async def perform_app_backup(
 
     slug = app.slug
 
+    # Garde choke-point atelier : la convention {slug}-ws est réservée aux
+    # ateliers (hubctl + workshop_service) — clones éphémères, jamais
+    # sauvegardés, quel que soit le point d'entrée (scheduler, snapshot,
+    # trigger). Les endpoints filtrent déjà ; cette garde est le dernier recours.
+    if slug.endswith("-ws"):
+        raise BackupExecutionError(
+            f"Les ateliers ({slug}) ne sont pas sauvegardés",
+            status_code=400,
+        )
+
     # 0. Créer ou réutiliser la ligne AppBackup avec statut "running"
     started_at = utcnow()
     if backup is None:
@@ -1945,6 +1963,13 @@ async def trigger_backup(
     Retourne 409 Conflict si un backup est déjà en cours pour cette app.
     """
     app = await get_app_or_404(db, slug)
+
+    # Garde atelier ({slug}-ws réservé aux ateliers) : jamais sauvegardés.
+    if slug.endswith("-ws"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Les ateliers ({slug}) ne sont pas sauvegardés",
+        )
 
     if getattr(app, "is_unmanaged", False):
         raise HTTPException(
@@ -2855,10 +2880,13 @@ async def get_all_backups_overview(
     """
     await ensure_hub_system_application(db)
 
-    # Récupérer toutes les applications avec leurs stats de backup
+    # Récupérer toutes les applications avec leurs stats de backup.
+    # Les ateliers ({slug}-ws, convention réservée aux ateliers) sont exclus :
+    # clones de travail éphémères, ils ne sont pas sauvegardés.
     apps_result = await db.execute(
         select(Application)
         .options(selectinload(Application.backups))
+        .where(~Application.slug.endswith("-ws"))
         .order_by(Application.name)
     )
     apps = apps_result.scalars().all()
@@ -3093,13 +3121,14 @@ async def get_backup_storage_stats(
     """
     Statistiques de stockage des sauvegardes.
     """
-    # Stats globales depuis la base
+    # Stats globales depuis la base (ateliers {slug}-ws exclus : jamais sauvegardés)
     result = await db.execute(
         select(
             func.count(AppBackup.id).label("total_backups"),
             func.sum(AppBackup.total_size_bytes).label("total_size"),
             func.count(func.distinct(AppBackup.app_slug)).label("apps_with_backups")
         )
+        .where(~AppBackup.app_slug.endswith("-ws"))
     )
     row = result.one()
     
