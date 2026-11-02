@@ -248,6 +248,11 @@ async def publish() -> None:
         zone = validate_zone(row.value if row and row.value else "")
         entries = await collect_entries(session, hub_host, zone)
 
+    if zone:
+        import pki  # hub/pki.py — racine du contexte /code (pattern routes/app_certs)
+
+        pki.ensure_wildcard_cert(zone)  # émission idempotente — avant le swap
+
     zone_content = render_zone(entries, zone)
     vhosts = render_vhosts(entries, zone, WILDCARD_CERT_DIR_NGINX)
 

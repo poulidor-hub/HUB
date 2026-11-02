@@ -15,10 +15,16 @@ from app.models import Application, AppSetting, RoutedService
 
 @pytest.fixture
 def dirs(tmp_path, settings):
-    """Redirige les dossiers de publication vers tmp_path (restaurés par la fixture settings)."""
+    """Redirige les dossiers de publication + certs vers tmp_path (CA fraîche,
+    clé RSA 2048 pour la vitesse des tests). Restaurés par la fixture settings."""
+    import pki
+
     s = get_settings()
     s.routing_dns_dir = str(tmp_path / "dns")
     s.routing_gateway_dir = str(tmp_path / "gateway")
+    s.certs_dir = str(tmp_path / "certs")
+    s.pki_key_size = 2048
+    pki.init_ca(force=True)
     return s
 
 
