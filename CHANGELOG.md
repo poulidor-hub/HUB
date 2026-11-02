@@ -5,6 +5,24 @@
 
 ---
 
+## [3.78.0] - 2 novembre 2026
+
+### ⚡ Durcissement : accès Docker via proxy filtré — plus aucun socket direct sur hub-api
+
+| Élément | Détail |
+|---|---|
+| Nouveau service | `docker-socket-proxy` (tecnativa `v0.5.0`) — **seul** conteneur montant `/var/run/docker.sock` |
+| hub-api | `DOCKER_HOST=tcp://docker-socket-proxy:2375` ; montage socket supprimé (base + overlay dev) ; `group_add` GID docker retiré (`entrypoint.sh` saute déjà le setup GID sans socket) |
+| Whitelist | Audit des appels réels (SDK python + CLI compose) → `CONTAINERS`, `ALLOW_START/STOP/RESTARTS`, `EXEC`, `NETWORKS`, `BUILD+SESSION+GRPC` (buildx), `IMAGES`, `VOLUMES`, `INFO`, `SYSTEM`, `VERSION`, `PING`, `EVENTS`, `POST` |
+| Familles fermées (403) | `secrets`, `swarm`, `services`, `tasks`, `nodes`, `plugins`, `commit`, `configs`, `distribution`, `auth` |
+| Garde-fou | `hub/tests/test_compose_socket_proxy.py` — socket uniquement dans le proxy (base + dev), `DOCKER_HOST` requis, pas de GID docker sur hub-api, familles dangereuses fermées (5 tests, sans PyYAML) |
+| Doc | `docs/DOCKER_SOCKET_PROXY.md` — whitelist preuve par preuve (fichier:ligne), procédure d'ajout d'une famille, rollback |
+| `.env.example` | `HOST_DOCKER_GID` documenté obsolète (sans effet depuis cette version) |
+| Vérification live | Matrice 403/200 complète depuis hub-api, scan 107 conteneurs, logs/stats/restart, `exec_run wg show` (VPN), build buildx + `up` + `down -v` via le proxy, suite auth 33/33 in-container |
+| Limite connue | hub-api reste l'exécuteur des déploiements (rôle orchestrateur) avec une whitelist large ; scission exécuteur dédié = option « 1b » non engagée |
+
+---
+
 ## [3.77.6] - 1er novembre 2026
 
 ### ⚡ Sauvegardes : les ateliers {slug}-ws ne sont plus sauvegardés

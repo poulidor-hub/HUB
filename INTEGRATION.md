@@ -1,7 +1,7 @@
 # Guide d'Intégration - Hub d'Authentification
 
-> **Version** : 3.77.6
-> **Dernière mise à jour** : 1 novembre 2026
+> **Version** : 3.78.0
+> **Dernière mise à jour** : 2 novembre 2026
 > **Auteur** : Équipe Hub
 
 Ce document décrit comment intégrer vos applications avec le Hub d'authentification centralisé.
