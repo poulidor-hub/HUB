@@ -219,6 +219,7 @@ def _generate_client_conf(
     endpoint: str,
     listen_port: int,
     subnet: str = "10.8.0.0/24",
+    dns_line: str = "",
 ) -> str:
     """Génère le .conf client pour un peer (téléchargement par l'utilisateur).
 
@@ -226,15 +227,19 @@ def _generate_client_conf(
       - vpn_server_ip/32 : le HUB via le tunnel (dérivé du sous-réseau VPN)
       - hub_host/32       : TOUTES les apps du host, tous ports (présentes et
                             futures) — depuis HUB_HOST/.env via get_hub_host()
-    Aucune ligne DNS imposée : le client conserve son résolveur habituel.
+    Chantier B : si la zone de routage est configurée, dns_line (« DNS = ip »)
+    est poussé dans [Interface] — les noms <dns_name>.<zone> résolvent via le
+    résolveur du hub. Sinon aucune ligne DNS : le client garde son résolveur.
     """
     peer_ip = peer.vpn_ip.split("/")[0]
     vpn_server_ip = str(ipaddress.IPv4Network(subnet, strict=False).network_address + 1)
     hub_host = get_settings().get_hub_host()
+    dns_block = f"{dns_line}\n" if dns_line else ""
     return (
         "[Interface]\n"
         f"PrivateKey = {peer.private_key}\n"
         f"Address = {peer_ip}/32\n"
+        f"{dns_block}"
         "\n"
         "[Peer]\n"
         f"PublicKey = {server_pubkey}\n"
@@ -242,6 +247,18 @@ def _generate_client_conf(
         f"AllowedIPs = {vpn_server_ip}/32, {hub_host}/32\n"
         "PersistentKeepalive = 25\n"
     )
+
+
+async def get_dns_line_for_peers(db: AsyncSession) -> str:
+    """Chantier B — ligne DNS des configs client, si la zone de routage est configurée."""
+    result = await db.execute(
+        select(AppSetting.value).where(AppSetting.key == "hub_dns_zone")
+    )
+    zone = (result.scalar_one_or_none() or "").strip()
+    if not zone:
+        return ""
+    hub_host = get_settings().get_hub_host()
+    return f"DNS = {hub_host}" if hub_host else ""
 
 
 async def _allocate_peer_ip(db: AsyncSession, subnet: str) -> str:
@@ -782,7 +799,8 @@ async def download_peer_config(
     if not server_pubkey or not endpoint:
         raise HTTPException(status_code=400, detail="Serveur non initialisé")
 
-    conf = _generate_client_conf(peer, server_pubkey, endpoint, int(listen_port_str), subnet_str)
+    dns_line = await get_dns_line_for_peers(db)
+    conf = _generate_client_conf(peer, server_pubkey, endpoint, int(listen_port_str), subnet_str, dns_line=dns_line)
 
     safe_name = peer.name.replace(" ", "_").lower()
     filename = f"hub-{peer.user.username}-{safe_name}.conf"
@@ -813,7 +831,8 @@ async def get_peer_qrcode(
     if not server_pubkey or not endpoint:
         raise HTTPException(status_code=400, detail="Serveur non initialisé")
 
-    conf = _generate_client_conf(peer, server_pubkey, endpoint, int(listen_port_str), subnet_str)
+    dns_line = await get_dns_line_for_peers(db)
+    conf = _generate_client_conf(peer, server_pubkey, endpoint, int(listen_port_str), subnet_str, dns_line=dns_line)
 
     factory = qrcode.image.svg.SvgPathImage
     img = qrcode.make(conf.encode(), image_factory=factory)
