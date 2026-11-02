@@ -13,17 +13,6 @@ BASE = "/api/routing"
 
 
 @pytest.fixture
-def no_publish(monkeypatch):
-    calls = {"n": 0}
-
-    async def fake_regenerate():
-        calls["n"] += 1
-
-    monkeypatch.setattr("app.routes.routing.regenerate", fake_regenerate)
-    return calls
-
-
-@pytest.fixture
 def resolver_up(monkeypatch):
     monkeypatch.setattr("app.routes.routing._resolver_status", lambda: True)
     monkeypatch.setattr(

@@ -341,6 +341,13 @@ async def lifespan(app: FastAPI):
     await _backfill_user_oidc_subs()  # Backfill oidc_sub des utilisateurs existants
     await backfill_dns_names()  # Chantier B : dns_name = slug pour les apps sans nom de routage
 
+    # Chantier B : reconcile du routage au boot (zone DNS + vhosts SNI) — jamais bloquant
+    try:
+        from app.routing_service import regenerate as _regenerate_routing
+        await _regenerate_routing()
+    except Exception as exc:
+        logger.warning(f"Routage: reconcile au boot échoué: {exc}")
+
     # Vérifier la configuration des secrets et de sécurité AVANT l'admin bootstrap
     # (un mdp admin/DB faible ou des secrets manquants bloquent en production)
     from app.config import get_settings, ensure_backup_keys_exist, validate_security_config, ConfigValidationError

@@ -84,6 +84,33 @@ services:
       retries: 6
       start_period: 5s
 
+  # ===== RÉSOLVEUR DNS (chantier B — routage par noms) =====
+  # Autoritaire sur <hub_dns_zone> (fichier hub.zone généré par hub-api) ;
+  # forward le reste au résolveur hôte. network_mode host: répond aux clients
+  # du tunnel WireGuard (partage le netns du serveur WG) et, plus tard, au LAN.
+  # Port 53 non publié (host network) — jamais exposé au-delà du serveur.
+  hub-dns:
+    image: andyshinn/dnsmasq:2.90
+    container_name: hub-dns
+    restart: unless-stopped
+    command: ["-C", "/etc/dnsmasq.d/dnsmasq.conf", "--no-daemon"]
+    volumes:
+      - ./dns:/etc/dnsmasq.d:ro
+    network_mode: host
+    mem_limit: 64m
+    memswap_limit: 64m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE  # port 53 (<1024)
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep dnsmasq >/dev/null"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
   # ===== HUB API (FastAPI) =====
   hub-api:
     build:
@@ -193,6 +220,10 @@ services:
       - ${APPS_HOST_PATH:?Définir APPS_HOST_PATH dans .env}:${APPS_HOST_PATH:?Définir APPS_HOST_PATH dans .env}:rw
       # Certificats PKI (CA + cert serveur), partagés avec le frontend
       - ./certs:/code/certs:rw
+      # Routage par noms (chantier B) : zone DNS + vhosts SNI générés par
+      # routing_service.publish() — hub-dns et hub-frontend les lisent en ro.
+      - ./dns:/code/dns:rw
+      - ./gateway:/code/gateway:rw
       # Configuration VPN WireGuard (volume partagé avec wireguard-server)
       - vpn-config:/vpn:rw
     depends_on:
@@ -244,6 +275,8 @@ services:
       - HUB_HTTPS_PORT=${HUB_HTTPS_PORT:-443}
     volumes:
       - ./certs:/etc/nginx/ssl:ro
+      # Vhosts SNI générés par hub-api (chantier B — routage par noms)
+      - ./gateway:/etc/nginx/vhosts.d:ro
     # Permet au conteneur nginx de joindre l'hôte Docker (pour le SNI PhiliaNG
     # qui proxy_pass vers host.docker.internal:4443 — port HTTPS de Philia Proxy).
     # Indépendant de l'IP du serveur : fonctionne sur n'importe quel déploiement.

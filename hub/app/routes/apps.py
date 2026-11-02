@@ -1157,7 +1157,14 @@ async def create_app(
         response["service_account"] = service_account_info
     else:
         response["hint"] = "💡 Pour créer un service account M2M, ajoutez 'create_service_account: true' ou utilisez POST /api/service-accounts/"
-    
+
+    # Chantier B : publier immédiatement la nouvelle app dans la zone de routage
+    try:
+        from app.routing_service import regenerate as _regenerate_routing
+        await _regenerate_routing()
+    except Exception:
+        pass
+
     return response
 
 
@@ -2294,7 +2301,14 @@ async def toggle_app_active(
     app.is_active = not app.is_active
     await db.commit()
     await db.refresh(app)
-    
+
+    # Chantier B : le statut actif apparaît dans la vue routage (publication conservée)
+    try:
+        from app.routing_service import regenerate as _regenerate_routing
+        await _regenerate_routing()
+    except Exception:  # la publication ne casse jamais le toggle
+        pass
+
     status_label = "activée" if app.is_active else "désactivée"
     logger.info(f"🔄 Application '{app.slug}' {status_label} par {current_user.username}")
     
@@ -3312,6 +3326,13 @@ async def update_app(
         except Exception as e:
             app.git_sync = f"warning: {str(e).splitlines()[0][:200]}"
 
+    # Chantier B : republished (dns_name/URLs peuvent avoir changé) — non bloquant
+    try:
+        from app.routing_service import regenerate as _regenerate_routing
+        await _regenerate_routing()
+    except Exception:
+        pass
+
     return app
 
 
@@ -3377,7 +3398,14 @@ async def delete_app(
     # Notifier les clients SSE de la suppression
     notify_event("apps_updated", {"action": "deleted", "app_slug": app_slug, "app_name": app_name})
     notify_stats_update()
-    
+
+    # Chantier B : retirer l'app de la zone de routage (publication automatique)
+    try:
+        from app.routing_service import regenerate as _regenerate_routing
+        await _regenerate_routing()
+    except Exception:
+        pass
+
     logger.info(f"Application supprimée: {app_name} (slug: {app_slug}) par {current_user.username}")
 
 

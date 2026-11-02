@@ -24,6 +24,9 @@ if [ "${HUB_HTTPS_ENABLED:-true}" = "true" ] && [ -f "$SSL_CRT" ] && [ -f "$SSL_
     else
         echo "   → PhiliaNG désactivé (certificats absents)"
     fi
+    # Chantier B : vhosts SNI générés par hub-api (routage par noms des apps
+    # et services tiers) — dossier vide tant que la zone n'est pas configurée
+    echo 'include /etc/nginx/vhosts.d/*.conf;' > /etc/nginx/conf.d/routing-gateway.conf
 else
     echo "🚀 Démarrage de Nginx (HTTP only)..."
     cp /etc/nginx/templates/nginx.conf /etc/nginx/conf.d/default.conf
