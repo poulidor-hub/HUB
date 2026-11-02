@@ -24,9 +24,6 @@ services:
     environment:
       - APP_ENV=development
       - DOCKER_SCAN_ENABLED=true
-    group_add:
-      # GID du groupe docker hôte. Override: DOCKER_GID=$(getent group docker | cut -d: -f3)
-      - "${DOCKER_GID:-986}"
     volumes:
       # Montage du code source pour hot-reload
       - ./hub/app:/code/app
@@ -34,8 +31,6 @@ services:
       - ./hub/migrations:/code/migrations
       - ./hub/app_tester.py:/code/app_tester.py
       - ./hub/pytest.ini:/code/pytest.ini
-      # Socket Docker (dev uniquement) pour le scan des conteneurs
-      - /var/run/docker.sock:/var/run/docker.sock:ro
 
   hub-frontend:
     # Volume mount des fichiers statiques pour hot-reload en dev

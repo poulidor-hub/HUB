@@ -34,6 +34,56 @@ services:
       timeout: 5s
       retries: 5
 
+  # ===== PROXY SOCKET DOCKER (chantier A 1a — durcissement) =====
+  # SEUL conteneur autorisé à monter /var/run/docker.sock. hub-api passe par
+  # DOCKER_HOST=tcp://docker-socket-proxy:2375. Whitelist = audit des appels
+  # réels du 02/11/2026 (cf. docs/DOCKER_SOCKET_PROXY.md) :
+  #   scan/inspect/logs/stats → CONTAINERS ; restart/stop → ALLOW_RESTARTS/ALLOW_STOP ;
+  #   start → ALLOW_START ; wg show (VPN) + make exec → EXEC ; sous-réseaux → NETWORKS ;
+  #   make build (buildx) → BUILD+SESSION+GRPC ; pull/cache → IMAGES ;
+  #   info/version → INFO/SYSTEM ; recréation up/down -v → POST (gouverne aussi DELETE).
+  # Familles fermées (aucun usage) : AUTH COMMIT CONFIGS DISTRIBUTION NODES PLUGINS
+  #   SECRETS SERVICES SWARM TASKS ALLOW_PAUSE ALLOW_UNPAUSE.
+  docker-socket-proxy:
+    image: tecnativa/docker-socket-proxy:v0.5.0
+    container_name: hub-docker-socket-proxy
+    restart: unless-stopped
+    environment:
+      - POST=1
+      - CONTAINERS=1
+      - ALLOW_START=1
+      - ALLOW_STOP=1
+      - ALLOW_RESTARTS=1
+      - EXEC=1
+      - IMAGES=1
+      - BUILD=1
+      - SESSION=1
+      - GRPC=1
+      - NETWORKS=1
+      - VOLUMES=1
+      - INFO=1
+      - SYSTEM=1
+      - VERSION=1
+      - PING=1
+      - EVENTS=1
+      # Tout le reste est fermé par défaut du proxy (cf. bloc commentaire ci-dessus).
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - hub-network
+    mem_limit: 128m
+    memswap_limit: 128m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:2375/_ping | grep -q OK"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 5s
+
   # ===== HUB API (FastAPI) =====
   hub-api:
     build:
@@ -77,6 +127,9 @@ services:
       - LOG_PURGE_INTERVAL_HOURS=${LOG_PURGE_INTERVAL_HOURS:-24}
       - DOCKER_SYNC_INTERVAL=${DOCKER_SYNC_INTERVAL:-300}
       - DOCKER_SCAN_ENABLED=${DOCKER_SCAN_ENABLED:-false}
+      # Accès Docker via le proxy filtré (chantier A 1a) — plus aucun montage
+      # socket direct sur ce conteneur. Voir docs/DOCKER_SOCKET_PROXY.md.
+      - DOCKER_HOST=tcp://docker-socket-proxy:2375
       - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-}
       - ALLOWED_ORIGIN_REGEX=${ALLOWED_ORIGIN_REGEX:-}
       # Limite de taille du body (protection DoS) — MB. La limite élargie ne
@@ -142,10 +195,10 @@ services:
       - ./certs:/code/certs:rw
       # Configuration VPN WireGuard (volume partagé avec wireguard-server)
       - vpn-config:/vpn:rw
-      # Socket Docker pour le pilotage des conteneurs (docker_scanner)
-      - /var/run/docker.sock:/var/run/docker.sock:ro
     depends_on:
       db:
+        condition: service_healthy
+      docker-socket-proxy:
         condition: service_healthy
     networks:
       - hub-network
@@ -154,11 +207,8 @@ services:
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --timeout-graceful-shutdown 5
     mem_limit: 2g
     memswap_limit: 2g
-    # Accès au socket Docker (requis par docker_scanner pour restart/logs/start/stop)
-    group_add:
-      # GID du groupe docker sur l'hôte — détecté par hubctl init (getent group docker).
-      # Fallback 128 (Linux Mint default) pour les installs manuelles sans .env.
-      - "${HOST_DOCKER_GID:-128}"
+    # NB : plus de GID docker hôte monté sur ce service — l'accès Docker passe
+    # par le proxy filtré (tcp://docker-socket-proxy:2375), plus aucun socket monté.
     security_opt:
       - no-new-privileges:true
     cap_drop:
