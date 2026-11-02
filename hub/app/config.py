@@ -415,6 +415,9 @@ class Settings(BaseSettings):
     # Host du Hub (IP ou hostname accessible par les clients)
     # Si non défini, sera détecté automatiquement
     hub_host: str = ""
+    # Chantier B — chemins de publication du routage par noms (volumes compose)
+    routing_dns_dir: str = "/code/dns"
+    routing_gateway_dir: str = "/code/gateway"
 
     # Ports d'écoute publics du Hub (API et frontend) — lus depuis HUB_API_PORT /
     # HUB_FRONTEND_PORT. Injectés par docker-compose (defaults 8000/80).

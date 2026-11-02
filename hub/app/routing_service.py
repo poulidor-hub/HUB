@@ -7,9 +7,13 @@ docs/superpowers/specs/2026-11-02-routage-dns-design.md
 """
 
 import re
+from pathlib import Path
 from urllib.parse import urlparse
 
 from sqlalchemy import select
+
+from app import database
+from app.config import get_settings
 
 RESERVED_DNS_NAMES = {"www", "mail", "ns1", "ns2", "api", "hub"}
 
@@ -152,3 +156,135 @@ def render_vhosts(entries: list[dict], zone: str, wildcard_dir: str) -> dict[str
             "}\n"
         )
     return vhosts
+
+
+# ---------------------------------------------------------------- publication
+
+
+class RoutingPublishError(RuntimeError):
+    """La publication du routage a échoué (reload nginx/dnsmasq en erreur) —
+    l'ancien contenu a été restauré ; le détail est dans routing_last_error."""
+
+
+def _get_docker_client():
+    import docker  # lazy : dépendance optionnelle si Docker indisponible
+
+    return docker.from_env()  # respecte DOCKER_HOST (proxy socket — chantier A)
+
+
+def _swap_dir(target: Path, new_files: dict[str, str]) -> Path | None:
+    """Écrit new_files dans un dossier temporaire puis bascule atomiquement.
+
+    Retourne le chemin de l'ancien contenu (déplacé, pour rollback) ou None."""
+    tmp = target.parent / (target.name + ".new")
+    old = target.parent / (target.name + ".old")
+    if tmp.exists():
+        _rmtree(tmp)
+    tmp.mkdir(parents=True, exist_ok=True)
+    for filename, content in new_files.items():
+        (tmp / filename).write_text(content, encoding="utf-8")
+    if old.exists():
+        _rmtree(old)
+    if target.exists():
+        target.rename(old)
+    tmp.rename(target)
+    return old if old.exists() else None
+
+
+def _restore_dir(target: Path, old: Path | None) -> None:
+    """Rollback : supprime le nouveau dossier, remet l'ancien en place."""
+    if target.exists():
+        _rmtree(target)
+    if old is not None and old.exists():
+        old.rename(target)
+
+
+def _rmtree(path: Path) -> None:
+    import shutil
+
+    shutil.rmtree(path, ignore_errors=True)
+
+
+def _reload_containers(reloads: list[tuple[str, str]]) -> None:
+    """docker exec des reloads — via le proxy socket (chantier A, EXEC=1)."""
+    client = _get_docker_client()
+    for name, cmd in reloads:
+        result = client.containers.get(name).exec_run(cmd)
+        code = result[0] if isinstance(result, tuple) else getattr(result, "exit_code", 0)
+        if code not in (0, None):
+            output = result[1] if isinstance(result, tuple) else getattr(result, "output", b"")
+            raise RuntimeError(
+                f"reload {name} (« {cmd} ») a échoué (code {code}) : "
+                f"{output if isinstance(output, str) else output.decode(errors='replace')[:400]}"
+            )
+
+
+async def _set_last_error(session, message: str) -> None:
+    from app.models import AppSetting  # évite la circularité
+
+    row = await session.get(AppSetting, "routing_last_error")
+    if row is None:
+        row = AppSetting(key="routing_last_error", value=message)
+        session.add(row)
+    else:
+        row.value = message
+    await session.commit()
+
+
+async def publish() -> None:
+    """Publie l'état courant du registre : zone DNS + vhosts SNI.
+
+    Ouvre sa propre session (les endpoints committent leur mutation MÉTIER puis
+    appellent regenerate()). Échec de reload → rollback des fichiers + re-reload
+    + routing_last_error persisté + RoutingPublishError.
+    """
+    from app.models import AppSetting
+
+    settings = get_settings()
+    hub_host = settings.get_hub_host()
+
+    async with database.async_session_maker() as session:
+        row = await session.get(AppSetting, "hub_dns_zone")
+        zone = validate_zone(row.value if row and row.value else "")
+        entries = await collect_entries(session, hub_host, zone)
+
+    zone_content = render_zone(entries, zone)
+    vhosts = render_vhosts(entries, zone, WILDCARD_CERT_DIR_NGINX)
+
+    dns_dir = Path(settings.routing_dns_dir)
+    gw_dir = Path(settings.routing_gateway_dir)
+    old_dns = _swap_dir(dns_dir, {"hub.zone": zone_content} if zone_content else {})
+    old_gw = _swap_dir(gw_dir, vhosts)
+
+    reloads = [("hub-dns", "kill -HUP 1"), ("hub-frontend", "nginx -s reload")]
+    try:
+        _reload_containers(reloads)
+    except Exception as exc:
+        _restore_dir(dns_dir, old_dns)
+        _restore_dir(gw_dir, old_gw)
+        try:
+            _reload_containers(reloads)  # re-servir l'ancien contenu
+        except Exception:
+            pass  # l'erreur primaire est celle qu'on remonte
+        async with database.async_session_maker() as err_session:
+            await _set_last_error(err_session, str(exc))
+        raise RoutingPublishError(str(exc)) from exc
+
+    async with database.async_session_maker() as err_session:
+        await _set_last_error(err_session, "")
+
+
+async def regenerate() -> None:
+    """Hook central : régénère et publie (appelé après toute mutation du registre,
+    au succès d'un déploiement et au boot). Ne lève jamais : l'échec est persisté
+    dans routing_last_error et visible dans le bandeau de la vue."""
+    try:
+        await publish()
+    except RoutingPublishError as exc:
+        import logging
+
+        logging.getLogger(__name__).warning("Publication du routage échouée : %s", exc)
+    except Exception as exc:  # collecte/DB inattendue — ne casse jamais l'appelant
+        import logging
+
+        logging.getLogger(__name__).warning("Régénération du routage impossible : %s", exc)
