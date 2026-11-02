@@ -39,11 +39,10 @@ async function showAddAppForm() {
     document.getElementById('advancedOptionsSection').classList.remove('d-none');
     document.getElementById('m2mInfoSection').classList.remove('d-none');
     
-    // Mode simplifié (ports)
-    document.getElementById('simplePortsSection').classList.remove('d-none');
-    document.getElementById('advancedUrlsSection').classList.add('d-none');
-    document.getElementById('appApiPort').required = true;
-    document.getElementById('appApiUrl').required = false;
+    // Mode simplifié (chantier B : ports alloués automatiquement, slug seul)
+    document.getElementById('advancedUrlsSection')?.classList.add('d-none');
+    const apiUrlField = document.getElementById('appApiUrl');
+    if (apiUrlField) apiUrlField.required = false;
     
     document.getElementById('appSubmitBtn').innerHTML = '<i class="bi bi-check-lg me-1"></i>Enregistrer';
 
@@ -479,9 +478,7 @@ async function editApp(id) {
     document.getElementById('appGitRepoUrl').value = app.git_repo_url || '';
     
     // Mode édition : URLs directes
-    document.getElementById('simplePortsSection').classList.add('d-none');
-    document.getElementById('advancedUrlsSection').classList.remove('d-none');
-    document.getElementById('appApiPort').required = false;
+    document.getElementById('advancedUrlsSection')?.classList.remove('d-none');
     document.getElementById('appApiUrl').required = true;
     
     document.getElementById('appSubmitBtn').innerHTML = '<i class="bi bi-check-lg me-1"></i>Enregistrer';
@@ -502,27 +499,8 @@ function toggleCustomHost() {
 }
 
 function updateUrlPreview() {
-    const apiPort = document.getElementById('appApiPort').value;
-    const frontendPort = document.getElementById('appFrontendPort').value;
-    const customHost = document.getElementById('appCustomHost').checked;
-    const customHostValue = document.getElementById('appCustomHostValue').value;
-    
-    const host = customHost && customHostValue ? customHostValue : (hubHost || 'chargement...');
-    
-    const previewApi = document.getElementById('previewApiUrl');
-    const previewFrontend = document.getElementById('previewFrontendUrl');
-    
-    if (apiPort) {
-        previewApi.innerHTML = `<i class="bi bi-hdd-rack me-1"></i>API: <code>http://${host}:${apiPort}</code>`;
-    } else {
-        previewApi.innerHTML = '<i class="bi bi-hdd-rack me-1"></i>API: <span class="text-danger">Port requis</span>';
-    }
-    
-    if (frontendPort) {
-        previewFrontend.innerHTML = `<i class="bi bi-window me-1"></i>Front: <code>http://${host}:${frontendPort}</code>`;
-    } else {
-        previewFrontend.innerHTML = '';
-    }
+    // Chantier B : plus d'inputs de ports — allocation automatique au déploiement.
+    // Conservé en no-op pour compatibilité (toggleCustomHost / anciens appels).
 }
 
 function updateAppFormPreview() {
@@ -606,9 +584,8 @@ async function handleSaveApp(event) {
                 color: document.getElementById('appColor').value,
                 category: document.getElementById('appCategory').value.trim() || null,
                 group_id: document.getElementById('appGroup').value ? parseInt(document.getElementById('appGroup').value) : null,
-                api_port: parseInt(document.getElementById('appApiPort').value),
-                frontend_port: document.getElementById('appFrontendPort').value ? 
-                    parseInt(document.getElementById('appFrontendPort').value) : null,
+                api_port: null,
+                frontend_port: null,
                 custom_host: customHost ? document.getElementById('appCustomHostValue').value : null,
                 requires_auth: document.getElementById('appRequiresAuth').checked,
                 is_shared_service: isSharedService,
@@ -882,11 +859,7 @@ function openAppFormPrefilled(prepared) {
         const set = (id, val) => { const el = document.getElementById(id); if (el) el.value = val; };
         set('appName', prepared.name);
         set('appSlug', prepared.slug);
-        set('appApiPort', prepared.api_port);
-        if (prepared.frontend_port) set('appFrontendPort', prepared.frontend_port);
         set('appGitRepoUrl', prepared.git_repo_url || '');
-
-        if (typeof updateUrlPreview === 'function') updateUrlPreview();
 
         // Préflight renvoyé par le prepare (spec 2026-09-17) : verdict immédiat
         renderGitAccessBanner(prepared.repo_access ? Object.assign({ checked_url: prepared.git_repo_url }, prepared.repo_access) : null);

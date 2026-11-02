@@ -142,6 +142,13 @@ async def set_hub_host(
     settings.hub_host = host
     logger.info(f"🌐 HUB_HOST défini à '{host}' par {current_admin.username}")
 
+    # Chantier B : l'IP sert aux enregistrements DNS + proxy_pass → republished
+    try:
+        from app.routing_service import regenerate as _regenerate_routing
+        await _regenerate_routing()
+    except Exception:
+        pass
+
     try:
         from app.routes.events import broadcast_event
         await broadcast_event("settings_updated", {"key": HUB_HOST_KEY, "value": host})

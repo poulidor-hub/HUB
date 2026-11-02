@@ -186,6 +186,26 @@ async def test_service_duplicate_dns_name_returns_422(client, admin_token,
     assert resp.status_code == 422
 
 
+@pytest.mark.asyncio
+async def test_create_app_without_ports_allocates_and_publishes(
+        client, admin_token, async_session, resolver_up, no_publish):
+    """Chantier B : création « slug seul » — ports alloués automatiquement."""
+    await _seed_zone(async_session)
+    resp = await client.post("/api/apps/", json={
+        "name": "Nouvelle App", "slug": "nouvelle-app",
+    }, headers=_auth(admin_token))
+    assert resp.status_code == 201, resp.text
+    data = resp.json()["application"]  # réponse enveloppée {application: {...}}
+    assert data["dns_name"] == "nouvelle-app"
+    app = (await async_session.execute(
+        select(Application).where(Application.slug == "nouvelle-app")
+    )).scalars().one()
+    assert app.dns_name == "nouvelle-app"
+    assert ":None" not in (app.api_url or "")
+    # publication déclenchée après création
+    assert no_publish["n"] >= 1
+
+
 # ------------------------------------------------------------------ resolve
 
 

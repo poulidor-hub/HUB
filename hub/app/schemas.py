@@ -322,7 +322,8 @@ class AppCreateSimplified(BaseModel):
     description: Optional[str] = None
     icon: str = "bi-app"
     color: str = "#0d6efd"
-    api_port: int = Field(..., ge=1, le=65535, description="Port de l'API backend")
+    # Chantier B : ports optionnels — None → allocation automatique (slug seul)
+    api_port: Optional[int] = Field(None, ge=1, le=65535, description="Port de l'API backend (None: allocation auto)")
     frontend_port: Optional[int] = Field(None, ge=1, le=65535, description="Port du frontend")
     frontend_https_port: Optional[int] = Field(None, ge=1, le=65535, description="Port HTTPS du frontend (si HTTPS activé)")
     custom_host: Optional[str] = Field(None, description="Host personnalisé si différent du Hub")

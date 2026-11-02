@@ -210,6 +210,7 @@ async def state(db: AsyncSession = Depends(get_db),
     return {
         "configured": bool(zone),
         "zone": zone,
+        "hub_host": hub_host,
         "resolver": {"active": _resolver_status(),
                      "count": sum(1 for e in entries if e.get("in_zone"))},
         "wildcard": _wildcard_info(zone),

@@ -1020,16 +1020,25 @@ async def create_app(
         host = settings.get_hub_host()
     
     # Construire les URLs à partir des ports
-    api_url = f"http://{host}:{app_data.api_port}"
-    
     frontend_url = None
     callback_url = None
     frontend_https_port = getattr(app_data, 'frontend_https_port', None)
-    if app_data.frontend_port:
+
+    # Chantier B : création SANS saisie de ports — allocation automatique
+    # idempotente par (slug, host) ; dns_name = slug → publié dès le déploiement.
+    api_port = app_data.api_port
+    frontend_port = app_data.frontend_port
+    if api_port is None:
+        allocation, _reused = await allocate_ports_for_app(db, app_data.slug, host, settings)
+        api_port = allocation.api_port
+        frontend_port = allocation.frontend_port
+        frontend_https_port = allocation.frontend_https_port
+
+    if app_data.frontend_port or frontend_port:
         if frontend_https_port:
             frontend_url = f"https://{host}:{frontend_https_port}"
         else:
-            frontend_url = f"http://{host}:{app_data.frontend_port}"
+            frontend_url = f"http://{host}:{frontend_port}"
         callback_url = f"{frontend_url}/callback"
     
     # Créer l'application avec les URLs construites
@@ -1040,10 +1049,11 @@ async def create_app(
         icon=app_data.icon,
         color=app_data.color,
         category=app_data.category,
-        api_url=api_url,
+        api_url=f"http://{host}:{api_port}",
         frontend_url=frontend_url,
         callback_url=callback_url,
         frontend_https_port=frontend_https_port,
+        dns_name=app_data.slug,
         requires_auth=app_data.requires_auth,
         is_shared_service=app_data.is_shared_service,
         is_unmanaged=getattr(app_data, "is_unmanaged", False),
@@ -1139,6 +1149,7 @@ async def create_app(
             "api_url": app.api_url,
             "frontend_url": app.frontend_url,
             "callback_url": app.callback_url,
+            "dns_name": app.dns_name,
             "is_active": app.is_active,
             "requires_auth": app.requires_auth,
             "is_shared_service": app.is_shared_service,

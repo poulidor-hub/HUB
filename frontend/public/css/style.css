@@ -2717,3 +2717,9 @@ body {
     line-height: 1.5;
     user-select: all;
 }
+
+/* ===== Routage par noms (chantier B — vue Accès & routage) ===== */
+/* Pas d'animation : états statiques par badges (charte perf). */
+.routing-app-list { max-height: 32rem; overflow-y: auto; }
+#routingContent .nav-pills .nav-link { padding: .25rem .75rem; }
+#routingContent table td { vertical-align: middle; }
