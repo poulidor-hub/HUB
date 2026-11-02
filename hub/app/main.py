@@ -28,6 +28,7 @@ from app.routes import auth, users, apps, service_accounts, audit, docs, events,
 from app.routes import settings as settings_routes
 from app.routes import network as network_routes
 from app.routes import app_recreate
+from app.routes import routing as routing_routes
 from app.routes import app_socle_check
 
 import logging
@@ -873,6 +874,7 @@ app.include_router(apps.router)
 app.include_router(service_accounts.router)
 app.include_router(audit.router)
 app.include_router(docs.router)
+app.include_router(routing_routes.router)
 app.include_router(events.router)
 app.include_router(app_backups.router)
 app.include_router(snapshots.router)
