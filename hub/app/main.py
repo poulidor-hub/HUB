@@ -18,6 +18,7 @@ from app.database import (
     _ensure_user_identity_columns,
     _backfill_user_uuids,
     _backfill_user_oidc_subs,
+    backfill_dns_names,
 )
 from app.outbox import outbox_service
 from app.models import User, ErrorLog, utcnow
@@ -337,6 +338,7 @@ async def lifespan(app: FastAPI):
     await _ensure_user_identity_columns()  # Colonnes identité (uuid/prenom/nom)
     await _backfill_user_uuids()  # Backfill uuid des utilisateurs existants
     await _backfill_user_oidc_subs()  # Backfill oidc_sub des utilisateurs existants
+    await backfill_dns_names()  # Chantier B : dns_name = slug pour les apps sans nom de routage
 
     # Vérifier la configuration des secrets et de sécurité AVANT l'admin bootstrap
     # (un mdp admin/DB faible ou des secrets manquants bloquent en production)

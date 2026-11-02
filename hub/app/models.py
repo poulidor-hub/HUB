@@ -353,6 +353,9 @@ class Application(Base):
     git_repo_url = Column(String(512), nullable=True)  # URL du dépôt Git (GitHub) pour update-check et changelog
     frontend_url = Column(String(255))  # URL du frontend
     callback_url = Column(String(255))  # URL de callback pour le token
+    dns_name = Column(String(63), nullable=True, index=True,
+                      comment="Chantier B : nom de routage dans la zone du hub "
+                              "(<dns_name>.<hub_dns_zone>) — défaut: slug (backfill)")
     frontend_https_port = Column(Integer, nullable=True)  # Port HTTPS du frontend (si HTTPS activé)
     is_active = Column(Boolean, default=True)
     requires_auth = Column(Boolean, default=True)
@@ -1169,3 +1172,25 @@ class UserWorkshopAccess(Base):
 
     def __repr__(self):
         return f"<UserWorkshopAccess user={self.user_id} app={self.app_id}>"
+
+
+class RoutedService(Base):
+    """Chantier B — service tiers routé par nom (ex. PhiliaNG).
+
+    dns_name est un FQDN libre : s'il termine par la zone DNS du hub
+    (<hub_dns_zone>) il est aussi publié en enregistrement A (vers hub_host) ;
+    sinon seul le vhost SNI est généré (nom déjà résoluble publiquement).
+    Rend visible dans la vue admin « Accès & routage » ce qui était jusqu'ici
+    un vhost nginx caché (nginx-philia-ng.conf).
+    """
+    __tablename__ = "routed_service"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(100), nullable=False)
+    dns_name = Column(String(255), unique=True, nullable=False)  # FQDN libre
+    target_url = Column(String(512), nullable=False)
+    is_enabled = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime, default=utcnow)
+
+    def __repr__(self):
+        return f"<RoutedService {self.dns_name} -> {self.target_url}>"
