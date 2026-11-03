@@ -62,6 +62,28 @@ def _host_of(url: str) -> str | None:
 
 
 
+def _resolve_host_to_ip(host: str | None) -> str | None:
+    """IP si host est déjà une IP, sinon résolution DNS — None si irrésoluble.
+
+    Nécessaire pour les lignes `address=` de dnsmasq (IP uniquement) :
+    les apps peuvent pointer host.docker.internal ou un nom LAN."""
+    if not host:
+        return None
+    import ipaddress
+
+    try:
+        ipaddress.ip_address(host)
+        return host
+    except ValueError:
+        pass
+    try:
+        import socket
+
+        return socket.gethostbyname(host)
+    except OSError:
+        return None
+
+
 async def collect_entries(session, hub_host: str, zone: str) -> list[dict]:
     """Construit les entrées de routage depuis le registre.
 
@@ -98,9 +120,11 @@ async def collect_entries(session, hub_host: str, zone: str) -> list[dict]:
         else:
             continue
         if app.is_remote:
-            ip = _host_of(app.frontend_url) or hub_host
+            ip = _resolve_host_to_ip(_host_of(app.frontend_url)) or hub_host
         else:
-            ip = hub_host
+            ip = _resolve_host_to_ip(hub_host) or hub_host
+        if ip is None:
+            continue
         entries.append({
             "kind": "app", "ref": app.slug, "dns_name": dns_name,
             "fqdn": f"{dns_name}.{zone}" if zone else dns_name,
@@ -117,7 +141,8 @@ async def collect_entries(session, hub_host: str, zone: str) -> list[dict]:
         in_zone = bool(zone) and (fqdn == zone or fqdn.endswith(f".{zone}"))
         entries.append({
             "kind": "service", "ref": svc.name, "dns_name": fqdn, "fqdn": fqdn,
-            "in_zone": in_zone, "ip": hub_host, "proxy_pass": svc.target_url,
+            "in_zone": in_zone, "ip": _resolve_host_to_ip(hub_host) or hub_host,
+            "proxy_pass": svc.target_url,
             "is_workshop": False, "is_active": True, "enabled": True,
         })
 
