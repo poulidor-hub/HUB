@@ -71,8 +71,13 @@ def test_admin_tabs_panes_are_closed():
     rend plusieurs menus admin vides (incident 03/11/2026)."""
     import pathlib
     index = pathlib.Path(HUB_BASE, "frontend", "public", "index.html").read_text(encoding="utf-8")
+    # les commentaires HTML peuvent contenir des balises d'exemple : on les retire
+    index = re.sub(r"<!--.*?-->", "", index, flags=re.S)
+    # fenêtre = page admin uniquement (de la barre adminPageTabs aux panes)
+    start = index.index('id="adminPageTabs"')
+    index = index[start:]
     panes = [m.start() for m in re.finditer(r'<div class="tab-pane fade"', index)]
-    assert len(panes) >= 5, "les tab-panes admin doivent exister"
+    assert len(panes) >= 4, "les tab-panes admin doivent exister"
     panes.append(len(index))
     for a, b in zip(panes, panes[1:]):
         zone = index[a:b]
