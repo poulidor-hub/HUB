@@ -11,6 +11,11 @@ from unittest.mock import patch, AsyncMock
 from tests.test_compose_socket_proxy import _service_blocks
 
 HUB_BASE = pathlib.Path(__file__).resolve().parents[2]
+
+# HOST_ONLY : le compose n'est pas copié dans l'image — run hôte uniquement
+import os as _os
+if not _os.path.exists(str(HUB_BASE / "docker-compose.yml")):
+    pytest.skip("fichiers checkout hors image — run hôte", allow_module_level=True)
 COMPOSE = HUB_BASE / "docker-compose.yml"
 
 

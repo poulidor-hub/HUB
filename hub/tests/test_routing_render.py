@@ -64,9 +64,11 @@ async def test_collect_entries_seven_profiles(async_session):
         _app("exemple-app-ws", workshop=True),  # atelier
         _app("app-off", active=False),        # inactive → conservée
         _app("unmanaged-app", unmanaged=True),  # unmanaged actif → publié
+        _app("hub", unmanaged=False),          # app système → JAMAIS routée
         # locale SANS PortAllocation → port parsé de frontend_url
         _app("no-alloc", front_url=f"http://{HUB_HOST}:4299"),
     ]
+    apps[5].is_system_app = True
     async_session.add_all(apps)
     await async_session.flush()
     async_session.add_all([
@@ -86,8 +88,8 @@ async def test_collect_entries_seven_profiles(async_session):
     entries = await collect_entries(async_session, HUB_HOST, ZONE)
     by_dns = {e["dns_name"]: e for e in entries}
 
-    # locales → ip hub_host + proxy_pass port alloué
-    assert by_dns["exemple-app"]["proxy_pass"] == f"http://{HUB_HOST}:4201"
+    # locales → proxy_pass = frontend_url du registre (scheme conservé)
+    assert by_dns["exemple-app"]["proxy_pass"] == "http://192.0.2.10:4200"
     assert by_dns["exemple-app"]["ip"] == HUB_HOST
     assert by_dns["exemple-app"]["fqdn"] == f"exemple-app.{ZONE}"
     assert by_dns["exemple-app"]["in_zone"] is True
@@ -96,11 +98,12 @@ async def test_collect_entries_seven_profiles(async_session):
     assert by_dns["remote-app"]["proxy_pass"] == "https://203.0.113.42:9443"
     # atelier publié + marqué
     assert by_dns["exemple-app-ws"]["is_workshop"] is True
-    assert by_dns["exemple-app-ws"]["proxy_pass"] == f"http://{HUB_HOST}:5211"
+    assert by_dns["exemple-app-ws"]["proxy_pass"] == "http://192.0.2.10:4200"
     # inactive conservée
     assert by_dns["app-off"]["is_active"] is False
-    # unmanaged actif publié
+    # unmanaged actif publié ; app système « hub » jamais routée
     assert "unmanaged-app" in by_dns
+    assert "hub" not in by_dns
     # locale sans allocation → port parsé de frontend_url
     assert by_dns["no-alloc"]["proxy_pass"] == f"http://{HUB_HOST}:4299"
     # services : interne actif in_zone, externe actif hors zone, désactivé absent
@@ -157,14 +160,15 @@ def test_render_zone_excludes_out_of_zone_and_empty_zone():
 
 def test_render_vhosts_exact_content():
     vhosts = render_vhosts(_entries(), ZONE,
-                           wildcard_dir="/etc/nginx/ssl/hub-dns-wildcard")
+                           wildcard_dir="/etc/nginx/ssl/server/hub-dns-wildcard")
     assert set(vhosts) == {"exemple-app.conf", "remote-app.conf",
                            "exemple-app-ws.conf", "compta.hub.example.lan.conf"}
     vh = vhosts["exemple-app.conf"]
     assert "server_name exemple-app.hub.example.lan;" in vh
-    assert "ssl_certificate     /etc/nginx/ssl/hub-dns-wildcard/server.crt;" in vh
+    assert "ssl_certificate     /etc/nginx/ssl/server/hub-dns-wildcard/server.crt;" in vh
     assert f"proxy_pass http://{HUB_HOST}:4201;" in vh
-    assert "include /etc/nginx/proxy-common.inc;" in vh
+    assert "proxy_set_header Host $host;" in vh
+    assert "proxy_buffering off;" in vh
     # distante → proxy_pass = frontend_url telle quelle
     assert "proxy_pass https://203.0.113.42:9443;" in vhosts["remote-app.conf"]
 

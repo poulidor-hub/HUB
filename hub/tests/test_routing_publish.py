@@ -16,16 +16,21 @@ from app.models import Application, AppSetting, RoutedService
 @pytest.fixture
 def dirs(tmp_path, settings):
     """Redirige les dossiers de publication + certs vers tmp_path (CA fraîche,
-    clé RSA 2048 pour la vitesse des tests). Restaurés par la fixture settings."""
+    clé RSA 2048 pour la vitesse des tests). RESTAURATION du singleton à la fin
+    (sinon fuite inter-tests : certs_dir pointe un tmp purgé)."""
     import pki
 
     s = get_settings()
+    saved = (s.routing_dns_dir, s.routing_gateway_dir, s.certs_dir, s.pki_key_size)
     s.routing_dns_dir = str(tmp_path / "dns")
     s.routing_gateway_dir = str(tmp_path / "gateway")
     s.certs_dir = str(tmp_path / "certs")
     s.pki_key_size = 2048
+    pki.settings = s  # resync singleton (cf. certs_tmp, test_pki_wildcard)
     pki.init_ca(force=True)
-    return s
+    yield s
+    s.routing_dns_dir, s.routing_gateway_dir, s.certs_dir, s.pki_key_size = saved
+    pki.settings = s
 
 
 @pytest.fixture

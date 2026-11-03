@@ -21,7 +21,7 @@ _DNS_LABEL = r"[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?"
 _DNS_NAME_RE = re.compile(rf"^{_DNS_LABEL}$")
 _ZONE_RE = re.compile(rf"^{_DNS_LABEL}(\.{_DNS_LABEL})+$")
 
-WILDCARD_CERT_DIR_NGINX = "/etc/nginx/ssl/hub-dns-wildcard"
+WILDCARD_CERT_DIR_NGINX = "/etc/nginx/ssl/server/hub-dns-wildcard"
 _ZONE_FILE_HEADER = "# Généré par hub-api (routing_service) — NE PAS ÉDITER"
 
 
@@ -61,9 +61,6 @@ def _host_of(url: str) -> str | None:
     return urlparse(url).hostname if url else None
 
 
-def _port_of(url: str, default: int = 80) -> int:
-    return urlparse(url).port or default
-
 
 async def collect_entries(session, hub_host: str, zone: str) -> list[dict]:
     """Construit les entrées de routage depuis le registre.
@@ -88,17 +85,22 @@ async def collect_entries(session, hub_host: str, zone: str) -> list[dict]:
         dns_name = (app.dns_name or "").strip().lower()
         if not dns_name:
             continue  # défensif : le backfill/lifespan garantit la présence
+        if getattr(app, "is_system_app", False):
+            continue  # app système du Hub (ex. « hub ») : jamais routée par nom
         alloc = allocations.get(app.slug)
+        # proxy_pass : frontend_url du REGISTRE en priorité (scheme conservé —
+        # http ou https selon le vrai listener de l'app) ; fallback : port HTTP
+        # alloué ; sinon rien à router.
+        if app.frontend_url:
+            proxy_pass = app.frontend_url
+        elif alloc and alloc.frontend_port:
+            proxy_pass = f"http://{hub_host}:{alloc.frontend_port}"
+        else:
+            continue
         if app.is_remote:
             ip = _host_of(app.frontend_url) or hub_host
-            proxy_pass = app.frontend_url
         else:
             ip = hub_host
-            if alloc and alloc.frontend_port:
-                proxy_pass = f"http://{hub_host}:{alloc.frontend_port}"
-            else:
-                port = _port_of(app.frontend_url or "", 80)
-                proxy_pass = f"http://{hub_host}:{port}"
         entries.append({
             "kind": "app", "ref": app.slug, "dns_name": dns_name,
             "fqdn": f"{dns_name}.{zone}" if zone else dns_name,
@@ -151,7 +153,14 @@ def render_vhosts(entries: list[dict], zone: str, wildcard_dir: str) -> dict[str
             f"    ssl_certificate_key {wildcard_dir}/server.key;\n"
             "    location / {\n"
             f"        proxy_pass {e['proxy_pass']};\n"
-            "        include /etc/nginx/proxy-common.inc;\n"
+            "        proxy_set_header Host $host;\n"
+            "        proxy_set_header X-Real-IP $remote_addr;\n"
+            "        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n"
+            "        proxy_set_header X-Forwarded-Proto $scheme;\n"
+            "        proxy_http_version 1.1;\n"
+            "        proxy_set_header Upgrade $http_upgrade;\n"
+            '        proxy_set_header Connection "upgrade";\n'
+            "        proxy_buffering off;\n"
             "    }\n"
             "}\n"
         )
@@ -172,31 +181,34 @@ def _get_docker_client():
     return docker.from_env()  # respecte DOCKER_HOST (proxy socket — chantier A)
 
 
-def _swap_dir(target: Path, new_files: dict[str, str]) -> Path | None:
-    """Écrit new_files dans un dossier temporaire puis bascule atomiquement.
+def _apply_dir(target: Path, new_files: dict[str, str]) -> dict[str, str]:
+    """Applique new_files dans target (in-place) et retourne l'ancien contenu.
 
-    Retourne le chemin de l'ancien contenu (déplacé, pour rollback) ou None."""
-    tmp = target.parent / (target.name + ".new")
-    old = target.parent / (target.name + ".old")
-    if tmp.exists():
-        _rmtree(tmp)
-    tmp.mkdir(parents=True, exist_ok=True)
-    for filename, content in new_files.items():
-        (tmp / filename).write_text(content, encoding="utf-8")
-    if old.exists():
-        _rmtree(old)
-    if target.exists():
-        target.rename(old)
-    tmp.rename(target)
-    return old if old.exists() else None
+    Le rename de dossier est impossible ici : /code/dns et /code/gateway sont
+    des points de montage bind (EBUSY). On purge donc les fichiers puis on
+    écrit les nouveaux — le reload se fait après l'écriture complète.
+    """
+    target.mkdir(parents=True, exist_ok=True)
+    old: dict[str, str] = {}
+    for f in sorted(target.iterdir()):
+        if f.is_file():
+            old[f.name] = f.read_text(encoding="utf-8")
+            f.unlink()
+    for name, content in new_files.items():
+        (target / name).write_text(content, encoding="utf-8")
+    return old
 
 
-def _restore_dir(target: Path, old: Path | None) -> None:
-    """Rollback : supprime le nouveau dossier, remet l'ancien en place."""
-    if target.exists():
-        _rmtree(target)
-    if old is not None and old.exists():
-        old.rename(target)
+def _restore_dir(target: Path, old_files: dict[str, str] | None) -> None:
+    """Rollback : remet exactement l'ancien contenu (in-place)."""
+    if old_files is None:
+        return
+    target.mkdir(parents=True, exist_ok=True)
+    for f in sorted(target.iterdir()):
+        if f.is_file():
+            f.unlink()
+    for name, content in old_files.items():
+        (target / name).write_text(content, encoding="utf-8")
 
 
 def _rmtree(path: Path) -> None:
@@ -258,8 +270,8 @@ async def publish() -> None:
 
     dns_dir = Path(settings.routing_dns_dir)
     gw_dir = Path(settings.routing_gateway_dir)
-    old_dns = _swap_dir(dns_dir, {"hub.zone": zone_content} if zone_content else {})
-    old_gw = _swap_dir(gw_dir, vhosts)
+    old_dns = _apply_dir(dns_dir, {"hub.zone": zone_content} if zone_content else {})
+    old_gw = _apply_dir(gw_dir, vhosts)
 
     reloads = [("hub-dns", "kill -HUP 1"), ("hub-frontend", "nginx -s reload")]
     try:

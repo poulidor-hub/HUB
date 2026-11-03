@@ -19,9 +19,16 @@ ZONE = "hub.example.lan"
 @pytest.fixture
 def certs_tmp(tmp_path, settings):
     s = get_settings()
+    saved = (s.certs_dir, s.pki_key_size)
     s.certs_dir = str(tmp_path / "certs")
+    s.pki_key_size = 2048
+    # resynchronisation : un test antérieur peut avoir fait get_settings.cache_clear()
+    # → pki.settings (singleton capturé à l'import) serait désynchronisé
+    pki.settings = s
     pki.init_ca(force=True)
-    return s
+    yield s
+    s.certs_dir, s.pki_key_size = saved
+    pki.settings = s
 
 
 def _dns_names(crt_path):

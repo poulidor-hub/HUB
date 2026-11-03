@@ -13,6 +13,12 @@ from pathlib import Path
 
 import pytest
 
+# HOST_ONLY : sync_version.py vit à la racine du checkout, jamais copiée dans
+# l'image Docker — run hôte uniquement.
+import os as _os
+if not _os.path.exists(str(Path(__file__).resolve().parents[2] / "sync_version.py")):
+    pytest.skip("sync_version.py hors image — run hôte", allow_module_level=True)
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 import sync_version as sv
 
