@@ -4,6 +4,7 @@ Réutilise le découpeur de blocs de test_compose_socket_proxy (sans PyYAML).
 """
 
 import pathlib
+import re
 
 import pytest
 from unittest.mock import patch, AsyncMock
@@ -63,3 +64,19 @@ async def test_toggle_active_triggers_regenerate(client, admin_token, async_sess
                               headers={"Authorization": f"Bearer {admin_token}"})
     assert resp.status_code == 200
     assert no_publish["n"] >= 1, "toggle-active doit déclencher regenerate()"
+
+
+def test_admin_tabs_panes_are_closed():
+    """Régression : un tab-pane admin non fermé aspire le HTML suivant et
+    rend plusieurs menus admin vides (incident 03/11/2026)."""
+    import pathlib
+    index = pathlib.Path(HUB_BASE, "frontend", "public", "index.html").read_text(encoding="utf-8")
+    panes = [m.start() for m in re.finditer(r'<div class="tab-pane fade"', index)]
+    assert len(panes) >= 5, "les tab-panes admin doivent exister"
+    panes.append(len(index))
+    for a, b in zip(panes, panes[1:]):
+        zone = index[a:b]
+        assert zone.count("<div") - zone.count("</div>") == 1, (
+            "un tab-pane admin n'est pas équilibré (1 <div> ouvert) — "
+            "le HTML suivant serait aspiré et les menus deviendraient vides"
+        )
