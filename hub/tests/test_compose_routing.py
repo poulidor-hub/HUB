@@ -71,17 +71,12 @@ def test_admin_tabs_panes_are_closed():
     rend plusieurs menus admin vides (incident 03/11/2026)."""
     import pathlib
     index = pathlib.Path(HUB_BASE, "frontend", "public", "index.html").read_text(encoding="utf-8")
-    # les commentaires HTML peuvent contenir des balises d'exemple : on les retire
+    # hors <script> (innerHTML JS) et commentaires (exemples HTML) — puis
+    # équilibre global : un tab-pane non fermé (régression onglets vides
+    # du 03/11/2026) déséquilibre TOUT le fichier.
+    index = re.sub(r"<script.*?</script>", "", index, flags=re.S)
     index = re.sub(r"<!--.*?-->", "", index, flags=re.S)
-    # fenêtre = page admin uniquement (de la barre adminPageTabs aux panes)
-    start = index.index('id="adminPageTabs"')
-    index = index[start:]
-    panes = [m.start() for m in re.finditer(r'<div class="tab-pane fade"', index)]
-    assert len(panes) >= 4, "les tab-panes admin doivent exister"
-    panes.append(len(index))
-    for a, b in zip(panes, panes[1:]):
-        zone = index[a:b]
-        assert zone.count("<div") - zone.count("</div>") == 1, (
-            "un tab-pane admin n'est pas équilibré (1 <div> ouvert) — "
-            "le HTML suivant serait aspiré et les menus deviendraient vides"
-        )
+    assert index.count("<div") == index.count("</div>"), (
+        "index.html déséquilibré : un tab-pane admin n'est pas fermé — "
+        "le HTML suivant serait aspiré et les menus deviendraient vides"
+    )
