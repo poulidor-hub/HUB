@@ -5,6 +5,38 @@
 
 ---
 
+## [3.79.1] - 3 novembre 2026
+
+### 🆕 Nouvelle version
+
+> ⚠️ Cette entrée a été créée automatiquement par `sync_version.py`.
+> Veuillez compléter les détails des modifications.
+
+| Fonctionnalité | Description |
+|----------------|-------------|
+| **À compléter** | Décrivez les changements de cette version |
+
+---
+
+## [3.79.1] - 3 novembre 2026
+
+### 🔧 Fix pass — review indépendant du routage (post 3.79.0)
+
+| Élément | Détail |
+|---|---|
+| Front | refs DOM mortes après retrait des vues ports/réseau (création d'app et init admin refonctionnent) ; échappement guillemets ; plages réelles depuis /ports/status |
+| API création | slug en collision avec un routage existant → 400 clair (validation cross-table, review I3) |
+| dnsmasq | `local-service` (pas de résolveur ouvert vers Internet, review I4) + `bind-dynamic` (hot-plug wg0, review I5) ; zone en format hosts via addn-hosts (conf-dir alpine inopérant) |
+| Publication | résolution host→IP pour address= (host.docker.internal, noms LAN — cas exemple-app-ws) ; app système « hub » jamais routée |
+| Durabilité | dossiers dns-generated/gateway trackés (.gitkeep, contenus gitignorés — install fresh sans dossiers root, review I6) |
+| Event loop | opérations bloquantes (gethostbyname, SDK docker, RSA, UDP) en asyncio.to_thread (review I8) |
+| Hooks | unset_hub_host → republication (review M5) |
+
+Live après fix : résolutions 42 noms (locales + host.docker.internal), SNI 200,
+création en collision → 400.
+
+---
+
 ## [3.79.0] - 3 novembre 2026
 
 ### ⚡ Routage par noms DNS — vue « Accès & routage » (chantier B)
