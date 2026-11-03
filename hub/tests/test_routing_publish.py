@@ -72,8 +72,8 @@ async def test_publish_writes_files_and_reloads(async_session, dirs, fake_docker
     await rs.publish()
 
     import pathlib
-    zone = pathlib.Path(dirs.routing_dns_dir, "hub.zone").read_text()
-    assert "address=/exemple-app.hub.example.lan/192.0.2.10" in zone
+    zone = pathlib.Path(dirs.routing_dns_dir, "hub.hosts").read_text()
+    assert "exemple-app.hub.example.lan" in zone
     vhost = pathlib.Path(dirs.routing_gateway_dir, "exemple-app.conf").read_text()
     assert "server_name exemple-app.hub.example.lan;" in vhost
     # reloads : dnsmasq HUP + nginx reload

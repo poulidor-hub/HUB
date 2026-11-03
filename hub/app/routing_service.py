@@ -153,13 +153,21 @@ async def collect_entries(session, hub_host: str, zone: str) -> list[dict]:
 
 
 def render_zone(entries: list[dict], zone: str) -> str:
-    """Fichier de zone dnsmasq (format hosts) — uniquement les entrées in_zone."""
+    """Fichier hosts additionnel pour dnsmasq (addn-hosts) — entrées in_zone.
+
+    Format hosts (une ligne par IP, tous les noms de cette IP) : plus robuste
+    que des directives address= (une ligne invalide n'invalide pas le fichier).
+    """
     if not zone:
         return ""
+    by_ip: dict[str, list[str]] = {}
+    for e in entries:
+        if not e.get("in_zone"):
+            continue
+        by_ip.setdefault(e["ip"], []).append(e["fqdn"])
     lines = [_ZONE_FILE_HEADER]
-    for e in sorted((e for e in entries if e.get("in_zone")),
-                    key=lambda e: e["fqdn"]):
-        lines.append(f"address=/{e['fqdn']}/{e['ip']}")
+    for ip in sorted(by_ip):
+        lines.append(f"{ip} " + " ".join(sorted(by_ip[ip])))
     return "\n".join(lines) + "\n"
 
 
@@ -295,7 +303,7 @@ async def publish() -> None:
 
     dns_dir = Path(settings.routing_dns_dir)
     gw_dir = Path(settings.routing_gateway_dir)
-    old_dns = _apply_dir(dns_dir, {"hub.zone": zone_content} if zone_content else {})
+    old_dns = _apply_dir(dns_dir, {"hub.hosts": zone_content} if zone_content else {})
     old_gw = _apply_dir(gw_dir, vhosts)
 
     reloads = [("hub-dns", "kill -HUP 1"), ("hub-frontend", "nginx -s reload")]
