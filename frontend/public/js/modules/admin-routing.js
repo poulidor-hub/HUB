@@ -85,9 +85,9 @@ function renderRoutingAdmin() {
     container.innerHTML = `
         ${renderRoutingBanner()}
         <ul class="nav nav-pills mb-3" id="routingSubTabs">
-            <li class="nav-item"><button class="nav-link ${routingActiveSubTab === 'apps' ? 'active' : ''}" data-action="routingSubTab" data-subtab="apps">Applications</button></li>
-            <li class="nav-item"><button class="nav-link ${routingActiveSubTab === 'services' ? 'active' : ''}" data-action="routingSubTab" data-subtab="services">Services tiers (${s.services.length})</button></li>
-            <li class="nav-item"><button class="nav-link ${routingActiveSubTab === 'ports' ? 'active' : ''}" data-action="routingSubTab" data-subtab="ports">Ports — lecture seule</button></li>
+            <li class="nav-item"><button class="nav-link ${routingActiveSubTab === 'apps' ? 'active' : ''}" data-action="routingSubTab" data-args="$el" data-subtab="apps">Applications</button></li>
+            <li class="nav-item"><button class="nav-link ${routingActiveSubTab === 'services' ? 'active' : ''}" data-action="routingSubTab" data-args="$el" data-subtab="services">Services tiers (${s.services.length})</button></li>
+            <li class="nav-item"><button class="nav-link ${routingActiveSubTab === 'ports' ? 'active' : ''}" data-action="routingSubTab" data-args="$el" data-subtab="ports">Ports — lecture seule</button></li>
         </ul>
         <div id="routingSubContent"></div>
     `;
@@ -179,7 +179,7 @@ function renderRoutingApps() {
                 <div class="list-group routing-app-list">
                     ${apps.map(a => `
                         <button class="list-group-item list-group-item-action ${selected && selected.slug === a.slug ? 'active' : ''}"
-                                data-action="routingSelectApp" data-slug="${escapeHtmlRouting(a.slug)}">
+                                data-action="routingSelectApp" data-args="$el" data-slug="${escapeHtmlRouting(a.slug)}">
                             <span>${escapeHtmlRouting(a.name)}</span>
                             ${a.is_workshop ? '<span class="badge bg-warning text-dark ms-1">atelier</span>' : ''}
                             ${a.is_remote ? '<span class="badge bg-info text-dark ms-1">distante</span>' : ''}
@@ -217,15 +217,15 @@ function renderRoutingAppDetail(app) {
                     ${fqdn
                         ? `<code class="text-primary fw-bold">https://${escapeHtmlRouting(fqdn)}</code>
                            <span class="ms-auto">
-                             <button class="btn btn-sm btn-outline-secondary" data-action="routingCopyUrl" data-url="https://${escapeHtmlRouting(fqdn)}">📋 copier</button>
-                             <button class="btn btn-sm btn-primary" data-action="routingOpenUrl" data-url="https://${escapeHtmlRouting(fqdn)}">ouvrir ↗</button>
+                             <button class="btn btn-sm btn-outline-secondary" data-action="routingCopyUrl" data-args="$el" data-url="https://${escapeHtmlRouting(fqdn)}">📋 copier</button>
+                             <button class="btn btn-sm btn-primary" data-action="routingOpenUrl" data-args="$el" data-url="https://${escapeHtmlRouting(fqdn)}">ouvrir ↗</button>
                            </span>`
                         : '<span class="text-muted">aucun nom de routage</span>'}
                 </div>
                 <div class="mb-2">
                     <span class="text-muted small">Nom de routage (publié à l'enregistrement)</span><br>
                     <code class="border rounded px-2 py-1">${escapeHtmlRouting(app.dns_name || app.slug)}</code><span class="text-muted">.${escapeHtmlRouting(zone)}</span>
-                    <button class="btn btn-link btn-sm p-0" data-action="routingRename" data-slug="${escapeHtmlRouting(app.slug)}" data-current="${escapeHtmlRouting(app.dns_name || app.slug)}">✏️ renommer</button>
+                    <button class="btn btn-link btn-sm p-0" data-action="routingRename" data-args="$el" data-slug="${escapeHtmlRouting(app.slug)}" data-current="${escapeHtmlRouting(app.dns_name || app.slug)}">✏️ renommer</button>
                 </div>
                 <div class="small mb-2">
                     Statuts : <span class="${app.published ? 'text-success' : 'text-muted'}">${app.published ? '● DNS publié' : '○ non publié'}</span>
@@ -234,7 +234,7 @@ function renderRoutingAppDetail(app) {
                 <div class="small text-muted mb-2">
                     Fallback ports (transition) : ${fbLabel}
                 </div>
-                <button class="btn btn-sm btn-outline-secondary mb-3" data-action="routingTestResolve" data-slug="${escapeHtmlRouting(app.slug)}">🧪 tester la résolution</button>
+                <button class="btn btn-sm btn-outline-secondary mb-3" data-action="routingTestResolve" data-args="$el" data-slug="${escapeHtmlRouting(app.slug)}">🧪 tester la résolution</button>
                 <button class="btn btn-sm btn-outline-secondary" data-action="routingOpenApp" data-slug="${escapeHtmlRouting(app.slug)}">⚙ Gérer l'app →</button>
             </div>
         </div>
@@ -260,8 +260,8 @@ function renderRoutingServices() {
                         <span class="text-muted small">→ ${escapeHtmlRouting(sv.target_url)}</span>
                     </div>
                     <div class="btn-group">
-                        <button class="btn btn-sm btn-outline-secondary" data-action="routingEditService" data-id="${sv.id}">✏️</button>
-                        <button class="btn btn-sm btn-outline-danger" data-action="routingDeleteService" data-id="${sv.id}" data-name="${escapeHtmlRouting(sv.name)}">🗑</button>
+                        <button class="btn btn-sm btn-outline-secondary" data-action="routingEditService" data-args="$el" data-id="${sv.id}">✏️</button>
+                        <button class="btn btn-sm btn-outline-danger" data-action="routingDeleteService" data-args="$el" data-id="${sv.id}" data-name="${escapeHtmlRouting(sv.name)}">🗑</button>
                     </div>
                 </div>
             `).join('') || '<div class="text-muted p-3">Aucun service tiers routé.</div>'}
@@ -436,7 +436,7 @@ async function loadRoutingPortsReadOnly() {
                             <td>${a.api_port ?? '—'}</td>
                             <td>${a.frontend_port ?? '—'}</td>
                             <td>${a.frontend_https_port ?? '—'}</td>
-                            <td><button class="btn btn-sm btn-outline-danger" data-action="routingReleasePorts" data-id="${a.id}" data-slug="${escapeHtmlRouting(a.app_slug)}">libérer</button></td>
+                            <td><button class="btn btn-sm btn-outline-danger" data-action="routingReleasePorts" data-args="$el" data-id="${a.id}" data-slug="${escapeHtmlRouting(a.app_slug)}">libérer</button></td>
                         </tr>
                     `).join('') || '<tr><td colspan="6" class="text-muted">Aucune allocation.</td></tr>'}
                 </tbody>
