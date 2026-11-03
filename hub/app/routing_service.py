@@ -6,6 +6,7 @@ reload/rollback (Task 3). La spécification fait foi :
 docs/superpowers/specs/2026-11-02-routage-dns-design.md
 """
 
+import asyncio
 import re
 from pathlib import Path
 from urllib.parse import urlparse
@@ -60,6 +61,44 @@ def validate_zone(zone: str) -> str:
 def _host_of(url: str) -> str | None:
     return urlparse(url).hostname if url else None
 
+
+
+async def assert_dns_name_available(db, dns_name: str, zone: str,
+                                    exclude_app_slug: str | None = None,
+                                    exclude_service_id: int | None = None) -> None:
+    """Unicité cross-table : Application (fqdn) ∪ RoutedService (dns_name).
+
+    Lève ValueError avec un message clair — les routes la convertissent
+    (422/400) selon le contexte. Le dns_name d'app est un nom court (la zone
+    est ajoutée pour la comparaison), celui d'un service est un FQDN libre.
+    AsyncSession async : à awaiter depuis les callers.
+    """
+    fqdn = _fqdn_of(dns_name, zone)
+    from app.models import (  # import local : évite la circularité
+        Application, RoutedService,
+    )
+
+    apps = (await db.execute(
+        select(Application).where(Application.dns_name.isnot(None))
+    )).scalars().all()
+    for app in apps:
+        if app.slug == exclude_app_slug:
+            continue
+        if _fqdn_of(app.dns_name, zone) == fqdn:
+            raise ValueError(f"« {fqdn} » est déjà utilisé par l'app {app.slug}.")
+    services = (await db.execute(select(RoutedService))).scalars().all()
+    for svc in services:
+        if exclude_service_id is not None and svc.id == exclude_service_id:
+            continue
+        if svc.dns_name.lower() == fqdn:
+            raise ValueError(f"« {fqdn} » est déjà utilisé par le service {svc.name}.")
+
+
+def _fqdn_of(name: str, zone: str) -> str:
+    name = (name or "").strip().lower().rstrip(".")
+    if zone and (name == zone or name.endswith(f".{zone}")):
+        return name
+    return f"{name}.{zone}" if zone else name
 
 
 def _resolve_host_to_ip(host: str | None) -> str | None:
@@ -120,9 +159,11 @@ async def collect_entries(session, hub_host: str, zone: str) -> list[dict]:
         else:
             continue
         if app.is_remote:
-            ip = _resolve_host_to_ip(_host_of(app.frontend_url)) or hub_host
+            ip = await asyncio.to_thread(
+                _resolve_host_to_ip, _host_of(app.frontend_url)
+            ) or hub_host
         else:
-            ip = _resolve_host_to_ip(hub_host) or hub_host
+            ip = await asyncio.to_thread(_resolve_host_to_ip, hub_host) or hub_host
         if ip is None:
             continue
         entries.append({
@@ -141,7 +182,7 @@ async def collect_entries(session, hub_host: str, zone: str) -> list[dict]:
         in_zone = bool(zone) and (fqdn == zone or fqdn.endswith(f".{zone}"))
         entries.append({
             "kind": "service", "ref": svc.name, "dns_name": fqdn, "fqdn": fqdn,
-            "in_zone": in_zone, "ip": _resolve_host_to_ip(hub_host) or hub_host,
+            "in_zone": in_zone, "ip": await asyncio.to_thread(_resolve_host_to_ip, hub_host) or hub_host,
             "proxy_pass": svc.target_url,
             "is_workshop": False, "is_active": True, "enabled": True,
         })
@@ -280,9 +321,14 @@ async def publish() -> None:
     """Publie l'état courant du registre : zone DNS + vhosts SNI.
 
     Ouvre sa propre session (les endpoints committent leur mutation MÉTIER puis
-    appellent regenerate()). Échec de reload → rollback des fichiers + re-reload
-    + routing_last_error persisté + RoutingPublishError.
+    appellent regenerate()). TOUT échec — wildcard, écritures, reload — déclenche
+    rollback (fichiers + re-reload) + routing_last_error persisté +
+    RoutingPublishError (review I7). Les opérations bloquantes (SDK docker,
+    résolutions, RSA) passent en to_thread (review I8 — jamais dans la boucle).
     """
+    import asyncio
+    import logging
+
     from app.models import AppSetting
 
     settings = get_settings()
@@ -293,31 +339,36 @@ async def publish() -> None:
         zone = validate_zone(row.value if row and row.value else "")
         entries = await collect_entries(session, hub_host, zone)
 
-    if zone:
-        import pki  # hub/pki.py — racine du contexte /code (pattern routes/app_certs)
-
-        pki.ensure_wildcard_cert(zone)  # émission idempotente — avant le swap
-
     zone_content = render_zone(entries, zone)
     vhosts = render_vhosts(entries, zone, WILDCARD_CERT_DIR_NGINX)
 
     dns_dir = Path(settings.routing_dns_dir)
     gw_dir = Path(settings.routing_gateway_dir)
-    old_dns = _apply_dir(dns_dir, {"hub.hosts": zone_content} if zone_content else {})
-    old_gw = _apply_dir(gw_dir, vhosts)
-
     reloads = [("hub-dns", "kill -HUP 1"), ("hub-frontend", "nginx -s reload")]
+
+    old_dns: dict[str, str] | None = None
+    old_gw: dict[str, str] | None = None
     try:
-        _reload_containers(reloads)
+        if zone:
+            import pki  # hub/pki.py — racine du contexte /code
+
+            await asyncio.to_thread(pki.ensure_wildcard_cert, zone)
+        old_dns = await asyncio.to_thread(
+            _apply_dir, dns_dir, {"hub.hosts": zone_content} if zone_content else {}
+        )
+        old_gw = await asyncio.to_thread(_apply_dir, gw_dir, vhosts)
+        await asyncio.to_thread(_reload_containers, reloads)
     except Exception as exc:
-        _restore_dir(dns_dir, old_dns)
-        _restore_dir(gw_dir, old_gw)
+        await asyncio.to_thread(_restore_dir, dns_dir, old_dns)
+        await asyncio.to_thread(_restore_dir, gw_dir, old_gw)
         try:
-            _reload_containers(reloads)  # re-servir l'ancien contenu
+            await asyncio.to_thread(_reload_containers, reloads)  # re-servir l'ancien
         except Exception:
             pass  # l'erreur primaire est celle qu'on remonte
         async with database.async_session_maker() as err_session:
             await _set_last_error(err_session, str(exc))
+        logging.getLogger(__name__).warning(
+            "Publication du routage échouée (rollback appliqué) : %s", exc)
         raise RoutingPublishError(str(exc)) from exc
 
     async with database.async_session_maker() as err_session:

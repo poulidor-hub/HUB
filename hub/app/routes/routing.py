@@ -132,21 +132,14 @@ def _resolve_local(fqdn: str, server: str, timeout: float = 2.0) -> str | None:
 async def _assert_dns_name_free(db: AsyncSession, zone: str, fqdn: str,
                                 exclude_app_slug: str | None = None,
                                 exclude_service_id: int | None = None) -> None:
-    """Unicité cross-table : Application (fqdn) ∪ RoutedService (dns_name)."""
-    apps = (await db.execute(
-        select(Application).where(Application.dns_name.isnot(None))
-    )).scalars().all()
-    for app in apps:
-        if app.slug == exclude_app_slug:
-            continue
-        if _fqdn(app.dns_name, zone) == fqdn:
-            raise HTTPException(422, f"« {fqdn} » est déjà utilisé par l'app {app.slug}.")
-    services = (await db.execute(select(RoutedService))).scalars().all()
-    for svc in services:
-        if exclude_service_id is not None and svc.id == exclude_service_id:
-            continue
-        if svc.dns_name.lower() == fqdn:
-            raise HTTPException(422, f"« {fqdn} » est déjà utilisé par le service {svc.name}.")
+    """Wrapper HTTP : ValueError du helper central → 422."""
+    try:
+        from app.routing_service import assert_dns_name_available
+        await assert_dns_name_available(db, dns_name=fqdn, zone=zone,
+                                  exclude_app_slug=exclude_app_slug,
+                                  exclude_service_id=exclude_service_id)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc))
 
 
 # ---------------------------------------------------------------- schemas

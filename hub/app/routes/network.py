@@ -177,6 +177,13 @@ async def unset_hub_host(
     settings.hub_host = (os.environ.get("HUB_HOST") or "").strip()
     logger.info(f"🌐 HUB_HOST admin supprimé — retour env/auto par {current_admin.username}")
 
+    # Chantier B (review M5) : l'IP sert aux enregistrements DNS + proxy_pass
+    try:
+        from app.routing_service import regenerate as _regenerate_routing
+        await _regenerate_routing()
+    except Exception:
+        pass
+
     db_value = await _read_db_hub_host(db)
     return _network_state(db_value)
 

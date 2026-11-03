@@ -218,3 +218,20 @@ async def test_test_resolve(client, admin_token, async_session, resolver_up):
     assert data["fqdn"] == "exemple-app.hub.example.lan"
     assert data["resolved"] is True
     assert data["ip"] == "192.0.2.10"
+
+
+@pytest.mark.asyncio
+async def test_create_app_slug_colliding_with_service_dns_name_returns_400(
+        client, admin_token, async_session, no_publish):
+    """Review I3 : un slug qui collisionne un RoutedService/dns_name existant
+    donne un 400 clair (pas un 500 par violation d'index unique)."""
+    await _seed_zone(async_session)
+    async_session.add(RoutedService(name="Pris", dns_name="conflit.hub.example.lan",
+                                    target_url="http://x:80"))
+    await async_session.commit()
+    resp = await client.post("/api/apps/", json={
+        "name": "Conflit", "slug": "conflit",
+    }, headers=_auth(admin_token))
+    assert resp.status_code == 400
+    assert "conflit" in resp.json()["detail"].lower()
+

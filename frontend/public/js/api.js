@@ -967,6 +967,10 @@ class HubAPI {
         });
     }
 
+    async testRoutingResolve(slug) {
+        return this.request(`/routing/test-resolve/${encodeURIComponent(slug)}`);
+    }
+
     async deleteRoutingService(id) {
         return this.request(`/routing/services/${id}`, {
             method: 'DELETE'

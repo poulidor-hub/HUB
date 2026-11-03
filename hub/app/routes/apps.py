@@ -1018,7 +1018,23 @@ async def create_app(
     else:
         # Utiliser le host configuré ou auto-détecté
         host = settings.get_hub_host()
-    
+
+    # Chantier B (review I3) : le slug devient dns_name — refuse une collision
+    # avec un routage existant (app ou service tiers) AVANT tout insert (400
+    # clair au lieu d'un 500 par index unique).
+    from app.routing_service import assert_dns_name_available, validate_dns_name
+    from app.models import AppSetting  # chantier B : lecture de la zone de routage
+    zone_row = await db.get(AppSetting, "hub_dns_zone")
+    zone = (zone_row.value if zone_row else "") or ""
+    try:
+        validate_dns_name(app_data.slug)
+        await assert_dns_name_available(db, app_data.slug, zone)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Slug non utilisable comme nom de routage : {exc}",
+        )
+
     # Construire les URLs à partir des ports
     frontend_url = None
     callback_url = None
