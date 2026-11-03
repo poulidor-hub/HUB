@@ -291,18 +291,51 @@ def _rmtree(path: Path) -> None:
     shutil.rmtree(path, ignore_errors=True)
 
 
-def _reload_containers(reloads: list[tuple[str, str]]) -> None:
-    """docker exec des reloads — via le proxy socket (chantier A, EXEC=1)."""
-    client = _get_docker_client()
-    for name, cmd in reloads:
-        result = client.containers.get(name).exec_run(cmd)
-        code = result[0] if isinstance(result, tuple) else getattr(result, "exit_code", 0)
-        if code not in (0, None):
-            output = result[1] if isinstance(result, tuple) else getattr(result, "output", b"")
-            raise RuntimeError(
-                f"reload {name} (« {cmd} ») a échoué (code {code}) : "
-                f"{output if isinstance(output, str) else output.decode(errors='replace')[:400]}"
-            )
+class _ReloadCommandError(RuntimeError):
+    """La commande de reload a RÉPONDU en échec (fatal, pas de retry)."""
+
+
+def _reload_containers(reloads: list[tuple[str, str]], attempts: int = 4,
+                       delay: float = 5.0, client=None) -> None:
+    """docker exec des reloads — via le proxy socket (chantier A, EXEC=1).
+
+    Au boot du hub, hub-api peut finir son lifespan avant que hub-frontend /
+    hub-dns soient running (409 « is not running » sur exec) : on RETENTE les
+    reloads en attente au lieu de poser une erreur dans le bandeau. Une
+    commande qui répond en échec (code != 0) reste fatale (rollback géré par
+    publish()).
+    """
+    import time
+
+    client = client or _get_docker_client()
+    pending = list(reloads)
+    last_exc: Exception | None = None
+    for _attempt in range(attempts):
+        still_pending: list[tuple[str, str]] = []
+        for name, cmd in pending:
+            try:
+                container = client.containers.get(name)
+                result = container.exec_run(cmd)
+                code = result[0] if isinstance(result, tuple) else getattr(result, "exit_code", 0)
+                output = result[1] if isinstance(result, tuple) else getattr(result, "output", b"")
+                if code not in (0, None):
+                    shown = output if isinstance(output, str) else output.decode(errors="replace")[:400]
+                    raise _ReloadCommandError(
+                        f"reload {name} (« {cmd} ») a échoué (code {code}) : {shown}"
+                    )
+            except _ReloadCommandError:
+                raise
+            except Exception as exc:  # conteneur absent/pas prêt → retry
+                still_pending.append((name, cmd))
+                last_exc = exc
+        pending = still_pending
+        if not pending:
+            return
+        if _attempt < attempts - 1:
+            time.sleep(delay)
+    raise RuntimeError(
+        f"reloads impossibles après {attempts} tentatives : {last_exc}"
+    )
 
 
 async def _set_last_error(session, message: str) -> None:
