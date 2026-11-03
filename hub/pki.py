@@ -162,6 +162,43 @@ def create_server_cert(
     _write_cert(srv_crt, cert)
 
 
+def ensure_wildcard_cert(zone: str) -> dict:
+    """Chantier B — garantit un cert wildcard *.<zone> signé par la CA interne.
+
+    Réémet si le cert est absent OU si son SAN ne couvre pas la zone demandée
+    (changement de zone). N'est jamais appelé au boot sans zone configurée.
+    Retourne {cn, issued_at, expires_at} (datetimes UTC, lecture du cert).
+    """
+    crt_path, key_path = _server_paths("hub-dns-wildcard")
+    wanted = [f"*.{zone}", zone]
+
+    def _info(path: Path) -> dict:
+        cert = x509.load_pem_x509_certificate(path.read_bytes())
+        nb = getattr(cert, "not_valid_before_utc", None) or cert.not_valid_before
+        na = getattr(cert, "not_valid_after_utc", None) or cert.not_valid_after
+        return {
+            "cn": cert.subject.get_attributes_for_oid(NameOID.COMMON_NAME)[0].value,
+            "issued_at": nb,
+            "expires_at": na,
+        }
+
+    if crt_path.exists():
+        cert = x509.load_pem_x509_certificate(crt_path.read_bytes())
+        san = cert.extensions.get_extension_for_oid(
+            x509.ExtensionOID.SUBJECT_ALTERNATIVE_NAME
+        ).value
+        names = set(san.get_values_for_type(x509.DNSName))
+        if set(wanted) <= names:
+            return _info(crt_path)
+
+    hub_ip = settings.get_hub_host()
+    create_server_cert(
+        name="hub-dns-wildcard", force=True, cn=f"*.{zone}",
+        san=([*wanted, hub_ip] if hub_ip else wanted),
+    )
+    return _info(crt_path)
+
+
 def info() -> None:
     ca_crt, _ = _ca_paths()
     if not ca_crt.exists():

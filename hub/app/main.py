@@ -18,6 +18,7 @@ from app.database import (
     _ensure_user_identity_columns,
     _backfill_user_uuids,
     _backfill_user_oidc_subs,
+    backfill_dns_names,
 )
 from app.outbox import outbox_service
 from app.models import User, ErrorLog, utcnow
@@ -27,6 +28,7 @@ from app.routes import auth, users, apps, service_accounts, audit, docs, events,
 from app.routes import settings as settings_routes
 from app.routes import network as network_routes
 from app.routes import app_recreate
+from app.routes import routing as routing_routes
 from app.routes import app_socle_check
 
 import logging
@@ -337,6 +339,14 @@ async def lifespan(app: FastAPI):
     await _ensure_user_identity_columns()  # Colonnes identité (uuid/prenom/nom)
     await _backfill_user_uuids()  # Backfill uuid des utilisateurs existants
     await _backfill_user_oidc_subs()  # Backfill oidc_sub des utilisateurs existants
+    await backfill_dns_names()  # Chantier B : dns_name = slug pour les apps sans nom de routage
+
+    # Chantier B : reconcile du routage au boot (zone DNS + vhosts SNI) — jamais bloquant
+    try:
+        from app.routing_service import regenerate as _regenerate_routing
+        await _regenerate_routing()
+    except Exception as exc:
+        logger.warning(f"Routage: reconcile au boot échoué: {exc}")
 
     # Vérifier la configuration des secrets et de sécurité AVANT l'admin bootstrap
     # (un mdp admin/DB faible ou des secrets manquants bloquent en production)
@@ -871,6 +881,7 @@ app.include_router(apps.router)
 app.include_router(service_accounts.router)
 app.include_router(audit.router)
 app.include_router(docs.router)
+app.include_router(routing_routes.router)
 app.include_router(events.router)
 app.include_router(app_backups.router)
 app.include_router(snapshots.router)

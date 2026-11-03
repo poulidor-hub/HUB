@@ -11,7 +11,14 @@ Sans dépendance PyYAML : découpage texte des blocs de services.
 import re
 from pathlib import Path
 
+import pytest
+
 HUB_BASE = Path(__file__).resolve().parents[2]
+
+# HOST_ONLY : le compose n'est pas copié dans l'image — run hôte uniquement
+import os as _os
+if not _os.path.exists(str(HUB_BASE / "docker-compose.yml")):
+    pytest.skip("fichiers checkout hors image — run hôte", allow_module_level=True)
 COMPOSE_BASE = HUB_BASE / "docker-compose.yml"
 COMPOSE_DEV = HUB_BASE / "docker-compose.dev.yml"
 

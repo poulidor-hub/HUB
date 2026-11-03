@@ -394,6 +394,12 @@ async def _run_deployment(deployment_id: int, slug: str, session_factory=None) -
                 logs=f"[{_now():%H:%M:%S}] ✅ App en ligne (port {api_port})\n",
             )
             logger.info(f"[deploy:{slug}] succès")
+            # Chantier B : publier/actualiser l'app dans la zone de routage
+            try:
+                from app.routing_service import regenerate as _regenerate_routing
+                await _regenerate_routing()
+            except Exception:
+                pass
         except asyncio.CancelledError:
             await _update_deployment(deployment_id, factory, status="failed",
                                      current_step="annulé", finished_at=_now(),

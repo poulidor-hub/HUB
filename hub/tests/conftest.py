@@ -203,6 +203,23 @@ async def client(async_engine, async_session) -> AsyncGenerator[AsyncClient, Non
 
 
 @pytest.fixture
+def no_publish(monkeypatch):
+    """Neutralise la publication routing (regenerate) — compteur d'appels.
+
+    Patche la source (app.routing_service.regenerate — résolue par les hooks à
+    import local : apps.py, deploy_service.py, main.py) ET la référence du
+    router (app.routes.routing.regenerate). Fixture conftest partagée."""
+    calls = {"n": 0}
+
+    async def fake_regenerate():
+        calls["n"] += 1
+
+    monkeypatch.setattr("app.routing_service.regenerate", fake_regenerate)
+    monkeypatch.setattr("app.routes.routing.regenerate", fake_regenerate)
+    return calls
+
+
+@pytest.fixture
 async def test_user(async_session: AsyncSession) -> User:
     """Crée un utilisateur de test standard"""
     user = User(

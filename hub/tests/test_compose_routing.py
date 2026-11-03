@@ -1,0 +1,65 @@
+"""Chantier B Task 6 — garde-fou compose (hub-dns + vhosts gateway) + hooks.
+
+Réutilise le découpeur de blocs de test_compose_socket_proxy (sans PyYAML).
+"""
+
+import pathlib
+
+import pytest
+from unittest.mock import patch, AsyncMock
+
+from tests.test_compose_socket_proxy import _service_blocks
+
+HUB_BASE = pathlib.Path(__file__).resolve().parents[2]
+
+# HOST_ONLY : le compose n'est pas copié dans l'image — run hôte uniquement
+import os as _os
+if not _os.path.exists(str(HUB_BASE / "docker-compose.yml")):
+    pytest.skip("fichiers checkout hors image — run hôte", allow_module_level=True)
+COMPOSE = HUB_BASE / "docker-compose.yml"
+
+
+def test_compose_has_hub_dns_service():
+    blocs = _service_blocks(COMPOSE.read_text())
+    assert "hub-dns" in blocs, "service hub-dns absent du compose"
+    bloc = blocs["hub-dns"]
+    assert "network_mode: host" in bloc, "hub-dns doit être en host network (tunnel WG)"
+    assert "ports:" not in bloc, "hub-dns ne publie aucun port (53 via host network)"
+    assert "dnsmasq.d" in bloc, "hub-dns doit monter la zone générée"
+    assert "mem_limit: 64m" in bloc
+
+
+def test_compose_publish_dirs_mounted():
+    blocs = _service_blocks(COMPOSE.read_text())
+    assert "/code/dns" in blocs["hub-api"], "hub-api doit écrire la zone (/code/dns)"
+    assert "/code/gateway" in blocs["hub-api"], "hub-api doit écrire les vhosts (/code/gateway)"
+    assert "vhosts.d" in blocs["hub-frontend"], (
+        "hub-frontend doit lire les vhosts générés (/etc/nginx/vhosts.d)"
+    )
+
+
+def test_frontend_nginx_includes_vhosts_dir():
+    entrypoint = (HUB_BASE / "hub" / ".." / "frontend" / "docker-entrypoint.sh")
+    entrypoint = entrypoint.resolve()
+    content = entrypoint.read_text()
+    assert "vhosts.d" in content, "l'entrypoint doit inclure /etc/nginx/vhosts.d/*.conf"
+
+
+# ---------------------------------------------------------------- hooks
+
+
+@pytest.mark.asyncio
+async def test_toggle_active_triggers_regenerate(client, admin_token, async_session,
+                                                 no_publish):
+    """Le toggle actif/inactif d'une app déclenche la publication (regenerate)."""
+    from app.models import Application
+
+    app = Application(name="Inv", slug="exemple-app", api_url="http://192.0.2.10:9001",
+                      frontend_url="http://192.0.2.10:4201", dns_name="exemple-app")
+    async_session.add(app)
+    await async_session.commit()
+
+    resp = await client.patch(f"/api/apps/{app.id}/toggle-active",
+                              headers={"Authorization": f"Bearer {admin_token}"})
+    assert resp.status_code == 200
+    assert no_publish["n"] >= 1, "toggle-active doit déclencher regenerate()"

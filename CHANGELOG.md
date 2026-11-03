@@ -5,6 +5,28 @@
 
 ---
 
+## [3.79.0] - 3 novembre 2026
+
+### ⚡ Routage par noms DNS — vue « Accès & routage » (chantier B)
+
+| Élément | Détail |
+|---|---|
+| Vue admin « Accès & routage » | Remplace l'onglet Réseau et la modal Pool de ports : bandeau zone/résolveur/wildcard, onglets Applications (liste + panneau détail) / Services tiers / Ports (lecture seule + libération orphelins) ; publication automatique — le registre des apps est la source de vérité |
+| Résolveur `hub-dns` | dnsmasq 2.90 (build local alpine, host network, 64m, cap_drop ALL + NET_BIND_SERVICE) ; autoritaire sur `<hub_dns_zone>` ; forward le reste au résolveur hôte ; port 53 jamais publié |
+| Routage SNI | vhosts générés par `routing_service.publish()` dans `gateway/`, consommés par hub-frontend (`/etc/nginx/vhosts.d/`) ; proxy_pass = `frontend_url` du registre (scheme conservé) |
+| WireGuard | `DNS = <hub_host>` poussé dans les configs clients quand la zone est configurée (config download + QR) |
+| Création d'app | sans saisie de ports — allocation automatique idempotente ; `dns_name = slug` à la création (réponse enrichie) |
+| Modèle | `Application.dns_name` + table `routed_service` (services tiers visibles — PhiliaNG migrée) + migration 061 |
+| PKI | wildcard `*.<hub_dns_zone>` émis par pki.py (réémission au changement de zone) |
+| Garde-fous | `test_compose_socket_proxy.py` (chantier A) + `test_compose_routing.py` + `test_frontend_js_syntax` (collision let/function attrapée) |
+| Publication | `_apply_dir` in-place (bind mounts EBUSY au rename) + rollback contenu + `routing_last_error` dans le bandeau |
+| Live | zone `hub.example.lan` configurée : résolution 42 noms, SNI exemple-app cert wildcard Verification OK → app 200, renommage live régénéré, WG DNS ✓ ; suite hôte 1485 passed / 3 failed PRÉ-EXISTANTS au HEAD (oidc×2 + slo, prouvés par run baseline) |
+| Vues supprimées | onglet Réseau (propagation .env — obsolète), modal Pool de ports, section ports du formulaire |
+
+---
+
+---
+
 ## [3.78.0] - 2 novembre 2026
 
 ### ⚡ Durcissement : accès Docker via proxy filtré — plus aucun socket direct sur hub-api

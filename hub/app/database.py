@@ -102,6 +102,30 @@ async def _backfill_user_uuids() -> None:
         logger.info("Backfill users.uuid : %d utilisateur(s) migré(s)", len(users))
 
 
+async def backfill_dns_names() -> int:
+    """Chantier B : dns_name = slug pour les applications sans nom de routage.
+
+    Idempotent : renvoie le nombre d'applications modifiées (0 au 2e appel).
+    Appelé au lifespan, après les migrations (colonne dns_name déjà présente).
+    """
+    from sqlalchemy import select
+
+    from app.models import Application  # import local : évite la circularité
+
+    async with async_session_maker() as session:
+        result = await session.execute(
+            select(Application).where(Application.dns_name.is_(None))
+        )
+        apps = result.scalars().all()
+        if not apps:
+            return 0
+        for app in apps:
+            app.dns_name = app.slug
+        await session.commit()
+        logger.info("Backfill applications.dns_name : %d app(s) migrée(s)", len(apps))
+        return len(apps)
+
+
 async def _backfill_user_oidc_subs() -> None:
     """Assigne oidc_sub = username aux lignes legacy ; fallback uuid si collision
     (username recyclé après rename, déjà détenu comme oidc_sub d'un autre)."""

@@ -934,6 +934,45 @@ class HubAPI {
         });
     }
 
+    // Routage par noms (chantier B — vue Accès & routage)
+    async getRoutingState() {
+        return this.request('/routing/state');
+    }
+
+    async putRoutingZone(zone) {
+        return this.request('/routing/zone', {
+            method: 'PUT',
+            body: JSON.stringify({ zone })
+        });
+    }
+
+    async putRoutingDnsName(slug, dnsName) {
+        return this.request(`/routing/apps/${encodeURIComponent(slug)}`, {
+            method: 'PUT',
+            body: JSON.stringify({ dns_name: dnsName })
+        });
+    }
+
+    async createRoutingService(payload) {
+        return this.request('/routing/services', {
+            method: 'POST',
+            body: JSON.stringify(payload)
+        });
+    }
+
+    async updateRoutingService(id, payload) {
+        return this.request(`/routing/services/${id}`, {
+            method: 'PUT',
+            body: JSON.stringify(payload)
+        });
+    }
+
+    async deleteRoutingService(id) {
+        return this.request(`/routing/services/${id}`, {
+            method: 'DELETE'
+        });
+    }
+
     // Auto-register d'une application (crée app + service account automatiquement)
     async autoRegisterApp(slug, name, apiPort, frontendPort = null, isShared = false, description = null) {
         return this.request('/apps/auto-register', {
