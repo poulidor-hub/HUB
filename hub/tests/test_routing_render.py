@@ -139,10 +139,8 @@ def test_render_zone_exact_content():
     zone_file = render_zone(_entries(), ZONE)
     assert zone_file == (
         "# Généré par hub-api (routing_service) — NE PAS ÉDITER\n"
-        f"address=/compta.{ZONE}/{HUB_HOST}\n"
-        f"address=/exemple-app.{ZONE}/{HUB_HOST}\n"
-        f"address=/remote-app.{ZONE}/203.0.113.42\n"
-        f"address=/exemple-app-ws.{ZONE}/{HUB_HOST}\n"
+        "192.0.2.10 compta.hub.example.lan exemple-app.hub.example.lan exemple-app-ws.hub.example.lan\n"
+        "203.0.113.42 remote-app.hub.example.lan\n"
     )
 
 
@@ -154,7 +152,7 @@ def test_render_zone_excludes_out_of_zone_and_empty_zone():
     ]
     zone_file = render_zone(entries, ZONE)
     assert "pr177" not in zone_file
-    assert zone_file.count("address=") == 4
+    assert zone_file.count("\n") == 2 + 1  # header + 2 lignes hosts (2 IPs)
     assert render_zone(entries, "") == ""
 
 
