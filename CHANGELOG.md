@@ -5,6 +5,31 @@
 
 ---
 
+## [3.79.2] - 3 novembre 2026
+
+### 🆕 Nouvelle version
+
+> ⚠️ Cette entrée a été créée automatiquement par `sync_version.py`.
+> Veuillez compléter les détails des modifications.
+
+| Fonctionnalité | Description |
+|----------------|-------------|
+| **À compléter** | Décrivez les changements de cette version |
+
+---
+
+## [3.79.2] - 3 novembre 2026
+
+### 🔧 Hotfix — retry des reloads au boot (routage)
+
+Au boot, hub-api pouvait finir son lifespan avant que hub-frontend/hub-dns
+soient running → exec 409 « is not running » → erreur persistante dans la vue
+Accès & routage alors que tout tournait. Les reloads en attente sont désormais
+retentés (4 × 5 s) ; une commande qui répond en échec reste fatale (rollback).
+Tests unitaires du retry.
+
+---
+
 ## [3.79.1] - 3 novembre 2026
 
 ### 🆕 Nouvelle version
