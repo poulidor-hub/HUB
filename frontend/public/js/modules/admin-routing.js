@@ -67,7 +67,7 @@ async function loadRoutingState(silent = false) {
 function escapeHtmlRouting(text) {
     const div = document.createElement('div');
     div.textContent = text == null ? '' : String(text);
-    return div.innerHTML;
+    return div.innerHTML.replace(/"/g, '&quot;');
 }
 
 // ===== Rendu principal =====
@@ -231,9 +231,10 @@ function renderRoutingAppDetail(app) {
                     Statuts : <span class="${app.published ? 'text-success' : 'text-muted'}">${app.published ? '● DNS publié' : '○ non publié'}</span>
                     · 🔒 cert wildcard partagé
                 </div>
-                <div class="small text-muted mb-3">
+                <div class="small text-muted mb-2">
                     Fallback ports (transition) : ${fbLabel}
                 </div>
+                <button class="btn btn-sm btn-outline-secondary mb-3" data-action="routingTestResolve" data-slug="${escapeHtmlRouting(app.slug)}">🧪 tester la résolution</button>
                 <button class="btn btn-sm btn-outline-secondary" data-action="routingOpenApp" data-slug="${escapeHtmlRouting(app.slug)}">⚙ Gérer l'app →</button>
             </div>
         </div>
@@ -308,7 +309,7 @@ async function routingEditIp() {
     if (!ip) return;
     try {
         await api.setHubHost(ip);
-        showToast('IP mise à jour', `hub_host = ${ip} — republished la zone`, 'success');
+        showToast('IP mise à jour', `hub_host = ${ip} — zone republiée`, 'success');
         await loadRoutingState();
     } catch (error) {
         showToast('Erreur', error.message, 'danger');
@@ -343,6 +344,17 @@ async function routingRename(button) {
         showToast('Nom de routage mis à jour', `${slug} → ${dnsName}`, 'success');
         routingSelectedSlug = slug;
         await loadRoutingState();
+    } catch (error) {
+        showToast('Erreur', error.message, 'danger');
+    }
+}
+
+async function routingTestResolve(button) {
+    const slug = button.dataset.slug;
+    try {
+        const r = await api.testRoutingResolve(slug);
+        if (r.resolved) showToast('Résolution OK', `${r.fqdn} → ${r.ip}`, 'success');
+        else showToast('Non résolu', `${r.fqdn} : le résolveur du hub ne connaît pas ce nom`, 'warning');
     } catch (error) {
         showToast('Erreur', error.message, 'danger');
     }
@@ -411,8 +423,8 @@ async function loadRoutingPortsReadOnly() {
         const allocations = status.allocations || [];
         container.innerHTML = `
             <div class="small text-muted mb-2">
-                Plages : API ${escapeHtmlRouting(String(status.api_range_start ?? 9000))}-${escapeHtmlRouting(String(status.api_range_end ?? 9499))}
-                · Front ${escapeHtmlRouting(String(status.frontend_range_start ?? 4200))}-${escapeHtmlRouting(String(status.frontend_range_end ?? 4699))}
+                Plages : API ${escapeHtmlRouting(String((status.api_range || [])[0] ?? 9000))}-${escapeHtmlRouting(String((status.api_range || [])[1] ?? 9499))}
+                · Front ${escapeHtmlRouting(String((status.frontend_range || [])[0] ?? 4200))}-${escapeHtmlRouting(String((status.frontend_range || [])[1] ?? 4699))}
             </div>
             <table class="table table-sm table-striped">
                 <thead><tr><th>App</th><th>Host</th><th>API</th><th>Front</th><th>Front HTTPS</th><th></th></tr></thead>
@@ -451,5 +463,5 @@ Object.assign(window, {
     routingConfigureZone, routingEditZone, routingEditIp, routingSelectApp,
     routingCopyUrl, routingOpenUrl, routingRename, routingOpenApp,
     routingSubTab, routingAddService, routingEditService, routingDeleteService,
-    routingReleasePorts,
+    routingReleasePorts, routingTestResolve,
 });

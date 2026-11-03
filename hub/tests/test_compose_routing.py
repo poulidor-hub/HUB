@@ -25,14 +25,14 @@ def test_compose_has_hub_dns_service():
     bloc = blocs["hub-dns"]
     assert "network_mode: host" in bloc, "hub-dns doit être en host network (tunnel WG)"
     assert "ports:" not in bloc, "hub-dns ne publie aucun port (53 via host network)"
-    assert "dnsmasq.d" in bloc, "hub-dns doit monter la zone générée"
+    assert "dnsmasq.d-generated" in bloc, "hub-dns doit monter la zone générée (volume dédié)"
     assert "mem_limit: 64m" in bloc
 
 
 def test_compose_publish_dirs_mounted():
     blocs = _service_blocks(COMPOSE.read_text())
-    assert "/code/dns" in blocs["hub-api"], "hub-api doit écrire la zone (/code/dns)"
-    assert "/code/gateway" in blocs["hub-api"], "hub-api doit écrire les vhosts (/code/gateway)"
+    assert "/code/dns-generated:rw" in blocs["hub-api"], "hub-api doit écrire la zone (/code/dns-generated:rw)"
+    assert "/code/gateway:rw" in blocs["hub-api"], "hub-api doit écrire les vhosts (/code/gateway:rw)"
     assert "vhosts.d" in blocs["hub-frontend"], (
         "hub-frontend doit lire les vhosts générés (/etc/nginx/vhosts.d)"
     )

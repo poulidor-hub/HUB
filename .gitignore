@@ -83,3 +83,9 @@ secrets/hub_instance_id
 # Artefacts de couverture pytest (make test-cov)
 .coverage
 htmlcov/
+
+# Chantier B — contenus générés du routage (les dossiers sont trackés via .gitkeep)
+gateway/*
+!gateway/.gitkeep
+dns-generated/*
+!dns-generated/.gitkeep

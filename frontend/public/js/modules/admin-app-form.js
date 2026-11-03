@@ -33,7 +33,6 @@ async function showAddAppForm() {
     document.getElementById('customHostGroup').classList.add('d-none');
     document.getElementById('appSlug').readOnly = true;
     document.getElementById('slugHint').textContent = 'Généré automatiquement';
-    document.getElementById('appFrontendHttps').value = 'false';
     
     // Afficher les éléments de création
     document.getElementById('advancedOptionsSection').classList.remove('d-none');

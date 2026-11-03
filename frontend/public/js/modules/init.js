@@ -50,7 +50,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // Gérer le changement d'onglet dans la page admin (2 niveaux)
-    const ADMIN_SUBTAB_TARGETS = ['#tabAppGroups', '#tabServiceAccounts', '#tabOidcClients', '#tabGithubApps', '#tabNetwork'];
+    const ADMIN_SUBTAB_TARGETS = ['#tabAppGroups', '#tabServiceAccounts', '#tabOidcClients', '#tabGithubApps', '#tabRouting'];
     const ADMIN_SUBTAB_STORAGE_KEY = 'hub.admin.subtab';
 
     const adminPageTabsEl = document.getElementById('adminPageTabs');
@@ -225,7 +225,5 @@ document.addEventListener('DOMContentLoaded', () => {
     });
     
     // Update URL preview when ports change
-    document.getElementById('appApiPort').addEventListener('input', updateUrlPreview);
-    document.getElementById('appFrontendPort').addEventListener('input', updateUrlPreview);
     document.getElementById('appCustomHostValue').addEventListener('input', updateUrlPreview);
 });

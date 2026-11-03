@@ -64,10 +64,18 @@ transition (l'onglet Ports est en lecture seule — allocation automatique au
 déploiement). Leur retrait se fera à la fin de la vague B8 (« plus d'app
 legacy »), quand le LAN utilisera la résolution par noms.
 
+## Prérequis d'installation
+
+Les dossiers `dns-generated/` et `gateway/` doivent exister et être
+inscriptibles par l'utilisateur du hub (uid `HOST_UID`). Ils sont trackés
+dans le dépôt (`.gitkeep`) — une install git les crée avec les bons droits.
+En reprise manuelle : `chown -R $HOST_UID:$HOST_GID dns-generated gateway`.
+
 ## Sécurité du résolveur
 
 `hub-dns` est `network_mode: host` mais **ne jamais l'exposer au-delà du
 serveur** : pas de port publié (host network), `except-interface=lo`
-(systemd-resolved écoute 127.0.0.53/54), bind par interface
-(`bind-interfaces`). Il ne fait autorité QUE sur la zone du hub et forward le
+(systemd-resolved écoute 127.0.0.53/54), `bind-dynamic` (hot-plug wg0) et
+`local-service` (n'accepte que les réseaux direct-attachés : LAN + tunnel —
+jamais un résolveur ouvert vers Internet). Il fait autorité QUE sur la zone du hub et forward le
 reste au résolveur hôte — il n'est pas un résolveur récursif public.

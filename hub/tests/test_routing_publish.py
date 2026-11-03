@@ -133,3 +133,21 @@ async def test_publish_with_empty_zone_wipes_files(async_session, dirs, fake_doc
     await rs.publish()
     assert list(pathlib.Path(dirs.routing_dns_dir).glob("*")) == []
     assert list(pathlib.Path(dirs.routing_gateway_dir).glob("*")) == []
+
+
+@pytest.mark.asyncio
+async def test_publish_failure_before_swap_sets_last_error(
+        client, admin_token, async_session, dirs, fake_docker, monkeypatch):
+    """Review I7 : un échec AVANT le swap (wildcard, CA absente) alimente
+    routing_last_error et lève RoutingPublishError."""
+    await _seed(async_session)
+    import pki as pki_mod
+
+    def _boom(*a, **k):
+        raise FileNotFoundError("CA absente simulée (review I7)")
+
+    monkeypatch.setattr(pki_mod, "ensure_wildcard_cert", _boom)
+    with pytest.raises(rs.RoutingPublishError):
+        await rs.publish()
+    err = await async_session.get(AppSetting, "routing_last_error")
+    assert err is not None and "CA absente" in (err.value or "")
