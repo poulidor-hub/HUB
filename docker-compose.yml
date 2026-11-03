@@ -90,12 +90,14 @@ services:
   # du tunnel WireGuard (partage le netns du serveur WG) et, plus tard, au LAN.
   # Port 53 non publié (host network) — jamais exposé au-delà du serveur.
   hub-dns:
-    image: andyshinn/dnsmasq:2.90
+    # dnsmasq 2.90 (Alpine 3.20) — build local, cf. hub-dns/Dockerfile
+    build:
+      context: ./hub-dns
     container_name: hub-dns
     restart: unless-stopped
-    command: ["-C", "/etc/dnsmasq.d/dnsmasq.conf", "--no-daemon"]
     volumes:
       - ./dns:/etc/dnsmasq.d:ro
+      - ./dns-generated:/etc/dnsmasq.d-generated:ro
     network_mode: host
     mem_limit: 64m
     memswap_limit: 64m
@@ -222,7 +224,7 @@ services:
       - ./certs:/code/certs:rw
       # Routage par noms (chantier B) : zone DNS + vhosts SNI générés par
       # routing_service.publish() — hub-dns et hub-frontend les lisent en ro.
-      - ./dns:/code/dns:rw
+      - ./dns-generated:/code/dns-generated:rw
       - ./gateway:/code/gateway:rw
       # Configuration VPN WireGuard (volume partagé avec wireguard-server)
       - vpn-config:/vpn:rw

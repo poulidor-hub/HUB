@@ -416,7 +416,7 @@ class Settings(BaseSettings):
     # Si non défini, sera détecté automatiquement
     hub_host: str = ""
     # Chantier B — chemins de publication du routage par noms (volumes compose)
-    routing_dns_dir: str = "/code/dns"
+    routing_dns_dir: str = "/code/dns-generated"
     routing_gateway_dir: str = "/code/gateway"
 
     # Ports d'écoute publics du Hub (API et frontend) — lus depuis HUB_API_PORT /

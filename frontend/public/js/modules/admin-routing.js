@@ -16,7 +16,7 @@
 
 let routingState = null;
 let routingSelectedSlug = null;
-let routingSubTab = 'apps';
+let routingActiveSubTab = 'apps';
 let routingPollTimer = null;
 
 const ROUTING_POLL_MS = 5000;
@@ -85,17 +85,17 @@ function renderRoutingAdmin() {
     container.innerHTML = `
         ${renderRoutingBanner()}
         <ul class="nav nav-pills mb-3" id="routingSubTabs">
-            <li class="nav-item"><button class="nav-link ${routingSubTab === 'apps' ? 'active' : ''}" data-action="routingSubTab" data-subtab="apps">Applications</button></li>
-            <li class="nav-item"><button class="nav-link ${routingSubTab === 'services' ? 'active' : ''}" data-action="routingSubTab" data-subtab="services">Services tiers (${s.services.length})</button></li>
-            <li class="nav-item"><button class="nav-link ${routingSubTab === 'ports' ? 'active' : ''}" data-action="routingSubTab" data-subtab="ports">Ports — lecture seule</button></li>
+            <li class="nav-item"><button class="nav-link ${routingActiveSubTab === 'apps' ? 'active' : ''}" data-action="routingSubTab" data-subtab="apps">Applications</button></li>
+            <li class="nav-item"><button class="nav-link ${routingActiveSubTab === 'services' ? 'active' : ''}" data-action="routingSubTab" data-subtab="services">Services tiers (${s.services.length})</button></li>
+            <li class="nav-item"><button class="nav-link ${routingActiveSubTab === 'ports' ? 'active' : ''}" data-action="routingSubTab" data-subtab="ports">Ports — lecture seule</button></li>
         </ul>
         <div id="routingSubContent"></div>
     `;
 
     const sub = document.getElementById('routingSubContent');
-    if (routingSubTab === 'services') {
+    if (routingActiveSubTab === 'services') {
         sub.innerHTML = renderRoutingServices();
-    } else if (routingSubTab === 'ports') {
+    } else if (routingActiveSubTab === 'ports') {
         sub.innerHTML = `
             <div class="alert alert-warning py-2 small">
                 <i class="bi bi-hourglass-split me-1"></i>Fallback pendant la transition —
@@ -354,9 +354,9 @@ function routingOpenApp(button) {
 }
 
 function routingSubTab(button) {
-    routingSubTab = button.dataset.subtab;
+    routingActiveSubTab = button.dataset.subtab;
     renderRoutingAdmin();
-    if (routingSubTab === 'ports') loadRoutingPortsReadOnly();
+    if (routingActiveSubTab === 'ports') loadRoutingPortsReadOnly();
 }
 
 // ===== Services tiers =====
