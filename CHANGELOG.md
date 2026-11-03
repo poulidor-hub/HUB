@@ -5,6 +5,31 @@
 
 ---
 
+## [3.79.3] - 3 novembre 2026
+
+### 🆕 Nouvelle version
+
+> ⚠️ Cette entrée a été créée automatiquement par `sync_version.py`.
+> Veuillez compléter les détails des modifications.
+
+| Fonctionnalité | Description |
+|----------------|-------------|
+| **À compléter** | Décrivez les changements de cette version |
+
+---
+
+## [3.79.3] - 3 novembre 2026
+
+### 🔧 Fix front — handlers de la vue routage (data-args)
+
+| Élément | Détail |
+|---|---|
+| Cause | le dispatcher app.js passe les args parsés de `data-args` (jamais l'élément) — les handlers de la vue routage recevaient `undefined` au clic (TypeError, sélection d'app et actions inertes) |
+| Fix | `data-args="$el"` sur les 11 boutons générés (sélection d'app, copier/ouvrir URL, renommage, services tiers, libération de ports, sous-onglets) — pattern hub |
+| Cache | bump des `?v=` (reload obligatoire Ctrl+Shift+R) |
+
+---
+
 ## [3.79.2] - 3 novembre 2026
 
 ### 🆕 Nouvelle version
