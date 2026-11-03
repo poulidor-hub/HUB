@@ -102,6 +102,9 @@ function renderRoutingAdmin() {
                 les noms <code>&lt;slug&gt;.hub.&lt;zone&gt;</code> remplacent ces ports quand le LAN passe au résolveur du hub.
                 Aucun port n'est éditable : l'allocation est automatique au déploiement.
             </div>
+            <button class="btn btn-sm btn-outline-primary mb-2" data-action="routingCopyHostsBlock">
+                <i class="bi bi-clipboard me-1"></i>📋 Copier le bloc hosts (poste LAN, transition)
+            </button>
             <div id="routingPortsReadOnly"></div>
         `;
         loadRoutingPortsReadOnly();
@@ -349,6 +352,32 @@ async function routingRename(button) {
     }
 }
 
+function routingBuildHostsBlock() {
+    // Bloc /etc/hosts pour un poste LAN (transition) — toutes les apps locales
+    // publiées, une ligne par IP (format hosts multi-noms).
+    if (!routingState || !routingState.zone) return "";
+    const hubIp = routingState.hub_host || "";
+    const names = (routingState.apps || [])
+        .filter(a => a.published && a.dns_name && !a.is_remote)
+        .map(a => `${a.dns_name}.${routingState.zone}`)
+        .sort();
+    if (!hubIp || !names.length) return "";
+    const lines = [`# Hub POULIDOR (${routingState.zone}) — routeur SNI sur ${hubIp}:443`];
+    lines.push(`${hubIp} ${names.join(" ")}`);
+    return lines.join("\n");
+}
+
+async function routingCopyHostsBlock() {
+    const block = routingBuildHostsBlock();
+    if (!block) { showToast("Rien à copier", "Configurez d'abord la zone et publiez des apps", "warning"); return; }
+    try {
+        await navigator.clipboard.writeText(block);
+        showToast("Bloc hosts copié", `${routingState.apps.length} apps — collez dans /etc/hosts (Linux/macOS) ou drivers\\etc\\hosts (Windows)`, "success");
+    } catch (error) {
+        showToast("Erreur", error.message, "danger");
+    }
+}
+
 async function routingTestResolve(button) {
     const slug = button.dataset.slug;
     try {
@@ -463,5 +492,5 @@ Object.assign(window, {
     routingConfigureZone, routingEditZone, routingEditIp, routingSelectApp,
     routingCopyUrl, routingOpenUrl, routingRename, routingOpenApp,
     routingSubTab, routingAddService, routingEditService, routingDeleteService,
-    routingReleasePorts, routingTestResolve,
+    routingReleasePorts, routingTestResolve, routingCopyHostsBlock,
 });
