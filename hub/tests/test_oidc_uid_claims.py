@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 POULIDOR Audit & Développement (Valérian Poulidor)
+
 """OIDC : uid + name (Prénom Nom) dans l'id_token et le userinfo."""
 import jwt as pyjwt
 

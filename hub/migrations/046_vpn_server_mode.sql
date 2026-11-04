@@ -1,3 +1,6 @@
+-- SPDX-License-Identifier: AGPL-3.0-or-later
+-- Copyright (C) 2026 POULIDOR Audit & Développement (Valérian Poulidor)
+
 -- Migration: passage WireGuard client → serveur
 -- Crée la table vpn_peers et les paramètres serveur en app_settings
 

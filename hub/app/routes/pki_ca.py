@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 POULIDOR Audit & Développement (Valérian Poulidor)
+
 """Téléchargement de la CA racine du HUB — GET /api/pki/ca.crt et GET /api/pki/ca/info.
 
 Fonctionnalité 2026-10-06 : bouton « Certificat » sur la page Hub. Un utilisateur

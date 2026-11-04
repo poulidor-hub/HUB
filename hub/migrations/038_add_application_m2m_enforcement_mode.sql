@@ -1,3 +1,6 @@
+-- SPDX-License-Identifier: AGPL-3.0-or-later
+-- Copyright (C) 2026 POULIDOR Audit & Développement (Valérian Poulidor)
+
 -- Migration 038 : mode d'enforcement M2M par application (compat/enforced)
 ALTER TABLE applications
     ADD COLUMN IF NOT EXISTS m2m_enforcement_mode VARCHAR(16) NOT NULL DEFAULT 'compat';

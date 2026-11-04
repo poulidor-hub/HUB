@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 POULIDOR Audit & Développement (Valérian Poulidor)
+
 """Émission de certificats serveur pour les apps, signés par la PKI du HUB.
 
 POST /api/apps/cert/issue — auth M2M service account uniquement.

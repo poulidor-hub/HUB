@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 POULIDOR Audit & Développement (Valérian Poulidor)
+
 """Chantier B Task 3 — publication (swap atomique + reloads + rollback).
 
 publish() est async, ouvre SA propre session (async_session_maker patché vers la

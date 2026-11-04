@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 POULIDOR Audit & Développement (Valérian Poulidor)
+
 """
 Tests des endpoints VPN WireGuard (mode serveur).
 Couvre : init, server-config, peers CRUD, config download, qrcode, toggle, auth.

@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 POULIDOR Audit & Développement (Valérian Poulidor)
+
 """
 Tests SSE présence/erreurs :
 - notify_active_users_changed : cooldown 2 s

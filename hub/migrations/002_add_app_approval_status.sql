@@ -1,3 +1,6 @@
+-- SPDX-License-Identifier: AGPL-3.0-or-later
+-- Copyright (C) 2026 POULIDOR Audit & Développement (Valérian Poulidor)
+
 -- Migration: Add approval system for applications
 -- Date: 2026-01-04
 -- Description: Ajoute un système d'approbation admin pour les applications auto-enregistrées

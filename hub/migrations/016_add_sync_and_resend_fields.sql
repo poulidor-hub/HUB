@@ -1,3 +1,6 @@
+-- SPDX-License-Identifier: AGPL-3.0-or-later
+-- Copyright (C) 2026 POULIDOR Audit & Développement (Valérian Poulidor)
+
 -- Migration 016: Ajout des champs pour la synchronisation NotifCenter et le renvoi de messages
 -- Date: 2026-04-11
 -- Description:

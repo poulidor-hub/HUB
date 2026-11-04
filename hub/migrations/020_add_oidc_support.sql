@@ -1,3 +1,6 @@
+-- SPDX-License-Identifier: AGPL-3.0-or-later
+-- Copyright (C) 2026 POULIDOR Audit & Développement (Valérian Poulidor)
+
 -- Migration 020: réservation historique pour le support OIDC
 -- Date: 2026-04-25
 -- Description:

@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 POULIDOR Audit & Développement (Valérian Poulidor)
+
 """
 Tests logging horodaté à l'heure du Hub :
 - HubClock : offset hub/local (point médian), fallback heure locale UTC

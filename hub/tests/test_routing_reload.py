@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 POULIDOR Audit & Développement (Valérian Poulidor)
+
 """Chantier B hotfix — retry des reloads quand les conteneurs ne sont pas prêts.
 
 Au boot, hub-api peut finir son lifespan avant que hub-frontend/hub-dns soient

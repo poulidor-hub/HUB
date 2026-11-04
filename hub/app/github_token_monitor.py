@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 POULIDOR Audit & Développement (Valérian Poulidor)
+
 """Moniteur de vivacité du token GitHub — tâche périodique + alerte admins.
 
 Contexte (12 septembre 2026) : le PAT GitHub du parc est resté invalide

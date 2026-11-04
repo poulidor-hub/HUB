@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 POULIDOR Audit & Développement (Valérian Poulidor)
+
 """Chantier B Task 4 — wildcard PKI : ensure_wildcard_cert(zone).
 
 Les certs vivent dans tmp_path (fixture settings) avec une CA fraîche :

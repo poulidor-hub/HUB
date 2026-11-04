@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 POULIDOR Audit & Développement (Valérian Poulidor)
+
 """Tests de la recréation des conteneurs d'une app (POST /api/apps/{slug}/recreate).
 
 Opération tracée via le moteur workshop_operations (handler "recreate") :

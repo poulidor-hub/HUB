@@ -1,3 +1,6 @@
+-- SPDX-License-Identifier: AGPL-3.0-or-later
+-- Copyright (C) 2026 POULIDOR Audit & Développement (Valérian Poulidor)
+
 -- Migration 010: Ajouter la colonne source à user_app_roles
 -- Permet de distinguer les rôles provenant d'un profil (source='profile')
 -- de ceux ajoutés manuellement (source='manual')

@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 POULIDOR Audit & Développement (Valérian Poulidor)
+
 """Tests de la version d'app capturée à l'enregistrement et affichée au dashboard."""
 import pytest
 from unittest.mock import patch

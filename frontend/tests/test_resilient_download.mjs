@@ -1,4 +1,7 @@
 #!/usr/bin/env node
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 POULIDOR Audit & Développement (Valérian Poulidor)
+
 /**
  * Test autonome (Node >= 18, aucune dépendance) du téléchargement résilient.
  *

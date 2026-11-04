@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 POULIDOR Audit & Développement (Valérian Poulidor)
+
 """
 AN-1 (banc 2026-09-10) — `/api/apps/me/credentials` doit résoudre l'app
 propriétaire du service account, jamais un élément arbitraire de la

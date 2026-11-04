@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 POULIDOR Audit & Développement (Valérian Poulidor)
+
 """Le param ?app= du flux SSE ouvre un segment d'usage pour l'app."""
 import pytest
 

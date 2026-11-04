@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 POULIDOR Audit & Développement (Valérian Poulidor)
+
 """PUT /api/apps/me/role/{slug} (update_my_role) — idempotence sous concurrence.
 
 Incident 2026-09-06 : double-émission du sélecteur « Mon rôle » → deux PUT

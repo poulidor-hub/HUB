@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 POULIDOR Audit & Développement (Valérian Poulidor)
+
 """Tests pour /api/oidc/launch/{client_id} (redirecteur vers page login app externe).
 
 Le launch shortcut valide le JWT HUB du dashboard, vérifie l'accès user,

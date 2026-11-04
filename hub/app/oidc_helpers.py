@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 POULIDOR Audit & Développement (Valérian Poulidor)
+
 # HUB_base/hub/app/oidc_helpers.py
 """Helpers OIDC provider : id_token, PKCE, codes, logout_token, discovery metadata.
 

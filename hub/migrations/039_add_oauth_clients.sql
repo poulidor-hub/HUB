@@ -1,3 +1,6 @@
+-- SPDX-License-Identifier: AGPL-3.0-or-later
+-- Copyright (C) 2026 POULIDOR Audit & Développement (Valérian Poulidor)
+
 -- Migration 039 : Clients OIDC pour le bridge OIDC provider.
 -- Permet aux apps externes (Vikunja, Nextcloud, Grafana...) de consommer le SSO HUB via OIDC.
 CREATE TABLE IF NOT EXISTS oauth_clients (

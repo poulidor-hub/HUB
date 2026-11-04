@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 POULIDOR Audit & Développement (Valérian Poulidor)
+
 """Déploiement automatique des apps du parc (spec 2026-08-18-auto-deploy-apps).
 
 Pipeline : git clone/pull --ff-only -> .env -> make build && make up

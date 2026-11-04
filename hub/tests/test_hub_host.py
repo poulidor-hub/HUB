@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 POULIDOR Audit & Développement (Valérian Poulidor)
+
 """Tests get_hub_host() en exécution conteneurisée (bug 2026-10-03).
 
 En conteneur Docker, l'IP LAN de l'hôte n'est JAMAIS assignée aux interfaces

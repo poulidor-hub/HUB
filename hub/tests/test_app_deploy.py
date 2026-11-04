@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 POULIDOR Audit & Développement (Valérian Poulidor)
+
 """Tests du déploiement automatique des apps (spec 2026-08-18-auto-deploy-apps)."""
 import pytest
 from sqlalchemy import select

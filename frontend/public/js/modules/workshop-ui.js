@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 POULIDOR Audit & Développement (Valérian Poulidor)
+
 /**
  * Atelier (workshop) — bloc d'état + actions sur les cartes de la vue santé.
  * Contrat .workshop.env (hubctl v0.6.1) : WS_REF @ WS_COMMIT + version.

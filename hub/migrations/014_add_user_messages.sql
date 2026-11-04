@@ -1,3 +1,6 @@
+-- SPDX-License-Identifier: AGPL-3.0-or-later
+-- Copyright (C) 2026 POULIDOR Audit & Développement (Valérian Poulidor)
+
 -- Migration 014: Ajout du système de messagerie utilisateur
 -- Date: 2026-04-04
 -- Description: Permet aux admins et aux applications (via M2M) d'envoyer des messages

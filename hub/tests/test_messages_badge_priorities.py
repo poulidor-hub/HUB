@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 POULIDOR Audit & Développement (Valérian Poulidor)
+
 """
 Préférence globale (instance) : priorités comptées dans le badge messages navbar.
 - défaut = toutes ; PUT roundtrip + persistance AppSetting ; 422 si priorité

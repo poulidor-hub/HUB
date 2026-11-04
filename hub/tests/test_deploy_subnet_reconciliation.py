@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 POULIDOR Audit & Développement (Valérian Poulidor)
+
 """Réconciliation subnet Hub ↔ réseau Docker vivant (bugs 2026-10-10).
 
 Cause racine : le pipeline de déploiement ré-écrit APP_SUBNET depuis

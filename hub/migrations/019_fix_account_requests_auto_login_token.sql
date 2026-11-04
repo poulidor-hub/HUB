@@ -1,3 +1,6 @@
+-- SPDX-License-Identifier: AGPL-3.0-or-later
+-- Copyright (C) 2026 POULIDOR Audit & Développement (Valérian Poulidor)
+
 -- Migration: Fix account_requests — add auto_login_token if missing
 -- Date: 2026-04-16
 -- Description: Ajoute la colonne auto_login_token à account_requests si elle

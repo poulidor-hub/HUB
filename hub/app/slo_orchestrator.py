@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 POULIDOR Audit & Développement (Valérian Poulidor)
+
 """SLO v2 — Orchestrateur M2M : appelle les traducteurs pour révoquer les sessions distantes.
 
 Au login HUB d'un user B par-dessus un user A, le HUB appelle directement

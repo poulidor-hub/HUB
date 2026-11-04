@@ -1,3 +1,6 @@
+-- SPDX-License-Identifier: AGPL-3.0-or-later
+-- Copyright (C) 2026 POULIDOR Audit & Développement (Valérian Poulidor)
+
 -- Migration 023: Option de quiesce Vaultwarden lors des backups planifies
 -- Date: 2026-04-30
 -- Description: Permet a une application enregistree au Hub de demander que le

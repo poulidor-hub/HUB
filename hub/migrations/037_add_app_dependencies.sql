@@ -1,3 +1,6 @@
+-- SPDX-License-Identifier: AGPL-3.0-or-later
+-- Copyright (C) 2026 POULIDOR Audit & Développement (Valérian Poulidor)
+
 -- Migration 037: Table des dépendances inter-apps (M2M).
 -- Chaque app déclare ses deps via depends.yaml, envoyé au hub au register().
 -- last_sync_at est mis à jour par POST /api/apps/sync-report (best-effort).

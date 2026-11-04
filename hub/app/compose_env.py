@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 POULIDOR Audit & Développement (Valérian Poulidor)
+
 """Env allowlistée pour tout sous-processus make/compose lancé par le hub.
 
 Module partagé deploy_service / workshop_service (sans cycle d'import :

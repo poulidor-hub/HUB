@@ -1,3 +1,6 @@
+-- SPDX-License-Identifier: AGPL-3.0-or-later
+-- Copyright (C) 2026 POULIDOR Audit & Développement (Valérian Poulidor)
+
 -- Migration 028: Email optionnel sur les demandes de compte
 -- Description: Permet de collecter (optionnellement) l'email du demandeur sur
 --              la modale de demande, ou de le renseigner par l'admin lors de

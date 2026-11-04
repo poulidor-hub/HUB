@@ -1,3 +1,6 @@
+-- SPDX-License-Identifier: AGPL-3.0-or-later
+-- Copyright (C) 2026 POULIDOR Audit & Développement (Valérian Poulidor)
+
 -- Migration: Add must_change_password column to users table
 -- Date: 2026-01-04
 -- Description: Permet de forcer les utilisateurs à changer leur mot de passe à la prochaine connexion

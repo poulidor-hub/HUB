@@ -1,3 +1,6 @@
+-- SPDX-License-Identifier: AGPL-3.0-or-later
+-- Copyright (C) 2026 POULIDOR Audit & Développement (Valérian Poulidor)
+
 -- Migration 062 (chantier D) : reset self-service par code admin.
 -- Table password_reset_codes : code court 'XXXX-XXXX' généré par un admin,
 -- stocké hashé (bcrypt, jamais en clair), usage unique, TTL configurable

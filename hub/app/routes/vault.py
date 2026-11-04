@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 POULIDOR Audit & Développement (Valérian Poulidor)
+
 """Vault (coffre hubctl) — consultation et sauvegarde pour l'admin Hub.
 
 Proxy admin-only vers le service hôte `hubctl atelier serve` (le MÊME service

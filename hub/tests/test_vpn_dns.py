@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 POULIDOR Audit & Développement (Valérian Poulidor)
+
 """Chantier B Task 7 — WireGuard pousse le DNS du hub aux peers (si zone configurée)."""
 
 import pytest

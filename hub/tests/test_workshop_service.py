@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 POULIDOR Audit & Développement (Valérian Poulidor)
+
 """Tests du service atelier (workshop_service) — cycle pilotable depuis l'UI HUB.
 
 Pattern : subprocess mockés (_FakeProc/_install_fake_exec, cf. test_app_deploy.py),

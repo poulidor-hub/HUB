@@ -1,3 +1,6 @@
+-- SPDX-License-Identifier: AGPL-3.0-or-later
+-- Copyright (C) 2026 POULIDOR Audit & Développement (Valérian Poulidor)
+
 -- Migration 057: Historique des opérations atelier (cycle UI vue santé)
 -- Piloté par POST/DELETE /api/apps/{slug}/workshop*, exécuté par app/workshop_service.py.
 -- Lien par app_slug (pas de FK, cohérent avec app_deployments).

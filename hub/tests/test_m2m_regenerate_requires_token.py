@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 POULIDOR Audit & Développement (Valérian Poulidor)
+
 """H9: regenerate-secret MUST require a valid M2M token (no IP+header fallback)."""
 import pytest
 from httpx import AsyncClient

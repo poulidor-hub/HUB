@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 POULIDOR Audit & Développement (Valérian Poulidor)
+
 """Tests unitaires du helper SLO (détection de changement d'user au login)."""
 import pytest
 from httpx import AsyncClient

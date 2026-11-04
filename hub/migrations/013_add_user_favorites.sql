@@ -1,3 +1,6 @@
+-- SPDX-License-Identifier: AGPL-3.0-or-later
+-- Copyright (C) 2026 POULIDOR Audit & Développement (Valérian Poulidor)
+
 -- Migration 013: Ajout des favoris utilisateur
 -- Date: 2026-04-03
 -- Description: Permet aux utilisateurs d'épingler leurs applications favorites

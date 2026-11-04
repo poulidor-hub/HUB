@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 POULIDOR Audit & Développement (Valérian Poulidor)
+
 """Tests du trousseau JWT multi-kid (spec 2026-09-16 §5)."""
 import json
 from datetime import datetime, timedelta, timezone

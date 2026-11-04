@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 POULIDOR Audit & Développement (Valérian Poulidor)
+
 """Client GitHub partagé (factorisé depuis routes/apps_health.py).
 
 Centralise : headers HTTP avec token, fetch JSON/raw, parsing d'URL GitHub,

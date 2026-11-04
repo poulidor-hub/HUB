@@ -124,4 +124,4 @@ HUB_base/
 
 ---
 
-Projet interne — POULIDOR Audit & Développement. Licence : [`LICENSE.md`](LICENSE.md).
+Distribué sous licence **GNU AGPLv3** — voir [`LICENSE`](LICENSE). Le nom « HUB » et les logos ne sont pas couverts par la licence (politique de marque du méta-repo POULIDOR).

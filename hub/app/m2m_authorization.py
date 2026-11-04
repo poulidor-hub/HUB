@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 POULIDOR Audit & Développement (Valérian Poulidor)
+
 """Garde SA/slug : contrôle que le service account est autorisé pour une application."""
 from fastapi import Request, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession

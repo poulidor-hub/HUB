@@ -1,3 +1,6 @@
+-- SPDX-License-Identifier: AGPL-3.0-or-later
+-- Copyright (C) 2026 POULIDOR Audit & Développement (Valérian Poulidor)
+
 -- Migration 012: Ajout des catégories d'applications
 -- Date: 2026-04-03
 -- Description: Ajoute un champ category sur les applications pour permettre

@@ -1,3 +1,6 @@
+-- SPDX-License-Identifier: AGPL-3.0-or-later
+-- Copyright (C) 2026 POULIDOR Audit & Développement (Valérian Poulidor)
+
 -- Migration 008: Ajout du système de profils (templates de rôles)
 -- Date: 2026-02-14
 -- Description: Introduit un concept de "profil" (ex: Cadre, Agent, Admin SI)
