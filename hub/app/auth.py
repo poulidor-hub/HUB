@@ -13,7 +13,7 @@ from sqlalchemy.orm import selectinload
 from app.config import get_settings
 from app import jwt_keyring
 from app.database import get_db
-from app.models import User, ServiceAccount, RefreshToken, RevokedToken, UserAppRole, UserTag, utcnow
+from app.models import User, ServiceAccount, RefreshToken, RevokedToken, UserAppRole, UserTag, PasswordResetCode, utcnow
 
 settings = get_settings()
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -364,6 +364,50 @@ async def revoke_all_user_tokens(db: AsyncSession, user_id: int) -> None:
     for token in result.scalars():
         token.revoked_at = utcnow()
     await db.commit()
+
+
+# ============================================================================
+# CODES DE RÉINITIALISATION PAR ADMIN (chantier D — reset self-service)
+# ============================================================================
+# Alphabet 32 caractères sans 0/O/1/I (saisie orale/téléphone sécurisée) :
+# 8 caractères → 32^8 = 2^40 (~40 bits), largement suffisant avec un TTL
+# court (15 min par défaut) et le rate limiting de la vérification.
+RESET_CODE_ALPHABET = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ"
+
+
+def generate_reset_code() -> str:
+    """Code de reset 'XXXX-XXXX' : 8 caractères sur 32 → ~40 bits d'entropie."""
+    body = "".join(secrets.choice(RESET_CODE_ALPHABET) for _ in range(8))
+    return f"{body[:4]}-{body[4:]}"
+
+
+def normalize_reset_code(raw: str) -> str:
+    """Normalise la saisie : majuscules, retrait des espaces et tirets."""
+    return raw.upper().replace(" ", "").replace("-", "")
+
+
+async def create_password_reset_code(db: AsyncSession, *, user_id: int,
+                                     admin_id: int) -> tuple[str, datetime]:
+    """Consomme les codes actifs précédents puis crée le nouveau (hashé bcrypt).
+
+    Le code n'est retourné qu'une fois (retour de cette fonction) : il vit
+    ensuite uniquement en hash. TTL = settings.password_reset_code_ttl_minutes.
+    """
+    await db.execute(
+        update(PasswordResetCode)
+        .where(PasswordResetCode.user_id == user_id, PasswordResetCode.consumed_at.is_(None))
+        .values(consumed_at=utcnow())
+    )
+    code = generate_reset_code()
+    row = PasswordResetCode(
+        user_id=user_id,
+        code_hash=get_password_hash(code),
+        expires_at=utcnow() + timedelta(minutes=settings.password_reset_code_ttl_minutes),
+        created_by_user_id=admin_id,
+    )
+    db.add(row)
+    await db.commit()
+    return code, row.expires_at
 
 
 def verify_token(token: str) -> dict:
