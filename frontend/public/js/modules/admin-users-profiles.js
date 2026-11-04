@@ -235,6 +235,10 @@ function renderUsersPageTable(users) {
                                     title="Révoquer les sessions" ${user.id === currentUser.id ? 'disabled' : ''}>
                                     <i class="bi bi-door-closed"></i>
                                 </button>
+                                <button class="btn btn-sm btn-outline-warning" data-action="generateUserResetCode" data-arg1="${user.id}"
+                                    title="Générer un code de reset mot de passe">
+                                    <i class="bi bi-key"></i>
+                                </button>
                                 ${user.totp_enabled ? `<button class="btn btn-sm btn-outline-info" data-action="adminDisableUserTotp" data-arg1="${user.id}" title="Désactiver l'authentificateur">
                                     <i class="bi bi-shield-slash"></i>
                                 </button>` : ''}
@@ -288,6 +292,27 @@ async function adminDisableUserTotp(userId) {
     } catch (e) {
         alert(e.message || 'Erreur lors de la désactivation');
     }
+}
+
+async function generateUserResetCode(userId) {
+    if (!confirm('Générer un code de réinitialisation pour cet utilisateur ?\nLe code remplace tout code précédent et sera affiché une seule fois.')) return;
+    try {
+        const data = await api.generatePasswordResetCode(userId);
+        document.getElementById('passwordResetCodeValue').textContent = data.code;
+        document.getElementById('passwordResetCodeExpiry').textContent =
+            'Valide jusqu\u2019à ' + new Date(data.expires_at).toLocaleString();
+        bootstrap.Modal.getOrCreateInstance(document.getElementById('passwordResetCodeModal')).show();
+    } catch (e) {
+        showToast('Erreur', e.message || 'Génération impossible', 'danger');
+    }
+}
+
+function copyPasswordResetCode() {
+    const code = document.getElementById('passwordResetCodeValue').textContent;
+    if (!code) return;
+    navigator.clipboard.writeText(code)
+        .then(() => showToast('Copié', 'Code copié dans le presse-papiers', 'success'))
+        .catch(() => alert('Copie impossible : ' + code));
 }
 
 function toggleUserApps(userId) {

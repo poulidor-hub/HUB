@@ -5,6 +5,27 @@
 
 ---
 
+## [3.80.0] - 4 novembre 2026
+
+### 🆕 Reset self-service par code admin (chantier D)
+
+Un administrateur génère un code court `XXXX-XXXX` (affiché une seule fois, remis
+hors-bande) depuis la page utilisateurs ; l'utilisateur — 2FA ou non — le saisit dans
+la modale « Mot de passe oublié » (nouvel onglet « Code de reset ») et redéfinit son
+mot de passe lui-même. L'admin ne connaît jamais le mot de passe choisi.
+
+| Fonctionnalité | Description |
+|----------------|-------------|
+| **Codes de reset admin** | Table `password_reset_codes` (code hashé bcrypt, usage unique, brûlé dès la vérification, TTL 15 min configurable `password_reset_code_ttl_minutes`, un seul code actif par utilisateur) ; endpoint `POST /api/users/{id}/password-reset-code` (admin) + bouton/modal dans la page utilisateurs |
+| **Onglet « Code de reset »** | La modale « Mot de passe oublié » gagne 2 onglets (Code TOTP / Code de reset) ; le flux TOTP existant est inchangé ; la vérification délivre le JWT `pwd_reset` usage-unique existant (étape 2 inchangée) |
+| **Hygiène des sessions** | Nouveau helper `invalidate_user_sessions()` : révocation de tous les refresh tokens + SSE `force_logout` câblé sur les **4 chemins** de changement de mot de passe (change-password volontaire, recover TOTP, reset par code, reset admin `PATCH /users` avec champ `password`) — ⚠️ changement de comportement visible : l'utilisateur est déconnecté partout après un changement de mot de passe (standard OWASP) |
+| **Sécurité** | Erreurs 401 génériques (anti-énumération), vérification en temps constant (hash fantôme), rate limiting dédié 5 tent./60 s sur la vérification (indépendant du login), alphabet sans 0/O/1/I (~40 bits), audit `password_reset_code_generated` / `password_reset_code_verified` |
+
+**Hors périmètre (suivis séparés)** : outil hub-mcp `hub_user_reset_password` (après mise
+en prod de la route), email/SMS, codes de secours imprimables, WebAuthn.
+
+---
+
 ## [3.79.3] - 3 novembre 2026
 
 ### 🆕 Nouvelle version

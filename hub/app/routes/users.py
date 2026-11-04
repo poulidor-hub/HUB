@@ -8,6 +8,7 @@ from typing import List, Optional, Dict, Union
 from pydantic import BaseModel
 import math
 import csv
+from datetime import timezone
 import io
 
 from app.database import get_db
@@ -28,7 +29,7 @@ from app.schemas import (
     M2MObservedUsersRolesRequest, M2MObservedAppRole, M2MObservedUserData,
     M2MUserSearchItem, M2MUserSearchResponse, M2MUserListItem, M2MUserListResponse
 )
-from app.auth import get_admin_or_admin_sa, get_current_admin, get_current_entity, get_password_hash, revoke_all_user_tokens, generate_oidc_sub
+from app.auth import get_admin_or_admin_sa, get_current_admin, get_current_entity, get_password_hash, revoke_all_user_tokens, generate_oidc_sub, create_password_reset_code, invalidate_user_sessions
 from app.routes.audit import log_action
 
 router = APIRouter(prefix="/api/users", tags=["Users"])
@@ -672,8 +673,10 @@ async def update_user(
     
     # Détecter si l'utilisateur est en train d'être désactivé
     is_being_deactivated = "is_active" in update_data and update_data["is_active"] == False and user.is_active == True
-    
-    if "password" in update_data:
+
+    # Détecter un changement de mot de passe AVANT le pop (chantier D : hygiène sessions)
+    password_changed = "password" in update_data
+    if password_changed:
         update_data["hashed_password"] = get_password_hash(update_data.pop("password"))
     
     for field, value in update_data.items():
@@ -702,6 +705,11 @@ async def update_user(
         await revoke_all_user_tokens(db, user_id)
         # Notifier via SSE pour forcer la déconnexion côté client
         notify_event("force_logout", {"user_id": user_id, "username": user.username, "reason": "account_disabled"})
+    elif password_changed:
+        # Hygiène (chantier D) : reset admin du mot de passe → déconnexion partout.
+        # (Si désactivation + password dans le même PATCH : seul le chemin
+        # account_disabled s'applique — pas de double déconnexion.)
+        await invalidate_user_sessions(db, user_id, "password_reset", username=user.username)
     
     # Recharger avec les relations
     result = await db.execute(
@@ -718,6 +726,45 @@ async def update_user(
     notify_event("users_updated", {"action": "updated", "user_id": user.id, "username": user.username})
 
     return UserResponse.from_orm_model(user)
+
+
+@router.post("/{user_id}/password-reset-code")
+async def create_password_reset_code_route(
+    user_id: int,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(get_current_admin),
+):
+    """Génère un code de reset mot de passe (usage unique, TTL 15 min).
+
+    Le code est retourné UNE SEULE fois dans cette réponse : il n'est plus
+    jamais re-servable ensuite (stocké hashé). Générer un nouveau code
+    consomme tout code actif précédent du même utilisateur.
+    """
+    user = (await db.execute(select(User).where(User.id == user_id))).scalar_one_or_none()
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Utilisateur non trouvé"
+        )
+    if not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Utilisateur inactif : activez le compte avant de générer un code"
+        )
+    code, expires_at = await create_password_reset_code(db, user_id=user_id, admin_id=admin.id)
+    # utcnow() est naïf UTC : on explicite le décalage, sinon new Date() côté
+    # navigateur interpréterait l'ISO en heure LOCALE (validité faussée de 1-2 h).
+    expires_at_iso = expires_at.replace(tzinfo=timezone.utc).isoformat()
+    db.add(AuditLog(
+        user_id=admin.id,
+        action="password_reset_code_generated",
+        target=user.username,
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent", "")[:255],
+    ))
+    await db.commit()
+    return {"code": code, "expires_at": expires_at_iso}
 
 
 @router.post("/{user_id}/rename")

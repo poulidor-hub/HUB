@@ -13,7 +13,7 @@ from sqlalchemy.orm import selectinload
 from app.config import get_settings
 from app import jwt_keyring
 from app.database import get_db
-from app.models import User, ServiceAccount, RefreshToken, RevokedToken, UserAppRole, UserTag, utcnow
+from app.models import User, ServiceAccount, RefreshToken, RevokedToken, UserAppRole, UserTag, PasswordResetCode, utcnow
 
 settings = get_settings()
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -364,6 +364,65 @@ async def revoke_all_user_tokens(db: AsyncSession, user_id: int) -> None:
     for token in result.scalars():
         token.revoked_at = utcnow()
     await db.commit()
+
+
+# ============================================================================
+# CODES DE RÉINITIALISATION PAR ADMIN (chantier D — reset self-service)
+# ============================================================================
+# Alphabet 32 caractères sans 0/O/1/I (saisie orale/téléphone sécurisée) :
+# 8 caractères → 32^8 = 2^40 (~40 bits), largement suffisant avec un TTL
+# court (15 min par défaut) et le rate limiting de la vérification.
+RESET_CODE_ALPHABET = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ"
+
+
+def generate_reset_code() -> str:
+    """Code de reset 'XXXX-XXXX' : 8 caractères sur 32 → ~40 bits d'entropie."""
+    body = "".join(secrets.choice(RESET_CODE_ALPHABET) for _ in range(8))
+    return f"{body[:4]}-{body[4:]}"
+
+
+def normalize_reset_code(raw: str) -> str:
+    """Normalise la saisie : majuscules, retrait des espaces et tirets."""
+    return raw.upper().replace(" ", "").replace("-", "")
+
+
+async def create_password_reset_code(db: AsyncSession, *, user_id: int,
+                                     admin_id: int) -> tuple[str, datetime]:
+    """Consomme les codes actifs précédents puis crée le nouveau (hashé bcrypt).
+
+    Le code n'est retourné qu'une fois (retour de cette fonction) : il vit
+    ensuite uniquement en hash. TTL = settings.password_reset_code_ttl_minutes.
+    """
+    await db.execute(
+        update(PasswordResetCode)
+        .where(PasswordResetCode.user_id == user_id, PasswordResetCode.consumed_at.is_(None))
+        .values(consumed_at=utcnow())
+    )
+    code = generate_reset_code()
+    row = PasswordResetCode(
+        user_id=user_id,
+        # Hash du code NORMALISÉ (sans tiret) : la vérification normalise la saisie,
+        # les deux côtés du bcrypt doivent parler de la même chaîne.
+        code_hash=get_password_hash(normalize_reset_code(code)),
+        expires_at=utcnow() + timedelta(minutes=settings.password_reset_code_ttl_minutes),
+        created_by_user_id=admin_id,
+    )
+    db.add(row)
+    await db.commit()
+    return code, row.expires_at
+
+
+async def invalidate_user_sessions(db: AsyncSession, user_id: int, reason: str,
+                                   username: Optional[str] = None) -> None:
+    """Hygiène post-changement de mot de passe (chantier D, option « hygiène complète »).
+
+    Révoque tous les refresh tokens de l'utilisateur puis notifie force_logout
+    (SSE) pour déconnecter à la volée les clients connectés. Fenêtre résiduelle
+    assumée : les access tokens en vol restent valides jusqu'à leur TTL court.
+    """
+    await revoke_all_user_tokens(db, user_id)
+    from app.routes.events import notify_event  # import local — évite tout cycle
+    notify_event("force_logout", {"user_id": user_id, "username": username, "reason": reason})
 
 
 def verify_token(token: str) -> dict:

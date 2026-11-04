@@ -90,7 +90,8 @@ class TotpDisableRequest(BaseModel):
 
 class RecoverVerifyRequest(BaseModel):
     username: str = Field(..., min_length=1, max_length=50)
-    totp_code: str = Field(..., min_length=6, max_length=8)
+    totp_code: Optional[str] = Field(default=None, min_length=6, max_length=8)
+    reset_code: Optional[str] = Field(default=None, min_length=4, max_length=32)
 
 
 class RecoverVerifyResponse(BaseModel):

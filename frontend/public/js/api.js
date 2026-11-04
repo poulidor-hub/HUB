@@ -441,11 +441,14 @@ class HubAPI {
         });
     }
 
-    async recoverVerify(username, totpCode) {
+    async recoverVerify(username, totpCode, resetCode) {
+        const body = resetCode
+            ? { username, reset_code: resetCode }
+            : { username, totp_code: totpCode };
         const resp = await fetch(`${API_BASE}/auth/recover/verify`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ username, totp_code: totpCode })
+            body: JSON.stringify(body)
         });
         const data = await resp.json().catch(() => ({}));
         if (!resp.ok) {
@@ -469,6 +472,10 @@ class HubAPI {
 
     async adminDisableTotp(userId) {
         return this.request(`/users/${userId}/totp/disable`, { method: 'POST' });
+    }
+
+    async generatePasswordResetCode(userId) {
+        return this.request(`/users/${userId}/password-reset-code`, { method: 'POST' });
     }
 
     async logout() {

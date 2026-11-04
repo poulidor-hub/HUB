@@ -460,6 +460,10 @@ function handleForceLogout(reason) {
         message = 'Votre compte a été désactivé par un administrateur.';
     } else if (reason === 'admin_revoked') {
         message = 'Vos sessions ont été révoquées par un administrateur.';
+    } else if (reason === 'password_reset') {
+        message = 'Votre mot de passe a été réinitialisé. Veuillez vous reconnecter.';
+    } else if (reason === 'password_changed') {
+        message = 'Votre mot de passe a été modifié. Veuillez vous reconnecter avec votre nouveau mot de passe.';
     }
     
     // Afficher un modal d'alerte
@@ -720,9 +724,24 @@ async function handleTotpDisable() {
 
 let recoverModal = null;
 let recoverResetToken = null;
+let recoverMode = 'totp';   // 'totp' | 'code' — onglet actif de la modale de récupération
+
+function switchRecoverTab(mode) {
+    recoverMode = mode === 'code' ? 'code' : 'totp';
+    document.querySelectorAll('#recoverTabs [data-recover-tab]').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.recoverTab === recoverMode);
+    });
+    document.querySelectorAll('#recoverVerifyForm [data-recover-pane]').forEach(pane => {
+        const active = pane.dataset.recoverPane === recoverMode;
+        pane.classList.toggle('d-none', !active);
+        const input = pane.querySelector('input');
+        if (input) input.required = active;
+    });
+}
 
 function showRecoverModal() {
     recoverResetToken = null;
+    switchRecoverTab('totp');
     document.getElementById('recoverError').classList.add('d-none');
     document.getElementById('recoverSuccess').classList.add('d-none');
     document.getElementById('recoverVerifyForm').classList.remove('d-none');
@@ -740,9 +759,16 @@ async function handleRecoverVerify(event) {
     const errorDiv = document.getElementById('recoverError');
     errorDiv.classList.add('d-none');
     const username = document.getElementById('recoverUsername').value.trim();
-    const code = document.getElementById('recoverCode').value.trim();
     try {
-        const data = await api.recoverVerify(username, code);
+        let data;
+        if (recoverMode === 'code') {
+            const resetCode = document.getElementById('recoverResetCodeInput').value.trim();
+            if (!resetCode) throw new Error('Saisissez le code de réinitialisation remis par un administrateur');
+            data = await api.recoverVerify(username, null, resetCode);
+        } else {
+            const code = document.getElementById('recoverCode').value.trim();
+            data = await api.recoverVerify(username, code);
+        }
         recoverResetToken = data.reset_token;
         document.getElementById('recoverVerifyForm').classList.add('d-none');
         document.getElementById('recoverResetForm').classList.remove('d-none');

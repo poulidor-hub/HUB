@@ -11,7 +11,7 @@ import secrets
 import logging
 
 from app.database import get_db
-from app.models import User, AuditLog, ServiceAccount, UserAppRole, UserSession, Application, UserTag, utcnow, get_apps_with_roles_and_workshops, workshop_role_for_app, ApprovalStatus
+from app.models import User, AuditLog, ServiceAccount, UserAppRole, UserSession, Application, UserTag, PasswordResetCode, utcnow, get_apps_with_roles_and_workshops, workshop_role_for_app, ApprovalStatus
 from app.m2m_scope import sa_apps_claim, sa_claim_is_workshop
 from app.schemas import (
     Token, LoginRequest, TokenIntrospection, RefreshTokenRequest, LogoutRequest,
@@ -35,6 +35,8 @@ from app.auth import (
     create_reset_token,
     decode_reset_token,
     password_fingerprint,
+    normalize_reset_code,
+    invalidate_user_sessions,
 )
 from app.routes.audit import start_session, end_session, log_action
 from app.routes.service_accounts import encrypt_secret, decrypt_secret
@@ -98,6 +100,28 @@ def _check_rate_limit(ip: str) -> None:
         )
     attempts.append(now)
     _login_attempts[ip] = attempts
+
+
+# Rate limiting DÉDIÉ à /recover/verify (code TOTP ou code de reset) : indépendant
+# du limiter login pour qu'un brute-force de codes ne verrouille pas les logins
+# (et inversement). Mêmes constantes que le login (5 tent. / 60 s par IP).
+_recover_attempts: dict[str, list[float]] = {}
+
+
+def _check_recover_rate_limit(ip: str) -> None:
+    """Vérifie le rate limit dédié à la vérification de récupération. 429 si dépassé."""
+    import time
+    now = time.time()
+    attempts = _recover_attempts.get(ip, [])
+    attempts = [t for t in attempts if now - t < _RATE_LIMIT_WINDOW]
+    if len(attempts) >= _RATE_LIMIT_MAX:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Trop de tentatives. Réessayez dans {_RATE_LIMIT_WINDOW} secondes.",
+            headers={"Retry-After": str(_RATE_LIMIT_WINDOW)}
+        )
+    attempts.append(now)
+    _recover_attempts[ip] = attempts
 
 
 # ============================================================================
@@ -642,10 +666,16 @@ async def change_password(
     )
     db.add(audit)
     await db.commit()
-    
+
+    # Hygiène (chantier D) : le changement volontaire de mot de passe déconnecte
+    # toutes les sessions de l'utilisateur (standard OWASP) — il se reconnecte
+    # avec le nouveau mot de passe.
+    await invalidate_user_sessions(db, current_user.id, "password_changed",
+                                   username=current_user.username)
+
     # Notifier via SSE
     notify_event("audit_updated", {"action": "password_changed", "username": current_user.username})
-    
+
     return {"message": "Mot de passe modifié avec succès"}
 
 
@@ -730,6 +760,11 @@ async def totp_disable(
 
 _RECOVER_GENERIC_ERROR = "Code de récupération invalide ou récupération indisponible"
 
+# Hash pré-calculé d'un code fictif : la branche « code de reset » vérifie TOUJOURS
+# un hash bcrypt (même quand aucun code actif n'existe) pour garder un temps de
+# réponse constant et ne pas révéler l'existence d'un code par le timing.
+_RESET_CODE_DUMMY_HASH = get_password_hash("A7K9-M2P4")
+
 
 @router.post("/recover/verify", response_model=RecoverVerifyResponse)
 async def recover_verify(
@@ -737,13 +772,47 @@ async def recover_verify(
     payload: RecoverVerifyRequest,
     db: AsyncSession = Depends(get_db),
 ):
-    """Étape 1 de récupération : vérifie le code TOTP, renvoie un jeton de reset."""
+    """Étape 1 de récupération : code TOTP **ou** code de reset admin → jeton de reset."""
     client_ip = _get_client_ip(request)
-    _check_rate_limit(client_ip)
+    _check_recover_rate_limit(client_ip)
 
     result = await db.execute(select(User).where(User.username == payload.username))
     user = result.scalar_one_or_none()
 
+    if payload.reset_code:
+        # --- Branche « code de reset admin » (chantier D) ---
+        # Fonctionne pour tout utilisateur ACTIF, 2FA ou non : l'admin a délivré
+        # le code délibérément. Erreurs toutes génériques (anti-énumération).
+        if not user or not user.is_active:
+            verify_password(normalize_reset_code(payload.reset_code), _RESET_CODE_DUMMY_HASH)
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=_RECOVER_GENERIC_ERROR)
+        row = (await db.execute(
+            select(PasswordResetCode)
+            .where(PasswordResetCode.user_id == user.id,
+                   PasswordResetCode.consumed_at.is_(None),
+                   PasswordResetCode.expires_at > utcnow())
+            .order_by(PasswordResetCode.id.desc())
+        )).scalars().first()
+        if row is None:
+            verify_password(normalize_reset_code(payload.reset_code), _RESET_CODE_DUMMY_HASH)
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=_RECOVER_GENERIC_ERROR)
+        if not verify_password(normalize_reset_code(payload.reset_code), row.code_hash):
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=_RECOVER_GENERIC_ERROR)
+        # Consommé IMMÉDIATEMENT (fail-safe) : un code vérifié mais jamais
+        # complété oblige à demander un nouveau code à l'admin.
+        row.consumed_at = utcnow()
+        db.add(AuditLog(
+            user_id=user.id,
+            action="password_reset_code_verified",
+            ip_address=client_ip,
+            user_agent=request.headers.get("user-agent", "")[:255],
+        ))
+        await db.commit()
+        return RecoverVerifyResponse(reset_token=create_reset_token(user.username, user.hashed_password))
+
+    # --- Branche TOTP existante (inchangée) ---
+    if not payload.totp_code:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=_RECOVER_GENERIC_ERROR)
     if not user or not user.is_active or not user.totp_enabled or not user.totp_secret:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=_RECOVER_GENERIC_ERROR)
 
@@ -795,6 +864,9 @@ async def recover_reset(
         user_agent=request.headers.get("user-agent", "")[:255],
     ))
     await db.commit()
+
+    # Hygiène (chantier D) : recover TOTP ou code de reset → déconnexion partout.
+    await invalidate_user_sessions(db, user.id, "password_reset", username=user.username)
 
     notify_event("audit_updated", {"action": "password_recovered", "username": user.username})
     return {"message": "Mot de passe réinitialisé avec succès"}
