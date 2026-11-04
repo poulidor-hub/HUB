@@ -205,3 +205,26 @@ async def test_change_password_revokes_sessions(client, test_user, user_token, a
     rts = (await async_session.execute(
         select(RefreshToken).where(RefreshToken.user_id == test_user.id))).scalars().all()
     assert rts and all(t.revoked_at is not None for t in rts)
+
+
+async def test_admin_password_patch_revokes_sessions(client, test_user, admin_token, async_session, monkeypatch):
+    from app.models import RefreshToken
+    events = await _capture_sse(monkeypatch)
+    await client.post("/api/auth/token",
+                      data={"username": "testuser", "password": "testpass123"})
+    r = await client.patch(f"/api/users/{test_user.id}", headers=get_auth_header(admin_token),
+                           json={"password": "newadminset123"})
+    assert r.status_code == 200
+    fl = await _force_logouts(events)
+    assert fl and fl[-1]["reason"] == "password_reset"
+    rts = (await async_session.execute(
+        select(RefreshToken).where(RefreshToken.user_id == test_user.id))).scalars().all()
+    assert rts and all(t.revoked_at is not None for t in rts)
+
+
+async def test_admin_patch_without_password_keeps_sessions(client, test_user, admin_token, monkeypatch):
+    events = await _capture_sse(monkeypatch)
+    r = await client.patch(f"/api/users/{test_user.id}", headers=get_auth_header(admin_token),
+                           json={"prenom": "Jeanne"})
+    assert r.status_code == 200
+    assert await _force_logouts(events) == []              # Review Focus #3

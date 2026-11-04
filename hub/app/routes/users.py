@@ -28,7 +28,7 @@ from app.schemas import (
     M2MObservedUsersRolesRequest, M2MObservedAppRole, M2MObservedUserData,
     M2MUserSearchItem, M2MUserSearchResponse, M2MUserListItem, M2MUserListResponse
 )
-from app.auth import get_admin_or_admin_sa, get_current_admin, get_current_entity, get_password_hash, revoke_all_user_tokens, generate_oidc_sub, create_password_reset_code
+from app.auth import get_admin_or_admin_sa, get_current_admin, get_current_entity, get_password_hash, revoke_all_user_tokens, generate_oidc_sub, create_password_reset_code, invalidate_user_sessions
 from app.routes.audit import log_action
 
 router = APIRouter(prefix="/api/users", tags=["Users"])
@@ -672,8 +672,10 @@ async def update_user(
     
     # Détecter si l'utilisateur est en train d'être désactivé
     is_being_deactivated = "is_active" in update_data and update_data["is_active"] == False and user.is_active == True
-    
-    if "password" in update_data:
+
+    # Détecter un changement de mot de passe AVANT le pop (chantier D : hygiène sessions)
+    password_changed = "password" in update_data
+    if password_changed:
         update_data["hashed_password"] = get_password_hash(update_data.pop("password"))
     
     for field, value in update_data.items():
@@ -702,6 +704,11 @@ async def update_user(
         await revoke_all_user_tokens(db, user_id)
         # Notifier via SSE pour forcer la déconnexion côté client
         notify_event("force_logout", {"user_id": user_id, "username": user.username, "reason": "account_disabled"})
+    elif password_changed:
+        # Hygiène (chantier D) : reset admin du mot de passe → déconnexion partout.
+        # (Si désactivation + password dans le même PATCH : seul le chemin
+        # account_disabled s'applique — pas de double déconnexion.)
+        await invalidate_user_sessions(db, user_id, "password_reset", username=user.username)
     
     # Recharger avec les relations
     result = await db.execute(
