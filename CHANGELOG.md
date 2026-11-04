@@ -5,6 +5,20 @@
 
 ---
 
+## [3.80.3] - 4 novembre 2026
+
+### ⚡ Scrub secrets avant open source (historique réécrit)
+
+| Élément | Détail |
+|---------|--------|
+| **INTEGRATION.md** | couple `CLIENT_ID`/`CLIENT_SECRET` d'un service account d'exemple remplacé par les placeholders `<VOTRE_CLIENT_ID>` / `<VOTRE_CLIENT_SECRET>` (compte déjà supprimé du registre Hub) |
+| **hub/tests/test_vpn.py** | fixtures `_VALID_PRIVKEY`/`_VALID_PUBKEY` (paire WireGuard d'exemple) remplacées par une paire dummy générée |
+| **hub/tests/test_security_config.py** | fixture `VALID_FERNET` remplacée par une clé Fernet dummy générée |
+| **hub_backup.json** | export d'environnement (2025-12-31) retiré de tout l'historique via `git filter-repo` |
+| **Objectif** | préparation open source : aucune clé exploitable dans l'arbre ni l'historique |
+
+---
+
 ## [3.80.2] - 4 novembre 2026
 
 ### ⚡ fix(routing) — hub.hosts toujours écrit (vide si pas de zone)
