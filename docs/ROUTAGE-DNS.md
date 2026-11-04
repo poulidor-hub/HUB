@@ -1,7 +1,7 @@
 # Routage par noms DNS — guide admin (chantier B)
 
 > Depuis la v3.79.0, chaque application du hub est joignable en
-> `https://<dns_name>.<hub_dns_zone>` (ex. `https://exemple-app.hub.example.lan`) via
+> `https://<dns_name>.<hub_dns_zone>` (ex. `https://mon-app.hub.exemple.priv`) via
 > le résolveur DNS du hub (dnsmasq) et le routage SNI du hub-frontend, avec un
 > certificat wildcard `*.<hub_dns_zone>` signé par la PKI interne.
 > Voir aussi `DOCKER_SOCKET_PROXY.md` (chantier A) et la roadmap durcissement.
@@ -9,7 +9,7 @@
 ## Première configuration
 
 1. Onglet admin **« Accès & routage »** → état « non configuré ».
-2. Saisir la zone (ex. `hub.example.lan`) → **Configurer**.
+2. Saisir la zone (ex. `hub.exemple.priv`) → **Configurer**.
 3. Le hub publie automatiquement : émission du wildcard, génération de la zone
    DNS (`dns-generated/hub.zone`), des vhosts SNI (`gateway/*.conf`) et les
    reloads dnsmasq/nginx. Aucun bouton « propager » — le registre des apps est
@@ -20,12 +20,12 @@
 | Contexte | Résolution |
 |---|---|
 | Clients **WireGuard** | Le résolveur du hub est poussé dans leur config (`DNS = <hub_host>`). Les peers existants : bouton « régénérer la config » (page VPN) pour récupérer la ligne. |
-| Postes du **LAN** | V1 : continuent en `IP:ports` (fallback). Plus tard : ajouter l'IP du serveur au DHCP de la fédération (action côté fédération, voir ci-dessous) — le résolveur du hub écoute déjà sur toutes les interfaces (hôte). |
+| Postes du **LAN** | V1 : continuent en `IP:ports` (fallback). Plus tard : ajouter l'IP du serveur au DHCP de l'organisation (action côté organisation, voir ci-dessous) — le résolveur du hub écoute déjà sur toutes les interfaces (hôte). |
 
 ### Guide DHCP LAN (action fédération, optionnel)
 
-Sur le serveur DHCP de la fédération, déclarer le serveur hub comme DNS ou
-ajouter une zone de recherche `hub.example.lan` → serveur `192.0.2.10`.
+Sur le serveur DHCP de l'organisation, déclarer le serveur hub comme DNS ou
+ajouter une zone de recherche `hub.exemple.priv` → serveur `192.0.2.10`.
 Une fois fait, les postes du LAN résolvent les noms sans VPN (le fallback
 IP:ports reste actif — aucune rupture).
 

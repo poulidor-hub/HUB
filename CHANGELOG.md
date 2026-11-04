@@ -5,6 +5,23 @@
 
 ---
 
+## [3.80.4] - 4 novembre 2026
+
+### ⚡ Scrub open source (IPs, slugs d'apps, docs internes) + community files
+
+| Élément | Détail |
+|---------|--------|
+| **INTEGRATION.md** | IPs réelles → RFC 5737 ; slugs d'exemple `salarie`/`exemple-app`/`referentiels` → `mon-api`/`mon-app`/`mon-referentiel` (38 remplacements) |
+| **docs/ROUTAGE-DNS.md** | réécrit avec des exemples génériques (`hub.exemple.priv`, `mon-app`, `192.0.2.10`, « organisation ») — la doc technique dnsmasq/SNI reste complète |
+| **docs/GUIDE_INSTALLATION.md** | IP exemple scrubée ; section Mise à jour alignée sur la routine officielle (`docs/ops/mise-a-jour.md` du méta-repo) au lieu de `git pull`/`compose` en sous-module |
+| **.env.example / hub-profile.example.json** | IP serveur → 192.0.2.x |
+| **README** | badge + texte version à jour (3.80.4) |
+| **Community files** | `SECURITY.md` + `CONTRIBUTING.md` ajoutés (renvois méta-repo) |
+| **.gitignore** | fichiers internes conservés localement ignorés (`/project.md`, `/SECURITY_AUDIT.md`, `/docs/superpowers/`…) |
+| **CHANGELOG** | référence à un rapport interne purgé neutralisée |
+
+---
+
 ## [3.80.3] - 4 novembre 2026
 
 ### ⚡ Scrub secrets avant open source (historique réécrit)
@@ -1555,7 +1572,7 @@ build` → `make up` transitivement via le Makefile de l'app) :
   les tâches de fond en cours (backups) et figeait le reloader sans respawn
   (hub gelé, incident 2026-09-14 ×3, restauration par docker restart hub-api).
 - Preuve : backup exemple-app `success` (1 062 944 rows / 53.7 MB, ~60 s), hub UP
-  en continu pendant et après le backup (cf. POULIDOR/docs/migrationv1_rapport/16-exemple-app.md).
+  en continu pendant et après le backup (validé sur banc interne, preuve non publiée).
 
 ---
 

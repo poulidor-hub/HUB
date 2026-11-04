@@ -89,3 +89,12 @@ gateway/*
 !gateway/.gitkeep
 dns-generated/*
 !dns-generated/.gitkeep
+
+# Fichiers internes conservés localement, jamais publiés
+/docs/superpowers/
+/project.md
+/SUIVI-audit-login-errors.md
+/SECURITY_AUDIT.md
+/vaultRestorHUB.md
+/exemple-app.md
+/TODO.md
