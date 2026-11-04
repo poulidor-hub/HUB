@@ -1123,14 +1123,14 @@ async def get_profile(user: TokenPayload = Depends(get_current_user)):
 
 # Route avec vérification d'accès à cette app
 @app.get("/api/employees")
-async def list_employees(user: TokenPayload = Depends(require_app_access("salarie"))):
+async def list_employees(user: TokenPayload = Depends(require_app_access("mon-api"))):
     return {"employees": [...]}
 
 # Route admin de l'app uniquement
 @app.delete("/api/employees/{id}")
 async def delete_employee(
     id: int, 
-    user: TokenPayload = Depends(require_app_access("salarie", "admin"))
+    user: TokenPayload = Depends(require_app_access("mon-api", "admin"))
 ):
     return {"deleted": id}
 
@@ -1138,7 +1138,7 @@ async def delete_employee(
 @app.post("/api/employees")
 async def create_employee(
     data: dict,
-    user: TokenPayload = Depends(require_app_access("salarie", "manager"))
+    user: TokenPayload = Depends(require_app_access("mon-api", "manager"))
 ):
     return {"created": data}
 \`\`\`
@@ -1233,7 +1233,7 @@ const CONFIG = {
     },
     
     // Slug de l'application
-    APP_SLUG: 'salarie'
+    APP_SLUG: 'mon-api'
 };
 \`\`\`
 
@@ -1686,7 +1686,7 @@ class Application(SQLModel, table=True):
 
 ```sql
 -- Via SQL directement
-UPDATE applications SET is_shared_service = TRUE WHERE slug = 'salarie';
+UPDATE applications SET is_shared_service = TRUE WHERE slug = 'mon-api';
 
 -- Ou via l'API Hub (admin requis)
 PATCH /api/apps/{app_id}
@@ -1722,7 +1722,7 @@ session.commit()
 
 | Slug | Nom | Description |
 |------|-----|-------------|
-| `salarie` | API Salariés | Données RH des employés |
+| `mon-api` | API Salariés | Données RH des employés |
 
 > 💡 Pour ajouter une nouvelle API partagée, utilisez la commande SQL ci-dessus ou l'API d'administration.
 
@@ -1755,7 +1755,7 @@ curl -X GET "http://[HUB_IP]:8000/api/apps/discover" \
 {
   "shared_services": [
     {
-      "slug": "salarie",
+      "slug": "mon-api",
       "name": "API Salariés",
       "description": "Données RH des employés",
       "api_url": "http://192.0.2.11:18087",
@@ -1794,7 +1794,7 @@ async def discover_and_call_services():
     
     # 2. Appeler un service découvert dynamiquement
     salarie_service = next(
-        (s for s in discovery['shared_services'] if s['slug'] == 'salarie'),
+        (s for s in discovery['shared_services'] if s['slug'] == 'mon-api'),
         None
     )
     
@@ -2001,7 +2001,7 @@ CLIENT_ID=<VOTRE_CLIENT_ID>
 CLIENT_SECRET=<VOTRE_CLIENT_SECRET>
 
 # === Votre API ===
-APP_SLUG=salarie
+APP_SLUG=mon-api
 API_PORT=18087
 ```
 
@@ -2032,7 +2032,7 @@ async def get_external_data():
 
 ```yaml
 services:
-  api-salarie:
+  api-mon-api:
     build: .
     ports:
       - "18087:18087"
@@ -2075,7 +2075,7 @@ networks:
   "sub": "jean.dupont",
   "roles": ["user"],
   "apps": {
-    "salarie": "admin",
+    "mon-api": "admin",
     "compta": "viewer",
     "rh": "manager"
   },
@@ -2091,7 +2091,7 @@ networks:
 {
   "sub": "sa_mon-app",
   "roles": ["service_account"],
-  "apps": ["salarie", "exemple-app", "referentiels"],
+  "apps": ["mon-api", "mon-app", "mon-referentiel"],
   "type": "service_account",
   "exp": 1735650600,
   "iat": 1735648800,
@@ -2528,8 +2528,8 @@ echo $TOKEN | cut -d'.' -f2 | base64 -d | jq '.apps'
 
 # Exemple de sortie :
 # {
-#   "exemple-app": "service",
-#   "salarie": "service"       # ← L'API salarie doit être présente !
+#   "mon-app": "service",
+#   "mon-api": "service"       # ← L'API mon-api doit être présente !
 # }
 ```
 
@@ -2541,7 +2541,7 @@ Si l'API cible est une API de données commune (ex: API Salariés, API Référen
 
 ```sql
 -- Via SQL sur la base Hub
-UPDATE applications SET is_shared_service = TRUE WHERE slug = 'salarie';
+UPDATE applications SET is_shared_service = TRUE WHERE slug = 'mon-api';
 ```
 
 Ou via l'API Hub (admin requis) :
@@ -2552,7 +2552,7 @@ ADMIN_TOKEN=$(curl -s -X POST http://hub:8000/api/auth/token \
 
 # 2. Récupérer l'ID de l'app
 APP_ID=$(curl -s http://hub:8000/api/apps/ \
-  -H "Authorization: Bearer $ADMIN_TOKEN" | jq '.[] | select(.slug=="salarie") | .id')
+  -H "Authorization: Bearer $ADMIN_TOKEN" | jq '.[] | select(.slug=="mon-api") | .id')
 
 # 3. Activer is_shared_service
 curl -X PATCH http://hub:8000/api/apps/$APP_ID \
@@ -2578,7 +2578,7 @@ curl http://hub:8000/api/service-accounts/{sa_id} \
 curl -X PUT http://hub:8000/api/service-accounts/{sa_id}/apps \
   -H "Authorization: Bearer $ADMIN_TOKEN" \
   -H "Content-Type: application/json" \
-  -d '[1, 5, 12]'  # IDs des apps: salarie(1), exemple-app(5), autre-app(12)
+  -d '[1, 5, 12]'  # IDs des apps: mon-api(1), mon-app(5), autre-app(12)
 ```
 
 #### Option C : Redémarrer l'application pour resynchroniser (v2.5.4+)
@@ -2662,7 +2662,7 @@ Alternativement, montez les fichiers via `docker-compose.yml` :
 
 ```yaml
 services:
-  api-salarie:
+  api-mon-api:
     build: .
     volumes:
       # Monter les fichiers d'auth depuis le Hub

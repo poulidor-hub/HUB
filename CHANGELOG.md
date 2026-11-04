@@ -1555,7 +1555,7 @@ build` → `make up` transitivement via le Makefile de l'app) :
   les tâches de fond en cours (backups) et figeait le reloader sans respawn
   (hub gelé, incident 2026-09-14 ×3, restauration par docker restart hub-api).
 - Preuve : backup exemple-app `success` (1 062 944 rows / 53.7 MB, ~60 s), hub UP
-  en continu pendant et après le backup (cf. POULIDOR/docs/migrationv1_rapport/16-exemple-app.md).
+  en continu pendant et après le backup (validé sur banc interne, preuve non publiée).
 
 ---
 

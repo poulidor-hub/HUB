@@ -265,8 +265,6 @@ voir la documentation PKI pour en générer un.
 
 ## Mise à jour
 
-```bash
-git pull
-docker compose down
-docker compose up -d --build
-```
+> ⚠️ Ne jamais faire `git pull` / `docker compose` directement dans ce sous-module :
+> la mise à jour passe par la routine officielle du méta-repo — voir
+> `docs/ops/mise-a-jour.md` à la racine du dépôt POULIDOR (`./hubctl update hub`).

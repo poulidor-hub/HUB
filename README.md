@@ -1,6 +1,6 @@
 # HUB_base — Hub central POULIDOR
 
-![version](https://img.shields.io/badge/version-3.59.1-blue)
+![version](https://img.shields.io/badge/version-3.80.4-blue)
 
 Portail central du parc POULIDOR : **authentification SSO**, registre des applications,
 messagerie, sauvegardes et administration. Toutes les applications du parc s'y
@@ -119,7 +119,7 @@ HUB_base/
 
 ## Versionnage
 
-`VERSION` fait foi (actuellement 3.59.1), synchronisée dans le frontend par
+`VERSION` fait foi (actuellement 3.80.4), synchronisée dans le frontend par
 `sync_version.py`. Historique : [`CHANGELOG.md`](CHANGELOG.md).
 
 ---
