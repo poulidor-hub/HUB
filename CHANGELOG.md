@@ -5,6 +5,16 @@
 
 ---
 
+## [3.80.2] - 4 novembre 2026
+
+### ⚡ fix(routing) — hub.hosts toujours écrit (vide si pas de zone)
+
+- `routing_service.publish()` : `hub.hosts` est désormais **toujours** écrit dans le dossier DNS généré, même sans `hub_dns_zone` configuré (contenu vide).
+- Cause : `dns/dnsmasq.conf` référence `addn-hosts=/etc/dnsmasq.d-generated/hub.hosts` inconditionnellement ; avec la zone vide, `publish()` purgait le dossier sans réécrire le fichier → erreur `failed to load names from …/hub.hosts` à chaque (re)start/HUP du résolveur `hub-dns`.
+- Test : `test_publish_with_empty_zone_keeps_empty_hub_hosts` (remplace `…_wipes_files`) — le dossier généré contient exactement `hub.hosts` (vide), aucun vhost.
+
+---
+
 ## [3.80.1] - 4 novembre 2026
 
 ### ⚡ Licence open source AGPLv3 + en-têtes SPDX
