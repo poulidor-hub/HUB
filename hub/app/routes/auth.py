@@ -36,6 +36,7 @@ from app.auth import (
     decode_reset_token,
     password_fingerprint,
     normalize_reset_code,
+    invalidate_user_sessions,
 )
 from app.routes.audit import start_session, end_session, log_action
 from app.routes.service_accounts import encrypt_secret, decrypt_secret
@@ -665,10 +666,16 @@ async def change_password(
     )
     db.add(audit)
     await db.commit()
-    
+
+    # Hygiène (chantier D) : le changement volontaire de mot de passe déconnecte
+    # toutes les sessions de l'utilisateur (standard OWASP) — il se reconnecte
+    # avec le nouveau mot de passe.
+    await invalidate_user_sessions(db, current_user.id, "password_changed",
+                                   username=current_user.username)
+
     # Notifier via SSE
     notify_event("audit_updated", {"action": "password_changed", "username": current_user.username})
-    
+
     return {"message": "Mot de passe modifié avec succès"}
 
 
@@ -857,6 +864,9 @@ async def recover_reset(
         user_agent=request.headers.get("user-agent", "")[:255],
     ))
     await db.commit()
+
+    # Hygiène (chantier D) : recover TOTP ou code de reset → déconnexion partout.
+    await invalidate_user_sessions(db, user.id, "password_reset", username=user.username)
 
     notify_event("audit_updated", {"action": "password_recovered", "username": user.username})
     return {"message": "Mot de passe réinitialisé avec succès"}

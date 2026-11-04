@@ -412,6 +412,19 @@ async def create_password_reset_code(db: AsyncSession, *, user_id: int,
     return code, row.expires_at
 
 
+async def invalidate_user_sessions(db: AsyncSession, user_id: int, reason: str,
+                                   username: Optional[str] = None) -> None:
+    """Hygiène post-changement de mot de passe (chantier D, option « hygiène complète »).
+
+    Révoque tous les refresh tokens de l'utilisateur puis notifie force_logout
+    (SSE) pour déconnecter à la volée les clients connectés. Fenêtre résiduelle
+    assumée : les access tokens en vol restent valides jusqu'à leur TTL court.
+    """
+    await revoke_all_user_tokens(db, user_id)
+    from app.routes.events import notify_event  # import local — évite tout cycle
+    notify_event("force_logout", {"user_id": user_id, "username": username, "reason": reason})
+
+
 def verify_token(token: str) -> dict:
     """Vérifie un token JWT — clé sélectionnée par kid depuis le trousseau."""
     entry, public_pem = jwt_keyring.select_verification_key(token)

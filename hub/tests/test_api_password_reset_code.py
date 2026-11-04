@@ -146,3 +146,62 @@ async def test_verify_rate_limit_dedicated(client, test_user, admin_token):
                                json={"username": "testuser", "reset_code": code})
     assert r_last.status_code == 429 and "retry-after" in {k.lower() for k in r_last.headers}
     assert len(_login_attempts) == 0   # limiter login intact (Review Focus #2)
+
+
+async def _capture_sse(monkeypatch):
+    events = []
+    monkeypatch.setattr("app.routes.events.notify_event",
+                        lambda t, d=None: events.append((t, d or {})))
+    return events
+
+
+async def _force_logouts(events):
+    return [e for t, e in events if t == "force_logout"]
+
+
+async def test_full_code_flow_revokes_sessions(client, test_user, admin_token, async_session, monkeypatch):
+    from app.models import RefreshToken
+    events = await _capture_sse(monkeypatch)
+    login = await client.post("/api/auth/token",
+                              data={"username": "testuser", "password": "testpass123"})
+    assert login.status_code == 200                        # un refresh token vivant
+    code = await _gen(client, admin_token, test_user.id)
+    v = await client.post("/api/auth/recover/verify",
+                          json={"username": "testuser", "reset_code": code})
+    assert v.status_code == 200
+    r = await client.post("/api/auth/recover/reset",
+                          json={"reset_token": v.json()["reset_token"],
+                                "new_password": "brandnewpass123"})
+    assert r.status_code == 200
+    fl = await _force_logouts(events)
+    assert fl and fl[-1]["reason"] == "password_reset" and fl[-1]["user_id"] == test_user.id
+    rts = (await async_session.execute(
+        select(RefreshToken).where(RefreshToken.user_id == test_user.id))).scalars().all()
+    assert rts and all(t.revoked_at is not None for t in rts)
+    old = await client.post("/api/auth/token",
+                            data={"username": "testuser", "password": "testpass123"})
+    assert old.status_code == 401
+    new = await client.post("/api/auth/token",
+                            data={"username": "testuser", "password": "brandnewpass123"})
+    assert new.status_code == 200
+    again = await client.post("/api/auth/recover/reset",
+                              json={"reset_token": v.json()["reset_token"],
+                                    "new_password": "anotherpass123"})
+    assert again.status_code == 400                        # pwd_reset usage unique (pfp)
+
+
+async def test_change_password_revokes_sessions(client, test_user, user_token, async_session, monkeypatch):
+    from app.models import RefreshToken
+    events = await _capture_sse(monkeypatch)
+    # Un refresh token vivant doit exister pour prouver la révocation
+    login = await client.post("/api/auth/token",
+                              data={"username": "testuser", "password": "testpass123"})
+    assert login.status_code == 200
+    r = await client.put("/api/auth/change-password", headers=get_auth_header(user_token),
+                         json={"current_password": "testpass123", "new_password": "newpass456"})
+    assert r.status_code == 200
+    fl = await _force_logouts(events)
+    assert fl and fl[-1]["reason"] == "password_changed" and fl[-1]["user_id"] == test_user.id
+    rts = (await async_session.execute(
+        select(RefreshToken).where(RefreshToken.user_id == test_user.id))).scalars().all()
+    assert rts and all(t.revoked_at is not None for t in rts)
