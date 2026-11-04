@@ -5,6 +5,20 @@
 
 ---
 
+## [3.80.1] - 4 novembre 2026
+
+### ⚡ Licence open source AGPLv3 + en-têtes SPDX
+
+Le cœur du HUB passe en licence ouverte (préparation de la publication publique) :
+
+| Élément | Détail |
+|---------|--------|
+| **Licence** | `LICENSE.md` (propriétaire « usage interne ») remplacé par `LICENSE` — **GNU AGPLv3** ; le cœur (API, front, orchestration) devient distribuable sous licence libre |
+| **En-têtes SPDX** | `SPDX-License-Identifier: AGPL-3.0-or-later` + copyright POULIDOR Audit & Développement (Valérian Poulidor) ajoutés aux **345 fichiers sources** (backend Python, frontend TS/JS/CSS, scripts) — shebangs et déclarations d'encodage préservés, insertion au niveau octets |
+| **README** | Mention « Projet interne » remplacée par la référence AGPLv3 ; la marque et les logos restent réservés (politique de marque du méta-repo POULIDOR) |
+
+---
+
 ## [3.80.0] - 4 novembre 2026
 
 ### 🆕 Reset self-service par code admin (chantier D)
