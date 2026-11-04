@@ -474,6 +474,10 @@ class HubAPI {
         return this.request(`/users/${userId}/totp/disable`, { method: 'POST' });
     }
 
+    async generatePasswordResetCode(userId) {
+        return this.request(`/users/${userId}/password-reset-code`, { method: 'POST' });
+    }
+
     async logout() {
         // Sauvegarder les tokens avant de les effacer
         const accessToken = this.token;

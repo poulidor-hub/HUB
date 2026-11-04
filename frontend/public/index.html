@@ -3786,6 +3786,32 @@
         </div>
     </div>
 
+    <!-- Password Reset Code Modal (chantier D) : code affiché une seule fois -->
+    <div class="modal fade" id="passwordResetCodeModal" tabindex="-1">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="bi bi-key-fill me-2"></i>Code de réinitialisation généré</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body text-center">
+                    <div id="passwordResetCodeValue" class="fs-3 font-monospace fw-bold user-select-all"></div>
+                    <div id="passwordResetCodeExpiry" class="text-muted small"></div>
+                    <div class="alert alert-warning mt-3 mb-0">
+                        <i class="bi bi-exclamation-triangle me-2"></i>
+                        Affiché une seule fois — remettez-le à l'utilisateur par vos canaux habituels.
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Fermer</button>
+                    <button type="button" class="btn btn-primary" data-action="copyPasswordResetCode">
+                        <i class="bi bi-clipboard me-1"></i>Copier
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- App Backup Config Modal -->
     <div class="modal fade" id="appBackupConfigModal" tabindex="-1">
         <div class="modal-dialog">
