@@ -302,6 +302,7 @@ class Settings(BaseSettings):
     # TOTP / récupération de mot de passe
     totp_issuer: str = "HUB"  # Nom affiché dans l'application d'authentification
     recovery_token_ttl_minutes: int = 5  # Durée de vie du jeton de réinitialisation
+    password_reset_code_ttl_minutes: int = 15  # Durée de vie d'un code de reset généré par un admin
 
     # Autorise explicitement les secrets en clair (clé Fernet vide) — DEV uniquement.
     allow_plaintext_secrets: bool = False

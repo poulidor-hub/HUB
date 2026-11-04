@@ -582,6 +582,27 @@ class RevokedToken(Base):
         return f"<RevokedToken {self.jti}>"
 
 
+class PasswordResetCode(Base):
+    """Code de réinitialisation généré par un admin (chantier D — reset self-service).
+
+    Un seul code actif par utilisateur : toute génération consomme les actifs
+    précédents. Le code n'est jamais stocké en clair (hash bcrypt), il est
+    consommé dès la vérification réussie (fail-safe).
+    """
+    __tablename__ = "password_reset_codes"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), index=True, nullable=False)
+    code_hash = Column(String(255), nullable=False)  # bcrypt — jamais le code en clair
+    expires_at = Column(DateTime, nullable=False)
+    consumed_at = Column(DateTime, nullable=True)
+    created_by_user_id = Column(Integer, ForeignKey('users.id'), nullable=False)
+    created_at = Column(DateTime, default=utcnow)
+
+    def __repr__(self):
+        return f"<PasswordResetCode user={self.user_id} consumed={self.consumed_at is not None}>"
+
+
 class UserSession(Base):
     """
     Suivi des sessions utilisateurs (connexions/déconnexions).
