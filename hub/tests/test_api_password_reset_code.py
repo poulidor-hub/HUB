@@ -54,8 +54,9 @@ async def test_generate_success_format_hash_ttl(client, test_user, admin_token, 
     assert CODE_RE.match(body["code"]) and body["expires_at"]
     row = (await async_session.execute(
         select(PasswordResetCode).where(PasswordResetCode.user_id == test_user.id))).scalar_one()
+    from app.auth import normalize_reset_code
     assert row.code_hash != body["code"]
-    assert verify_password(body["code"], row.code_hash)          # hash bcrypt vérifiable
+    assert verify_password(normalize_reset_code(body["code"]), row.code_hash)  # hash du code normalisé
     assert row.consumed_at is None and row.created_by_user_id is not None
     audit = (await async_session.execute(
         select(AuditLog).where(AuditLog.action == "password_reset_code_generated"))).scalar_one()
@@ -69,3 +70,79 @@ async def test_generate_revokes_previous_code(client, test_user, admin_token, as
     rows = (await async_session.execute(
         select(PasswordResetCode).where(PasswordResetCode.user_id == test_user.id))).scalars().all()
     assert sum(1 for x in rows if x.consumed_at is None) == 1    # seul le dernier est actif
+
+
+async def _gen(client, admin_token, uid):
+    r = await client.post(GEN.format(uid=uid), headers=get_auth_header(admin_token))
+    assert r.status_code == 200
+    return r.json()["code"]
+
+
+async def test_verify_reset_code_delivers_pwd_reset(client, test_user, admin_token, async_session):
+    from app.auth import decode_reset_token
+    code = await _gen(client, admin_token, test_user.id)
+    r = await client.post("/api/auth/recover/verify",
+                          json={"username": "testuser", "reset_code": code})
+    assert r.status_code == 200
+    payload = decode_reset_token(r.json()["reset_token"])
+    assert payload["scope"] == "pwd_reset" and payload["sub"] == "testuser"
+    row = (await async_session.execute(
+        select(PasswordResetCode).where(PasswordResetCode.user_id == test_user.id))).scalar_one()
+    assert row.consumed_at is not None
+    assert (await async_session.execute(
+        select(AuditLog).where(AuditLog.action == "password_reset_code_verified"))).scalar_one()
+
+
+async def test_verify_normalization_accepts_lowercase_and_spaces(client, test_user, admin_token):
+    code = await _gen(client, admin_token, test_user.id)
+    messy = f" {code.lower().replace('-', ' ')} "
+    r = await client.post("/api/auth/recover/verify",
+                          json={"username": "testuser", "reset_code": messy})
+    assert r.status_code == 200
+
+
+async def test_verify_generic_errors_identical(client, test_user, admin_token, async_session):
+    from app.routes.auth import _recover_attempts
+    generic = "Code de récupération invalide ou récupération indisponible"
+    code = await _gen(client, admin_token, test_user.id)
+
+    async def try_code(body):
+        return await client.post("/api/auth/recover/verify", json=body)
+
+    r = await try_code({"username": "ghost", "reset_code": code})
+    assert (r.status_code, r.json()["detail"]) == (401, generic)      # user inconnu
+    _recover_attempts.clear()
+    r = await try_code({"username": "testuser", "reset_code": "ZZZZ-ZZZZ"})
+    assert (r.status_code, r.json()["detail"]) == (401, generic)      # mauvais code
+    _recover_attempts.clear()
+    r = await try_code({"username": "testuser", "reset_code": code.lower()})
+    assert r.status_code == 200
+    _recover_attempts.clear()
+    r = await try_code({"username": "testuser", "reset_code": code})   # déjà consommé
+    assert (r.status_code, r.json()["detail"]) == (401, generic)
+
+
+async def test_verify_expired_code_401(client, test_user, admin_token, async_session):
+    code = await _gen(client, admin_token, test_user.id)
+    row = (await async_session.execute(
+        select(PasswordResetCode).where(PasswordResetCode.user_id == test_user.id))).scalar_one()
+    row.expires_at = utcnow() - timedelta(seconds=1)
+    await async_session.commit()
+    r = await client.post("/api/auth/recover/verify",
+                          json={"username": "testuser", "reset_code": code})
+    assert r.status_code == 401
+
+
+async def test_verify_rate_limit_dedicated(client, test_user, admin_token):
+    from app.routes.auth import _login_attempts
+    code = await _gen(client, admin_token, test_user.id)
+    statuses = []
+    for _ in range(6):
+        r = await client.post("/api/auth/recover/verify",
+                              json={"username": "testuser", "reset_code": "AAAA-AAAA"})
+        statuses.append(r.status_code)
+    assert statuses[-1] == 429
+    r_last = await client.post("/api/auth/recover/verify",
+                               json={"username": "testuser", "reset_code": code})
+    assert r_last.status_code == 429 and "retry-after" in {k.lower() for k in r_last.headers}
+    assert len(_login_attempts) == 0   # limiter login intact (Review Focus #2)

@@ -401,7 +401,9 @@ async def create_password_reset_code(db: AsyncSession, *, user_id: int,
     code = generate_reset_code()
     row = PasswordResetCode(
         user_id=user_id,
-        code_hash=get_password_hash(code),
+        # Hash du code NORMALISÉ (sans tiret) : la vérification normalise la saisie,
+        # les deux côtés du bcrypt doivent parler de la même chaîne.
+        code_hash=get_password_hash(normalize_reset_code(code)),
         expires_at=utcnow() + timedelta(minutes=settings.password_reset_code_ttl_minutes),
         created_by_user_id=admin_id,
     )
