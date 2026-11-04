@@ -8,6 +8,7 @@ from typing import List, Optional, Dict, Union
 from pydantic import BaseModel
 import math
 import csv
+from datetime import timezone
 import io
 
 from app.database import get_db
@@ -752,6 +753,9 @@ async def create_password_reset_code_route(
             detail="Utilisateur inactif : activez le compte avant de générer un code"
         )
     code, expires_at = await create_password_reset_code(db, user_id=user_id, admin_id=admin.id)
+    # utcnow() est naïf UTC : on explicite le décalage, sinon new Date() côté
+    # navigateur interpréterait l'ISO en heure LOCALE (validité faussée de 1-2 h).
+    expires_at_iso = expires_at.replace(tzinfo=timezone.utc).isoformat()
     db.add(AuditLog(
         user_id=admin.id,
         action="password_reset_code_generated",
@@ -760,7 +764,7 @@ async def create_password_reset_code_route(
         user_agent=request.headers.get("user-agent", "")[:255],
     ))
     await db.commit()
-    return {"code": code, "expires_at": expires_at.isoformat()}
+    return {"code": code, "expires_at": expires_at_iso}
 
 
 @router.post("/{user_id}/rename")

@@ -596,7 +596,7 @@ class PasswordResetCode(Base):
     code_hash = Column(String(255), nullable=False)  # bcrypt — jamais le code en clair
     expires_at = Column(DateTime, nullable=False)
     consumed_at = Column(DateTime, nullable=True)
-    created_by_user_id = Column(Integer, ForeignKey('users.id'), nullable=False)
+    created_by_user_id = Column(Integer, ForeignKey('users.id', ondelete='SET NULL'), nullable=True)
     created_at = Column(DateTime, default=utcnow)
 
     def __repr__(self):

@@ -228,3 +228,80 @@ async def test_admin_patch_without_password_keeps_sessions(client, test_user, ad
                            json={"prenom": "Jeanne"})
     assert r.status_code == 200
     assert await _force_logouts(events) == []              # Review Focus #3
+
+
+async def test_delete_admin_who_generated_code_succeeds(tmp_path):
+    """Fix revue : FK created_by_user_id doit être ON DELETE SET NULL (idiome repo).
+
+    La suppression utilisateur est un hard delete : sans ondelete, un admin
+    ayant généré un code pour un AUTRE utilisateur devient insoluble
+    (IntegrityError → 500) — la ligne de code survit à la suppression du
+    générateur (cascade uniquement par user_id). SQLite ignore les FK par
+    défaut : on les active via un listener `connect` attaché AVANT la
+    première connexion du moteur dédié (pragma effectif).
+    """
+    import asyncio
+    from datetime import timedelta
+    from sqlalchemy import event as sa_event, select as sa_select
+    from sqlalchemy.exc import IntegrityError
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+    from app.database import Base
+    from app.models import User, utcnow
+
+    eng = create_async_engine(f"sqlite+aiosqlite:///{tmp_path}/fk_test.db")
+
+    @sa_event.listens_for(eng.sync_engine, "connect")
+    def _fk_on(dbapi_conn, _rec):
+        dbapi_conn.execute("pragma foreign_keys=ON")
+
+    maker = async_sessionmaker(eng, expire_on_commit=False)
+    async with eng.begin() as c:
+        await c.run_sync(Base.metadata.create_all)
+
+    try:
+        async with maker() as session:
+            generator = User(username="gen_admin", email="gen@example.com",
+                             hashed_password="x" * 60, is_active=True, is_admin=True)
+            target = User(username="target", email="target@example.com",
+                          hashed_password="x" * 60, is_active=True)
+            session.add_all([generator, target])
+            await session.commit()
+            await session.refresh(generator)
+            await session.refresh(target)
+
+            # Le code généré pointe vers la CIBLE (user_id) et le GÉNÉRATEUR
+            # (created_by) — deux utilisateurs distincts, cas réel.
+            session.add(PasswordResetCode(
+                user_id=target.id,
+                code_hash="hash",
+                expires_at=utcnow() + timedelta(minutes=15),
+                created_by_user_id=generator.id,
+            ))
+            await session.commit()
+
+            await session.delete(generator)
+            try:
+                await session.commit()
+            except IntegrityError:
+                raise AssertionError(
+                    "FK sans ON DELETE SET NULL : suppression du générateur impossible (bug revue #1)")
+
+            row = (await session.execute(
+                sa_select(PasswordResetCode).where(
+                    PasswordResetCode.created_by_user_id.is_(None)))).scalar_one()
+            assert row is not None      # l'historique survit, référence neutralisée
+    finally:
+        await eng.dispose()
+
+
+async def test_generate_expires_at_is_utc_aware(client, test_user, admin_token):
+    """Fix revue #2 : expires_at doit porter le décalage UTC explicite.
+
+    Un ISO naïf est interprété en heure LOCALE par new Date() côté navigateur :
+    l'admin verrait une validité surestimée de 1-2 h sur l'écran de remise.
+    """
+    r = await client.post(GEN.format(uid=test_user.id), headers=get_auth_header(admin_token))
+    assert r.status_code == 200
+    expires_at = r.json()["expires_at"]
+    assert expires_at.endswith("+00:00") or expires_at.endswith("Z"), \
+        f"expires_at naïf (heure locale navigateur) : {expires_at}"

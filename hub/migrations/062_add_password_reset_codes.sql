@@ -11,7 +11,7 @@ CREATE TABLE IF NOT EXISTS password_reset_codes (
     code_hash          VARCHAR(255) NOT NULL,
     expires_at         TIMESTAMP NOT NULL,
     consumed_at        TIMESTAMP,
-    created_by_user_id INTEGER NOT NULL REFERENCES users(id),
+    created_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
     created_at         TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
