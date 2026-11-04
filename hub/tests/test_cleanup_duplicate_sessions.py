@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 POULIDOR Audit & Développement (Valérian Poulidor)
+
 """Le cleanup ferme les sessions ouvertes en surnombre (1 max par user)."""
 import pytest
 from sqlalchemy import select

@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 POULIDOR Audit & Développement (Valérian Poulidor)
+
 """Tests unitaires de l'orchestrateur SLO v2 (propagate_remote_revoke).
 
 Le cookie hub_oidc_session porte un oidc_sub (immuable) depuis v3.47.0,

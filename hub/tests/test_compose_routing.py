@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 POULIDOR Audit & Développement (Valérian Poulidor)
+
 """Chantier B Task 6 — garde-fou compose (hub-dns + vhosts gateway) + hooks.
 
 Réutilise le découpeur de blocs de test_compose_socket_proxy (sans PyYAML).

@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 POULIDOR Audit & Développement (Valérian Poulidor)
+
 # Résolveur DNS du hub (chantier B — routage par noms)
 # dnsmasq du dépôt Alpine (2.90) — configuration montée dans /etc/dnsmasq.d
 # (dns/dnsmasq.conf + hub.zone générés par hub-api, cf. docs/DOCKER_SOCKET_PROXY.md

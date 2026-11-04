@@ -1,3 +1,6 @@
+-- SPDX-License-Identifier: AGPL-3.0-or-later
+-- Copyright (C) 2026 POULIDOR Audit & Développement (Valérian Poulidor)
+
 -- Migration 056: Historique des déploiements automatiques des apps
 -- Créé par POST /api/apps/{slug}/deploy, piloté par app/deploy_service.py.
 -- Lien par app_slug (pas de FK, cohérent avec port_allocations).

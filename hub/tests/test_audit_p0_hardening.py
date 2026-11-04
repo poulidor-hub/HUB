@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 POULIDOR Audit & Développement (Valérian Poulidor)
+
 """Durcissements P0 issus de l'audit de sécurité d'octobre 2026.
 
 - B-1 : POST /api/admin/restore — plus d'acceptation de tout service account ;

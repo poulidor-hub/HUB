@@ -1,3 +1,6 @@
+-- SPDX-License-Identifier: AGPL-3.0-or-later
+-- Copyright (C) 2026 POULIDOR Audit & Développement (Valérian Poulidor)
+
 -- Migration 024: Suivi de progression et de durée des backups
 -- Date: 2026-04-30
 -- Description: Ajoute les colonnes de cycle de vie (status, started_at,

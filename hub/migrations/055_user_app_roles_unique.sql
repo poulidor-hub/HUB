@@ -1,3 +1,6 @@
+-- SPDX-License-Identifier: AGPL-3.0-or-later
+-- Copyright (C) 2026 POULIDOR Audit & Développement (Valérian Poulidor)
+
 -- Migration 055: Unicité des lignes user_app_roles + préparation des overrides
 -- Date: 2026-08-17
 -- Description: Dédoublonne (user_id, app_id) puis pose une contrainte unique.

@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 POULIDOR Audit & Développement (Valérian Poulidor)
+
 """Helpers TOTP (RFC 6238) purs, sans dépendance à la base de données."""
 import base64
 import hmac

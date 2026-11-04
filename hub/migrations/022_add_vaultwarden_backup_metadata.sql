@@ -1,3 +1,6 @@
+-- SPDX-License-Identifier: AGPL-3.0-or-later
+-- Copyright (C) 2026 POULIDOR Audit & Développement (Valérian Poulidor)
+
 -- Migration 022: Metadata de backups Vaultwarden complets
 -- Date: 2026-04-29
 -- Description: Ajoute les indicateurs et compteurs nécessaires pour stocker

@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 POULIDOR Audit & Développement (Valérian Poulidor)
+
 """
 Server-Sent Events (SSE) pour les mises à jour en temps réel.
 Permet au frontend de recevoir les notifications sans rafraîchir la page.

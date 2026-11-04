@@ -1,3 +1,6 @@
+-- SPDX-License-Identifier: AGPL-3.0-or-later
+-- Copyright (C) 2026 POULIDOR Audit & Développement (Valérian Poulidor)
+
 -- Migration 061 (chantier B) : routage par noms DNS.
 -- dns_name sur applications (nom de routage <dns_name>.<hub_dns_zone>, défaut:
 -- slug via backfill au boot) + table routed_service (services tiers routés,

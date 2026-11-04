@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 POULIDOR Audit & Développement (Valérian Poulidor)
+
 """Tests pour l'endpoint /api/apps/github/* et le cache des repos."""
 import pytest
 from datetime import datetime, timedelta, timezone

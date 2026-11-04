@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 POULIDOR Audit & Développement (Valérian Poulidor)
+
 """Service atelier — cycle create/update/ship/remove piloté depuis l'UI HUB.
 
 Parité avec hubctl v0.6.1 (hubctl_src/hubctl_cli/actions.py). Le fichier

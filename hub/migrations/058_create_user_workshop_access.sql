@@ -1,3 +1,6 @@
+-- SPDX-License-Identifier: AGPL-3.0-or-later
+-- Copyright (C) 2026 POULIDOR Audit & Développement (Valérian Poulidor)
+
 -- Migration 058: Accès atelier par utilisateur (visibilité des apps -ws)
 -- L'activation référence TOUJOURS l'app de base (jamais la -ws) :
 -- elle survit à la suppression/recréation de l'atelier.

@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 POULIDOR Audit & Développement (Valérian Poulidor)
+
 """
 Collecteurs de donnees pour les snapshots Hub.
 Chaque collecteur produit un fichier dans le repertoire temporaire et retourne des stats.

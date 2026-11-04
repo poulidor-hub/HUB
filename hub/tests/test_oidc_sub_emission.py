@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 POULIDOR Audit & Développement (Valérian Poulidor)
+
 """sub OIDC = oidc_sub (immuable) ; preferred_username = username courant ; email figé."""
 import jwt as pyjwt
 import pytest

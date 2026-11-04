@@ -1,3 +1,6 @@
+-- SPDX-License-Identifier: AGPL-3.0-or-later
+-- Copyright (C) 2026 POULIDOR Audit & Développement (Valérian Poulidor)
+
 -- Migration 041 : Refresh tokens OIDC persistants et révocables (mirroir du mécanisme apps hub).
 CREATE TABLE IF NOT EXISTS oauth_refresh_tokens (
     id            SERIAL PRIMARY KEY,

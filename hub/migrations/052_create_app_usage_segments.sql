@@ -1,3 +1,6 @@
+-- SPDX-License-Identifier: AGPL-3.0-or-later
+-- Copyright (C) 2026 POULIDOR Audit & Développement (Valérian Poulidor)
+
 -- Migration: 052_create_app_usage_segments
 -- Description: Tracking du temps passé par application (segments d'usage) pour les visualisations d'audit.
 

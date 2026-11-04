@@ -1,3 +1,6 @@
+-- SPDX-License-Identifier: AGPL-3.0-or-later
+-- Copyright (C) 2026 POULIDOR Audit & Développement (Valérian Poulidor)
+
 -- Migration 036: Version de l'app capturée à l'enregistrement.
 -- Source de vérité : le fichier VERSION de l'app, transmis dans le payload
 -- d'enregistrement. Remplace l'usage du dernier backup pour le badge dashboard.

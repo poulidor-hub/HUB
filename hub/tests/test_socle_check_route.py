@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 POULIDOR Audit & Développement (Valérian Poulidor)
+
 """Tests de la route POST /api/apps/{slug}/socle-check.
 
 La route mint deux tokens éphémères côté hub (JWT user admin sur l'app +

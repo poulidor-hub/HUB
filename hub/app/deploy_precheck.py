@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 POULIDOR Audit & Développement (Valérian Poulidor)
+
 """Precheck de déploiement (feat 2026-10-11).
 
 Vérifie AVANT d'ouvrir la modale de mise en place (et avant le POST) que tout

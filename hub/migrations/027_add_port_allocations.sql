@@ -1,3 +1,6 @@
+-- SPDX-License-Identifier: AGPL-3.0-or-later
+-- Copyright (C) 2026 POULIDOR Audit & Développement (Valérian Poulidor)
+
 -- Migration 027: Table d'allocation dynamique des ports d'applications
 -- Le Hub attribue les ports (API + Frontend) aux apps lors du pré-vol.
 -- Clé d'idempotence : (app_slug, host).

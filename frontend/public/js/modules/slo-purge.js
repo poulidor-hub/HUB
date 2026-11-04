@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 POULIDOR Audit & Développement (Valérian Poulidor)
+
 // SLO poste partagé — purge des sessions distantes via iframes cachées.
 // Au login HUB d'un user B par-dessus un user A, le backend renvoie `remote_logout`
 // (liste d'apps OIDC où A avait une session). Le frontend ouvre une iframe cachée

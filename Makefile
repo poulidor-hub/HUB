@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 POULIDOR Audit & Développement (Valérian Poulidor)
+
 # Override chargé seulement s'il existe (-f sur un fichier absent casse docker compose).
 OVERRIDE := $(strip $(shell test -f docker-compose.override.yml && echo -f docker-compose.override.yml))
 COMPOSE      = docker compose -f docker-compose.yml $(OVERRIDE)

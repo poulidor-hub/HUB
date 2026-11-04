@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 POULIDOR Audit & Développement (Valérian Poulidor)
+
 """Régression OOM du 29/10/2026 — le pipeline d'assemblage des snapshots doit
 travailler en STREAMING (compression zstd, chiffrement AES-GCM, checksum).
 

@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 POULIDOR Audit & Développement (Valérian Poulidor)
+
 """Tests du moniteur de vivacité du token GitHub (github_token_monitor).
 
 Tâche périodique : GET /user sur api.github.com avec le token courant

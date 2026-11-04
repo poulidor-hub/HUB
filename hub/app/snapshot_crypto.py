@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 POULIDOR Audit & Développement (Valérian Poulidor)
+
 """Chiffrement/déchiffrement des snapshots HUB.
 
 Phase 1 « découplage » (spec 2026-09-16 §4) : les snapshots sont chiffrés

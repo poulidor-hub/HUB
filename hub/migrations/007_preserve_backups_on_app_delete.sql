@@ -1,3 +1,6 @@
+-- SPDX-License-Identifier: AGPL-3.0-or-later
+-- Copyright (C) 2026 POULIDOR Audit & Développement (Valérian Poulidor)
+
 -- Migration 007: Conserver les sauvegardes quand une application est supprimée
 -- Date: 2026-01-07
 -- Description: Modifie la contrainte de clé étrangère app_id dans app_backups

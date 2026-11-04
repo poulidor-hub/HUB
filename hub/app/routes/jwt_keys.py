@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 POULIDOR Audit & Développement (Valérian Poulidor)
+
 """Endpoints admin du trousseau de clés JWT (spec 2026-09-16 §5.5).
 
 Rotation planifiée, révocation d'urgence, vue d'ensemble, nettoyage.

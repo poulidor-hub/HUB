@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 POULIDOR Audit & Développement (Valérian Poulidor)
+
 """oidc_sub : backfill username, immuabilité, règle anti-collision à la création."""
 import pytest
 from sqlalchemy import select, text

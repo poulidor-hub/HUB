@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 POULIDOR Audit & Développement (Valérian Poulidor)
+
 """
 T1 (self-healing M2M) : le ré-enregistrement trusted d'une app existante
 dont le service account a disparu (suppression en cascade) doit recréer un

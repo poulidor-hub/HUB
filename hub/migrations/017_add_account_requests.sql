@@ -1,3 +1,6 @@
+-- SPDX-License-Identifier: AGPL-3.0-or-later
+-- Copyright (C) 2026 POULIDOR Audit & Développement (Valérian Poulidor)
+
 -- Migration: Add account request system
 -- Date: 2026-04-16
 -- Description: Ajoute un système de demande de compte utilisateur.

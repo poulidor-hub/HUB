@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 POULIDOR Audit & Développement (Valérian Poulidor)
+
 """Chantier B Task 1 — modèle de routage : dns_name + RoutedService + backfill.
 
 Le backfill dns_name=slug (idempotent) est appelé au lifespan (pattern

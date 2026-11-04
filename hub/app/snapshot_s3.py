@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 POULIDOR Audit & Développement (Valérian Poulidor)
+
 """
 Helpers S3 / MinIO pour les snapshots Hub.
 Upload multipart (>100 Mo), download, delete.

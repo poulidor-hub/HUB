@@ -1,3 +1,6 @@
+-- SPDX-License-Identifier: AGPL-3.0-or-later
+-- Copyright (C) 2026 POULIDOR Audit & Développement (Valérian Poulidor)
+
 -- Migration 006: Système de sauvegarde centralisée des applications
 -- Date: 2026-01-07
 -- Description: Ajoute la table app_backups pour stocker les métadonnées des sauvegardes

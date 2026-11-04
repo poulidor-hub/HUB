@@ -1,3 +1,6 @@
+-- SPDX-License-Identifier: AGPL-3.0-or-later
+-- Copyright (C) 2026 POULIDOR Audit & Développement (Valérian Poulidor)
+
 -- Migration: 054_add_port_allocations_subnet
 -- Description: Ajoute la colonne subnet aux allocations de ports : le Hub
 -- attribue désormais un sous-réseau Docker (/24) par app depuis le pool

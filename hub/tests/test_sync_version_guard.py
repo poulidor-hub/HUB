@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 POULIDOR Audit & Développement (Valérian Poulidor)
+
 """Garde-fous anti-écrasement croisé de sync_version.py (incident 2026-10-04).
 
 Deux sessions poussant des releases en parallèle ont produit un doublon de

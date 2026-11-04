@@ -1,4 +1,7 @@
 #!/usr/bin/env python
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 POULIDOR Audit & Développement (Valérian Poulidor)
+
 """
 AN-2 (banc 2026-09-10, Option B validée) — purge one-shot des liens M2M
 croisés atelier↔prod dans service_account_app_access.

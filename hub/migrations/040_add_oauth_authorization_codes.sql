@@ -1,3 +1,6 @@
+-- SPDX-License-Identifier: AGPL-3.0-or-later
+-- Copyright (C) 2026 POULIDOR Audit & Développement (Valérian Poulidor)
+
 -- Migration 040 : Codes d'autorisation OIDC one-shot (TTL court, utilisés pour /oidc/launch + /oidc/token).
 CREATE TABLE IF NOT EXISTS oauth_authorization_codes (
     id                    SERIAL PRIMARY KEY,

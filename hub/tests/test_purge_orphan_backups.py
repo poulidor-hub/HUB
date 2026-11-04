@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 POULIDOR Audit & Développement (Valérian Poulidor)
+
 """Tests de scripts/purge_orphan_backups.py — logique pure find_orphans.
 
 Le script pilote docker exec pour agir sur le conteneur hub ; seule la

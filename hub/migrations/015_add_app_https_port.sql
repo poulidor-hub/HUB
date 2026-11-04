@@ -1,3 +1,6 @@
+-- SPDX-License-Identifier: AGPL-3.0-or-later
+-- Copyright (C) 2026 POULIDOR Audit & Développement (Valérian Poulidor)
+
 -- Migration 015: Ajouter le port HTTPS du frontend aux applications
 -- Permet au Hub de construire des URLs HTTPS directes, évitant
 -- la redirection HTTP→HTTPS qui provoque un flash visuel désagréable

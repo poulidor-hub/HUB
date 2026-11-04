@@ -1,3 +1,6 @@
+-- SPDX-License-Identifier: AGPL-3.0-or-later
+-- Copyright (C) 2026 POULIDOR Audit & Développement (Valérian Poulidor)
+
 -- Migration 011: Multi-profils — permettre plusieurs profils par utilisateur
 -- Date: 2026-04-03
 -- Description: Remplace la relation users.profile_id (1:N) par une table de jonction

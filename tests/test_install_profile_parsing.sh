@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 POULIDOR Audit & Développement (Valérian Poulidor)
+
 # Test de régression C6 : le parsing du profil ne doit pas injecter de code
 # via le chemin du fichier (qui était interpolé dans du code Python inline).
 set -euo pipefail

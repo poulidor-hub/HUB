@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 POULIDOR Audit & Développement (Valérian Poulidor)
+
 """Checksum socle — rapport d'intégration hub↔app en 7 contrôles.
 
 Exécuté à la demande (vue santé) ou après ajout/maj d'une application :

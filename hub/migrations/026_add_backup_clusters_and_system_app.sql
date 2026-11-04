@@ -1,3 +1,6 @@
+-- SPDX-License-Identifier: AGPL-3.0-or-later
+-- Copyright (C) 2026 POULIDOR Audit & Développement (Valérian Poulidor)
+
 -- Migration 026: Clusters de sauvegarde et application systeme Hub
 -- Date: 2026-05-08
 -- Description: Ajoute des clusters persistants pour grouper les applications

@@ -1,3 +1,6 @@
+-- SPDX-License-Identifier: AGPL-3.0-or-later
+-- Copyright (C) 2026 POULIDOR Audit & Développement (Valérian Poulidor)
+
 -- Migration 005: Ajout des champs pour les applications distantes
 -- Date: 2026-01-06
 -- Description: Permet aux applications hébergées sur des serveurs distants (réseau local)

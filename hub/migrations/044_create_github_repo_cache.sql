@@ -1,3 +1,6 @@
+-- SPDX-License-Identifier: AGPL-3.0-or-later
+-- Copyright (C) 2026 POULIDOR Audit & Développement (Valérian Poulidor)
+
 -- Migration 044: Cache persistant des repos GitHub accessibles au PAT
 -- Peuplé par POST /api/apps/github/repos/refresh. Lu par GET /api/apps/github/repos.
 -- Clé d'upsert : repo_id (GitHub id stable).

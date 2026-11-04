@@ -1,3 +1,6 @@
+-- SPDX-License-Identifier: AGPL-3.0-or-later
+-- Copyright (C) 2026 POULIDOR Audit & Développement (Valérian Poulidor)
+
 -- Migration 009: Ajout du champ api_endpoints pour stocker la spec OpenAPI des apps
 -- Date: 2026-02-18
 -- Description: Permet aux applications de pousser leur spécification OpenAPI au Hub

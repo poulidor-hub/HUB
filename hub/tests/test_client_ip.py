@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 POULIDOR Audit & Développement (Valérian Poulidor)
+
 """Tests de régression pour _get_client_ip (H7 + H8).
 
 Le bug : _get_client_ip trustait X-Forwarded-For inconditionnellement.

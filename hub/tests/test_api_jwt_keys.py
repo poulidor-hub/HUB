@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 POULIDOR Audit & Développement (Valérian Poulidor)
+
 """Tests API /api/auth/keys — endpoints admin du trousseau (spec §5.5)."""
 import jwt as pyjwt
 import pytest

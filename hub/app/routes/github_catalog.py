@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 POULIDOR Audit & Développement (Valérian Poulidor)
+
 """Catalogue GitHub : découverte et sélection visuelle de repos.
 
 Endpoints admin-only sous /api/apps/github :

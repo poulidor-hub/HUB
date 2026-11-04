@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 POULIDOR Audit & Développement (Valérian Poulidor)
+
 """SLO (Single Logout) poste partagé — détection de changement d'utilisateur au login.
 
 Au login HUB d'un user B, si un cookie `hub_oidc_session` précédent identifie un user A
