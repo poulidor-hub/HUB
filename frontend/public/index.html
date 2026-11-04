@@ -3749,10 +3749,26 @@
                             <label for="recoverUsername" class="form-label">Identifiant</label>
                             <input type="text" class="form-control" id="recoverUsername" required>
                         </div>
-                        <div class="mb-3">
+                        <ul class="nav nav-tabs mb-3" id="recoverTabs">
+                            <li class="nav-item">
+                                <button type="button" class="nav-link active" data-recover-tab="totp"
+                                        data-action="switchRecoverTab" data-arg1="totp">Code TOTP</button>
+                            </li>
+                            <li class="nav-item">
+                                <button type="button" class="nav-link" data-recover-tab="code"
+                                        data-action="switchRecoverTab" data-arg1="code">Code de reset</button>
+                            </li>
+                        </ul>
+                        <div class="mb-3" data-recover-pane="totp">
                             <label for="recoverCode" class="form-label">Code de l'authentificateur</label>
                             <input type="text" class="form-control" id="recoverCode" inputmode="numeric"
                                    maxlength="8" autocomplete="one-time-code" required>
+                        </div>
+                        <div class="mb-3 d-none" data-recover-pane="code">
+                            <label for="recoverResetCodeInput" class="form-label">Code de réinitialisation</label>
+                            <input type="text" class="form-control" id="recoverResetCodeInput"
+                                   placeholder="XXXX-XXXX" maxlength="16">
+                            <div class="form-text">Code à 8 caractères remis par un administrateur.</div>
                         </div>
                         <button type="submit" class="btn btn-primary w-100">Vérifier le code</button>
                     </form>
