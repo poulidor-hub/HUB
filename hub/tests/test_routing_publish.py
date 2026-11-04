@@ -124,17 +124,19 @@ async def test_publish_clears_error_on_success_after_failure(async_session, dirs
 
 
 @pytest.mark.asyncio
-async def test_publish_with_empty_zone_wipes_files(async_session, dirs, fake_docker):
+async def test_publish_with_empty_zone_keeps_empty_hub_hosts(async_session, dirs, fake_docker):
     calls, _ = fake_docker
     import pathlib
     await _seed(async_session, zone="hub.example.lan")
     await rs.publish()
-    # puis zone vidée → dossiers sans fichier généré
+    # puis zone vidée → hub.hosts TOUJOURS présent mais vide (dnsmasq.conf
+    # référence addn-hosts inconditionnellement) ; plus aucun vhost généré
     row = await async_session.get(AppSetting, "hub_dns_zone")
     row.value = ""
     await async_session.commit()
     await rs.publish()
-    assert list(pathlib.Path(dirs.routing_dns_dir).glob("*")) == []
+    assert [f.name for f in pathlib.Path(dirs.routing_dns_dir).glob("*")] == ["hub.hosts"]
+    assert pathlib.Path(dirs.routing_dns_dir, "hub.hosts").read_text() == ""
     assert list(pathlib.Path(dirs.routing_gateway_dir).glob("*")) == []
 
 
