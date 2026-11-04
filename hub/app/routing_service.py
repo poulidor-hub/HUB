@@ -390,7 +390,10 @@ async def publish() -> None:
 
             await asyncio.to_thread(pki.ensure_wildcard_cert, zone)
         old_dns = await asyncio.to_thread(
-            _apply_dir, dns_dir, {"hub.hosts": zone_content} if zone_content else {}
+            # hub.hosts TOUJOURS écrit (vide si pas de zone) : dnsmasq.conf
+            # référence addn-hosts=…/hub.hosts inconditionnellement — un fichier
+            # absent déclenche une erreur à chaque (re)start/HUP du résolveur.
+            _apply_dir, dns_dir, {"hub.hosts": zone_content}
         )
         old_gw = await asyncio.to_thread(_apply_dir, gw_dir, vhosts)
         await asyncio.to_thread(_reload_containers, reloads)
