@@ -12,9 +12,11 @@ POULIDOR](https://github.com/POULIDOR-Audit-Developpement/POULIDOR/blob/main/CON
 3. **Tests** : toute modification de route/modèle/hub_auth doit passer la
    suite pytest (`make test` dans le conteneur) ; vérification complète via
    le cycle Docker du dépôt.
-4. **Docs** : toute nouvelle route est documentée dans `INTEGRATION.md` et
+4. **Hooks** : activez le scan de secrets avant commit — `./scripts/hooks/install-hooks.sh`
+   (gitleaks requis : https://github.com/gitleaks/gitleaks).
+5. **Docs** : toute nouvelle route est documentée dans `INTEGRATION.md` et
    l'entrée CHANGELOG associée (bump de `VERSION` obligatoire).
-5. **CLA** : toute première contribution est accompagnée d'un CLA
+6. **CLA** : toute première contribution est accompagnée d'un CLA
    (voir le méta-repo).
 
 ## Questions

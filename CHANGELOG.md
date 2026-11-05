@@ -5,6 +5,19 @@
 
 ---
 
+## [3.80.5] - 5 novembre 2026
+
+### ⚡ Sécurité : hook pre-commit gitleaks chaînable
+
+| Élément | Détail |
+|---------|--------|
+| **scripts/hooks/pre-commit-gitleaks.sh** | scan gitleaks des fichiers stagés — bloque le commit si secret détecté (`gitleaks:allow` pour exemption justifiée) |
+| **scripts/hooks/install-hooks.sh** | installe le hook dans `.git/hooks/pre-commit` en chaînant tout pre-commit existant (ne casse pas les hooks en place) |
+| **CONTRIBUTING.md** | section « Hooks » : activation par `./scripts/hooks/install-hooks.sh` |
+| **Contexte** | préparation open source — prévention de la réintroduction de secrets (cf. purge 0.80.x) |
+
+---
+
 ## [3.80.4] - 4 novembre 2026
 
 ### ⚡ Scrub open source (IPs, slugs d'apps, docs internes) + community files
