@@ -395,10 +395,10 @@ class TestAppLaunch:
         assert payload["apps"][app.slug] == "user"
 
     @pytest.mark.asyncio
-    async def test_app_launch_admin_without_explicit_role_gets_admin(
+    async def test_app_launch_admin_without_explicit_role_gets_viewer(
         self, client: AsyncClient, admin_user: User, test_app: Application
     ):
-        """Un admin Hub sans rôle explicite obtient un rôle admin dans le token de lancement."""
+        """Un admin Hub sans rôle explicite obtient le rôle viewer par défaut (spec 2026-11-06)."""
         token, _, _ = create_access_token(username=str(admin_user.username), apps={})
 
         response = await client.post(
@@ -408,10 +408,10 @@ class TestAppLaunch:
 
         assert response.status_code == 200
         data = response.json()
-        assert data["role"] == "admin"
+        assert data["role"] == "viewer"
 
         payload = decode_jwt_payload(data["access_token"])
-        assert payload["apps"][test_app.slug] == "admin"
+        assert payload["apps"][test_app.slug] == "viewer"
 
     @pytest.mark.asyncio
     async def test_app_launch_forbidden_without_role(

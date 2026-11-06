@@ -22,7 +22,7 @@ from app.routes.events import notify_event, notify_stats_update
 from app.routes.app_backups import reassociate_orphan_backups
 
 from app.database import get_db
-from app.models import Application, User, ServiceAccount, UserAppRole, ApprovalStatus, service_account_app_access, DEFAULT_ROLES, UserFavorite, utcnow, AppDependency, AppGroup, AppDeployment, UserWorkshopAccess
+from app.models import Application, User, ServiceAccount, UserAppRole, ApprovalStatus, service_account_app_access, DEFAULT_ROLES, UserFavorite, utcnow, AppDependency, AppGroup, AppDeployment, UserWorkshopAccess, get_apps_with_roles_and_workshops
 from app.m2m_scope import grant_shared_apps_to_sa
 from app.routes.app_groups import group_to_brief
 from app.schemas import (
@@ -646,6 +646,11 @@ async def list_apps(
         )
         user = user_result.scalar_one()
         user_roles_map = {ar.application.slug: ar.role for ar in user.app_roles}
+        if current_user.is_admin:
+            # Admin Hub : rôle résolu — explicite > héritage atelier >
+            # viewer par défaut (spec 2026-11-06). Même logique que le
+            # claim JWT, pour un dashboard cohérent avec l'accès réel.
+            user_roles_map = await get_apps_with_roles_and_workshops(current_user, db)
 
         # Charger les favoris de l'utilisateur courant
         fav_result = await db.execute(
@@ -735,7 +740,11 @@ async def list_apps(
             items += [
                 AppResponseWithMyRole.from_app_with_role(
                     ws_app,
-                    "user",
+                    # Héritage atelier (spec 2026-11-06) : rôle explicite sur
+                    # l'atelier > rôle explicite sur la base > défaut 'user'.
+                    user_roles_map.get(ws_app.slug)
+                    or user_roles_map.get(ws_app.slug[:-3])
+                    or "user",
                     app_version=ws_app.version,
                     is_favorite=ws_app.id in favorite_app_ids,
                     group=_group_brief(ws_app),
