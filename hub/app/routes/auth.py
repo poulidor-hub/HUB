@@ -1179,11 +1179,10 @@ async def create_app_launch_token(
 
     apps = await get_apps_with_roles_and_workshops(current_user, db)
     role = user_role
-    if current_user.is_admin and app_slug not in apps:
-        apps[app_slug] = "admin"
-        role = "admin"
-    elif current_user.is_admin and not role:
-        role = apps.get(app_slug, "admin")
+    if current_user.is_admin and not role:
+        # Admin Hub sans rôle explicite : viewer par défaut (spec 2026-11-06).
+        # Le fallback du helper garantit déjà l'entrée dans apps.
+        role = apps.get(app_slug, "viewer")
 
     token, expire, jti = create_access_token(
         username=current_username,
@@ -1302,12 +1301,10 @@ async def sso_login(
                     detail=f"Accès refusé à l'application {app_slug}"
                 )
     
-    # 4. Créer le token avec accès à l'app
+    # 4. Créer le token avec accès à l'app.
+    # Admin Hub sans rôle explicite : viewer par défaut (spec 2026-11-06),
+    # l'entrée est déjà présente dans apps via le fallback du helper.
     apps = await get_apps_with_roles_and_workshops(user, db)
-    
-    # S'assurer que l'app demandée est dans les apps (admin a toujours accès)
-    if user.is_admin and app_slug not in apps:
-        apps[app_slug] = "admin"
     
     token, expire, jti = create_access_token(
         username=user.username,

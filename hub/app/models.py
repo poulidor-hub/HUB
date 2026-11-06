@@ -261,8 +261,9 @@ async def workshop_role_for_app(db: AsyncSession, user_id: int,
                                 app_slug: str) -> Optional[str]:
     """Rôle de l'utilisateur sur l'atelier app_slug via user_workshop_access.
 
-    'user' si l'utilisateur a une activation sur l'app de base de app_slug ET
-    que l'atelier existe (is_workshop=True, is_active=True) ; sinon None.
+    Hérite du rôle explicite sur l'app de base (spec 2026-11-06) ; défaut
+    'user' si l'utilisateur a une activation sur l'app de base ET que
+    l'atelier existe (is_workshop=True, is_active=True) ; sinon None.
     """
     if not app_slug.endswith("-ws"):
         return None
@@ -283,19 +284,35 @@ async def workshop_role_for_app(db: AsyncSession, user_id: int,
             Application.is_active.is_(True),
         )
     )
-    return "user" if ws.scalar_one_or_none() is not None else None
+    if ws.scalar_one_or_none() is None:
+        return None
+    base_role = await db.execute(
+        select(UserAppRole.role)
+        .join(Application, UserAppRole.app_id == Application.id)
+        .where(
+            UserAppRole.user_id == user_id,
+            Application.slug == app_slug[:-3],
+        )
+    )
+    return base_role.scalar_one_or_none() or "user"
 
 
 async def get_apps_with_roles_and_workshops(user: "User",
                                             db: AsyncSession) -> dict:
     """Map {app_slug: rôle} de l'utilisateur + ses ateliers autorisés.
 
-    Étend get_apps_with_roles() : pour chaque activation user_workshop_access
-    pointant une app de base X, ajoute {X.slug}-ws: 'user' si l'atelier existe
-    et est actif. setdefault : une attribution explicite existante gagne.
+    Règles (spec 2026-11-06) :
+    1. Rôle explicite (user_app_roles) — toujours gagnant (setdefault).
+    2. Admin Hub sans rôle explicite : 'viewer' sur toute app non-système
+       (plus d'absence de rôle ni de rôle 'admin' implicite) ; l'atelier
+       {X}-ws hérite du rôle résolu de sa base X (viewer au minimum), sans
+       barrière d'accès atelier.
+    3. Non-admin : atelier {X}-ws autorisé uniquement avec l'activation
+       user_workshop_access sur X — hérite du rôle explicite de X, défaut
+       'user' s'il n'a aucun rôle sur la base.
 
-    Autonome : requête directe sur user_app_roles (pas de prérequis
-    selectinload — les relations User sont lazy='raise').
+    Autonome : requêtes directes (pas de prérequis selectinload — les
+    relations User sont lazy='raise').
     """
     roles_result = await db.execute(
         select(Application.slug, UserAppRole.role)
@@ -303,23 +320,43 @@ async def get_apps_with_roles_and_workshops(user: "User",
         .where(UserAppRole.user_id == user.id)
     )
     apps = {slug: role for slug, role in roles_result.all()}
+
+    if user.is_admin:
+        # Règle 2a : apps non-atelier -> viewer par défaut.
+        all_apps = await db.execute(
+            select(Application.slug).where(
+                Application.is_system_app == False,  # noqa: E712
+                Application.is_workshop == False,    # noqa: E712
+            )
+        )
+        for (slug,) in all_apps.all():
+            apps.setdefault(slug, "viewer")
+        # Règle 2b : ateliers -> héritent du rôle résolu de leur base
+        # (explicite ou viewer), sinon viewer pour un atelier orphelin.
+        ws_apps = await db.execute(
+            select(Application).where(Application.is_workshop == True)  # noqa: E712
+        )
+        for ws_app in ws_apps.scalars().all():
+            apps.setdefault(ws_app.slug, apps.get(ws_app.slug[:-3], "viewer"))
+        return apps
+
+    # Règle 3 : héritage atelier via user_workshop_access sur la base.
     links = await db.execute(
         select(Application.slug)
         .join(UserWorkshopAccess, UserWorkshopAccess.app_id == Application.id)
         .where(UserWorkshopAccess.user_id == user.id)
     )
     base_slugs = [row[0] for row in links.all()]
-    if not base_slugs:
-        return apps
-    ws_apps = await db.execute(
-        select(Application).where(
-            Application.slug.in_([s + "-ws" for s in base_slugs]),
-            Application.is_workshop.is_(True),
-            Application.is_active.is_(True),
+    if base_slugs:
+        ws_apps = await db.execute(
+            select(Application).where(
+                Application.slug.in_([s + "-ws" for s in base_slugs]),
+                Application.is_workshop.is_(True),
+                Application.is_active.is_(True),
+            )
         )
-    )
-    for ws_app in ws_apps.scalars().all():
-        apps.setdefault(ws_app.slug, "user")
+        for ws_app in ws_apps.scalars().all():
+            apps.setdefault(ws_app.slug, apps.get(ws_app.slug[:-3], "user"))
     return apps
 
 
