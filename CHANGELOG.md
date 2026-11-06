@@ -5,6 +5,22 @@
 
 ---
 
+## [3.81.0] - 6 novembre 2026
+
+### ⚡ Rôles : viewer par défaut pour l'admin Hub sans rôle + héritage atelier (spec 2026-11-06)
+
+| Élément | Détail |
+|---------|--------|
+| **hub/app/models.py — `get_apps_with_roles_and_workshops()`** | source unique de résolution du claim JWT `apps` : rôle explicite > héritage atelier > défaut `viewer` pour l'admin Hub sur toute app non-système. L'atelier `{X}-ws` d'un admin hérite du rôle résolu de sa base `X` (viewer au minimum), sans barrière d'accès atelier. Non-admin : héritage uniquement avec activation `user_workshop_access` (défaut `user` conservé sans rôle sur la base) |
+| **hub/app/models.py — `workshop_role_for_app()`** | héritage du rôle explicite de l'app de base pour les non-admins (au lieu du `user` systématique), même défaut et mêmes conditions d'accès |
+| **hub/app/routes/auth.py — `/launch` et `/sso`** | suppression des fallbacks locaux `apps[slug] = "admin"` : un admin Hub sans rôle explicite reçoit désormais `viewer` (fini le rôle admin implicite divergent qui disparaissait à la première rotation de refresh token) |
+| **hub/app/routes/apps.py — `list_apps`** | `my_role` de l'admin affiche le rôle résolu (explicite > hérité > viewer) — dashboard cohérent avec l'accès réel ; l'héritage atelier est aussi affiché pour les non-admins (explicit ws > base > `user`) |
+| **JWT** | claim `apps` de l'admin désormais complet (viewer implicite sur tout le parc non-système) — tokens légèrement plus volumineux, comportement uniforme sur login / `/login` / grant refresh_token / `/token/refresh` / `/launch` / `/sso` |
+| **Tests** | nouveau `hub/tests/test_role_default_admin.py` (15 tests, cycle rouge→vert : fallback viewer, héritage admin/non-admin, gardes d'accès, /launch, /sso, list_apps) ; `test_app_launch_admin_without_explicit_role_gets_admin` → `..._gets_viewer` |
+| **Hors périmètre** | `GET /api/auth/me` inchangé (liste les rôles explicites ; frontend Hub hors dépôt) — l'autorité d'accès reste le claim JWT |
+
+---
+
 ## [3.80.5] - 5 novembre 2026
 
 ### ⚡ Sécurité : hook pre-commit gitleaks chaînable
