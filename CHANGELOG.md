@@ -5,6 +5,25 @@
 
 ---
 
+## [3.82.0] - 7 novembre 2026
+
+### ⚡ Ateliers : fin des compteurs incohérents — unlink protégé, réconciliation fantômes/orphelins (diagnostic 2026-11-07)
+
+Cause racine du diagnostic (« Ateliers: 1, badges ATELIER: 5, gestion des applications: 0 ») : trois sources de vérité divergentes — le disque (marqueurs `.workshop.env`), la DB (lignes `is_workshop` des auto-enregistrements `{slug}-ws` jamais purgées après suppression hors UI), et le filtre admin par défaut (`workshop_filter=false` sans re-fetch).
+
+| Élément | Détail |
+|---------|--------|
+| **hub/app/workshop_service.py — `_op_remove` / `_op_ship`** | unlink `.workshop.env` protégé (try/except OSError) : un filesystem read-only (Errno 30 réel du 06/11) ne court-circuite plus la purge DB de la fiche `{slug}-ws` (cause des badges ATELIER fantômes). down -v OK + purge DB OK = opération en **succès**, warning journalisé dans les steps (« fs possiblement read-only ») |
+| **hub/app/routes/atelier.py — `_scan_ghosts()` / `_scan_orphans()`** | `GET /api/admin/atelier` expose désormais `ghosts` (fiches DB `is_workshop=True` sans marqueur disque, tolérant DB down → `[]`) et `orphans` (projets compose `-ws` actifs sans marqueur, via labels Docker, tolérant Docker down → `[]`) — clé `ateliers` inchangée (rétro-compat) |
+| **hub/app/routes/atelier.py — `POST /api/admin/atelier/reconcile`** | nouvelle route admin : purge des fiches fantômes via `_delete_workshop_app_row` (cascade SA M2M + ports + credentials), garde `is_workshop=True`, skip si marqueur disque présent, body `{"slugs": [...]}` optionnel (défaut : tous les ghosts), audit best-effort `ATELIER_RECONCILE` (pattern close-all) |
+| **frontend/public/js/modules/admin-atelier.js** | onglet Ateliers : section « Fiches fantômes » (cases pré-cochées + purge confirmée → POST reconcile → refresh) et section « Projets Docker orphelins » (informative), rendues seulement si non vides |
+| **frontend/public/js/modules/admin-apps.js** | le sélecteur Mode (Production/Atelier/Tout) déclenche un **re-fetch serveur** au changement (fini le refiltrage client d'une liste fetchée en `false` qui affichait toujours 0 atelier) ; idem pour « Réinitialiser » et `focusPendingApps()` |
+| **hub/tests** | +13 tests : succès `_op_remove`/`_op_ship` malgré OSError(30) avec purge DB vérifiée, détection ghosts/orphans (exclusions prod, DB/Docker down), endpoint reconcile (auth, purge, skip, garde is_workshop, erreurs sans 500). Périmètre atelier/workshop : 132 verts |
+
+> Nettoyage d'état associé (op du 07/11, hors repo) : 10 lignes `-ws` fantômes purgées via la cascade officielle, marqueur zombie `exemple-app` supprimé, atelier sauvage worktree `exemple-app-ws` détruit (down -v + purge), volumes orphelins (`exemple-app-ws-postgres-data`, `exemple-app-ws_*`) supprimés.
+
+---
+
 ## [3.81.0] - 6 novembre 2026
 
 ### ⚡ Rôles : viewer par défaut pour l'admin Hub sans rôle + héritage atelier (spec 2026-11-06)
