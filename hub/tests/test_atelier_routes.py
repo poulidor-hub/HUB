@@ -98,7 +98,7 @@ async def test_atelier_list_empty(client, admin_token, tmp_path, monkeypatch):
     r = await client.get("/api/admin/atelier",
                          headers=get_auth_header(admin_token))
     assert r.status_code == 200
-    assert r.json() == {"ateliers": []}
+    assert r.json() == {"ateliers": [], "ghosts": [], "orphans": []}
 
 
 # ── Un marker → 1 entrée, champs exacts ──
@@ -116,7 +116,7 @@ async def test_atelier_list_with_marker(client, admin_token, tmp_path,
                          headers=get_auth_header(admin_token))
     assert r.status_code == 200
     data = r.json()
-    assert list(data.keys()) == ["ateliers"]
+    assert list(data.keys()) == ["ateliers", "ghosts", "orphans"]
     assert data["ateliers"] == [{
         "app": "monapp",
         "ws_slug": "monapp-ws",

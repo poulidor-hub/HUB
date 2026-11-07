@@ -11,9 +11,16 @@ containers_state="inconnu", la route ne lève jamais 500.
 
 Shape de sortie (contrat, consommé par l'agent exemple-app et l'UI admin) :
     {"ateliers": [{"app", "ws_slug", "api_port", "frontend_port",
-                   "containers_state"}, ...]}
+                   "containers_state"}, ...],
+     "ghosts":   [{"slug", "name", "created_at"}, ...],
+     "orphans":  [{"project", "containers", "running"}, ...]}
 
 containers_state ∈ {"running", "partiel", "stopped", "absent", "inconnu"}.
+ghosts : fiches Hub is_workshop=True dont le slug n'a plus de marqueur disque
+(ex. unlink en échec sur fs read-only) — purgeables via POST /reconcile.
+orphans : projets compose -ws actifs sans marqueur disque. Les clés ghosts/
+orphans sont des listes vides en cas d'indisponibilité DB/Docker : la route
+ne lève jamais 500. La clé "ateliers" reste inchangée (rétro-compat).
 """
 import logging
 from pathlib import Path
@@ -114,12 +121,79 @@ def scan_workshops(apps_path: Path, docker_client) -> list[dict]:
     return ateliers
 
 
+async def _scan_ghosts(known_ws_slugs: set[str]) -> list[dict]:
+    """Fiches Hub is_workshop=True sans marqueur .workshop.env disque.
+
+    Fantôme = ligne Application {slug}-ws survivant à la suppression de
+    l'atelier (ex. unlink en échec sur fs read-only) : ses URLs pointent sur
+    des ports possiblement réattribués → purgeable via POST /reconcile.
+    Tolérant aux pannes DB : DB injoignable ⇒ [] + warning (la liste des
+    ateliers doit rester consultable pour diagnostiquer, jamais 500)."""
+    from sqlalchemy import select
+
+    from app.database import async_session_maker
+    from app.models import Application
+
+    ghosts: list[dict] = []
+    try:
+        async with async_session_maker() as db:
+            result = await db.execute(
+                select(Application)
+                .where(Application.is_workshop.is_(True))
+                .order_by(Application.slug))
+            for app in result.scalars().all():
+                if app.slug in known_ws_slugs:
+                    continue  # marqueur disque présent → atelier vivant
+                ghosts.append({
+                    "slug": app.slug,
+                    "name": app.name,
+                    "created_at": (app.created_at.isoformat()
+                                   if app.created_at else None),
+                })
+    except Exception as e:
+        logger.warning(f"scan ateliers fantômes indisponible (DB) : {e}")
+        return []
+    return ghosts
+
+
+def _scan_orphans(docker_client, known_ws_slugs: set[str]) -> list[dict]:
+    """Projets compose -ws actifs sans marqueur disque (conteneurs orphelins).
+
+    Réutilise le client Docker de _containers_state (socket :ro) : Docker
+    injoignable ⇒ [] — la route ne lève jamais 500. Trié par projet pour un
+    contrat stable ; noms de conteneurs best-effort (getattr)."""
+    if docker_client is None:
+        return []
+    try:
+        containers = docker_client.containers.list(all=True)
+    except Exception as e:
+        logger.warning(f"scan ateliers orphelins indisponible : {e}")
+        return []
+    projects: dict[str, list] = {}
+    for c in containers:
+        project = (c.labels or {}).get(COMPOSE_PROJECT_LABEL)
+        if not project or not project.endswith("-ws"):
+            continue  # hors périmètre atelier (projets prod, hub, …)
+        if project in known_ws_slugs:
+            continue  # marqueur disque présent → atelier vivant
+        projects.setdefault(project, []).append(c)
+    return [{
+        "project": project,
+        "containers": [getattr(c, "name", "") or "?" for c in cs],
+        "running": sum(1 for c in cs if c.status == "running"),
+    } for project, cs in sorted(projects.items())]
+
+
 @router.get("")
 async def list_ateliers(_: User = Depends(get_current_admin)):
-    """Liste native des ateliers (marqueurs .workshop.env + état conteneurs).
+    """Liste native des ateliers (marqueurs .workshop.env + état conteneurs),
+    enrichie du diagnostic incohérences : ghosts (fiches DB is_workshop=True
+    sans marqueur) et orphans (projets compose -ws sans marqueur).
 
-    Read-only : lecture du disque apps_host_path et du socket Docker :ro ;
-    Docker indisponible ⇒ containers_state "inconnu", jamais d'erreur 500.
+    Read-only : lecture du disque apps_host_path, du socket Docker :ro et de
+    la table applications ; Docker ou DB indisponible ⇒ état "inconnu"/liste
+    vide, jamais d'erreur 500. La clé "ateliers" est inchangée (rétro-compat
+    agent exemple-app / UI admin).
     """
     docker_client = None
     try:
@@ -129,7 +203,76 @@ async def list_ateliers(_: User = Depends(get_current_admin)):
         logger.warning(f"client Docker indisponible : {e}")
         docker_client = None
     apps_path = Path(get_settings().apps_host_path)
-    return {"ateliers": scan_workshops(apps_path, docker_client)}
+    ateliers = scan_workshops(apps_path, docker_client)
+    known_ws_slugs = {a["ws_slug"] for a in ateliers}
+    return {
+        "ateliers": ateliers,
+        "ghosts": await _scan_ghosts(known_ws_slugs),
+        "orphans": _scan_orphans(docker_client, known_ws_slugs),
+    }
+
+
+@router.post("/reconcile")
+async def reconcile_ateliers(
+    request: Request,
+    current_admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Purge les fiches atelier fantômes (is_workshop=True sans marqueur).
+
+    Body JSON optionnel {"slugs": [...]} : cible explicite ; absent/vide ⇒
+    tous les ghosts courants. Un slug redevenu porteur d'un marqueur est
+    skip (l'atelier existe encore — jamais purgé à tort). La purge passe
+    toujours par _delete_workshop_app_row : garde is_workshop=True, une
+    fiche prod n'est JAMAIS visée. Réponse :
+    {"purged": [...], "skipped": [{"slug", "reason"}], "errors": [{"slug", "error"}]}
+    """
+    try:
+        body = await request.json()
+    except ValueError:
+        body = {}
+    slugs = body.get("slugs") if isinstance(body, dict) else None
+
+    apps_path = Path(get_settings().apps_host_path)
+    known_ws_slugs = {a["ws_slug"] for a in scan_workshops(apps_path, None)}
+    if slugs:
+        targets = [str(s) for s in slugs]
+    else:
+        targets = [g["slug"] for g in await _scan_ghosts(known_ws_slugs)]
+
+    from app.workshop_service import _delete_workshop_app_row
+
+    purged: list[str] = []
+    skipped: list[dict] = []
+    errors: list[dict] = []
+    for slug in targets:
+        if slug in known_ws_slugs:
+            skipped.append({"slug": slug,
+                            "reason": "marqueur .workshop.env présent"})
+            continue
+        try:
+            if await _delete_workshop_app_row(slug):
+                purged.append(slug)
+            else:
+                skipped.append({"slug": slug,
+                                "reason": "aucune fiche is_workshop=True"})
+        except Exception as e:
+            logger.warning(f"purge fiche atelier « {slug} » échouée : {e}")
+            errors.append({"slug": slug, "error": str(e)})
+
+    # Audit Hub standard (action destructive, comme les routes admin).
+    try:
+        from app.routes.audit import log_action
+        await log_action(
+            db, current_admin.id, "ATELIER_RECONCILE", target="atelier",
+            details=f"purge fantômes ateliers (purged={len(purged)}, "
+                    f"skipped={len(skipped)}, errors={len(errors)})",
+            notify_sse=False, request=request)
+        await db.commit()
+    except Exception as e:
+        logger.warning(f"audit reconcile impossible : {e}")
+
+    return {"purged": purged, "skipped": skipped, "errors": errors}
 
 
 def _read_atelier_token(token_file: str) -> str:
