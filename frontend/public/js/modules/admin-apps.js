@@ -146,11 +146,25 @@ function getFilteredAdminApps() {
 }
 
 function filterAdminApps() {
+    const previousWorkshopFilter = adminAppsWorkshopFilter;
     adminAppsSearchQuery = document.getElementById('adminAppsSearch')?.value || '';
     adminAppsStatusFilter = document.getElementById('adminAppsStatusFilter')?.value || 'all';
     adminAppsCategoryFilter = document.getElementById('adminAppsCategoryFilter')?.value || 'all';
     adminAppsWorkshopFilter = document.getElementById('adminAppsWorkshopFilter')?.value || 'false';
     adminAppsUnmanagedFilter = document.getElementById('adminAppsUnmanagedFilter')?.value || 'all';
+
+    // Le filtre Mode est appliqué côté serveur (api.getAllApps(filter)) :
+    // changer le sélecteur doit relancer loadAdminData(), sinon on ne
+    // refiltre qu'une liste déjà amputée par l'ancien filtre (« Atelier »
+    // afficherait 0 après un fetch initial en Production). La recherche
+    // texte et les autres filtres restent des refiltrages client.
+    if (adminAppsWorkshopFilter !== previousWorkshopFilter) {
+        loadAdminData().catch(error => {
+            console.error('filterAdminApps: re-fetch après changement de Mode:', error);
+            showToast('Erreur', error.message, 'danger');
+        });
+        return;
+    }
 
     syncAdminAppsFilterControls();
     renderAppsTable(getFilteredAdminApps());
@@ -184,12 +198,22 @@ function clearAdminAppsSearch() {
 }
 
 function resetAdminAppsFilters() {
+    // Le reset peut changer le Mode (cf. filterAdminApps) : re-fetch serveur
+    // nécessaire, sinon la liste affichée reste celle de l'ancien filtre.
+    const workshopFilterChanged = adminAppsWorkshopFilter !== 'false';
     adminAppsSearchQuery = '';
     adminAppsStatusFilter = 'all';
     adminAppsCategoryFilter = 'all';
     adminAppsWorkshopFilter = 'false';
     adminAppsUnmanagedFilter = 'all';
     syncAdminAppsFilterControls();
+    if (workshopFilterChanged) {
+        loadAdminData().catch(error => {
+            console.error('resetAdminAppsFilters: re-fetch après reset du Mode:', error);
+            showToast('Erreur', error.message, 'danger');
+        });
+        return;
+    }
     renderAppsTable(getFilteredAdminApps());
 }
 

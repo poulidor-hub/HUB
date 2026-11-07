@@ -829,7 +829,17 @@ async def _op_ship(op_id: int, slug: str) -> None:
                         "down", "-v"], app_dir, T_UP, env_base=compose_env)
     except Exception as e:
         logger.warning(f"down -v atelier échoué ({e}) — .workshop.env supprimé quand même")
-    _ws_env_path(slug).unlink(missing_ok=True)
+    try:
+        _ws_env_path(slug).unlink(missing_ok=True)
+    except OSError as e:
+        # fs possiblement read-only (ex. EROFS Errno 30) : ne JAMAIS court-
+        # circuiter la purge DB qui suit, sinon la fiche {slug}-ws devient un
+        # fantôme (marqueur absent + ligne Application orpheline).
+        logger.warning(f"unlink .workshop.env échoué ({e}) — fs possiblement "
+                       "read-only ; purge DB poursuivie")
+        await _step(op_id, "cleanup",
+                    "⚠ unlink .workshop.env échoué — fs possiblement "
+                    "read-only ; purge fiche Hub poursuivie")
 
     # Suppression de la fiche Hub {slug}-ws (sinon ligne « fantôme » pointant
     # sur des ports réattribués). Non bloquant : l'atelier est déjà supprimé.
@@ -868,7 +878,17 @@ async def _op_remove(op_id: int, slug: str) -> None:
         logger.warning(f"down -v atelier échoué ({e}) — poursuite du cleanup")
 
     await _step(op_id, "cleanup", "Suppression .workshop.env")
-    _ws_env_path(slug).unlink(missing_ok=True)
+    try:
+        _ws_env_path(slug).unlink(missing_ok=True)
+    except OSError as e:
+        # fs possiblement read-only (ex. EROFS Errno 30) : ne JAMAIS court-
+        # circuiter la purge DB qui suit, sinon la fiche {slug}-ws devient un
+        # fantôme (marqueur absent + ligne Application orpheline).
+        logger.warning(f"unlink .workshop.env échoué ({e}) — fs possiblement "
+                       "read-only ; purge DB poursuivie")
+        await _step(op_id, "cleanup",
+                    "⚠ unlink .workshop.env échoué — fs possiblement "
+                    "read-only ; purge fiche Hub poursuivie")
 
     # Suppression de la fiche Hub {slug}-ws (sinon ligne « fantôme » pointant
     # sur des ports réattribués). Non bloquant : l'atelier est déjà supprimé.
