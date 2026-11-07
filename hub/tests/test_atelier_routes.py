@@ -15,8 +15,14 @@ POST /api/admin/atelier/close-all — proxy admin vers le service atelier hôte
 est injoignable (ConnectError/timeout), token partagé X-Atelier-Token lu du
 fichier monté :ro. Mocké via respx (httpx intercepté au niveau httpcore).
 
+POST /api/admin/atelier/reconcile — purge des fiches fantômes (is_workshop=
+True sans marqueur disque) : purged/skipped/errors, garde is_workshop=True,
+skip si le marqueur est (re)devenu présent.
+
 Shape de sortie du GET (contrat consommé par l'agent exemple-app et l'UI admin) :
-{"ateliers": [{app, ws_slug, api_port, frontend_port, containers_state}]}
+{"ateliers": [{app, ws_slug, api_port, frontend_port, containers_state}],
+ "ghosts":   [{slug, name, created_at ISO}],   # fiches DB sans marqueur
+ "orphans":  [{project, containers, running}]} # projets compose sans marqueur
 """
 import httpx
 import pytest
@@ -56,9 +62,10 @@ def _docker_unavailable(monkeypatch):
 
 
 class _FakeContainer:
-    def __init__(self, labels, status):
+    def __init__(self, labels, status, name=None):
         self.labels = labels
         self.status = status
+        self.name = name
 
 
 def _fake_docker(monkeypatch, containers=None, raise_error=False):
@@ -212,6 +219,207 @@ def test_scan_workshops_missing_slug_and_bad_ports(tmp_path):
         "frontend_port": None,
         "containers_state": "inconnu",
     }]
+
+
+# ── Ghosts : fiches DB is_workshop=True sans marqueur disque ──
+
+
+async def _mk_ws_row(async_session, slug, name=None, is_workshop=True):
+    """Fiche Application atelier (is_workshop=True par défaut), expungée."""
+    from app.models import Application
+    row = Application(name=name or slug, slug=slug,
+                      api_url="http://192.0.2.10:10000",
+                      frontend_url="http://192.0.2.10:5200",
+                      is_workshop=is_workshop, is_active=True)
+    async_session.add(row)
+    await async_session.commit()
+    await async_session.refresh(row)
+    async_session.expunge(row)
+    return row
+
+
+async def _ws_row_exists(async_session, slug):
+    from app.models import Application
+    result = await async_session.execute(
+        select(Application).where(Application.slug == slug))
+    return result.scalars().first() is not None
+
+
+async def test_atelier_list_ghosts(client, admin_token, tmp_path, monkeypatch,
+                                   async_session):
+    """Fiche is_workshop=True sans marqueur → ghost (created_at ISO) ;
+    marqueur présent → pas ghost ; fiche prod hors périmètre."""
+    _use_apps_dir(monkeypatch, tmp_path)
+    _docker_unavailable(monkeypatch)
+    _write_ws_marker(tmp_path / "vivante", ws_slug="vivante-ws")
+    await _mk_ws_row(async_session, "vivante-ws")       # atelier vivant
+    await _mk_ws_row(async_session, "fantome-ws", name="Atelier fantôme")
+    await _mk_ws_row(async_session, "prod-classique", is_workshop=False)
+    r = await client.get("/api/admin/atelier",
+                         headers=get_auth_header(admin_token))
+    assert r.status_code == 200
+    ghosts = r.json()["ghosts"]
+    assert [g["slug"] for g in ghosts] == ["fantome-ws"]
+    assert ghosts[0]["name"] == "Atelier fantôme"
+    assert "T" in ghosts[0]["created_at"]  # ISO 8601
+
+
+async def test_atelier_list_ghosts_db_down_never_500(client, admin_token,
+                                                     tmp_path, monkeypatch):
+    """DB injoignable → ghosts=[] + 200 (la vue doit rester consultable)."""
+    import app.database as database
+    _use_apps_dir(monkeypatch, tmp_path)
+    _docker_unavailable(monkeypatch)
+
+    def _boom():
+        raise RuntimeError("db down")
+
+    monkeypatch.setattr(database, "async_session_maker", _boom)
+    r = await client.get("/api/admin/atelier",
+                         headers=get_auth_header(admin_token))
+    assert r.status_code == 200
+    assert r.json()["ghosts"] == []
+
+
+# ── Orphans : projets compose -ws actifs sans marqueur disque ──
+
+
+async def test_atelier_list_orphans(client, admin_token, tmp_path, monkeypatch):
+    """Projet -ws sans marqueur → orphan groupé (running compté, trié) ;
+    projet avec marqueur → vivant ; projet hors -ws → hors périmètre."""
+    _use_apps_dir(monkeypatch, tmp_path)
+    _fake_docker(monkeypatch, [
+        _FakeContainer({"com.docker.compose.project": "fantome-ws"},
+                       "running", name="fantome-ws-api-1"),
+        _FakeContainer({"com.docker.compose.project": "fantome-ws"},
+                       "exited", name="fantome-ws-db-1"),
+        _FakeContainer({"com.docker.compose.project": "vivante-ws"},
+                       "running", name="vivante-ws-api-1"),
+        _FakeContainer({"com.docker.compose.project": "monapp"},
+                       "running", name="monapp-api-1"),  # prod : ignoré
+    ])
+    _write_ws_marker(tmp_path / "vivante", ws_slug="vivante-ws")
+    r = await client.get("/api/admin/atelier",
+                         headers=get_auth_header(admin_token))
+    assert r.status_code == 200
+    assert r.json()["orphans"] == [{
+        "project": "fantome-ws",
+        "containers": ["fantome-ws-api-1", "fantome-ws-db-1"],
+        "running": 1,
+    }]
+
+
+async def test_atelier_list_orphans_docker_down_never_500(
+        client, admin_token, tmp_path, monkeypatch):
+    """Docker injoignable → orphans=[] + 200 (P0, parité containers_state)."""
+    _use_apps_dir(monkeypatch, tmp_path)
+    _fake_docker(monkeypatch, raise_error=True)
+    _write_ws_marker(tmp_path / "monapp")
+    r = await client.get("/api/admin/atelier",
+                         headers=get_auth_header(admin_token))
+    assert r.status_code == 200
+    assert r.json()["orphans"] == []
+
+
+# ── POST /reconcile — purge des fiches fantômes ──
+
+RECONCILE_PATH = "/api/admin/atelier/reconcile"
+
+
+async def test_reconcile_requires_auth(client):
+    r = await client.post(RECONCILE_PATH)
+    assert r.status_code == 401
+
+
+async def test_reconcile_admin_only(client, user_token):
+    r = await client.post(RECONCILE_PATH, headers=get_auth_header(user_token))
+    assert r.status_code == 403
+
+
+async def test_reconcile_purge_ghost(client, admin_token, admin_user,
+                                     tmp_path, monkeypatch, async_session):
+    """Ghost sans marqueur → purgé, fiche disparue, action auditée."""
+    _use_apps_dir(monkeypatch, tmp_path)
+    await _mk_ws_row(async_session, "fantome-ws")
+    r = await client.post(RECONCILE_PATH, json={},
+                          headers=get_auth_header(admin_token))
+    assert r.status_code == 200
+    assert r.json() == {"purged": ["fantome-ws"], "skipped": [], "errors": []}
+    assert await _ws_row_exists(async_session, "fantome-ws") is False
+    rows = (await async_session.execute(
+        select(AuditLog).where(AuditLog.action == "ATELIER_RECONCILE")
+    )).scalars().all()
+    assert len(rows) == 1
+    assert rows[0].user_id == admin_user.id
+
+
+async def test_reconcile_purge_tous_les_ghosts_par_defaut(
+        client, admin_token, tmp_path, monkeypatch, async_session):
+    """Body absent/vide ⇒ cible = tous les ghosts (jamais les ateliers vivants)."""
+    _use_apps_dir(monkeypatch, tmp_path)
+    _write_ws_marker(tmp_path / "vivante", ws_slug="vivante-ws")
+    await _mk_ws_row(async_session, "vivante-ws")
+    await _mk_ws_row(async_session, "a-ws")
+    await _mk_ws_row(async_session, "b-ws")
+    r = await client.post(RECONCILE_PATH, headers=get_auth_header(admin_token))
+    assert r.status_code == 200
+    assert r.json()["purged"] == ["a-ws", "b-ws"]
+    assert await _ws_row_exists(async_session, "vivante-ws") is True
+
+
+async def test_reconcile_skip_si_marqueur_present(client, admin_token,
+                                                  tmp_path, monkeypatch,
+                                                  async_session):
+    """Atelier vivant (marqueur disque) → JAMAIS purgé, même ciblé nommément."""
+    _use_apps_dir(monkeypatch, tmp_path)
+    _write_ws_marker(tmp_path / "vivante", ws_slug="vivante-ws")
+    await _mk_ws_row(async_session, "vivante-ws")
+    r = await client.post(RECONCILE_PATH,
+                          json={"slugs": ["vivante-ws"]},
+                          headers=get_auth_header(admin_token))
+    assert r.status_code == 200
+    data = r.json()
+    assert data["purged"] == []
+    assert data["skipped"] == [{"slug": "vivante-ws",
+                                "reason": "marqueur .workshop.env présent"}]
+    assert data["errors"] == []
+    assert await _ws_row_exists(async_session, "vivante-ws") is True
+
+
+async def test_reconcile_slugs_explicites_garde_is_workshop(
+        client, admin_token, tmp_path, monkeypatch, async_session):
+    """Slug ciblé sans fiche is_workshop=True (prod, inconnu) → skipped :
+    le garde-fou protège les fiches prod, rien n'est supprimé."""
+    _use_apps_dir(monkeypatch, tmp_path)
+    await _mk_ws_row(async_session, "prod-classique", is_workshop=False)
+    r = await client.post(RECONCILE_PATH,
+                          json={"slugs": ["prod-classique", "inconnu-ws"]},
+                          headers=get_auth_header(admin_token))
+    assert r.status_code == 200
+    data = r.json()
+    assert data["purged"] == []
+    assert [s["slug"] for s in data["skipped"]] == [
+        "prod-classique", "inconnu-ws"]
+    assert await _ws_row_exists(async_session, "prod-classique") is True
+
+
+async def test_reconcile_purge_echec_pas_de_500(client, admin_token,
+                                                tmp_path, monkeypatch,
+                                                async_session):
+    """Purge en échec → errors[], réponse 200 (pattern best-effort close-all)."""
+    _use_apps_dir(monkeypatch, tmp_path)
+    await _mk_ws_row(async_session, "fantome-ws")
+
+    async def _boom(ws_slug):
+        raise RuntimeError("db down")
+
+    monkeypatch.setattr("app.workshop_service._delete_workshop_app_row", _boom)
+    r = await client.post(RECONCILE_PATH, headers=get_auth_header(admin_token))
+    assert r.status_code == 200
+    data = r.json()
+    assert data["purged"] == []
+    assert data["errors"] == [{"slug": "fantome-ws", "error": "db down"}]
+    assert await _ws_row_exists(async_session, "fantome-ws") is True
 
 
 # ── POST /close-all — proxy vers hubctl atelier serve (127.0.0.1:8777) ──

@@ -748,6 +748,88 @@ async def test_op_remove_fiche_delete_echec_non_bloquant(tmp_path, monkeypatch, 
     assert not (app / ".workshop.env").exists()
 
 
+# ── unlink .workshop.env en échec (fs read-only) : purge DB quand même ──
+
+from pathlib import Path
+
+
+def _patch_unlink_rofs(monkeypatch):
+    """Simule un fs read-only (EROFS Errno 30) sur l'unlink du marqueur
+    .workshop.env — les autres unlink passent normalement."""
+    real_unlink = Path.unlink
+    calls = {"n": 0}
+
+    def _rofs_unlink(self, missing_ok=False):
+        if self.name == ".workshop.env":
+            calls["n"] += 1
+            raise OSError(30, "Read-only file system")
+        return real_unlink(self, missing_ok=missing_ok)
+
+    monkeypatch.setattr(Path, "unlink", _rofs_unlink)
+    return calls
+
+
+async def test_op_remove_unlink_rofs_succes_et_purge_db(tmp_path, monkeypatch,
+                                                        async_session):
+    """EROFS sur l'unlink : l'opération reste un succès ET la purge DB est
+    exécutée — sinon la fiche {slug}-ws devient un fantôme (root cause
+    incident : marqueur absent + ligne orpheline, compteurs UI incohérents)."""
+    app = _mk_app(tmp_path, monkeypatch, with_ws=True)
+    await _mk_ws_app_row(async_session)
+    op = await _mk_op(async_session, op="remove")
+    calls = _install_exec(monkeypatch, [(0, b"") for _ in range(4)])
+    unlink_calls = _patch_unlink_rofs(monkeypatch)
+
+    await ws._run_workshop_operation(op.id, "wstest", "remove")
+    done = await async_session.get(WorkshopOperation, op.id)
+    assert done.status == "success"        # PAS failed
+    assert unlink_calls["n"] == 1          # l'unlink a bien été tenté
+    flat = [" ".join(c["cmd"]) for c in calls]
+    assert any("down" in f and "-v" in f for f in flat)
+    assert (app / ".workshop.env").exists()  # marqueur bloqué par le fs RO
+    # …mais la fiche Hub est purgée + warning journalisé dans les steps
+    assert await _ws_row_exists(async_session) is False
+    assert "read-only" in (done.logs or "").lower()
+
+
+async def test_op_ship_unlink_rofs_succes_et_purge_db(tmp_path, monkeypatch,
+                                                      async_session):
+    """Même contrat pour le ship : EROFS sur l'unlink post-déploiement ne doit
+    ni fail l'opération (prod déployée !), ni laisser la fiche {slug}-ws en DB."""
+    _mk_app(tmp_path, monkeypatch, with_ws=True)
+    await _mk_ws_app_row(async_session)
+    op = await _mk_op(async_session, op="ship")
+    monkeypatch.setattr(ws, "_git_state",
+                        lambda d: asyncio.sleep(0, result={"ok": True, "branch": "main", "head": "prev123"}))
+    monkeypatch.setattr(ws, "_worktree_clean", lambda d: asyncio.sleep(0, result=True))
+    _no_github_token(monkeypatch)
+
+    async def _healthy(port, timeout=60):
+        return True
+
+    monkeypatch.setattr(ws, "_wait_healthy", _healthy)
+    calls = []
+
+    def _exec(cmd, **kw):
+        calls.append({"cmd": cmd})
+        if "origin/main" in " ".join(cmd):
+            return _FakeProc(0, b"prev123\n")  # == WS_COMMIT
+        return _FakeProc(0, b"")
+
+    async def _fake_exec(*cmd, cwd=None, env=None, stdout=None, stderr=None):
+        return _exec(cmd)
+
+    monkeypatch.setattr(ds.asyncio, "create_subprocess_exec", _fake_exec)
+    unlink_calls = _patch_unlink_rofs(monkeypatch)
+
+    await ws._run_workshop_operation(op.id, "wstest", "ship")
+    done = await async_session.get(WorkshopOperation, op.id)
+    assert done.status == "success"
+    assert unlink_calls["n"] == 1
+    assert await _ws_row_exists(async_session) is False
+    assert "read-only" in (done.logs or "").lower()
+
+
 # ── git-config : remote local + auth PAT + test connexion ──
 
 import subprocess as _sp
