@@ -6,8 +6,10 @@
 Parité avec hubctl v0.6.1 (hubctl_src/hubctl_cli/actions.py). Le fichier
 APPS/X/.workshop.env (7 clés, cf. WS_ENV_KEYS) est le CONTRAT de dualité
 entre hubctl (CLI hôte) et hub-api (UI) : lecture/écriture avec les mêmes
-sémantiques. Pattern d'exécution : deploy_service.py (task asyncio,
-lock global, logs en DB).
+sémantiques. Complément : APPS/X/.workshop.overrides.env (optionnel,
+committé par l'app) surcharge l'env compose de l'atelier — sous les clés
+du contrat, cf. _ws_override_env. Pattern d'exécution : deploy_service.py
+(task asyncio, lock global, logs en DB).
 """
 from __future__ import annotations
 
@@ -57,6 +59,11 @@ WS_ENV_KEYS = [
     "APP_SLUG", "API_PORT", "FRONTEND_PORT", "FRONTEND_HTTPS_PORT",
     "WS_REF", "WS_COMMIT", "APP_SUBNET",
 ]
+
+# Clés possédées par l'allocateur atelier (contrat .workshop.env + overlay
+# HTTPS) : présentes dans .workshop.overrides.env, elles sont ignorées avec
+# un warning — les overrides ne peuvent pas détourner ports/subnet/ref.
+WS_OVERRIDE_RESERVED = set(WS_ENV_KEYS) | {"HTTPS_ENABLED"}
 
 # Plages/pool identiques hubctl (workshop zone actions.py)
 WS_API_PORT_RANGE = (10000, 10499)
@@ -114,6 +121,49 @@ def _app_dir(slug: str) -> Path:
 
 def _ws_env_path(slug: str) -> Path:
     return _app_dir(slug) / ".workshop.env"
+
+
+def _ws_overrides_path(slug: str) -> Path:
+    """Fichier d'overrides optionnel, même répertoire que le contrat."""
+    return _app_dir(slug) / ".workshop.overrides.env"
+
+
+def _ws_override_env(slug: str) -> dict[str, str]:
+    """Env d'overrides compose de l'atelier (APPS/<slug>/.workshop.overrides.env).
+
+    Motivation : les apps qui bindent des ports host métier via des vars de
+    leur .env prod (ex. exemple-app : "${PHILIA_NG_PORT:-42690}:8080")
+    retombaient sur le port prod dans l'atelier → conflit de bind → restart
+    loop. Compose lit lui-même le .env prod du working tree (partagé avec la
+    prod) : l'OS doit pouvoir lui imposer les valeurs atelier, sans toucher
+    au tree ni au contrat .workshop.env.
+
+    Sémantique :
+    - fichier absent → {} (no-op strict, comportement identique à avant) ;
+    - parsing tolérant via _read_env_file (pas d'échec dur sur lignes
+      bizarres) ;
+    - clés réservées (WS_OVERRIDE_RESERVED : clés du contrat + HTTPS_ENABLED)
+      ignorées avec un warning — possédées par l'allocateur ;
+    - fichier illisible (OSError, dont PermissionError) → warning + ignore :
+      jamais de crash d'opération atelier pour ça.
+
+    Précédence d'appel (du plus faible au plus fort) : _compose_base_env()
+    < _ws_override_env() < clés du contrat .workshop.env (cf.
+    _ws_compose_env)."""
+    path = _ws_overrides_path(slug)
+    if not path.exists():
+        return {}
+    try:
+        overrides = _read_env_file(path)
+    except OSError as e:
+        logger.warning(f".workshop.overrides.env illisible ({e}) — ignoré, "
+                       f"opération atelier poursuivie sans overrides ({slug})")
+        return {}
+    reserved = {k: v for k, v in overrides.items() if k in WS_OVERRIDE_RESERVED}
+    for key in reserved:
+        logger.warning(f"clé réservée {key} ignorée dans .workshop.overrides.env"
+                       f" — possédée par l'allocateur ({slug})")
+    return {k: v for k, v in overrides.items() if k not in reserved}
 
 
 def _write_ws_env_full(path: Path, config: dict[str, str]) -> None:
@@ -326,11 +376,15 @@ from app.compose_env import (  # noqa: E402
 
 
 def _ws_compose_env(slug: str) -> dict[str, str]:
-    """Allowlist + .workshop.env + APP_VERSION du tree (parité hubctl).
+    """Allowlist + overrides + .workshop.env + APP_VERSION du tree (parité hubctl).
 
     L'environnement du hub-api n'est volontairement PAS transmis (cf.
-    _COMPOSE_ENV_ALLOWLIST)."""
+    _COMPOSE_ENV_ALLOWLIST). Précédence (du plus faible au plus fort) :
+    allowlist docker < .workshop.overrides.env (bat le .env prod que Compose
+    lit lui-même depuis le working tree) < clés du contrat .workshop.env
+    (possédées par l'allocateur, gagnent TOUJOURS)."""
     env = _compose_base_env()
+    env.update(_ws_override_env(slug))
     env.update(_read_env_file(_ws_env_path(slug)))
     version_file = _app_dir(slug) / "VERSION"
     if version_file.exists():
