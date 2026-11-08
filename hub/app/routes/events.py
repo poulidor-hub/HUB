@@ -353,19 +353,24 @@ async def _emit_heartbeat(user_id: int, app_slug: Optional[str] = None) -> None:
 
 async def event_generator(request: Request, queue: asyncio.Queue, user_id: Optional[int] = None, app_slug: Optional[str] = None):
     """Générateur d'événements SSE pour un client."""
+    started_at = utcnow()
+    exit_cause = "client_disconnect"
     try:
         yield f"data: {json.dumps({'type': 'connected'})}\n\n"
         last_beat = utcnow()
 
         while True:
             if _shutdown_event.is_set():
+                exit_cause = "server_shutdown"
                 break
             if await request.is_disconnected():
+                exit_cause = "client_disconnect"
                 break
 
             try:
                 event = await asyncio.wait_for(queue.get(), timeout=HEARTBEAT_INTERVAL_S)
                 if event.get("type") == "shutdown":
+                    exit_cause = "event_shutdown"
                     break
                 yield f"data: {json.dumps(event)}\n\n"
             except asyncio.TimeoutError:
@@ -377,8 +382,16 @@ async def event_generator(request: Request, queue: asyncio.Queue, user_id: Optio
                 last_beat = utcnow()
                 await _emit_heartbeat(user_id, app_slug)
     except asyncio.CancelledError:
-        pass
+        exit_cause = "cancelled"
+    except Exception:
+        exit_cause = "error"
+        logger.exception(f"💥 SSE erreur générateur: user_id={user_id} app={app_slug}")
     finally:
+        duration_s = (utcnow() - started_at).total_seconds()
+        logger.info(
+            f"📴 SSE fermé cause={exit_cause} durée={duration_s:.0f}s "
+            f"user_id={user_id} app={app_slug}"
+        )
         # Cleanup quand le client se déconnecte
         _connected_clients.discard(queue)
         
@@ -438,6 +451,7 @@ async def event_stream(request: Request):
     user_id = None
     auth_header = request.headers.get("authorization", "")
     authenticated = False
+    auth_mode = None
 
     if auth_header:
         try:
@@ -455,6 +469,8 @@ async def event_stream(request: Request):
                             if user and user.is_active:
                                 user_id = user.id
                     authenticated = user_id is not None
+                    if authenticated:
+                        auth_mode = "bearer"
         except Exception as e:
             logger.warning(f"SSE: token Bearer invalide: {e}")
 
@@ -475,6 +491,8 @@ async def event_stream(request: Request):
                             if user and user.is_active:
                                 user_id = user.id
                     authenticated = user_id is not None
+                    if authenticated:
+                        auth_mode = "query_token"
             except Exception as e:
                 logger.warning(f"SSE: token URL invalide: {e}")
 
@@ -488,6 +506,7 @@ async def event_stream(request: Request):
                 if verify_beacon_token(uid, beacon_token):
                     user_id = uid
                     authenticated = True
+                    auth_mode = "beacon"
                 else:
                     logger.warning(f"SSE: beacon_token invalide pour user_id={user_id_param}")
             except (ValueError, Exception):
@@ -527,6 +546,17 @@ async def event_stream(request: Request):
             register_app_connection(user_id, app_slug, queue)
 
     start_cleanup_task()
+
+    # Instrumentation : contexte de connexion (identifie le client, sa source et
+    # son mode d'auth) — clé du diagnostic du churn de reconnexion SSE.
+    client_ip = (
+        request.headers.get("x-forwarded-for", "").split(",")[0].strip()
+        or (request.client.host if request.client else "inconnu")
+    )
+    logger.info(
+        f"🔌 SSE connecté: user_id={user_id} app={app_slug} auth={auth_mode} "
+        f"ip={client_ip} clients_actifs={len(_connected_clients)}"
+    )
 
     return StreamingResponse(
         event_generator(request, queue, user_id, app_slug=app_slug),
