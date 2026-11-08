@@ -10,6 +10,7 @@ import asyncio
 import json
 import hmac
 import hashlib
+from collections import deque
 import time
 from typing import Set, Optional, Dict
 from datetime import datetime, timezone
@@ -148,6 +149,7 @@ async def broadcast_stats_update():
         async with async_session_maker() as db:
             stats = await compute_dashboard_stats(db)
             stats["connected_sse_clients"] = len(_connected_clients)
+            stats["sse_auth_failures_1h"] = sse_auth_failures_last_hour()
             await broadcast_event("stats_updated", stats)
     except Exception as e:
         logger.warning(f"⚠️ Erreur calcul stats SSE: {e}")
@@ -309,6 +311,26 @@ DISCONNECT_GRACE_S = 300
 # Fenêtre au connect : en dessous, la (re)connexion ne touche pas la DB
 # (la session ouverte est réutilisée, sa présence est à jour en mémoire).
 RECONNECT_REUSE_WINDOW_S = 65
+
+
+# --- Visibilité 401 SSE (fin du trou noir) ----------------------------------
+# Les 401 SSE sont exclus d'uvicorn.access et d'error_logs (bruit legacy).
+# Ce compteur mémoire les rend visibles : exposé dans les stats diffusées
+# et consommé par l'alerte sur seuils (alert_checker).
+_sse_auth_failures: "deque[float]" = deque()
+
+
+def record_sse_auth_failure() -> None:
+    """Enregistre un échec d'auth SSE (appelé par le filtre de log main.py)."""
+    _sse_auth_failures.append(time.time())
+
+
+def sse_auth_failures_last_hour() -> int:
+    """Nombre d'échecs d'auth SSE sur la dernière heure glissante."""
+    cutoff = time.time() - 3600
+    while _sse_auth_failures and _sse_auth_failures[0] < cutoff:
+        _sse_auth_failures.popleft()
+    return len(_sse_auth_failures)
 
 
 def _needs_db_session_touch(user_id: int, app_slug: Optional[str] = None) -> bool:

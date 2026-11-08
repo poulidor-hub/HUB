@@ -62,6 +62,13 @@ class _SuppressLegacySSE401Filter(logging.Filter):
             and method == "GET"
             and str(path).split("?", 1)[0] == "/api/events/stream"
         ):
+            # Visibilité : le 401 est masqué des logs mais compté
+            # (exposé dans les stats SSE + alerte sur seuils).
+            try:
+                from app.routes.events import record_sse_auth_failure
+                record_sse_auth_failure()
+            except Exception:
+                pass
             return False
         return True
 
