@@ -243,6 +243,11 @@ services:
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --timeout-graceful-shutdown 5
     mem_limit: 2g
     memswap_limit: 2g
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"
     # NB : plus de GID docker hôte monté sur ce service — l'accès Docker passe
     # par le proxy filtré (tcp://docker-socket-proxy:2375), plus aucun socket monté.
     security_opt:
@@ -296,6 +301,11 @@ services:
       - hub-network
     mem_limit: 256m
     memswap_limit: 256m
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"
     security_opt:
       - no-new-privileges:true
     cap_drop:

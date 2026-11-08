@@ -66,7 +66,30 @@ class _SuppressLegacySSE401Filter(logging.Filter):
         return True
 
 
+class _ScrubSecretsFilter(logging.Filter):
+    """Masque les secrets en query string (`token=`, `beacon_token=`) des
+    access logs uvicorn.
+
+    Audit 08/11/2026 : chaque reconnexion SSE en mode query_token loggeait
+    un JWT admin complet (~2,5 Ko, valide 8 h) dans les access logs —
+    exposition de credentials + gonflement du log. La ligne reste loggée,
+    seule la valeur sensible est remplacée par ***.
+    """
+
+    _SECRET_QUERY_RE = re.compile(r"([?&](?:beacon_)?token=)[^&\s]+")
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if record.args:
+            scrubbed = tuple(
+                self._SECRET_QUERY_RE.sub(r"\1***", arg) if isinstance(arg, str) else arg
+                for arg in record.args
+            )
+            record.args = scrubbed
+        return True
+
+
 logging.getLogger("uvicorn.access").addFilter(_SuppressLegacySSE401Filter())
+logging.getLogger("uvicorn.access").addFilter(_ScrubSecretsFilter())
 
 settings = get_settings()
 
