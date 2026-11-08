@@ -155,7 +155,10 @@ def _ws_override_env(slug: str) -> dict[str, str]:
         return {}
     try:
         overrides = _read_env_file(path)
-    except OSError as e:
+    except (OSError, UnicodeDecodeError) as e:
+        # OSError couvre PermissionError ; UnicodeDecodeError : fichier non
+        # UTF-8 (encodage exotique) — même contrat : warning + ignore, jamais
+        # de crash d'opération atelier pour un fichier d'override.
         logger.warning(f".workshop.overrides.env illisible ({e}) — ignoré, "
                        f"opération atelier poursuivie sans overrides ({slug})")
         return {}

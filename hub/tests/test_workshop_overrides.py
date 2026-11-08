@@ -180,6 +180,18 @@ def test_overrides_unreadable_warning_and_noop(tmp_path, monkeypatch, caplog):
         os.chmod(app / ".workshop.overrides.env", 0o644)  # cleanup tmp_path
 
 
+def test_overrides_non_utf8_warning_and_noop(tmp_path, monkeypatch, caplog):
+    """Fichier non-UTF-8 (encodage exotique, ex. UTF-16) : UnicodeDecodeError,
+    même contrat que PermissionError — warning + {}, jamais de crash."""
+    app = _mk_app(tmp_path, monkeypatch, with_ws=True)
+    (app / ".workshop.overrides.env").write_bytes(
+        b"\xff\xfeP\x00H\x00I\x00L\x00I\x00A\x00"  # BOM UTF-16 + texte UTF-16
+        b"\x00=\x005\x002\x009\x000\x00")
+    with caplog.at_level(logging.WARNING, logger="hub.workshop"):
+        assert ws._ws_override_env("wstest") == {}
+    assert any("illisible" in m for m in _warning_msgs(caplog))
+
+
 @pytest.mark.asyncio
 async def test_op_create_unreadable_overrides_continue(tmp_path, monkeypatch,
                                                        async_session, caplog):
