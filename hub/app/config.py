@@ -244,6 +244,7 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+asyncpg://hubadmin:CHANGEZ_MOI_DB_PASSWORD@db:5432/hub_auth"
     jwt_algorithm: str = "RS256"
     access_token_expire_minutes: int = 480  # TTL access token (aligné cookie OIDC 8h ; déploiement local LAN — doit matcher docker-compose/.env)
+    m2m_access_token_expire_minutes: int = 60  # TTL court des tokens M2M (client_credentials) — audit 08/11/2026 : 8 h pour un secret machine était trop large
     refresh_token_expire_days: int = 7  # 7 jours pour le refresh token
     refresh_token_grace_seconds: int = 60  # Fenêtre de re-délivrance d'un refresh token récemment rotaté (course inter-onglets)
     session_timeout_minutes: int = 20  # Seuil pour considérer une session comme terminée (sans logout explicite)
