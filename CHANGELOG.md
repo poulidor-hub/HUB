@@ -5,6 +5,24 @@
 
 ---
 
+## [3.83.2] - 8 novembre 2026
+
+### ⚡ Post-audit SSE : logs, visibilité, alertes admin, hygiène DB, durcissement M2M
+
+Suite de l'audit 08/11/2026 (anti-churn 3.83.1) — 5 correctifs sur les risques logging/auth/alerting identifiés :
+
+| Élément | Détail |
+|---------|--------|
+| **Scrub logs** | `_ScrubSecretsFilter` : valeurs `token=`/`beacon_token=` masquées (`***`) dans les access logs uvicorn — un JWT admin valide 8 h était loggé en clair à chaque reconnexion query_token. Rotation json-file 50 Mo × 3 sur hub-api et hub-frontend (croissance illimitée auparavant) |
+| **Visibilité 401** | Compteur mémoire des 401 SSE (exclus logs + error_logs pour cause de bruit legacy) exposé dans les stats (`sse_auth_failures_1h`) — un storm d'échecs d'auth n'est plus invisible |
+| **Durcissement M2M** | Rate limit sur `client_credentials` (5/60 s/IP — seule branche sans limite, endpoint exposé 80/443/8000) + TTL court `m2m_access_token_expire_minutes` (60 min, était 8 h) |
+| **Hygiène DB** | Purge `user_sessions` (rétention `session_retention_days`=180 j, seule table sans rétention : 37,6 k lignes) branchée sur la purge 24 h + index `login_at` (migration **063**) |
+| **Alertes admin** | Vérificateur périodique (`ALERT_CHECK_INTERVAL_S`=60 s) : pic d'erreurs (>30/10 min), échecs 401/403 API (>20/10 min), storm 401 SSE (>100/h), deadlocks DB (>10/h), capacité SSE (>500 clients), app offline (>5 min) → `UserMessage` persistée aux admins actifs + SSE temps réel, cooldown 30 min par clé. Tout configurable via Settings `alert_*`, désactivable (`ALERT_CHECK_INTERVAL_S=0`) |
+| **Tests** | 33 nouveaux tests (scrub 5, visibilité 4, M2M 2, purge 4, alertes 11 + scope SSE) — suite hôte 1580 vert, échecs préexistants inchangés (`test_app_deploy`×2, `test_vpn_dns`) |
+| **Déployé et vérifié en prod dev** | boot : purge sessions 180 j + alertes 60 s activées, migration 063 appliquée, index créé, 0 traceback |
+
+---
+
 ## [3.83.1] - 8 novembre 2026
 
 ### ⚡ SSE : présence en mémoire anti-churn + instrumentation du flux
