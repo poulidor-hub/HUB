@@ -351,6 +351,15 @@ class Settings(BaseSettings):
     # Rétention des sessions utilisateur (en jours) - 0 = pas de purge
     # Audit 08/11/2026 : user_sessions n'avait aucune rétention (37,6 k lignes).
     session_retention_days: int = 180
+    # --- Alertes admin sur seuils (audit 08/11/2026) ---
+    alert_check_interval_s: int = 60      # 0 = désactivé
+    alert_error_rate_10m: int = 30        # erreurs error_logs en 10 min
+    alert_auth_failures_10m: int = 20     # échecs 401/403 API en 10 min
+    alert_sse_auth_failures_1h: int = 100 # échecs auth SSE en 1 h
+    alert_sse_clients_max: int = 500      # capacité SSE
+    alert_app_offline_min: int = 5        # app offline persistante (minutes)
+    alert_db_write_errors_1h: int = 10    # deadlocks / erreurs d'écriture en 1 h
+    alert_cooldown_min: int = 30          # anti-spam par clé d'alerte
     
     # Intervalle de purge des logs (en heures)
     log_purge_interval_hours: int = 24

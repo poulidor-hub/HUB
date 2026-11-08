@@ -438,6 +438,10 @@ async def lifespan(app: FastAPI):
     # Démarrer la tâche de purge des logs
     _log_purge_task = asyncio.create_task(periodic_log_purge())
 
+    # Démarrer les alertes admin sur seuils (audit 08/11/2026)
+    from app.alert_checker import start_alert_checker_task
+    start_alert_checker_task()
+
     # Démarrer le moniteur de vivacité du token GitHub (alerte admins si invalide)
     from app.github_token_monitor import periodic_github_token_check
     _github_token_check_task = asyncio.create_task(periodic_github_token_check())

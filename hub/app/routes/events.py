@@ -333,6 +333,21 @@ def sse_auth_failures_last_hour() -> int:
     return len(_sse_auth_failures)
 
 
+# Erreurs d'écriture DB (deadlocks...) sur les chemins SSE — input d'alerte
+_db_write_errors_1h: "deque[float]" = deque()
+
+
+def record_db_write_error() -> None:
+    _db_write_errors_1h.append(time.time())
+
+
+def db_write_errors_last_hour() -> int:
+    cutoff = time.time() - 3600
+    while _db_write_errors_1h and _db_write_errors_1h[0] < cutoff:
+        _db_write_errors_1h.popleft()
+    return len(_db_write_errors_1h)
+
+
 def _needs_db_session_touch(user_id: int, app_slug: Optional[str] = None) -> bool:
     """Vrai si cette (re)connexion doit garantir la session en DB :
     - première connexion, ou retour après une vraie absence (> fenêtre churn) ;
@@ -381,6 +396,7 @@ async def handle_app_disconnect(user_id: int, app_slug: str):
                 if closed > 0:
                     notify_active_users_changed()
     except Exception as e:
+        record_db_write_error()
         logger.warning(f"⚠️ Fermeture segment app {app_slug} user {user_id}: {e}")
 
 
@@ -410,6 +426,7 @@ async def handle_user_disconnect(user_id: int):
                 _last_app_slug.pop(user_id, None)
                 await broadcast_stats_update()
     except Exception as e:
+        record_db_write_error()
         logger.warning(f"⚠️ Erreur fermeture session SSE: {e}")
 
 
