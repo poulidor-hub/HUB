@@ -347,6 +347,10 @@ class Settings(BaseSettings):
     message_retention_days: int = 90
 
     workshop_retention_days: int = 30  # purge de l'historique workshop_operations
+
+    # Rétention des sessions utilisateur (en jours) - 0 = pas de purge
+    # Audit 08/11/2026 : user_sessions n'avait aucune rétention (37,6 k lignes).
+    session_retention_days: int = 180
     
     # Intervalle de purge des logs (en heures)
     log_purge_interval_hours: int = 24

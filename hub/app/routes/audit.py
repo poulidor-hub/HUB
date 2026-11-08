@@ -224,6 +224,25 @@ async def purge_old_logs(
     }
 
 
+async def purge_old_sessions(db: AsyncSession, retention_days: int) -> int:
+    """Purge les user_sessions plus vieilles que retention_days (login_at).
+
+    Audit 08/11/2026 : seule table sans rétention (37,6 k lignes de churn,
+    sans index sur login_at — index ajouté par la migration 063).
+    0 = pas de purge (cohérent avec purge_old_logs).
+    """
+    from sqlalchemy import delete
+
+    if retention_days <= 0:
+        return 0
+    cutoff = utcnow() - timedelta(days=retention_days)
+    result = await db.execute(
+        delete(UserSession).where(UserSession.login_at < cutoff)
+    )
+    await db.commit()
+    return result.rowcount
+
+
 # =============================================================================
 # GESTION DES SESSIONS
 # =============================================================================

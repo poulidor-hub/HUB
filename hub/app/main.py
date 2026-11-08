@@ -204,12 +204,13 @@ async def periodic_log_purge():
     audit_days = settings.audit_retention_days
     error_days = settings.error_retention_days
     message_days = settings.message_retention_days
+    session_days = settings.session_retention_days
     
-    if audit_days <= 0 and error_days <= 0 and message_days <= 0:
+    if audit_days <= 0 and error_days <= 0 and message_days <= 0 and session_days <= 0:
         logger.info("🗑️ Purge des logs désactivée (rétention = 0)")
         return
     
-    logger.info(f"🗑️ Purge des logs activée (audit: {audit_days}j, errors: {error_days}j, messages: {message_days}j, intervalle: {interval_hours}h)")
+    logger.info(f"🗑️ Purge des logs activée (audit: {audit_days}j, errors: {error_days}j, messages: {message_days}j, sessions: {session_days}j, intervalle: {interval_hours}h)")
     
     # Attendre un peu avant la première purge
     await asyncio.sleep(60)
@@ -225,6 +226,16 @@ async def periodic_log_purge():
                 msg_deleted = await purge_old_messages(db, message_days)
                 if msg_deleted > 0:
                     logger.info(f"🗑️ Purge messages: {msg_deleted} message(s) supprimé(s)")
+
+                # Purge des sessions utilisateur (aucune rétention avant l'audit
+                # 08/11/2026 : 37,6 k lignes de churn accumulées)
+                try:
+                    from app.routes.audit import purge_old_sessions
+                    sessions_deleted = await purge_old_sessions(db, session_days)
+                    if sessions_deleted > 0:
+                        logger.info(f"🗑️ Purge sessions: {sessions_deleted} session(s) supprimée(s)")
+                except Exception:
+                    logger.exception("purge user_sessions échouée")
 
                 # Purge de l'historique des opérations atelier
                 try:
