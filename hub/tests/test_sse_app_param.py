@@ -18,6 +18,13 @@ async def test_stream_with_app_opens_segment(async_engine, async_session, test_u
     # Session ouverte + beacon valide
     from tests.test_usage_segments import _make_session
     await _make_session(async_session, test_user)
+
+    # Mémoire de présence à zéro : on simule une première arrivée de l'user
+    # (l'état module-level sinon dépend de l'ordre d'exécution des tests)
+    from app.routes import events as sse_events
+    sse_events._last_seen.pop(test_user.id, None)
+    sse_events._last_app_slug.pop(test_user.id, None)
+
     beacon = generate_beacon_token(test_user.id)
 
     path = f"/api/events/stream?user_id={test_user.id}&beacon_token={beacon}&app=test-app"

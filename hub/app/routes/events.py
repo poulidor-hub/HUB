@@ -182,12 +182,17 @@ async def periodic_session_cleanup():
             await asyncio.sleep(120)  # 2 minutes
             
             async with async_session_maker() as db:
+                # Flush batché de la présence mémoire (1 tx pour tous les users)
+                flushed = await _flush_presence_to_db(db)
                 cleaned = await cleanup_stale_sessions(db)
+                await db.commit()
                 if cleaned > 0:
                     logger.info(f"🧹 Cleanup périodique: {cleaned} session(s) expirée(s) fermée(s)")
                     # Mettre à jour les stats après cleanup
                     await broadcast_stats_update()
                     notify_active_users_changed()
+                elif flushed > 0:
+                    logger.debug(f"💾 Flush présence SSE: {flushed} utilisateur(s)")
         except asyncio.CancelledError:
             break
         except Exception as e:
@@ -285,13 +290,57 @@ def unregister_app_connection(user_id: int, app_slug: str, queue: asyncio.Queue)
             _app_connections.pop((user_id, app_slug), None)
 
 
+# --- Présence en mémoire (anti-churn) --------------------------------------
+# Audit SSE du 08/11/2026 : le navigateur recrée ses flux SSE toutes les
+# ~60 s (churn mesuré : 1583 fermetures/24h pour 1 utilisateur). Chaque
+# cycle coûtait INSERT session + UPDATE fermeture + heartbeat DB, avec
+# deadlocks sweeper×fermeture en prime. Désormais : heartbeat en mémoire,
+# grâce de déconnexion > délai de reconnexion client, flush DB unique par
+# le sweeper.
+_last_seen: Dict[int, float] = {}
+_last_app_slug: Dict[int, str] = {}
+# Grâce > délais de reconnexion observés (5 s sse.js, 10 s AuthContext
+# exemple-app) : le reconnect annule le end_session/close_segment planifié.
+DISCONNECT_GRACE_S = 65
+# Fenêtre au connect : en dessous, la (re)connexion ne touche pas la DB
+# (la session ouverte est réutilisée, sa présence est à jour en mémoire).
+RECONNECT_REUSE_WINDOW_S = 65
+
+
+def _needs_db_session_touch(user_id: int, app_slug: Optional[str] = None) -> bool:
+    """Vrai si cette (re)connexion doit garantir la session en DB :
+    - première connexion, ou retour après une vraie absence (> fenêtre churn) ;
+    - changement d'app courante (le segment d'usage doit suivre en DB).
+    Un churn de reconnexion sur la même app ne coûte aucune écriture."""
+    last = _last_seen.get(user_id)
+    if last is None or (time.time() - last) > RECONNECT_REUSE_WINDOW_S:
+        return True
+    return app_slug is not None and _last_app_slug.get(user_id) != app_slug
+
+
+async def _flush_presence_to_db(db: AsyncSession) -> int:
+    """Flush batché de la présence mémoire vers la DB (une seule transaction
+    pour tous les utilisateurs connectés — appelé par le sweeper 120 s)."""
+    from app.routes.audit import ensure_session_presence
+
+    flushed = 0
+    for user_id, _ts in list(_last_seen.items()):
+        if not _user_connections.get(user_id):
+            continue  # parti : entrée obsolète, le sweeper fermera la session
+        app_slug = _last_app_slug.get(user_id)
+        await ensure_session_presence(db, user_id, app_slug=app_slug or None)
+        flushed += 1
+    await db.commit()
+    return flushed
+
+
 async def handle_app_disconnect(user_id: int, app_slug: str):
     """Ferme le segment d'usage de l'app quand sa dernière connexion SSE part."""
     from app.database import async_session_maker
     from app.routes.audit import get_active_session_for_user
     from app.usage_tracking import close_app_segment
 
-    await asyncio.sleep(5)  # tolère une reconnexion rapide
+    await asyncio.sleep(DISCONNECT_GRACE_S)  # tolère un churn de reconnexion
     if _app_connections.get((user_id, app_slug)):
         return
 
@@ -317,8 +366,9 @@ async def handle_user_disconnect(user_id: int):
     from app.database import async_session_maker
     from app.routes.audit import end_session
     
-    # Attendre un court délai pour permettre une reconnexion rapide
-    await asyncio.sleep(5)
+    # Attendre la grâce : un churn de reconnexion (< DISCONNECT_GRACE_S)
+    # annule la fermeture — la session ouverte est réutilisée au reconnect.
+    await asyncio.sleep(DISCONNECT_GRACE_S)
     
     # Vérifier si l'utilisateur a encore des connexions actives
     if user_id in _user_connections and _user_connections[user_id]:
@@ -330,6 +380,8 @@ async def handle_user_disconnect(user_id: int):
             if session:
                 logger.info(f"📴 Session fermée (déconnexion SSE): user_id={user_id}")
                 await db.commit()
+                _last_seen.pop(user_id, None)
+                _last_app_slug.pop(user_id, None)
                 await broadcast_stats_update()
     except Exception as e:
         logger.warning(f"⚠️ Erreur fermeture session SSE: {e}")
@@ -339,16 +391,12 @@ HEARTBEAT_INTERVAL_S = 15.0
 
 
 async def _emit_heartbeat(user_id: int, app_slug: Optional[str] = None) -> None:
-    """Heartbeat DB à cadence fixe : last_activity (+ segment d'app en phase 2).
-    Best-effort : une erreur DB ne doit jamais casser le flux SSE."""
-    try:
-        from app.database import async_session_maker
-        from app.routes.audit import update_session_activity
-        async with async_session_maker() as db:
-            await update_session_activity(db, user_id, app_slug=app_slug)
-            await db.commit()
-    except Exception:
-        pass
+    """Heartbeat en mémoire à cadence fixe (15 s). Aucun accès DB : le flush
+    est fait en batch par le sweeper (_flush_presence_to_db, 1 tx / 120 s).
+    Le ping SSE transport, lui, reste à cadence 15 s côté générateur."""
+    _last_seen[user_id] = time.time()
+    if app_slug:
+        _last_app_slug[user_id] = app_slug
 
 
 async def event_generator(request: Request, queue: asyncio.Queue, user_id: Optional[int] = None, app_slug: Optional[str] = None):
@@ -427,14 +475,15 @@ async def event_stream(request: Request):
     - `users_updated` : Un utilisateur a été créé, modifié ou supprimé
     - `service_accounts_updated` : Un service account a été modifié
     - `stats_updated` : Statistiques mises à jour
-    - `ping` : Keep-alive (toutes les 15s) - Met aussi à jour l'activité de session
+    - `ping` : Keep-alive (toutes les 15s)
       Note : rester < ~25 s — Firefox coupe une connexion SSE ~25-29 s après
       le dernier octet reçu (sinon déconnexions toutes les ~55 s).
     
-    Le ping SSE sert de heartbeat pour:
-    - Maintenir la connexion active
-    - Tracker l'activité utilisateur (last_activity_at)
+    Le ping SSE sert de keep-alive transport pour:
+    - Maintenir la connexion active (proxy/navigateur)
     - Détecter les déconnexions (fermeture navigateur, etc.)
+    L'activité utilisateur (last_activity_at) est tenue en mémoire à la même
+    cadence et flushée en DB par le sweeper toutes les 120 s.
     
     **Exemple d'utilisation JavaScript :**
     ```javascript
@@ -545,14 +594,44 @@ async def event_stream(request: Request):
         if user_id and app_slug:
             register_app_connection(user_id, app_slug, queue)
 
-    start_cleanup_task()
-
     # Instrumentation : contexte de connexion (identifie le client, sa source et
     # son mode d'auth) — clé du diagnostic du churn de reconnexion SSE.
     client_ip = (
         request.headers.get("x-forwarded-for", "").split(",")[0].strip()
         or (request.client.host if request.client else "inconnu")
     )
+
+    # Garantie session en DB uniquement pour une vraie (re)connexion :
+    # un churn (< RECONNECT_REUSE_WINDOW_S) réutilise la session ouverte
+    # et ne coûte aucune écriture.
+    #
+    # NB : start_cleanup_task (health checker inclus) est volontairement
+    # appelé APRÈS ce bloc — ses tâches de fond écrivent en DB et, en test
+    # (StaticPool SQLite partagé), un rollback de pool concurrent peut
+    # annuler une transaction en vol.
+    if user_id and _needs_db_session_touch(user_id, app_slug):
+        try:
+            from app.database import async_session_maker
+            from app.routes.audit import ensure_session_presence
+            async with async_session_maker() as db:
+                await ensure_session_presence(
+                    db,
+                    user_id,
+                    app_slug=app_slug,
+                    ip_address=client_ip,
+                    user_agent=request.headers.get("user-agent"),
+                )
+                await db.commit()
+        except Exception as e:
+            logger.warning(f"⚠️ Garantie session SSE user {user_id}: {e}")
+
+    if user_id:
+        _last_seen[user_id] = time.time()
+        if app_slug:
+            _last_app_slug[user_id] = app_slug
+
+    start_cleanup_task()
+
     logger.info(
         f"🔌 SSE connecté: user_id={user_id} app={app_slug} auth={auth_mode} "
         f"ip={client_ip} clients_actifs={len(_connected_clients)}"
