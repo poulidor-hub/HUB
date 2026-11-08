@@ -5,6 +5,23 @@
 
 ---
 
+## [3.83.1] - 8 novembre 2026
+
+### ⚡ SSE : présence en mémoire anti-churn + instrumentation du flux
+
+Audit SSE du 08/11/2026 : le navigateur recrée ses flux SSE toutes les ~60 s (churn erratique, 7-55 s de vie mesuré), et chaque cycle coûtait INSERT session + end_session + heartbeat DB par client (~5,3 tx/s à 80 users) avec deadlocks sweeper×fermeture sur `user_sessions`/`app_usage_segments` (37,5 k lignes accumulées, 1 583 fermetures/24 h pour 1 utilisateur).
+
+| Élément | Détail |
+|---------|--------|
+| **Instrumentation** | `event_generator` journalise la cause de sortie (`client_disconnect`/`server_shutdown`/`event_shutdown`/`cancelled`/`error`) + durée de vie ; exceptions passent de silencieuses à `logger.exception`. Log de connexion `🔌` avec user_id, app_slug, mode d'auth (bearer/query_token/beacon), IP source (X-Forwarded-For) et clients actifs |
+| **Heartbeat en mémoire** | `_emit_heartbeat` ne touche plus la DB : dicts `_last_seen`/`_last_app_slug`. Flush batché par le sweeper (`_flush_presence_to_db`, 1 transaction / 120 s pour tous les utilisateurs connectés) — ~5,3 tx/s → ~0 |
+| **Session réutilisée** | Grâce de déconnexion 5 s → **300 s** (`DISCONNECT_GRACE_S`) : un reconnect dans la fenêtre annule le `end_session` planifié ; garantie session au connect uniquement hors fenêtre de churn (`RECONNECT_REUSE_WINDOW_S`) ou si l'app courante change — via `ensure_session_presence` |
+| **Ordre de démarrage** | `start_cleanup_task` (health checker) déplacé après la garantie session : en test (StaticPool SQLite partagé), un rollback de pool concurrent pouvait annuler une transaction en vol |
+| **Tests** | `test_sse_presence_memory.py` (4 cas anti-churn), instrumentation (3 cas), heartbeat réécrit pour le contrat mémoire, `test_sse_app_param` déterminisé — portée SSE 20/20, suite hôte 1552 vert (échecs préexistants `test_app_deploy`×2, `test_vpn_dns` + flaky parallèle) |
+| **Validé en prod dev** | post-déploiement : 1 session ouverte à travers tous les cycles de churn, 0 fermeture `sse_disconnect`, 0 deadlock sur fenêtre continue |
+
+---
+
 ## [3.83.0] - 8 novembre 2026
 
 ### ⚡ Ateliers : overrides compose par app (`.workshop.overrides.env`) — fix durable Task 0
