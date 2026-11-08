@@ -5,6 +5,24 @@
 
 ---
 
+## [3.83.0] - 8 novembre 2026
+
+### ⚡ Ateliers : overrides compose par app (`.workshop.overrides.env`) — fix durable Task 0
+
+Bug Task 0 (exemple-app) : le contrat `.workshop.env` (7 clés + `HTTPS_ENABLED` à la création) ne couvre pas les ports host métier d'une app — l'atelier retombait sur les ports prod du `.env` (ex. `PHILIA_NG_PORT=42690` déjà bindé) → conflit de bind → restart loop à chaque recréation.
+
+| Élément | Détail |
+|---------|--------|
+| **`WS_OVERRIDE_RESERVED` + `_ws_overrides_path()` + `_ws_override_env()`** | nouveau fichier optionnel `APPS/<slug>/.workshop.overrides.env` (dotenv, committé par l'app), fusionné dans l'env subprocess de `docker compose -p X-ws` ; précédence `_compose_base_env()` < overrides < `.workshop.env` (les clés de l'allocateur gagnent toujours) |
+| **`_ws_compose_env()`** | point d'intégration unique — couvre create (build/up/rollback), maj (rebuild), ship (down -v) et remove ; les chemins prod (recreate, deploy_service) restent en `_compose_base_env()` seul, volontairement inchangés |
+| **Robustesse** | fichier absent → no-op strict (comportement identique) ; illisible ou non-UTF-8 → warning + ignore, jamais de crash d'opération ; clés réservées présentes dans les overrides → ignorées avec warning (possédées par l'allocateur) |
+| **Contrat inchangé** | le `.workshop.env` généré reste strictement aux clés du contrat — contract tests 3.82.0 verts sans modification d'assertion ; `hubctl` (0.17.0) implémente la parité côté CLI |
+| **hub/tests** | nouveau `test_workshop_overrides.py` (8 tests : no-op, merge, précédence, clés réservées + warning, create path, illisible, non-UTF-8) — périmètre atelier/workshop : 139 verts |
+
+> Premier utilisateur : exemple-app 3.5.2 (`.workshop.overrides.env` committé, `PHILIA_NG_PORT=5290` / `PHILIA_NG_HTTPS_PORT=5291`).
+
+---
+
 ## [3.82.0] - 7 novembre 2026
 
 ### ⚡ Ateliers : fin des compteurs incohérents — unlink protégé, réconciliation fantômes/orphelins (diagnostic 2026-11-07)
