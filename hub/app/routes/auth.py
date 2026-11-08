@@ -275,7 +275,11 @@ async def login_for_token(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="client_id et client_secret requis"
             )
-        
+
+        # Audit 08/11/2026 : seule branche sans rate limit — brute force de
+        # secrets M2M non bornée sur un endpoint exposé (80/443/8000).
+        _check_rate_limit(_get_client_ip(request))
+
         result = await db.execute(
             select(ServiceAccount)
             .options(selectinload(ServiceAccount.applications))
@@ -308,6 +312,7 @@ async def login_for_token(
             apps=apps,
             is_service_account=True,
             is_workshop=is_workshop,
+            expires_delta=timedelta(minutes=settings.m2m_access_token_expire_minutes),
         )
         
         # Log

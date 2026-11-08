@@ -244,6 +244,7 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+asyncpg://hubadmin:CHANGEZ_MOI_DB_PASSWORD@db:5432/hub_auth"
     jwt_algorithm: str = "RS256"
     access_token_expire_minutes: int = 480  # TTL access token (aligné cookie OIDC 8h ; déploiement local LAN — doit matcher docker-compose/.env)
+    m2m_access_token_expire_minutes: int = 60  # TTL court des tokens M2M (client_credentials) — audit 08/11/2026 : 8 h pour un secret machine était trop large
     refresh_token_expire_days: int = 7  # 7 jours pour le refresh token
     refresh_token_grace_seconds: int = 60  # Fenêtre de re-délivrance d'un refresh token récemment rotaté (course inter-onglets)
     session_timeout_minutes: int = 20  # Seuil pour considérer une session comme terminée (sans logout explicite)
@@ -346,6 +347,19 @@ class Settings(BaseSettings):
     message_retention_days: int = 90
 
     workshop_retention_days: int = 30  # purge de l'historique workshop_operations
+
+    # Rétention des sessions utilisateur (en jours) - 0 = pas de purge
+    # Audit 08/11/2026 : user_sessions n'avait aucune rétention (37,6 k lignes).
+    session_retention_days: int = 180
+    # --- Alertes admin sur seuils (audit 08/11/2026) ---
+    alert_check_interval_s: int = 60      # 0 = désactivé
+    alert_error_rate_10m: int = 30        # erreurs error_logs en 10 min
+    alert_auth_failures_10m: int = 20     # échecs 401/403 API en 10 min
+    alert_sse_auth_failures_1h: int = 100 # échecs auth SSE en 1 h
+    alert_sse_clients_max: int = 500      # capacité SSE
+    alert_app_offline_min: int = 5        # app offline persistante (minutes)
+    alert_db_write_errors_1h: int = 10    # deadlocks / erreurs d'écriture en 1 h
+    alert_cooldown_min: int = 30          # anti-spam par clé d'alerte
     
     # Intervalle de purge des logs (en heures)
     log_purge_interval_hours: int = 24

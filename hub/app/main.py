@@ -62,11 +62,41 @@ class _SuppressLegacySSE401Filter(logging.Filter):
             and method == "GET"
             and str(path).split("?", 1)[0] == "/api/events/stream"
         ):
+            # Visibilité : le 401 est masqué des logs mais compté
+            # (exposé dans les stats SSE + alerte sur seuils).
+            try:
+                from app.routes.events import record_sse_auth_failure
+                record_sse_auth_failure()
+            except Exception:
+                pass
             return False
         return True
 
 
+class _ScrubSecretsFilter(logging.Filter):
+    """Masque les secrets en query string (`token=`, `beacon_token=`) des
+    access logs uvicorn.
+
+    Audit 08/11/2026 : chaque reconnexion SSE en mode query_token loggeait
+    un JWT admin complet (~2,5 Ko, valide 8 h) dans les access logs —
+    exposition de credentials + gonflement du log. La ligne reste loggée,
+    seule la valeur sensible est remplacée par ***.
+    """
+
+    _SECRET_QUERY_RE = re.compile(r"([?&](?:beacon_)?token=)[^&\s]+")
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if record.args:
+            scrubbed = tuple(
+                self._SECRET_QUERY_RE.sub(r"\1***", arg) if isinstance(arg, str) else arg
+                for arg in record.args
+            )
+            record.args = scrubbed
+        return True
+
+
 logging.getLogger("uvicorn.access").addFilter(_SuppressLegacySSE401Filter())
+logging.getLogger("uvicorn.access").addFilter(_ScrubSecretsFilter())
 
 settings = get_settings()
 
@@ -174,12 +204,13 @@ async def periodic_log_purge():
     audit_days = settings.audit_retention_days
     error_days = settings.error_retention_days
     message_days = settings.message_retention_days
+    session_days = settings.session_retention_days
     
-    if audit_days <= 0 and error_days <= 0 and message_days <= 0:
+    if audit_days <= 0 and error_days <= 0 and message_days <= 0 and session_days <= 0:
         logger.info("🗑️ Purge des logs désactivée (rétention = 0)")
         return
     
-    logger.info(f"🗑️ Purge des logs activée (audit: {audit_days}j, errors: {error_days}j, messages: {message_days}j, intervalle: {interval_hours}h)")
+    logger.info(f"🗑️ Purge des logs activée (audit: {audit_days}j, errors: {error_days}j, messages: {message_days}j, sessions: {session_days}j, intervalle: {interval_hours}h)")
     
     # Attendre un peu avant la première purge
     await asyncio.sleep(60)
@@ -195,6 +226,16 @@ async def periodic_log_purge():
                 msg_deleted = await purge_old_messages(db, message_days)
                 if msg_deleted > 0:
                     logger.info(f"🗑️ Purge messages: {msg_deleted} message(s) supprimé(s)")
+
+                # Purge des sessions utilisateur (aucune rétention avant l'audit
+                # 08/11/2026 : 37,6 k lignes de churn accumulées)
+                try:
+                    from app.routes.audit import purge_old_sessions
+                    sessions_deleted = await purge_old_sessions(db, session_days)
+                    if sessions_deleted > 0:
+                        logger.info(f"🗑️ Purge sessions: {sessions_deleted} session(s) supprimée(s)")
+                except Exception:
+                    logger.exception("purge user_sessions échouée")
 
                 # Purge de l'historique des opérations atelier
                 try:
@@ -396,6 +437,10 @@ async def lifespan(app: FastAPI):
     
     # Démarrer la tâche de purge des logs
     _log_purge_task = asyncio.create_task(periodic_log_purge())
+
+    # Démarrer les alertes admin sur seuils (audit 08/11/2026)
+    from app.alert_checker import start_alert_checker_task
+    start_alert_checker_task()
 
     # Démarrer le moniteur de vivacité du token GitHub (alerte admins si invalide)
     from app.github_token_monitor import periodic_github_token_check
