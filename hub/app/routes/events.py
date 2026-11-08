@@ -299,9 +299,13 @@ def unregister_app_connection(user_id: int, app_slug: str, queue: asyncio.Queue)
 # le sweeper.
 _last_seen: Dict[int, float] = {}
 _last_app_slug: Dict[int, str] = {}
-# Grâce > délais de reconnexion observés (5 s sse.js, 10 s AuthContext
-# exemple-app) : le reconnect annule le end_session/close_segment planifié.
-DISCONNECT_GRACE_S = 65
+# Grâce > tout délai de reconnexion réaliste : retry client 5 s (sse.js) /
+# 10 s (AuthContext exemple-app), MAIS Firefox bride les timers des onglets
+# en arrière-plan à ≥ 60 s et le churn navigateur mesuré est erratique
+# (vies de 7 à 55 s). 5 min garantit que le churn n'atteint jamais la
+# fermeture ; un départ réel ferme la session ≤ 5 min après (le sweeper
+# applique de toute façon session_timeout_minutes sur inactivité).
+DISCONNECT_GRACE_S = 300
 # Fenêtre au connect : en dessous, la (re)connexion ne touche pas la DB
 # (la session ouverte est réutilisée, sa présence est à jour en mémoire).
 RECONNECT_REUSE_WINDOW_S = 65

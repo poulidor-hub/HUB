@@ -96,7 +96,8 @@ def test_needs_db_session_touch_window():
 
 
 def test_disconnect_grace_exceeds_churn():
-    """La grâce de fermeture doit dépasser le délai de reconnexion client
-    (5 s sse.js, 10 s AuthContext exemple-app) pour que le churn annule
-    le end_session planifié."""
-    assert events.DISCONNECT_GRACE_S >= 30
+    """La grâce de fermeture doit couvrir le churn navigateur réel :
+    retry 5-10 s en onglet actif, mais Firefox brime les timers en
+    arrière-plan (≥ 60 s) et le tueur est erratique (vies 7-55 s mesurées).
+    5 min = un départ réel ferme la session ≤ 5 min après."""
+    assert events.DISCONNECT_GRACE_S >= 300
