@@ -8,13 +8,15 @@
  *  - mode « Ma boîte » (tous les utilisateurs) : tableau paginé, chips avec
  *    compteurs, sélection multiple + actions rapides, détail slide-over avec
  *    auto mark-read, « Vider les lus », regroupement dépliable des alertes
- *    identiques (occurrences) — implémenté ici (Task 6) ;
- *  - mode « Gestion » (admins) : Task 7 (rendu placeholder en attendant).
+ *    identiques (occurrences) ;
+ *  - mode « Gestion » (admins) : vue système des messages (GET /messages avec
+ *    group_similar), chips statut/priorité/source, sélection → archivage /
+ *    suppression en masse, taux de lecture, modal de purge par critère.
  *
- * Reprend de l'ancienne boîte de réception (messages-inbox.js) : les cartes
+ * Reprend de l'ancien module inbox (supprimé en Task 7) : les cartes
  * flottantes SSE, les badges (cloche + navbar), les préférences de badge
  * admin et la migration des ids masqués du localStorage vers la suppression
- * serveur (receipt.hidden_at).
+ * serveur (receipt.hidden_at). Le compose vit dans messages-compose.js.
  *
  * Les fonctions restent globales (window.*) : le délégateur js/app.js résout
  * les data-action du markup #notificationsSection.
@@ -80,6 +82,7 @@ function migrateInboxHiddenIds() {
 function showNotificationsPage(mode) {
     migrateInboxHiddenIds();
     _notif.mode = (mode === 'manage' && currentUser?.is_admin) ? 'manage' : 'inbox';
+    _notifSanitizeFiltersForMode();
     _notif.page = 1;
     _notif.selection.clear();
     _notif.expandedGroups.clear();
@@ -96,6 +99,7 @@ function notifSetMode(mode) {
     const target = (mode === 'manage' && currentUser?.is_admin) ? 'manage' : 'inbox';
     if (_notif.mode === target) return;
     _notif.mode = target;
+    _notifSanitizeFiltersForMode();
     _notif.page = 1;
     _notif.selection.clear();
     _notif.expandedGroups.clear();
@@ -103,6 +107,20 @@ function notifSetMode(mode) {
     closeNotifDetail();
     notifSyncModeUI();
     loadNotifications();
+}
+
+/**
+ * Les chips visibles diffèrent selon le mode : les statuts (actif/archivé/
+ * expiré) n'existent que côté Gestion (GET /messages?status=…), le filtre
+ * « non lus » que côté Ma boîte (GET /me?unread=true). Un filtre qui change
+ * de mode sans support resterait actif de façon invisible.
+ */
+function _notifSanitizeFiltersForMode() {
+    if (_notif.mode === 'manage') {
+        _notif.filters.unread = false;
+    } else {
+        _notif.filters.status = null;
+    }
 }
 
 function notifSyncModeUI() {
@@ -113,11 +131,16 @@ function notifSyncModeUI() {
     document.getElementById('notifModeBtnManage')?.classList.toggle('active', mode === 'manage');
     document.getElementById('notifModeInbox')?.classList.toggle('d-none', mode !== 'inbox');
     document.getElementById('notifModeManage')?.classList.toggle('d-none', mode !== 'manage');
+    // Barre de sélection : Ma boîte = Marquer lu / Supprimer de ma boîte ;
+    // Gestion = Archiver / Supprimer définitivement.
+    document.getElementById('btnBulkRead')?.classList.toggle('d-none', mode === 'manage');
     document.getElementById('btnBulkArchive')?.classList.toggle('d-none', mode !== 'manage');
-    // Chips de statut : visibles uniquement en mode Gestion
+    // Chips de statut : visibles uniquement en mode Gestion ; le chip « Non
+    // lus » n'a pas d'équivalent GET /messages (vue système) : Gestion seul.
     ['notifChipActive', 'notifChipArchived', 'notifChipExpired'].forEach(id => {
         document.getElementById(id)?.classList.toggle('d-none', mode !== 'manage');
     });
+    document.getElementById('notifChipUnread')?.classList.toggle('d-none', mode === 'manage');
     const heading = document.getElementById('notifHeading');
     if (heading) {
         heading.innerHTML = mode === 'manage'
@@ -131,7 +154,7 @@ function notifSyncModeUI() {
 // =============================================================================
 
 async function loadNotifications() {
-    if (_notif.mode === 'manage') { _renderManagePlaceholder(); return; }
+    if (_notif.mode === 'manage') { await notifRenderManage(); return; }
 
     const f = _notif.filters;
     const params = {
@@ -180,8 +203,6 @@ function renderNotifTable() {
     const thead = document.getElementById('notifTableHead');
     const tbody = document.getElementById('notifTableBody');
     if (!thead || !tbody) return;
-
-    if (_notif.mode === 'manage') { _renderManagePlaceholder(); return; }
 
     thead.innerHTML = `<tr>
         <th style="width:2.2rem;"><input type="checkbox" class="form-check-input" title="Tout sélectionner" aria-label="Tout sélectionner" data-action="notifToggleSelectAll" data-args="$el"></th>
@@ -257,20 +278,244 @@ function _notifGroupSubRows(m) {
     }).join('');
 }
 
+// =============================================================================
+// Mode Gestion (admin) — vue système des messages
+// =============================================================================
+
 /**
- * Mode Gestion : rendu complet en Task 7 (notifRenderManage). Placeholder
- * volontaire pour que la page reste cohérente dès maintenant.
+ * Mode Gestion : GET /messages (vue système, group_similar) + rendu du
+ * tableau console. Colonnes : ☑ | P | Titre (+×N ▾) | Source | Cible |
+ * Envoyé | État | Lus (x/y) | Actions (⬆/⬇ · 🗑).
  */
-function _renderManagePlaceholder() {
+async function notifRenderManage() {
     const thead = document.getElementById('notifTableHead');
     const tbody = document.getElementById('notifTableBody');
-    if (thead) thead.innerHTML = '';
-    if (tbody) {
-        tbody.innerHTML = '<tr><td class="text-center text-muted py-5"><i class="bi bi-gear" style="font-size:2.5rem;opacity:.3;"></i><div class="mt-2">Mode Gestion — rendu à venir.</div></td></tr>';
+    if (!thead || !tbody) return;
+
+    const f = _notif.filters;
+    const params = {
+        page: _notif.page,
+        perPage: _notif.pageSize,
+        groupSimilar: true,
+        status: f.status || undefined,
+        priority: f.priority || (f.urgent ? 'urgent' : null),
+        senderApp: f.app,
+        search: f.search,
+    };
+
+    try {
+        const data = await api.getMessages(params);
+        _notifMessages = data.messages || [];
+        _notifTotal = data.total || 0;
+        _notifPages = data.pages || 1;
+
+        // Hors bornes (ex. dernière page vidée par une purge) : revenir en
+        // page valide plutôt que d'afficher une liste vide incohérente.
+        if (_notif.page > _notifPages && _notif.page > 1) {
+            _notif.page = _notifPages;
+            return notifRenderManage();
+        }
+
+        _notif.expandedGroups.clear();
+        _notifGroupMembers.clear();
+        renderNotifManageTable();
+        renderNotifChips();
+        renderNotifPagination();
+        _renderNotifAppFilter();
+        _syncNotifSelectionBar();
+    } catch (e) {
+        thead.innerHTML = '';
+        tbody.innerHTML = '<tr><td colspan="9" class="text-center text-danger py-4">Erreur de chargement des messages</td></tr>';
+        const pg = document.getElementById('notifPagination');
+        if (pg) pg.innerHTML = '';
+        _syncNotifSelectionBar();
     }
-    const pg = document.getElementById('notifPagination');
-    if (pg) pg.innerHTML = '';
-    _syncNotifSelectionBar();
+}
+
+function renderNotifManageTable() {
+    const thead = document.getElementById('notifTableHead');
+    const tbody = document.getElementById('notifTableBody');
+    if (!thead || !tbody) return;
+
+    thead.innerHTML = `<tr>
+        <th style="width:2.2rem;"><input type="checkbox" class="form-check-input" title="Tout sélectionner" aria-label="Tout sélectionner" data-action="notifToggleSelectAll" data-args="$el"></th>
+        <th style="width:5.5rem;">P</th>
+        <th>Titre</th>
+        <th style="width:10rem;">Source</th>
+        <th style="width:10rem;">Cible</th>
+        <th style="width:7.5rem;">Envoyé</th>
+        <th style="width:6.5rem;">État</th>
+        <th style="width:8.5rem;">Lus</th>
+        <th style="width:6.5rem;" class="text-end">Actions</th>
+    </tr>`;
+
+    if (_notifMessages.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="9" class="text-center text-muted py-5"><i class="bi bi-envelope-paper" style="font-size:2.5rem;opacity:.3;"></i><div class="mt-2">Aucun message</div></td></tr>';
+        return;
+    }
+
+    tbody.innerHTML = _notifMessages.map(m => _notifManageRowHtml(m)).join('');
+}
+
+/**
+ * Chip de priorité (colonne P).
+ */
+function _notifPriorityChip(p) {
+    const prio = p || 'info';
+    const label = prio === 'urgent' ? 'Urgent' : prio === 'warning' ? 'Warning' : 'Info';
+    return `<span class="notif-chip notif-chip-${prio}">${label}</span>`;
+}
+
+/**
+ * Badge d'état (cycle de vie) : Actif / Expiré / Archivé — les messages
+ * programmés n'ont aucun de ces trois statuts → chip neutre « Programmé ».
+ */
+function _notifStateChip(m) {
+    if (m.status === 'archived') return '<span class="notif-status-badge archived">Archivé</span>';
+    if (_isExpired(m)) return '<span class="notif-status-badge expired">Expiré</span>';
+    if (m.status === 'active') return '<span class="notif-status-badge active">Actif</span>';
+    return '<span class="notif-status-badge">Programmé</span>';
+}
+
+/**
+ * Badge de source : app émettrice (slug) / système / administration.
+ */
+function _notifSourceBadge(m) {
+    if (m.sender_app_slug) {
+        return `<span class="notif-source-badge app" title="${escapeHtml(m.sender_app_slug)}">${escapeHtml(m.sender_app_slug)}</span>`;
+    }
+    if (m.sender_type === 'system') {
+        return '<span class="notif-source-badge system" title="Système">Système</span>';
+    }
+    const by = m.sender_username ? ` title="Par ${escapeHtml(m.sender_username)}"` : '';
+    return `<span class="notif-source-badge admin"${by}>Administration</span>`;
+}
+
+/**
+ * Badge de cible : broadcast global ou utilisateur spécifique.
+ */
+function _notifTargetBadge(m) {
+    if (m.target_type === 'broadcast') {
+        return '<span class="notif-target-badge broadcast"><i class="bi bi-broadcast-pin me-1"></i>Global</span>';
+    }
+    const who = m.target_username || (m.target_user_id ? `User #${m.target_user_id}` : '—');
+    return `<span class="notif-target-badge user"><i class="bi bi-person me-1"></i>${escapeHtml(who)}</span>`;
+}
+
+/**
+ * Taux de lecture read_count/total_targets + mini-barre Bootstrap .progress
+ * (sans animation — cf. .notif-table .progress-bar dans style.css).
+ */
+function _notifReadRateHtml(m) {
+    const total = m.total_targets || 0;
+    const read = m.read_count || 0;
+    const pct = total > 0 ? Math.round((read / total) * 100) : 0;
+    const barColor = pct >= 75 ? '#059669' : (pct >= 40 ? '#6366f1' : (pct > 0 ? '#f59e0b' : '#d1d5db'));
+    return `<div style="min-width:6.5rem;">
+        <div class="d-flex justify-content-between small text-muted mb-1"><span>${read}/${total}</span><span>${pct}%</span></div>
+        <div class="progress" style="height:5px;" role="progressbar" aria-label="Taux de lecture" aria-valuenow="${pct}" aria-valuemin="0" aria-valuemax="100">
+            <div class="progress-bar" style="width:${pct}%;background:${barColor};"></div>
+        </div>
+    </div>`;
+}
+
+function _notifManageRowHtml(m) {
+    const occ = m.occurrences || 1;
+    const expanded = _notif.expandedGroups.has(m.id);
+    const expander = occ > 1
+        ? `<button type="button" class="btn btn-sm btn-link p-0 me-1 align-baseline" data-action="notifExpandGroup" data-arg1="${m.id}" title="${expanded ? 'Masquer' : 'Afficher'} les ${occ} messages identiques">×${occ} <i class="bi ${expanded ? 'bi-caret-up-fill' : 'bi-caret-down-fill'} small"></i></button>`
+        : '';
+    const received = parseUTCDate(m.created_at);
+    const dimmed = (m.status === 'archived' || _isExpired(m)) ? ' text-muted' : '';
+
+    return `<tr class="${dimmed}">
+        <td><input type="checkbox" class="form-check-input" ${_notif.selection.has(m.id) ? 'checked' : ''} aria-label="Sélectionner" data-action="notifToggleSelect" data-arg1="${m.id}" data-arg2="$el"></td>
+        <td>${_notifPriorityChip(m.priority)}</td>
+        <td class="text-break">${expander}${escapeHtml(m.title)}</td>
+        <td>${_notifSourceBadge(m)}</td>
+        <td>${_notifTargetBadge(m)}</td>
+        <td class="small text-muted" title="${received.toLocaleString('fr-FR')}">${_relativeTime(received)}</td>
+        <td>${_notifStateChip(m)}</td>
+        <td>${_notifReadRateHtml(m)}</td>
+        <td class="text-end text-nowrap">
+            ${m.status === 'archived'
+                ? `<button type="button" class="btn btn-sm btn-outline-success" data-action="notifRestoreOne" data-arg1="${m.id}" title="Restaurer"><i class="bi bi-arrow-counterclockwise"></i></button>`
+                : `<button type="button" class="btn btn-sm btn-outline-secondary" data-action="notifArchiveOne" data-arg1="${m.id}" title="Archiver"><i class="bi bi-archive"></i></button>`}
+            <button type="button" class="btn btn-sm btn-outline-danger" data-action="notifHardDeleteOne" data-arg1="${m.id}" title="Supprimer définitivement"><i class="bi bi-trash"></i></button>
+        </td>
+    </tr>${expanded ? _notifManageGroupSubRows(m) : ''}`;
+}
+
+/**
+ * Sous-lignes d'un groupe déplié (mode Gestion) : les autres occurrences,
+ * mêmes colonnes que la ligne représentante.
+ */
+function _notifManageGroupSubRows(m) {
+    const members = (_notifGroupMembers.get(m.id) || []).filter(x => x.id !== m.id);
+    if (members.length === 0) return '';
+    return members.map(x => {
+        const received = parseUTCDate(x.created_at);
+        const dimmed = (x.status === 'archived' || _isExpired(x)) ? ' text-muted' : '';
+        return `<tr class="table-light small${dimmed}">
+        <td></td>
+        <td>${_notifPriorityChip(x.priority)}</td>
+        <td class="ps-4 text-break"><i class="bi bi-arrow-return-right text-muted me-1"></i>${escapeHtml(x.title)}</td>
+        <td>${_notifSourceBadge(x)}</td>
+        <td>${_notifTargetBadge(x)}</td>
+        <td class="text-muted" title="${received.toLocaleString('fr-FR')}">${_relativeTime(received)}</td>
+        <td>${_notifStateChip(x)}</td>
+        <td>${_notifReadRateHtml(x)}</td>
+        <td class="text-end text-nowrap">
+            ${x.status === 'archived'
+                ? `<button type="button" class="btn btn-sm btn-outline-success" data-action="notifRestoreOne" data-arg1="${x.id}" title="Restaurer"><i class="bi bi-arrow-counterclockwise"></i></button>`
+                : `<button type="button" class="btn btn-sm btn-outline-secondary" data-action="notifArchiveOne" data-arg1="${x.id}" title="Archiver"><i class="bi bi-archive"></i></button>`}
+            <button type="button" class="btn btn-sm btn-outline-danger" data-action="notifHardDeleteOne" data-arg1="${x.id}" title="Supprimer définitivement"><i class="bi bi-trash"></i></button>
+        </td>
+    </tr>`;
+    }).join('');
+}
+
+// ----- Lifecycle (une ligne) : archiver / restaurer / supprimer -----
+
+async function notifArchiveOne(id) {
+    id = parseInt(id, 10);
+    if (!id) return;
+    try {
+        await api.archiveMessage(id);
+        showToast('Archivé', 'Le message a été archivé.', 'success');
+        updateNavMessagesBadge();
+        await loadNotifications();
+    } catch (e) {
+        showToast('Erreur', e.message, 'danger');
+    }
+}
+
+async function notifRestoreOne(id) {
+    id = parseInt(id, 10);
+    if (!id) return;
+    try {
+        await api.restoreMessage(id);
+        showToast('Restauré', 'Le message a été restauré.', 'success');
+        await loadNotifications();
+    } catch (e) {
+        showToast('Erreur', e.message, 'danger');
+    }
+}
+
+async function notifHardDeleteOne(id) {
+    id = parseInt(id, 10);
+    if (!id) return;
+    const m = _notifMessages.find(x => x.id === id);
+    if (!confirm(`Supprimer définitivement « ${m?.title || id} » ? Cette action est irréversible.`)) return;
+    try {
+        await api.hardDeleteMessage(id);
+        _notif.selection.delete(id);
+        showToast('Supprimé', 'Le message a été supprimé définitivement.', 'success');
+        updateNavMessagesBadge();
+        await loadNotifications();
+    } catch (e) {
+        showToast('Erreur', e.message, 'danger');
+    }
 }
 
 // =============================================================================
@@ -472,12 +717,236 @@ async function notifBulkRead() {
 async function notifBulkDelete() {
     const ids = [..._notif.selection];
     if (ids.length === 0) return;
+    if (_notif.mode === 'manage') return _notifManageBulkHardDelete(ids);
     if (!confirm(`Retirer ${ids.length} notification(s) de votre boîte ?`)) return;
     try {
         const result = await api.deleteMyBatch(ids);
         showToast('Succès', `${result.hidden ?? ids.length} notification(s) supprimée(s).`, 'success');
         _notif.selection.clear();
         closeNotifDetail();
+        await loadNotifications();
+    } catch (e) {
+        showToast('Erreur', e.message, 'danger');
+    }
+}
+
+// =============================================================================
+// Mode Gestion : actions en masse + purge
+// =============================================================================
+
+/**
+ * Archivage en masse (sélection) — DELETE /messages/batch sans hard=true.
+ */
+async function notifBulkArchive() {
+    const ids = [..._notif.selection];
+    if (ids.length === 0) return;
+    if (!confirm(`Archiver ${ids.length} message(s) sélectionné(s) ?`)) return;
+    try {
+        const result = await api.deleteMessagesByIds(ids, false);
+        showToast('Succès', result.message || `${ids.length} message(s) archivé(s).`, 'success');
+        _notif.selection.clear();
+        updateNavMessagesBadge();
+        await loadNotifications();
+    } catch (e) {
+        showToast('Erreur', e.message, 'danger');
+    }
+}
+
+/**
+ * Suppression DÉFINITIVE en masse (sélection) — DELETE /messages/batch?hard=true.
+ * Derrière le bouton « Supprimer » de la barre de sélection en mode Gestion.
+ */
+async function _notifManageBulkHardDelete(ids) {
+    if (!confirm(`Suppression DÉFINITIVE de ${ids.length} message(s) ? Cette action est irréversible.`)) return;
+    try {
+        const result = await api.deleteMessagesByIds(ids, true);
+        showToast('Succès', result.message || `${ids.length} message(s) supprimé(s).`, 'success');
+        _notif.selection.clear();
+        updateNavMessagesBadge();
+        await loadNotifications();
+    } catch (e) {
+        showToast('Erreur', e.message, 'danger');
+    }
+}
+
+/**
+ * Export CSV des messages (bouton de la barre Gestion) : reprend les filtres
+ * courants supportés par l'endpoint export (priorité, app source).
+ */
+async function exportMessages() {
+    const f = _notif.filters;
+    try {
+        await api.exportMessages({
+            priority: f.priority || (f.urgent ? 'urgent' : null),
+            senderApp: f.app,
+        });
+        showToast('Succès', 'Export téléchargé', 'success');
+    } catch (e) {
+        showToast('Erreur', e.message, 'danger');
+    }
+}
+
+// ----- Modal purge (#purgeModal) -----
+
+let _purgePreviewTimer = null;
+let _purgePreviewSeq = 0; // responses périmées (l'aperçu est async + débounced)
+
+/**
+ * Option radio sélectionnée dans la modal de purge.
+ */
+function _purgeSelectedOption() {
+    return document.querySelector('input[name="purgeOpt"]:checked')?.value || 'read';
+}
+
+/**
+ * Mapping imposé option → query params (partagés par /purge-preview et
+ * DELETE /messages) :
+ *   lus     → read_only:true
+ *   expirés → expired_only:true & exclude_urgent_unread:true
+ *   vieux   → hours: jours*24 (+ older_than_days, forme native de l'aperçu)
+ *   app     → sender_app:<slug>
+ */
+function _purgeBuildParams() {
+    const opt = _purgeSelectedOption();
+    const params = {};
+    if (opt === 'read') {
+        params.read_only = true;
+    } else if (opt === 'expired') {
+        params.expired_only = true;
+        params.exclude_urgent_unread = true;
+    } else if (opt === 'older') {
+        const days = Math.min(3650, Math.max(1, parseInt(document.getElementById('purgeOlderDays')?.value, 10) || 90));
+        params.hours = days * 24;
+        params.older_than_days = days;
+    } else if (opt === 'app') {
+        const slug = document.getElementById('purgeAppSelect')?.value || '';
+        if (slug) params.sender_app = slug;
+    }
+    return params;
+}
+
+/**
+ * Libellé humain du critère (confirmation).
+ */
+function _purgeOptionLabel() {
+    const opt = _purgeSelectedOption();
+    if (opt === 'read') return 'les messages lus par tous leurs destinataires';
+    if (opt === 'expired') return 'les messages expirés (urgents jamais lus épargnés)';
+    if (opt === 'older') {
+        const days = Math.min(3650, Math.max(1, parseInt(document.getElementById('purgeOlderDays')?.value, 10) || 90));
+        return `les messages de plus de ${days} jour(s)`;
+    }
+    const slug = document.getElementById('purgeAppSelect')?.value || '';
+    return `les messages de l'app « ${slug} »`;
+}
+
+/**
+ * Ouvre la modal de purge : peuple la liste des apps sources puis lance
+ * l'aperçu du critère par défaut.
+ */
+async function openPurgeModal() {
+    const modalEl = document.getElementById('purgeModal');
+    if (!modalEl) return;
+    await _purgePopulateApps();
+    bootstrap.Modal.getOrCreateInstance(modalEl).show();
+    purgePreviewRefresh();
+}
+
+/**
+ * Alimente #purgeAppSelect avec les slugs émetteurs (stats messages, comptes
+ * sur la période complète).
+ */
+async function _purgePopulateApps() {
+    const sel = document.getElementById('purgeAppSelect');
+    if (!sel) return;
+    try {
+        const stats = await api.getMessageStats(null, undefined);
+        const byApp = stats?.by_app || {};
+        const slugs = Object.keys(byApp).sort();
+        sel.innerHTML = slugs.length > 0
+            ? slugs.map(s => `<option value="${escapeHtml(s)}">${escapeHtml(s)} (${byApp[s]})</option>`).join('')
+            : '<option value="">Aucune app émettrice</option>';
+    } catch (e) {
+        sel.innerHTML = '<option value="">Liste indisponible</option>';
+    }
+}
+
+/**
+ * Changement d'option radio : relance l'aperçu (le délégateur déclenche à la
+ * fois input et change → debounce partagé avec purgePreviewRefresh).
+ */
+function purgeSelectOption() {
+    purgePreviewRefresh();
+}
+
+/**
+ * Aperçu du nombre de messages concernés (debounced) : un seul appel
+ * /purge-preview, dont on lit le compteur correspondant à l'option —
+ *   read → resp.read ; expired → resp.expired ;
+ *   older → resp.older_than_days.count (l'aperçu ne connaît que les jours) ;
+ *   app → resp.per_app (top 5 apps actives émettrices).
+ */
+function purgePreviewRefresh() {
+    if (_purgePreviewTimer) clearTimeout(_purgePreviewTimer);
+    _purgePreviewTimer = setTimeout(_purgePreviewDoRefresh, 350);
+}
+
+async function _purgePreviewDoRefresh() {
+    _purgePreviewTimer = null;
+    const label = document.getElementById('purgeCountLabel');
+    const modalEl = document.getElementById('purgeModal');
+    if (!label || !modalEl || !modalEl.classList.contains('show')) return; // modal fermée : pas d'appel
+
+    const opt = _purgeSelectedOption();
+    const params = _purgeBuildParams();
+    const seq = ++_purgePreviewSeq;
+    try {
+        const preview = await api.purgePreview(params);
+        if (seq !== _purgePreviewSeq) return; // une requête plus récente a répondu
+
+        let count = 0;
+        if (opt === 'read') count = preview.read || 0;
+        else if (opt === 'expired') count = preview.expired || 0;
+        else if (opt === 'older') count = preview.older_than_days?.count || 0;
+        else if (opt === 'app') {
+            const slug = document.getElementById('purgeAppSelect')?.value || '';
+            count = (preview.per_app || []).find(e => e.sender_app_slug === slug)?.count || 0;
+        }
+        label.textContent = `Purger ${count} messages`;
+    } catch (e) {
+        if (seq === _purgePreviewSeq) label.textContent = 'Aperçu indisponible : ' + e.message;
+    }
+}
+
+/**
+ * Purge : DELETE /messages avec le mapping du critère (+ hard si la case
+ * « Suppression définitive » est cochée), puis toast + rechargement.
+ */
+async function confirmPurge() {
+    const opt = _purgeSelectedOption();
+    // Garde-fou : une purge « app » sans slug sélectionné partirait sans
+    // aucun filtre (avec hard=true ⇒ suppression de TOUS les messages).
+    if (opt === 'app' && !(document.getElementById('purgeAppSelect')?.value)) {
+        showToast('Information', 'Sélectionnez d\'abord une application source.', 'info');
+        return;
+    }
+    const params = _purgeBuildParams();
+    const hard = !!document.getElementById('purgeHardCheck')?.checked;
+    if (hard) params.hard = true;
+
+    const countLabel = document.getElementById('purgeCountLabel')?.textContent || '';
+    const scope = _purgeOptionLabel();
+    const action = hard
+        ? 'SUPPRESSION DÉFINITIVE (irréversible)'
+        : 'archivage (récupérable via le chip « Archivés »)';
+    if (!confirm(`Purger ${scope} — ${countLabel} ?\nAction : ${action}.`)) return;
+
+    try {
+        const result = await api.purgeMessages(params);
+        showToast(hard ? 'Supprimés' : 'Archivés', result.message || `${result.affected ?? 0} message(s).`, 'success');
+        const modalEl = document.getElementById('purgeModal');
+        if (modalEl) bootstrap.Modal.getOrCreateInstance(modalEl).hide();
+        updateNavMessagesBadge();
         await loadNotifications();
     } catch (e) {
         showToast('Erreur', e.message, 'danger');
@@ -504,6 +973,8 @@ async function notifPurgeRead() {
  * Déplie/replie le groupe d'un message : refetch search=<titre> + sender_app
  * puis filtrage local sur la clé exacte du groupe (titre + priorité +
  * coalesce(sender_app_slug, sender_type)), miroir du group_similar SQL.
+ * Le refetch suit le mode : GET /me (Ma boîte) ou GET / (Gestion, vue
+ * système, avec le filtre de statut courant).
  */
 async function notifExpandGroup(messageId) {
     messageId = parseInt(messageId, 10);
@@ -512,25 +983,46 @@ async function notifExpandGroup(messageId) {
 
     if (_notif.expandedGroups.has(messageId)) {
         _notif.expandedGroups.delete(messageId);
-        renderNotifTable();
+        _notifRerenderTable();
         return;
     }
 
+    const key = (x) => JSON.stringify([x.title, x.priority, x.sender_app_slug || x.sender_type]);
     try {
-        const data = await api.getMyMessages({
-            search: m.title,
-            senderApp: m.sender_app_slug,
-            page: 1,
-            pageSize: 100,
-        });
-        const key = (x) => JSON.stringify([x.title, x.priority, x.sender_app_slug || x.sender_type]);
-        const members = (data.messages || []).filter(x => key(x) === key(m));
+        let members;
+        if (_notif.mode === 'manage') {
+            const data = await api.getMessages({
+                search: m.title,
+                senderApp: m.sender_app_slug,
+                status: _notif.filters.status || undefined,
+                page: 1,
+                perPage: 100,
+            });
+            members = (data.messages || []).filter(x => key(x) === key(m));
+        } else {
+            const data = await api.getMyMessages({
+                search: m.title,
+                senderApp: m.sender_app_slug,
+                page: 1,
+                pageSize: 100,
+            });
+            members = (data.messages || []).filter(x => key(x) === key(m));
+        }
         _notifGroupMembers.set(messageId, members);
         _notif.expandedGroups.add(messageId);
-        renderNotifTable();
+        _notifRerenderTable();
     } catch (e) {
         showToast('Erreur', e.message, 'danger');
     }
+}
+
+/**
+ * Re-rendu du tableau selon le mode courant (le markup thead/tbody est
+ * partagé entre Ma boîte et Gestion).
+ */
+function _notifRerenderTable() {
+    if (_notif.mode === 'manage') renderNotifManageTable();
+    else renderNotifTable();
 }
 
 // =============================================================================
