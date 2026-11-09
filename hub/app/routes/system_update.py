@@ -112,15 +112,24 @@ async def _proxy_get_status_or_job(path: str) -> dict:
 
 
 @router.get("/update-status")
-async def update_status(_: User = Depends(get_current_admin)):
+async def update_status(
+    _: User = Depends(get_current_admin),
+    refresh: bool = False,
+):
     """État du parc (versions locales vs origin/main) — proxy GET
     {base}/update/status.
 
     Tolérant à la panne (cf. _proxy_get_status_or_job) : le badge navbar
     interroge cette route à l'initialisation et doit dégrader proprement
     si le service hôte est down.
+
+    ?refresh=1 (activation de l'onglet, bouton « Vérifier maintenant »)
+    est forwardé tel quel au service hôte, qui honore ce query pour
+    forcer le re-check git (cache TTL 60 s) — sans ce forward, le
+    rafraîchissement explicite du front était silencieusement ignoré.
     """
-    return await _proxy_get_status_or_job("/update/status")
+    path = "/update/status?refresh=1" if refresh else "/update/status"
+    return await _proxy_get_status_or_job(path)
 
 
 @router.post("/update")

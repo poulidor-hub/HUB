@@ -362,7 +362,10 @@ async function runSystemUpdateFlow() {
         res = await api.runSystemUpdate(); // 202 ; 409/503 → throw (message = detail)
     } catch (error) {
         const msg = (error && error.message) || 'Erreur inconnue';
-        if (/déjà en cours/i.test(msg)) {
+        // Sans accent : le service hôte renvoie « update deja en cours »
+        // (update_serve.py, hubctl) — la regex doit matcher les deux
+        // graphies (d[eé]j[aà]) pour rattraper le 409 passthrough.
+        if (/d[eé]j[aà]\s+en\s+cours/i.test(msg)) {
             // 409 passthrough : un job tourne déjà (autre admin / onglet) —
             // on s'y rattache plutôt que de rester bloqué.
             showToast('Mise à jour', 'Une mise à jour est déjà en cours — suivi rattaché au job en cours.', 'warning');

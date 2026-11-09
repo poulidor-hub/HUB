@@ -74,6 +74,32 @@ async def test_update_status_passthrough_200(client, admin_token, tmp_path,
     assert sent.headers["X-Atelier-Token"] == "token-secret-123"
 
 
+async def test_update_status_forwards_refresh_query(client, admin_token,
+                                                    tmp_path, monkeypatch):
+    """?refresh=1 du front est forwardé au service hôte (review finale).
+
+    Le front ajoute ?refresh=1 quand l'onglet s'active et sur « Vérifier
+    maintenant » pour forcer le re-check git côté hôte (cache TTL 60 s) :
+    le proxy doit relayer ce query — et n'en ajouter AUCUN quand le front
+    n'en envoie pas (le badge navbar initial doit rester servi du cache).
+    """
+    _use_update_service(monkeypatch, tmp_path)
+    headers = get_auth_header(admin_token)
+    with respx.mock(assert_all_called=False) as mock:
+        route = mock.get(f"{UPDATE_HOST}/update/status").respond(
+            200, json={"service": "ok"})
+        r_plain = await client.get(STATUS_PATH, headers=headers)
+        r_refresh = await client.get(STATUS_PATH + "?refresh=1",
+                                     headers=headers)
+    assert r_plain.status_code == 200
+    assert r_refresh.status_code == 200
+    assert route.call_count == 2
+    # Sans ?refresh côté Hub : aucune query transmise au service hôte.
+    assert route.calls[0].request.url.query == b""
+    # Avec ?refresh=1 : exactement ce param, rien d'autre.
+    assert dict(route.calls[1].request.url.params) == {"refresh": "1"}
+
+
 async def test_update_status_unreachable_returns_200(client, admin_token,
                                                      tmp_path, monkeypatch):
     """Service injoignable → 200 {"service": "unreachable", "hint": …}.
@@ -160,7 +186,10 @@ async def test_run_passthrough_202_and_409(client, admin_token, admin_user,
     _use_update_service(monkeypatch, tmp_path)
     submitted = {"job": {"state": "running",
                          "started_at": "2026-11-09T10:00:00"}}
-    conflict = {"detail": "update déjà en cours",
+    # Payload verbatim du service hôte (update_serve.py, hubctl) : SANS
+    # accent — le front matche ce detail avec une regex insensible aux
+    # accents pour rattacher l'onglet au job en cours.
+    conflict = {"detail": "update deja en cours",
                 "job": {"state": "running"}}
     with respx.mock(assert_all_called=False) as mock:
         route = mock.post(f"{UPDATE_HOST}/update/run").mock(side_effect=[
