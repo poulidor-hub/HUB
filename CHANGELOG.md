@@ -5,6 +5,24 @@
 
 ---
 
+## [3.85.0] - 9 novembre 2026
+
+### ✨ Centre de mises à jour : routes proxy + onglet « Mises à jour » (admin)
+
+Le Hub expose le service hôte `hubctl update --serve` à ses administrateurs : détection des mises à jour du socle (diff git), déclenchement de `hubctl update hub` avec suivi live du log et reconnexion automatique pendant le redémarrage du Hub. Détail du service hôte : hubctl 0.18.0.
+
+| Élément | Détail |
+|---------|--------|
+| **`hub/app/routes/system_update.py`** | router admin `/api/admin/system` : `GET /update-status` (passthrough du statut git par composant ; `?refresh=1` forwardé au service hôte ; service down ⇒ 200 `{"service":"unreachable"}`), `POST /update` (strict + audit `SYSTEM_UPDATE_TRIGGERED`), `GET /update-job` (tolérant) ; timeout GETs branché sur `settings.update_timeout` (30 s) ; token atelier réutilisé, 503 dédié (hint `journalctl -u hubctl-update`) |
+| **Settings** | `update_service_url` (défaut `http://host.docker.internal:8778`) + `update_timeout` (30.0) |
+| **Front — badge navbar** | point orange à côté de la version (admin only) quand `origin/main` est en avance ; clic → page admin onglet Mises à jour ; 403/unreachable silencieux |
+| **Front — onglet Mises à jour** | statut par composant (version → version cible, badges à jour / X → Y / divergé / arbre sale / erreur + remèdes), bouton « Mettre à jour le Hub et le socle » (confirmation, anti double-clic, 409 → rattachement au job), panneau live : polling 2 s sans plafond, « Hub en redémarrage… » après 3 échecs consécutifs, verdict + tail du log, re-fetch `/api/health` au retour |
+| **Sécurité** | `get_current_admin` sur les 3 routes (401/403 testés), échappement HTML sur toute valeur serveur, pas d'animations (polling sobre) |
+| **Tests** | +9 `test_system_update_routes.py` (passthrough strict/tolérant, 401/403, audit en DB, forward `?refresh=1`, timeout sentinelle, 409 payload réel sans accent) — les échecs `test_app_deploy`/`test_vpn_dns`/`test_workshop_overrides` sont préexistants sur main (prouvés identiques sur l'image main) |
+
+---
+
+
 ## [3.84.0] - 9 novembre 2026
 
 ### ✨ Console Notifications unifiée : une seule page adaptée au rôle (Ma boîte / Gestion)
