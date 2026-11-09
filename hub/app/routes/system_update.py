@@ -61,8 +61,12 @@ async def _proxy_get_status_or_job(path: str) -> dict:
 
     Read-only. Service injoignable (ConnectError/timeout) ⇒ 200
     {"service": "unreachable", "hint": …}. Autre HTTPError / réponse non
-    JSON / non-objet / code ≠ 200 ⇒ 502 verbalisable. Timeout client
-    court (10 s) : un status/job doit répondre vite — le front sonde.
+    JSON / non-objet / code ≠ 200 ⇒ 502 verbalisable. Timeout
+    settings.update_timeout (30 s) : la collecte de statut à froid côté
+    hôte (cache TTL 60 s expiré ⇒ git fetch des dépôts) prend ~10 s sur
+    le parc réel — un timeout plus court faisait répondre le premier
+    appel « unreachable » puis le suivant « ok » (badge instable à
+    chaque cycle TTL).
     """
     settings = get_settings()
     base_url = settings.update_service_url.rstrip("/")
@@ -71,7 +75,8 @@ async def _proxy_get_status_or_job(path: str) -> dict:
         raise HTTPException(status_code=503, detail=TOKEN_MISSING_DETAIL)
     headers = {"X-Atelier-Token": token}
     try:
-        async with httpx.AsyncClient(timeout=10.0) as http:
+        async with httpx.AsyncClient(
+                timeout=settings.update_timeout) as http:
             resp = await http.get(f"{base_url}{path}", headers=headers)
     except (httpx.ConnectError, httpx.TimeoutException) as e:
         logger.warning(f"service update hôte injoignable ({path}) : {e}")

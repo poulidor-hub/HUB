@@ -94,6 +94,49 @@ async def test_update_status_unreachable_returns_200(client, admin_token,
     assert body["hint"]
 
 
+async def test_proxy_timeout_follows_setting(client, admin_token, tmp_path,
+                                             monkeypatch):
+    """Timeout des proxys branché sur settings.update_timeout (régression).
+
+    Les 2 GETs tolérants utilisaient un 10.0 s codé en dur : à froid
+    (cache TTL 60 s expiré) la collecte de statut côté hôte (git fetch
+    des dépôts) prend ~10.2 s sur le parc réel — le premier appel
+    répondait « unreachable » (timeout proxy) puis le suivant « ok » :
+    badge instable à chaque cycle TTL. Sentinelle 12.34 passée à la
+    setting + capture du kwarg timeout du httpx.AsyncClient (respx ne
+    simule pas les timeouts sur transport mocké) : prouve le
+    branchement à la setting, pas seulement la valeur par défaut.
+    """
+    captured = []
+    real_client = httpx.AsyncClient
+
+    class SpyAsyncClient(real_client):
+        def __init__(self, *args, **kwargs):
+            captured.append(kwargs.get("timeout"))
+            super().__init__(*args, **kwargs)
+
+    monkeypatch.setattr(httpx, "AsyncClient", SpyAsyncClient)
+    monkeypatch.setattr(get_settings(), "update_timeout", 12.34)
+    _use_update_service(monkeypatch, tmp_path)
+    with respx.mock(assert_all_called=False) as mock:
+        status_route = mock.get(f"{UPDATE_HOST}/update/status").respond(
+            200, json={"service": "ok"})
+        job_route = mock.get(f"{UPDATE_HOST}/update/job").respond(
+            200, json={"state": "idle"})
+        run_route = mock.post(f"{UPDATE_HOST}/update/run").respond(
+            202, json={"job": {"state": "running"}})
+        r1 = await client.get(STATUS_PATH,
+                              headers=get_auth_header(admin_token))
+        r2 = await client.get(JOB_PATH, headers=get_auth_header(admin_token))
+        r3 = await client.post(RUN_PATH, headers=get_auth_header(admin_token))
+    assert r1.status_code == 200
+    assert r2.status_code == 200
+    assert r3.status_code == 202
+    assert status_route.called and job_route.called and run_route.called
+    assert captured, "aucun httpx.AsyncClient construit par les proxys"
+    assert all(t == 12.34 for t in captured), captured
+
+
 async def test_update_token_missing_returns_503(client, admin_token,
                                                 tmp_path, monkeypatch):
     """Token partagé absent/illisible → 503 avec hint (les 3 routes)."""
