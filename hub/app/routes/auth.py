@@ -127,6 +127,42 @@ def _check_recover_rate_limit(ip: str) -> None:
     _recover_attempts[ip] = attempts
 
 
+# Rate limiting DÉDIÉ au grant client_credentials (M2M) — incident 09/11/2026 :
+# toutes les apps du parc mintent derrière la MÊME IP (gateway Docker 10.42.0.1),
+# un compteur par IP bloquait le mint inter-apps (84×429 en cascade à chaque
+# vague synchronisée). Pour une IP interne de confiance (whitelist Docker), le
+# compteur est keyé par client_id — la borne anti-hammering est conservée PAR
+# service account ; pour une IP externe, il reste keyé par IP (inchangé 3.83.2).
+_M2M_RATE_LIMIT_MAX_INTERNAL = 20   # par client_id (IP interne de confiance)
+_M2M_RATE_LIMIT_MAX_EXTERNAL = 5    # par IP (externe) — inchangé vs 3.83.2
+_m2m_attempts: dict[str, list[float]] = {}
+
+
+def _check_m2m_rate_limit(request: Request, client_id: str) -> None:
+    """Vérifie le rate limit du grant M2M : par client_id (interne), par IP (externe)."""
+    import time
+    from app.routes.apps import is_docker_network_ip
+
+    ip = _get_client_ip(request)
+    if is_docker_network_ip(ip):
+        key = f"m2m:client:{client_id}"
+        limit = _M2M_RATE_LIMIT_MAX_INTERNAL
+    else:
+        key = f"m2m:ip:{ip}"
+        limit = _M2M_RATE_LIMIT_MAX_EXTERNAL
+    now = time.time()
+    attempts = _m2m_attempts.get(key, [])
+    attempts = [t for t in attempts if now - t < _RATE_LIMIT_WINDOW]
+    if len(attempts) >= limit:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Trop de tentatives de connexion. Réessayez dans {_RATE_LIMIT_WINDOW} secondes.",
+            headers={"Retry-After": str(_RATE_LIMIT_WINDOW)}
+        )
+    attempts.append(now)
+    _m2m_attempts[key] = attempts
+
+
 # ============================================================================
 # BEACON TOKEN — jeton éphémère HMAC pour sécuriser beacon-logout
 # ============================================================================
@@ -278,7 +314,9 @@ async def login_for_token(
 
         # Audit 08/11/2026 : seule branche sans rate limit — brute force de
         # secrets M2M non bornée sur un endpoint exposé (80/443/8000).
-        _check_rate_limit(_get_client_ip(request))
+        # Incident 09/11/2026 : compteur keyé par client_id pour une IP interne
+        # (toutes les apps partagent la gateway Docker) — voir _check_m2m_rate_limit.
+        _check_m2m_rate_limit(request, client_id)
 
         result = await db.execute(
             select(ServiceAccount)
