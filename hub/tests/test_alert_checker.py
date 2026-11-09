@@ -7,6 +7,8 @@ Audit 08/11/2026 : le Hub n'avait AUCUNE alerte poussée — tout était en
 pull via le dashboard. evaluate_alerts est la partie pure (seuils +
 cooldown) ; la livraison passe par le canal messages vers les admins.
 """
+import pytest
+
 from app.alert_checker import evaluate_alerts
 
 THRESHOLDS = {
@@ -119,3 +121,55 @@ def test_other_keys_fire_during_cooldown():
     evaluate_alerts(_metrics(error_count_10m=31), THRESHOLDS, state, NOW)
     alerts = evaluate_alerts(_metrics(sse_clients=501), THRESHOLDS, state, NOW + 60)
     assert _keys(alerts) == ["sse_capacity"]
+
+
+# =============================================================================
+# LIVRAISON — deliver_alerts (persisted UserMessage + SSE temps réel)
+# =============================================================================
+
+@pytest.mark.asyncio
+async def test_deliver_alerts_sse_payload_includes_message_id(
+    monkeypatch, async_session, admin_user
+):
+    """Le payload SSE d'une alerte transporte l'id du UserMessage persisté.
+
+    Incident 09/11/2026 : deliver_alerts émettait un payload SANS id → le front
+    (messages-inbox.js) retombait sur Date.now() comme id et rappelait
+    POST /api/messages/<timestamp>/read → overflow int32 côté asyncpg (500 en
+    boucle sur /read, pic d'erreurs Hub).
+    """
+    import app.routes.events as events
+
+    sent = []
+
+    async def fake_send_to_user(user_id, event, payload):
+        sent.append((user_id, event, payload))
+
+    monkeypatch.setattr(events, "send_to_user", fake_send_to_user)
+
+    from app.alert_checker import deliver_alerts
+
+    alerts = [{
+        "key": "error_rate",
+        "priority": "warning",
+        "title": "Pic d'erreurs Hub",
+        "body": "42 erreurs enregistrées en 10 min",
+    }]
+    delivered = await deliver_alerts(alerts)
+    assert delivered == 1
+
+    # L'alerte est persistée en UserMessage...
+    from sqlalchemy import select
+    from app.models import UserMessage
+    msg = (await async_session.execute(select(UserMessage))).scalars().first()
+    assert msg is not None
+
+    # ...et le SSE transporte CE même id (sinon le front marque un id inventé en lu)
+    assert len(sent) == 1
+    user_id, event, payload = sent[0]
+    assert user_id == admin_user.id
+    assert event == "user_message"
+    assert payload["id"] == msg.id
+    assert payload["title"] == "Pic d'erreurs Hub"
+    assert payload["priority"] == "warning"
+    assert payload["key"] == "error_rate"
