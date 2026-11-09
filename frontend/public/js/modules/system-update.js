@@ -256,7 +256,7 @@ function _renderSystemUpdateMetaCard(data, meta, metaAvailable) {
         ? `<span class="badge bg-warning text-dark">${escapeHtml(String(meta.version || '?'))} → ${escapeHtml(String(meta.version_target || '?'))}</span>`
         : '<span class="badge bg-success">à jour</span>'];
     if (meta.dirty) badges.push('<span class="badge bg-warning text-dark">arbre sale</span>');
-    if (meta.drifted) badges.push('<span class="badge bg-danger">divergé</span>');
+    if (meta.drifted && meta.drifted.length) badges.push('<span class="badge bg-danger">divergé</span>');
 
     const checkedAt = _systemUpdateDate(data && data.checked_at);
     const remedies = _systemUpdateRemedies(meta);
