@@ -5,6 +5,18 @@
 
 ---
 
+## [3.85.1] - 9 novembre 2026
+
+### 🐛 Badge « divergé » affiché à tort sur le méta aligné
+
+`system-update.js` testait `if (meta.drifted)` — or un tableau vide `[]` est truthy
+en JavaScript : la carte « Parc » affichait « divergé » même sans aucun submodule
+dérivé. Test resserré sur `meta.drifted && meta.drifted.length` (constaté sur le
+déploiement réel 3.85.0, statut hôte derrière = 0 / dirty = false / drifted = []).
+
+---
+
+
 ## [3.85.0] - 9 novembre 2026
 
 ### ✨ Centre de mises à jour : routes proxy + onglet « Mises à jour » (admin)
