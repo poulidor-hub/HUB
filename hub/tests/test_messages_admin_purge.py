@@ -151,3 +151,59 @@ async def test_purge_expired_excludes_urgent_unread(client: AsyncClient, async_s
     # L'urgent jamais lu survit, l'expiré info est archivé
     assert m_urgent.status == "active"
     assert m_info.status == "archived"
+
+# -----------------------------------------------------------------------------
+# Revue finale — fixes Critical #1 + Important #4 :
+#   - DELETE /api/messages/?older_than_days=N épargne les récents (l'ancien
+#     param `hours` est une fenêtre RÉCENTE, l'option de purge doit viser le VIEUX)
+#   - DELETE /api/messages/?status=active épargne les archivés (alignement
+#     modal ↔ purge-preview, qui compte sur les actifs uniquement)
+# -----------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_purge_older_than_days_spares_recent(client: AsyncClient, async_session: AsyncSession,
+                                                   admin_user, admin_token):
+    vieux = await _make_broadcast(async_session, admin_user, title="vieux-100j",
+                                  created_at=utcnow() - timedelta(days=100))
+    recent = await _make_broadcast(async_session, admin_user, title="recent-1j",
+                                   created_at=utcnow() - timedelta(days=1))
+
+    resp = await client.delete("/api/messages/",
+                               params={"older_than_days": "90"},
+                               headers=get_auth_header(admin_token))
+    assert resp.status_code == 200
+    assert resp.json()["affected"] == 1
+
+    await async_session.refresh(vieux)
+    await async_session.refresh(recent)
+    assert vieux.status == "archived"
+    assert recent.status == "active", "le param older_than_days ne doit PAS toucher les récents"
+
+
+@pytest.mark.asyncio
+async def test_purge_status_active_spares_archived(client: AsyncClient, async_session: AsyncSession,
+                                                   admin_user, admin_token):
+    actif = await _make_broadcast(async_session, admin_user, title="actif-app", app_slug="app-x")
+    archive = await _make_broadcast(async_session, admin_user, title="archive-app", app_slug="app-x",
+                                    status="archived")
+
+    # Cas qui compte : hard + status=active → l'archivé doit SURVIVRE à la
+    # suppression définitive (alignement modal ↔ purge-preview, compte actifs)
+    resp = await client.delete("/api/messages/",
+                               params={"sender_app": "app-x", "status": "active", "hard": "true"},
+                               headers=get_auth_header(admin_token))
+    assert resp.status_code == 200
+    assert resp.json()["deleted"] == 1
+
+    # L'actif a été supprimé en dur, l'archivé survit
+    assert (await async_session.get(UserMessage, actif.id)) is None
+    assert (await async_session.get(UserMessage, archive.id)) is not None, \
+        "status=active doit épargner les archivés même en hard"
+
+    # Sans le param : sémantique historique conservée (tous statuts)
+    autre_actif = await _make_broadcast(async_session, admin_user, title="actif-app-2", app_slug="app-y")
+    resp2 = await client.delete("/api/messages/",
+                                params={"sender_app": "app-y", "hard": "true"},
+                                headers=get_auth_header(admin_token))
+    assert resp2.status_code == 200
+    assert (await async_session.get(UserMessage, autre_actif.id)) is None

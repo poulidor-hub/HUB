@@ -934,6 +934,17 @@ async def get_unread_count(
         ))
         .scalar_subquery()
     )
+    # Sous-requête : IDs des messages masqués par l'utilisateur (hidden_at) —
+    # un masqué non lu ne doit pas compter dans la cloche (alignement avec
+    # unread_total de GET /me).
+    hidden_subq = (
+        select(MessageReadReceipt.message_id)
+        .where(and_(
+            MessageReadReceipt.user_id == current_user.id,
+            MessageReadReceipt.hidden_at.isnot(None),
+        ))
+        .scalar_subquery()
+    )
 
     count = await db.scalar(
         select(func.count(UserMessage.id))
@@ -951,6 +962,7 @@ async def get_unread_count(
             )
         )
         .where(UserMessage.id.notin_(read_subq))
+        .where(UserMessage.id.notin_(hidden_subq))
     ) or 0
 
     return {"count": count}
@@ -1531,9 +1543,11 @@ async def hard_delete_message(
 @router.delete("/")
 async def purge_messages(
     hours: Optional[int] = Query(None, ge=1, le=8760),
+    older_than_days: Optional[int] = Query(None, ge=1, le=3650, description="Limiter aux messages plus vieux que N jours (créés avant now-Nj) — inverse de `hours`"),
     priority: Optional[str] = Query(None),
     sender_app: Optional[str] = Query(None),
     target_type: Optional[str] = Query(None),
+    status: Optional[str] = Query(None, description="Filtrer par statut (ex: active — épargne les archivés même en hard)"),
     read_only: bool = Query(False, description="Limiter aux messages lus par tous leurs destinataires"),
     expired_only: bool = Query(False, description="Limiter aux messages expirés (date passée, encore actifs)"),
     exclude_urgent_unread: bool = Query(False, description="Exclure les urgents jamais lus"),
@@ -1549,12 +1563,18 @@ async def purge_messages(
     if hours:
         since = now - timedelta(hours=hours)
         filters.append(UserMessage.created_at >= since)
+    if older_than_days:
+        # « Plus vieux que N jours » : créés AVANT now-Nj (le miroir exact du
+        # purge-preview ?older_than_days ; `hours` reste une fenêtre récente)
+        filters.append(UserMessage.created_at < now - timedelta(days=older_than_days))
     if priority:
         filters.append(UserMessage.priority == priority)
     if sender_app:
         filters.append(UserMessage.sender_app_slug == sender_app)
     if target_type:
         filters.append(UserMessage.target_type == target_type)
+    if status:
+        filters.append(UserMessage.status == status)
     # Nouveaux cas de purge (combinables entre eux et avec les filtres ci-dessus) :
     if read_only:
         # « lu par tous » : total_targets > 0 ET read_count >= total_targets
