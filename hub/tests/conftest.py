@@ -27,14 +27,16 @@ from app.config import get_settings
 @pytest.fixture(autouse=True)
 def reset_rate_limiter():
     """Réinitialise les rate limiters entre chaque test"""
-    from app.routes.auth import _login_attempts, _recover_attempts
+    from app.routes.auth import _login_attempts, _recover_attempts, _m2m_attempts
     from app.routes.oidc import _token_failures
     _login_attempts.clear()
     _recover_attempts.clear()
+    _m2m_attempts.clear()
     _token_failures.clear()
     yield
     _login_attempts.clear()
     _recover_attempts.clear()
+    _m2m_attempts.clear()
     _token_failures.clear()
 
 
