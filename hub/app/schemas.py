@@ -1820,6 +1820,8 @@ class MessageResponse(BaseModel):
     delivered_count: int = 0
     click_count: int = 0
     is_expired: bool = False
+    # Taille du groupe quand group_similar=true sur GET /api/messages (None sinon)
+    occurrences: Optional[int] = None
 
     model_config = ConfigDict(from_attributes=True)
 

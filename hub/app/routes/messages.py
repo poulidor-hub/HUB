@@ -293,6 +293,7 @@ async def list_messages(
     hours: Optional[int] = Query(None, ge=1, le=8760),
     status: Optional[str] = Query(None, description="Filtre cycle de vie : active | archived | expired | all (défaut: all)"),
     expiring_within_hours: Optional[int] = Query(None, ge=1, le=8760),
+    group_similar: bool = Query(False, description="Regrouper les messages identiques (titre+priorité+app) : 1 représentant par groupe + occurrences"),
     current_user = Depends(get_admin_or_admin_sa),
     db: AsyncSession = Depends(get_db)
 ):
@@ -341,15 +342,46 @@ async def list_messages(
         query = query.where(and_(*filters))
         count_query = count_query.where(and_(*filters))
 
-    total = await db.scalar(count_query) or 0
-    pages = max(1, (total + per_page - 1) // per_page)
+    if group_similar:
+        # 1 ligne par groupe (titre, priorité, app) : représentant = plus récent,
+        # occurrences = taille du groupe. Même pattern window que GET /me (Task 2),
+        # sans jointure receipts (vue système admin).
+        grp = func.coalesce(UserMessage.sender_app_slug, UserMessage.sender_type)
+        PART = (UserMessage.title, UserMessage.priority, grp)
+        rn = func.row_number().over(
+            partition_by=PART,
+            order_by=(desc(UserMessage.created_at), desc(UserMessage.id)),
+        ).label("rn")
+        occ = func.count().over(partition_by=PART).label("occurrences")
+        subq = select(UserMessage, rn, occ)
+        if filters:
+            subq = subq.where(and_(*filters))
+        subq = subq.subquery()
+        um = aliased(UserMessage, subq)
+        total = await db.scalar(
+            select(func.count()).select_from(subq).where(subq.c.rn == 1)
+        ) or 0
+        pages = max(1, (total + per_page - 1) // per_page)
+        offset = (page - 1) * per_page
+        rows = (await db.execute(
+            select(um, subq.c.occurrences)
+            .where(subq.c.rn == 1)
+            .order_by(desc(subq.c.created_at), desc(subq.c.id))
+            .offset(offset).limit(per_page)
+        )).all()
+        messages = [row[0] for row in rows]
+        occurrences_by_id = {row[0].id: row.occurrences for row in rows}
+    else:
+        total = await db.scalar(count_query) or 0
+        pages = max(1, (total + per_page - 1) // per_page)
 
-    offset = (page - 1) * per_page
-    result = await db.execute(
-        query.order_by(desc(UserMessage.created_at))
-        .offset(offset).limit(per_page)
-    )
-    messages = result.scalars().all()
+        offset = (page - 1) * per_page
+        result = await db.execute(
+            query.order_by(desc(UserMessage.created_at))
+            .offset(offset).limit(per_page)
+        )
+        messages = result.scalars().all()
+        occurrences_by_id = {}
 
     # Résoudre les usernames
     user_ids = set()
@@ -412,6 +444,7 @@ async def list_messages(
             is_expired=is_expired,
             is_resend=m.is_resend or False,
             original_message_id=m.original_message_id,
+            occurrences=occurrences_by_id.get(m.id),
         ))
 
     return PaginatedMessagesResponse(
@@ -539,6 +572,55 @@ async def get_message_stats(
         "avg_delivered_rate": round(float(avg_delivered or 0.0), 4),
         "apps_count": len(by_app),
         "top_apps": top_apps[:10],
+    }
+
+
+@router.get("/purge-preview")
+async def purge_preview(
+    older_than_days: int = Query(90, ge=1, le=3650, description="Seuil « vieux messages » en jours"),
+    current_user: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """Aperçu des purges possibles : comptes par cas (lus / expirés / vieux / par app).
+
+    Tous les comptes portent sur les messages ACTIFS. per_app = top 5 apps émettrices.
+    """
+    now = utcnow()
+    ACTIVE = UserMessage.status == "active"
+
+    # Prédicats imposés (partagés avec DELETE /) :
+    #   « lu par tous » : total_targets > 0 ET read_count >= total_targets
+    READ_ALL = and_(UserMessage.total_targets > 0, UserMessage.read_count >= UserMessage.total_targets)
+    #   « expiré » : date passée ET toujours actif
+    EXPIRED = and_(UserMessage.expires_at.isnot(None), UserMessage.expires_at <= now, UserMessage.status == "active")
+
+    read = await db.scalar(
+        select(func.count(UserMessage.id)).where(and_(ACTIVE, READ_ALL))
+    ) or 0
+    expired = await db.scalar(
+        select(func.count(UserMessage.id)).where(EXPIRED)
+    ) or 0
+    older = await db.scalar(
+        select(func.count(UserMessage.id)).where(and_(
+            ACTIVE,
+            UserMessage.created_at < now - timedelta(days=older_than_days),
+        ))
+    ) or 0
+
+    app_rows = await db.execute(
+        select(UserMessage.sender_app_slug, func.count(UserMessage.id))
+        .where(and_(ACTIVE, UserMessage.sender_app_slug.isnot(None)))
+        .group_by(UserMessage.sender_app_slug)
+        .order_by(desc(func.count(UserMessage.id)))
+        .limit(5)
+    )
+    per_app = [{"sender_app_slug": slug, "count": cnt} for slug, cnt in app_rows.all()]
+
+    return {
+        "read": read,
+        "expired": expired,
+        "older_than_days": {"days": older_than_days, "count": older},
+        "per_app": per_app,
     }
 
 
@@ -1452,6 +1534,9 @@ async def purge_messages(
     priority: Optional[str] = Query(None),
     sender_app: Optional[str] = Query(None),
     target_type: Optional[str] = Query(None),
+    read_only: bool = Query(False, description="Limiter aux messages lus par tous leurs destinataires"),
+    expired_only: bool = Query(False, description="Limiter aux messages expirés (date passée, encore actifs)"),
+    exclude_urgent_unread: bool = Query(False, description="Exclure les urgents jamais lus"),
     hard: bool = Query(False, description="Si true, suppression définitive (au lieu de simple archivage)"),
     current_user: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db)
@@ -1459,9 +1544,10 @@ async def purge_messages(
     """Archive (soft-delete) ou supprime définitivement (?hard=true) les messages filtrés (admin)."""
     from app.routes.audit import log_action
 
+    now = utcnow()
     filters = []
     if hours:
-        since = utcnow() - timedelta(hours=hours)
+        since = now - timedelta(hours=hours)
         filters.append(UserMessage.created_at >= since)
     if priority:
         filters.append(UserMessage.priority == priority)
@@ -1469,6 +1555,20 @@ async def purge_messages(
         filters.append(UserMessage.sender_app_slug == sender_app)
     if target_type:
         filters.append(UserMessage.target_type == target_type)
+    # Nouveaux cas de purge (combinables entre eux et avec les filtres ci-dessus) :
+    if read_only:
+        # « lu par tous » : total_targets > 0 ET read_count >= total_targets
+        filters.append(and_(UserMessage.total_targets > 0, UserMessage.read_count >= UserMessage.total_targets))
+    if expired_only:
+        # « expiré » : date passée ET encore actif
+        filters.append(and_(
+            UserMessage.expires_at.isnot(None),
+            UserMessage.expires_at <= now,
+            UserMessage.status == "active",
+        ))
+    if exclude_urgent_unread:
+        # Survie des urgents jamais lus
+        filters.append(or_(UserMessage.priority != "urgent", UserMessage.read_count >= 1))
 
     if hard:
         stmt = delete(UserMessage)
@@ -1497,7 +1597,7 @@ async def purge_messages(
 
     await log_action(
         db, current_user.id, action,
-        details=f"affected={affected}, hours={hours}, priority={priority}, app={sender_app}, hard={hard}",
+        details=f"affected={affected}, hours={hours}, priority={priority}, app={sender_app}, hard={hard}, read_only={read_only}, expired_only={expired_only}, exclude_urgent_unread={exclude_urgent_unread}",
         notify_sse=False
     )
     await db.commit()
