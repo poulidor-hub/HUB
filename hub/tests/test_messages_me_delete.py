@@ -178,3 +178,25 @@ async def test_purge_read(client: AsyncClient, async_session: AsyncSession,
 
     # unread_total inchangé (la purge ne touche que les lus)
     assert body["unread_total"] == 1
+
+# -----------------------------------------------------------------------------
+# Revue finale — fix Critical #2 : le compteur de la cloche (GET /me/unread-count)
+# doit exclure les messages masqués, comme unread_total de GET /me.
+# -----------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_unread_count_excludes_hidden(client: AsyncClient, async_session: AsyncSession,
+                                            admin_user, admin_token):
+    m1 = await _make_broadcast(async_session, admin_user, title="non-lu-1")
+    m2 = await _make_broadcast(async_session, admin_user, title="non-lu-2")
+
+    before = await client.get("/api/messages/me/unread-count", headers=get_auth_header(admin_token))
+    assert before.status_code == 200
+    assert before.json()["count"] == 2
+
+    resp = await client.delete(f"/api/messages/me/{m1.id}", headers=get_auth_header(admin_token))
+    assert resp.status_code == 200
+
+    after = await client.get("/api/messages/me/unread-count", headers=get_auth_header(admin_token))
+    assert after.status_code == 200
+    assert after.json()["count"] == 1, "un message masqué non lu ne doit plus compter dans la cloche"
