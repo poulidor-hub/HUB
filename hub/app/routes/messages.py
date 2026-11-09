@@ -896,7 +896,7 @@ async def mark_message_read(
             MessageReadReceipt.user_id == current_user.id,
         ))
     )
-    receipt = existing.scalar_one_or_none()
+    receipt = existing.scalars().first()
 
     if receipt is None:
         receipt = MessageReadReceipt(
@@ -948,7 +948,7 @@ async def mark_message_delivered(
             MessageReadReceipt.user_id == current_user.id,
         ))
     )
-    receipt = existing.scalar_one_or_none()
+    receipt = existing.scalars().first()
 
     if receipt is None:
         db.add(MessageReadReceipt(
@@ -989,7 +989,7 @@ async def mark_message_clicked(
             MessageReadReceipt.user_id == current_user.id,
         ))
     )
-    receipt = existing.scalar_one_or_none()
+    receipt = existing.scalars().first()
 
     if receipt is None:
         receipt = MessageReadReceipt(

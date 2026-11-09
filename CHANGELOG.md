@@ -5,6 +5,23 @@
 
 ---
 
+## [3.83.3] - 9 novembre 2026
+
+### ⚡ Correctifs pic d'erreurs messages : receipts dupliqués + ids SSE invalides
+
+Incident 09/11/2026 (pic d'erreurs Hub : 42 erreurs/10 min sur `POST /api/messages/{id}/read`) — deux causes racines distinctes :
+
+| Élément | Détail |
+|---------|--------|
+| **Payload alertes amputé** | `deliver_alerts()` émettait le SSE `user_message` **sans `id`** → le front (`messages-inbox.js`) retombait sur `Date.now()` comme identifiant et rappelait POST /read avec un timestamp à 13 chiffres → overflow int32 asyncpg (« invalid input for query argument »), 500 en boucle. Le payload transporte désormais l'id du `UserMessage` persisté (même contrat que `_message_to_brief()`) |
+| **Unicité effective des receipts** | L'UNIQUE(message_id, user_id) de la migration 014 était un **no-op** sur toutes les installations : `create_all` construit la table depuis un modèle sans contrainte AVANT `apply_migrations()`, donc son `CREATE TABLE IF NOT EXISTS` ne s'applique jamais. Des courses (read + read-all concurrents) ont créé de vrais doublons → « Multiple rows were found when one or none was required » en boucle. Modèle : index unique nommé `uq_message_read_receipts_message_user` ; migration **064** : dédoublonnage (ROW_NUMBER, pattern 055) + `CREATE UNIQUE INDEX IF NOT EXISTS` |
+| **Routes tolérantes** | read/delivered/click : `scalars().first()` au lieu de `scalar_one_or_none()` — tolère des doublons pré-migration au lieu de 500 |
+| **Garde front** | `messages-inbox.js` : seul un id entier plausible (> 0, ≤ int32) autorise `markMessageRead` ; sinon id d'affichage anonyme, la carte se ferme sans POST |
+| **Tests** | 2 nouveaux (id dans le payload SSE, rejet du doublon par la contrainte) — suite hôte 1583 vert ; 3 échecs préexistants inchangés (`test_app_deploy`×2, `test_vpn_dns`, présents sur la base 3.83.2) |
+| **Déployé et vérifié en prod dev** | migration 064 appliquée au boot, index présent en DB ; trafic réel : 43 erreurs /read à 02:08 → 0 après déploiement (2-3 résidus à la minute du redémarrage) |
+
+---
+
 ## [3.83.2] - 8 novembre 2026
 
 ### ⚡ Post-audit SSE : logs, visibilité, alertes admin, hygiène DB, durcissement M2M

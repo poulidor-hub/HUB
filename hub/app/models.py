@@ -888,6 +888,14 @@ class UserMessage(Base):
 class MessageReadReceipt(Base):
     """Accusé de lecture d'un message par un utilisateur"""
     __tablename__ = "message_read_receipts"
+    # Unicité (message_id, user_id) : un receipt par paire. Sans elle, des
+    # courses (read + read-all concurrents) créaient des doublons → crash
+    # scalar_one_or_none() sur /read (incident 09/11/2026). Index nommé unique
+    # pour que la migration 064 (CREATE UNIQUE INDEX IF NOT EXISTS même nom)
+    # soit un no-op sur les installs neuves et répare les installs existantes.
+    __table_args__ = (
+        Index('uq_message_read_receipts_message_user', 'message_id', 'user_id', unique=True),
+    )
     
     id = Column(Integer, primary_key=True, index=True)
     message_id = Column(Integer, ForeignKey('user_messages.id', ondelete='CASCADE'), nullable=False)

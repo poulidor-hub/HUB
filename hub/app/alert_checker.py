@@ -200,9 +200,10 @@ async def deliver_alerts(alerts: List[dict]) -> int:
         if not admins:
             logger.warning("⚠️ Alerte(s) à livrer mais aucun admin actif trouvé")
             return 0
+        created: List[tuple[dict, User, UserMessage]] = []
         for alert in alerts:
             for admin in admins:
-                db.add(UserMessage(
+                msg = UserMessage(
                     sender_type="system",
                     sender_id=None,
                     target_type="user",
@@ -212,21 +213,25 @@ async def deliver_alerts(alerts: List[dict]) -> int:
                     title=alert["title"][:200],
                     body=alert["body"],
                     total_targets=1,
-                ))
+                )
+                db.add(msg)
+                created.append((alert, admin, msg))
         await db.commit()
 
     # Temps réel (ne casse jamais la boucle d'alerte)
-    for alert in alerts:
-        for admin in admins:
-            try:
-                await send_to_user(
-                    admin.id,
-                    "user_message",
-                    {"title": alert["title"], "priority": alert["priority"],
-                     "key": alert["key"]},
-                )
-            except Exception:
-                pass
+    # NB : le payload transporte l'id du UserMessage persisté — sans lui, le
+    # front retombe sur un id inventé (Date.now()) et rappelle /read avec,
+    # → overflow int32 asyncpg (incident 09/11/2026).
+    for alert, admin, msg in created:
+        try:
+            await send_to_user(
+                admin.id,
+                "user_message",
+                {"id": msg.id, "title": alert["title"], "priority": alert["priority"],
+                 "key": alert["key"]},
+            )
+        except Exception:
+            pass
     return len(alerts)
 
 
