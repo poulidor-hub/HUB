@@ -14,7 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, and_, or_, delete, desc, case
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import selectinload, aliased
 from datetime import datetime, timedelta, timezone
 from typing import Optional, List, Union
 from urllib.parse import urlparse, urljoin
@@ -29,7 +29,7 @@ from app.models import User, UserMessage, MessageReadReceipt, MessageTemplate, S
 from app.auth import get_current_user, get_current_entity, get_current_admin, get_admin_or_admin_sa, get_settings
 from app.schemas import (
     MessageCreate, MessageM2MCreate, MessageBadgePrioritiesUpdate, MessageResponse, MessageBrief,
-    PaginatedMessagesResponse,
+    PaginatedMessagesResponse, PaginatedMyMessages,
     MessageSyncItem, MessageSyncResponse,
     ReceiptSyncItem, ReceiptSyncResponse,
     MessageDetailSyncResponse, MessageReadReceiptResponse,
@@ -684,81 +684,155 @@ async def export_messages_csv(
 
 @router.get("/me")
 async def get_my_messages(
+    page: int = Query(1, ge=1, description="Numéro de page (1-based)"),
+    page_size: int = Query(20, ge=1, le=100, description="Taille de page"),
+    unread: bool = Query(False, description="Uniquement les non-lus"),
+    priority: Optional[str] = Query(None, description="Filtrer par priorité (info|warning|urgent)"),
+    sender_app: Optional[str] = Query(None, description="Filtrer par slug de l'app source"),
+    search: Optional[str] = Query(None, description="Recherche dans titre + corps"),
+    group_similar: bool = Query(False, description="Regrouper les messages identiques (titre+priorité+app)"),
     include_archived: bool = Query(False, description="Inclure les messages archivés par l'admin"),
     include_expired: bool = Query(True, description="Inclure les messages expirés"),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """Messages de l'utilisateur connecté (ciblés + broadcasts).
+    """Messages de l'utilisateur connecté (ciblés + broadcasts), TOUJOURS paginés.
 
-    Marque automatiquement les messages comme "livrés" (delivered_at) au passage,
-    pour le tracking d'engagement (rentre dans la même transaction).
+    Réponse enveloppée (PaginatedMyMessages). Marque automatiquement les
+    messages de la page comme "livrés" (delivered_at), pour le tracking
+    d'engagement (rentre dans la même transaction). Les messages masqués par
+    le destinataire (receipt.hidden_at) sont exclus du résultat ET de
+    unread_total. group_similar regroupe les messages identiques (titre +
+    priorité + app) : un représentant par groupe (le plus récent) + occurrences.
     """
     now = utcnow()
 
-    msg_filters = [
+    # Jointure receipts de cet utilisateur (alias réutilisé par les Tasks 2-4)
+    rcpt = aliased(MessageReadReceipt)
+    RCPT_JOIN = and_(rcpt.message_id == UserMessage.id, rcpt.user_id == current_user.id)
+    HIDDEN_OK = or_(rcpt.id.is_(None), rcpt.hidden_at.is_(None))
+    UNREAD_COND = or_(rcpt.id.is_(None), rcpt.read_at.is_(None))
+
+    base_filters = [
         or_(
             UserMessage.target_user_id == current_user.id,
             UserMessage.target_type == "broadcast",
         )
     ]
     if not include_archived:
-        msg_filters.append(UserMessage.status == "active")
+        base_filters.append(UserMessage.status == "active")
     if not include_expired:
-        msg_filters.append(or_(UserMessage.expires_at.is_(None), UserMessage.expires_at > now))
+        base_filters.append(or_(UserMessage.expires_at.is_(None), UserMessage.expires_at > now))
 
-    query = (
-        select(UserMessage)
-        .where(and_(*msg_filters))
-        .order_by(desc(UserMessage.created_at))
-        .limit(200)
-    )
-    result = await db.execute(query)
-    messages = result.scalars().all()
+    extra_filters = []
+    if unread:
+        extra_filters.append(UNREAD_COND)
+    if priority:
+        extra_filters.append(UserMessage.priority == priority)
+    if sender_app:
+        extra_filters.append(UserMessage.sender_app_slug == sender_app)
+    if search:
+        like = f"%{search}%"
+        extra_filters.append(or_(UserMessage.title.ilike(like), UserMessage.body.ilike(like)))
 
-    # Récupérer les receipts existants de cet utilisateur pour ces messages
-    msg_ids = [m.id for m in messages]
-    receipts_by_msg: dict[int, MessageReadReceipt] = {}
-    if msg_ids:
-        rr_result = await db.execute(
-            select(MessageReadReceipt).where(and_(
-                MessageReadReceipt.message_id.in_(msg_ids),
-                MessageReadReceipt.user_id == current_user.id,
-            ))
+    conditions = base_filters + [HIDDEN_OK] + extra_filters
+
+    if group_similar:
+        # 1 ligne par groupe (titre, priorité, app) : représentant = plus récent,
+        # occurrences = taille du groupe. Window functions → portable SQLite/PG.
+        grp = func.coalesce(UserMessage.sender_app_slug, UserMessage.sender_type)
+        PART = (UserMessage.title, UserMessage.priority, grp)
+        rn = func.row_number().over(
+            partition_by=PART,
+            order_by=(desc(UserMessage.created_at), desc(UserMessage.id)),
+        ).label("rn")
+        occ = func.count().over(partition_by=PART).label("occurrences")
+        subq = (
+            select(UserMessage, rcpt.id.label("rcpt_id"), rn, occ)
+            .outerjoin(rcpt, RCPT_JOIN)
+            .where(and_(*conditions))
+            .subquery()
         )
-        for r in rr_result.scalars().all():
-            receipts_by_msg[r.message_id] = r
+        um = aliased(UserMessage, subq)
+        rows = (await db.execute(
+            select(um, subq.c.occurrences, subq.c.rcpt_id)
+            .where(subq.c.rn == 1)
+            .order_by(subq.c.created_at.desc(), subq.c.id.desc())
+            .offset((page - 1) * page_size)
+            .limit(page_size)
+        )).all()
+        total = await db.scalar(
+            select(func.count()).select_from(subq).where(subq.c.rn == 1)
+        ) or 0
 
-    # Auto-delivery : pour chaque message visible non encore livré, créer ou mettre
-    # à jour le receipt avec delivered_at + incrémenter delivered_count.
+        # Receipts des représentants de la page (is_read / auto-delivery) :
+        # la jointure vit dans la subquery → re-fetch ORM par id.
+        rcpt_ids = [row.rcpt_id for row in rows if row.rcpt_id is not None]
+        receipts_by_id: dict[int, MessageReadReceipt] = {}
+        if rcpt_ids:
+            res = await db.execute(
+                select(MessageReadReceipt).where(MessageReadReceipt.id.in_(rcpt_ids))
+            )
+            receipts_by_id = {r.id: r for r in res.scalars().all()}
+        page_items = [(row[0], receipts_by_id.get(row.rcpt_id), row.occurrences) for row in rows]
+    else:
+        rows = (await db.execute(
+            select(UserMessage, rcpt)
+            .outerjoin(rcpt, RCPT_JOIN)
+            .where(and_(*conditions))
+            .order_by(desc(UserMessage.created_at), desc(UserMessage.id))
+            .offset((page - 1) * page_size)
+            .limit(page_size)
+        )).all()
+        page_items = [(row[0], row[1], None) for row in rows]
+        total = await db.scalar(
+            select(func.count())
+            .select_from(UserMessage)
+            .outerjoin(rcpt, RCPT_JOIN)
+            .where(and_(*conditions))
+        ) or 0
+
+    # unread_total (badge) : base + cachés exclus, SANS les filtres de recherche
+    unread_total = await db.scalar(
+        select(func.count())
+        .select_from(UserMessage)
+        .outerjoin(rcpt, RCPT_JOIN)
+        .where(and_(*base_filters, HIDDEN_OK, UNREAD_COND))
+    ) or 0
+
+    # Auto-delivery : pour chaque message de la page non encore livré, créer ou
+    # mettre à jour le receipt avec delivered_at + incrémenter delivered_count.
+    messages: list[MessageBrief] = []
     new_deliveries = 0
-    for m in messages:
-        rcpt = receipts_by_msg.get(m.id)
-        if rcpt is None:
-            rcpt = MessageReadReceipt(
+    for m, r, occurrences in page_items:
+        if r is None:
+            r = MessageReadReceipt(
                 message_id=m.id,
                 user_id=current_user.id,
                 delivered_at=now,
             )
-            db.add(rcpt)
-            receipts_by_msg[m.id] = rcpt
+            db.add(r)
             m.delivered_count = (m.delivered_count or 0) + 1
             new_deliveries += 1
-        elif rcpt.delivered_at is None:
-            rcpt.delivered_at = now
+        elif r.delivered_at is None:
+            r.delivered_at = now
             m.delivered_count = (m.delivered_count or 0) + 1
             new_deliveries += 1
+        brief_data = _message_to_brief(m, is_read=(r.read_at is not None), receipt=r)
+        brief_data["occurrences"] = occurrences
+        messages.append(MessageBrief(**brief_data))
     if new_deliveries:
         await db.commit()
 
-    return [
-        MessageBrief(**_message_to_brief(
-            m,
-            is_read=(receipts_by_msg.get(m.id) is not None and receipts_by_msg[m.id].read_at is not None),
-            receipt=receipts_by_msg.get(m.id),
-        ))
-        for m in messages
-    ]
+    pages = (total + page_size - 1) // page_size
+    return PaginatedMyMessages(
+        messages=messages,
+        total=total,
+        page=page,
+        page_size=page_size,
+        pages=pages,
+        unread_total=unread_total,
+    )
 
 
 @router.get("/me/unread-count")
