@@ -1475,6 +1475,41 @@ class HubAPI {
         return await response.json();
     }
     
+    // ===== Mises à jour du parc (admin, proxy service hôte hubctl) =====
+
+    /**
+     * Etat du parc (versions locales vs origin/main) — proxy TOLÉRANT
+     * vers le service hôte hubctl update --serve : service injoignable
+     * ⇒ 200 {"service": "unreachable", "hint"} ; non-admin ⇒ 403.
+     * @param {boolean} [refresh] Force un re-check git côté hôte
+     * @returns {Promise<{service, checked_at?, meta?, components?, hint?}>}
+     */
+    async getSystemUpdateStatus(refresh) {
+        return this.request(`/admin/system/update-status${refresh ? "?refresh=1" : ""}`);
+    }
+
+    /**
+     * Déclenche la mise à jour du Hub et du socle — passthrough STRICT
+     * du service hôte (202 job lancé, 409 déjà en cours, 503 service
+     * injoignable / token absent).
+     * @returns {Promise<Object>} Réponse du service (shape décidée par hubctl)
+     */
+    async runSystemUpdate() {
+        return this.request('/admin/system/update', {
+            method: 'POST'
+        });
+    }
+
+    /**
+     * Etat courant/dernier du job de mise à jour (polling front toutes
+     * les 2 s pendant l'exécution, cf. spec §5.3) — tolérant : service
+     * injoignable ⇒ 200 {"service": "unreachable"}.
+     * @returns {Promise<{state, started_at?, finished_at?, exit_code?, log_path?, tail?}>}
+     */
+    async getSystemUpdateJob() {
+        return this.request('/admin/system/update-job');
+    }
+    
     // ===== Bulk Operations API =====
     
     /**

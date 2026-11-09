@@ -30,6 +30,7 @@
                 <i class="bi bi-grid-3x3-gap-fill me-2"></i>
                 <span>Hub</span>
                 <small class="navbar-version ms-2" id="navbarVersionBadge">v3.84.0</small>
+                <span id="systemUpdateBadgeSlot" class="ms-2 d-inline-flex align-items-center d-none"></span>
             </a>
             
             <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarContent" aria-controls="navbarContent" aria-expanded="false" aria-label="Menu">
@@ -1052,6 +1053,11 @@
                         <i class="bi bi-tools me-1"></i>Ateliers
                     </button>
                 </li>
+                <li class="nav-item">
+                    <button class="nav-link" id="systemUpdateTabBtn" data-bs-toggle="tab" data-bs-target="#tabSystemUpdates">
+                        <i class="bi bi-arrow-repeat me-1"></i>Mises à jour
+                    </button>
+                </li>
                 <li class="nav-item admin-subtabs-item">
                     <div class="admin-subtabs">
                         <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tabAppGroups">
@@ -1225,6 +1231,36 @@
                     <div id="ateliersActionResult" class="d-none"></div>
                     <div id="ateliersTable" class="table-responsive">
                         <!-- Table loaded dynamically -->
+                    </div>
+                </div>
+                <!-- Mises à jour Tab -->
+                <div class="tab-pane fade" id="tabSystemUpdates">
+                    <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+                        <div>
+                            <h5 class="mb-0"><i class="bi bi-arrow-repeat me-2"></i>Mises à jour du Hub et du socle</h5>
+                            <small class="text-muted">Versions locales vs <code>origin/main</code> (méta POULIDOR + composants) — mise à jour exécutée par <code>hubctl</code> sur l'hôte, service coupé quelques dizaines de secondes</small>
+                        </div>
+                        <button class="btn btn-outline-secondary btn-sm" data-action="checkSystemUpdatesNow">
+                            <i class="bi bi-arrow-clockwise me-1"></i>Vérifier maintenant
+                        </button>
+                    </div>
+                    <div id="systemUpdateError" class="alert alert-danger d-none"></div>
+                    <div id="systemUpdateParcCard"></div>
+                    <div id="systemUpdateComponents" class="mb-3"></div>
+                    <div class="d-flex align-items-center flex-wrap gap-2 mb-3">
+                        <button class="btn btn-primary" id="systemUpdateRunBtn" data-action="runSystemUpdateFlow" disabled>
+                            <i class="bi bi-arrow-repeat me-1"></i>Mettre à jour le Hub et le socle
+                        </button>
+                        <small class="text-muted" id="systemUpdateRunHint">Chargement du statut…</small>
+                    </div>
+                    <div class="card border-0 shadow-sm d-none" id="systemUpdateJobPanel">
+                        <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+                            <span id="systemUpdateJobState">Suivi de la mise à jour</span>
+                            <small class="text-muted" id="systemUpdateJobMeta"></small>
+                        </div>
+                        <div class="card-body p-0">
+                            <pre id="systemUpdateLog" class="bg-dark text-light p-3 mb-0" style="max-height: 20rem; overflow: auto;"></pre>
+                        </div>
                     </div>
                 </div>
                 <!-- GitHub Apps Tab -->
@@ -4577,6 +4613,7 @@
     <script src="js/modules/user-tags.js?v=3.84.0"></script>
     <script src="js/modules/audit-errors.js?v=3.84.0"></script>
     <script src="js/modules/apps-health.js?v=3.84.0"></script>
+    <script src="js/modules/system-update.js?v=3.84.0"></script>
     <script src="js/modules/workshop-ui.js?v=3.84.0"></script>
     <script src="js/modules/admin-routing.js?v=3.84.0"></script>
     <script src="js/modules/backup-import.js?v=3.84.0"></script>
