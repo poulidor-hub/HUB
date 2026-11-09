@@ -1729,6 +1729,8 @@ class MessageBrief(BaseModel):
     delivered_at: Optional[datetime] = None
     clicked_at: Optional[datetime] = None
     read_at: Optional[datetime] = None
+    # Taille du groupe quand group_similar=true sur GET /me (None sinon)
+    occurrences: Optional[int] = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -1818,6 +1820,8 @@ class MessageResponse(BaseModel):
     delivered_count: int = 0
     click_count: int = 0
     is_expired: bool = False
+    # Taille du groupe quand group_similar=true sur GET /api/messages (None sinon)
+    occurrences: Optional[int] = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -1829,6 +1833,20 @@ class PaginatedMessagesResponse(BaseModel):
     page: int
     per_page: int
     pages: int
+
+
+class PaginatedMyMessages(BaseModel):
+    """Réponse TOUJOURS paginée de GET /api/messages/me (vue utilisateur).
+
+    Breaking vs l'ancienne liste brute : le front est refondu dans la même
+    release ; aucun autre consommateur (M2M non concerné).
+    """
+    messages: List[MessageBrief]
+    total: int
+    page: int
+    page_size: int
+    pages: int
+    unread_total: int
 
 
 # ===== Sync M2M Schemas (pour exemple-app) =====

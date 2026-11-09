@@ -523,13 +523,16 @@ function handleSSEEvent(data) {
             // Toujours resynchroniser la cloche utilisateur (un message peut avoir
             // été supprimé/archivé/expiré côté serveur).
             loadUnreadMessageCount();
-            // Mettre à jour le badge nav admin même hors de la page Messages.
+            // Mettre à jour le badge nav admin même hors de la page.
             if (currentUser?.is_admin) {
                 updateNavMessagesBadge();
-                // Rafraîchir la liste complète seulement si la page est ouverte.
-                if (currentPage === 'messages') {
-                    loadMessagesPage();
-                }
+            }
+            // Console notifications (ids 'messages' | 'inbox' | 'notifications',
+            // cf. showPage) : rafraîchir la liste si la page est ouverte —
+            // Ma boîte comme Gestion, pour tous les utilisateurs.
+            if ((currentPage === 'messages' || currentPage === 'inbox' || currentPage === 'notifications')
+                && typeof loadNotifications === 'function') {
+                loadNotifications();
             }
             break;
 

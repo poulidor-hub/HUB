@@ -346,7 +346,7 @@ class TestAutoDeliveryOnMe:
 
         resp = await client.get("/api/messages/me", headers=get_auth_header(user_token))
         assert resp.status_code == 200
-        items = resp.json()
+        items = resp.json()["messages"]  # /me est désormais toujours paginé (enveloppe)
         assert len(items) >= 2
         # is_read doit rester False (delivered != read)
         ids = {m["id"]: m for m in items}
@@ -374,7 +374,7 @@ class TestBackwardCompatibility:
         await _make_broadcast(async_session, admin_user, title="legacy")
         resp = await client.get("/api/messages/me", headers=get_auth_header(user_token))
         assert resp.status_code == 200
-        items = resp.json()
+        items = resp.json()["messages"]  # /me est désormais toujours paginé (enveloppe)
         assert len(items) >= 1
         m = items[0]
         # Champs historiquement attendus par les apps clientes

@@ -14,7 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, and_, or_, delete, desc, case
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import selectinload, aliased
 from datetime import datetime, timedelta, timezone
 from typing import Optional, List, Union
 from urllib.parse import urlparse, urljoin
@@ -29,7 +29,7 @@ from app.models import User, UserMessage, MessageReadReceipt, MessageTemplate, S
 from app.auth import get_current_user, get_current_entity, get_current_admin, get_admin_or_admin_sa, get_settings
 from app.schemas import (
     MessageCreate, MessageM2MCreate, MessageBadgePrioritiesUpdate, MessageResponse, MessageBrief,
-    PaginatedMessagesResponse,
+    PaginatedMessagesResponse, PaginatedMyMessages,
     MessageSyncItem, MessageSyncResponse,
     ReceiptSyncItem, ReceiptSyncResponse,
     MessageDetailSyncResponse, MessageReadReceiptResponse,
@@ -293,6 +293,7 @@ async def list_messages(
     hours: Optional[int] = Query(None, ge=1, le=8760),
     status: Optional[str] = Query(None, description="Filtre cycle de vie : active | archived | expired | all (défaut: all)"),
     expiring_within_hours: Optional[int] = Query(None, ge=1, le=8760),
+    group_similar: bool = Query(False, description="Regrouper les messages identiques (titre+priorité+app) : 1 représentant par groupe + occurrences"),
     current_user = Depends(get_admin_or_admin_sa),
     db: AsyncSession = Depends(get_db)
 ):
@@ -341,15 +342,46 @@ async def list_messages(
         query = query.where(and_(*filters))
         count_query = count_query.where(and_(*filters))
 
-    total = await db.scalar(count_query) or 0
-    pages = max(1, (total + per_page - 1) // per_page)
+    if group_similar:
+        # 1 ligne par groupe (titre, priorité, app) : représentant = plus récent,
+        # occurrences = taille du groupe. Même pattern window que GET /me (Task 2),
+        # sans jointure receipts (vue système admin).
+        grp = func.coalesce(UserMessage.sender_app_slug, UserMessage.sender_type)
+        PART = (UserMessage.title, UserMessage.priority, grp)
+        rn = func.row_number().over(
+            partition_by=PART,
+            order_by=(desc(UserMessage.created_at), desc(UserMessage.id)),
+        ).label("rn")
+        occ = func.count().over(partition_by=PART).label("occurrences")
+        subq = select(UserMessage, rn, occ)
+        if filters:
+            subq = subq.where(and_(*filters))
+        subq = subq.subquery()
+        um = aliased(UserMessage, subq)
+        total = await db.scalar(
+            select(func.count()).select_from(subq).where(subq.c.rn == 1)
+        ) or 0
+        pages = max(1, (total + per_page - 1) // per_page)
+        offset = (page - 1) * per_page
+        rows = (await db.execute(
+            select(um, subq.c.occurrences)
+            .where(subq.c.rn == 1)
+            .order_by(desc(subq.c.created_at), desc(subq.c.id))
+            .offset(offset).limit(per_page)
+        )).all()
+        messages = [row[0] for row in rows]
+        occurrences_by_id = {row[0].id: row.occurrences for row in rows}
+    else:
+        total = await db.scalar(count_query) or 0
+        pages = max(1, (total + per_page - 1) // per_page)
 
-    offset = (page - 1) * per_page
-    result = await db.execute(
-        query.order_by(desc(UserMessage.created_at))
-        .offset(offset).limit(per_page)
-    )
-    messages = result.scalars().all()
+        offset = (page - 1) * per_page
+        result = await db.execute(
+            query.order_by(desc(UserMessage.created_at))
+            .offset(offset).limit(per_page)
+        )
+        messages = result.scalars().all()
+        occurrences_by_id = {}
 
     # Résoudre les usernames
     user_ids = set()
@@ -412,6 +444,7 @@ async def list_messages(
             is_expired=is_expired,
             is_resend=m.is_resend or False,
             original_message_id=m.original_message_id,
+            occurrences=occurrences_by_id.get(m.id),
         ))
 
     return PaginatedMessagesResponse(
@@ -539,6 +572,62 @@ async def get_message_stats(
         "avg_delivered_rate": round(float(avg_delivered or 0.0), 4),
         "apps_count": len(by_app),
         "top_apps": top_apps[:10],
+    }
+
+
+@router.get("/purge-preview")
+async def purge_preview(
+    older_than_days: int = Query(90, ge=1, le=3650, description="Seuil « vieux messages » en jours"),
+    exclude_urgent_unread: bool = Query(False, description="Exclure les urgents jamais lus des comptes (même garde que DELETE /)"),
+    current_user: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """Aperçu des purges possibles : comptes par cas (lus / expirés / vieux / par app).
+
+    Tous les comptes portent sur les messages ACTIFS, avec le même garde
+    exclude_urgent_unread que DELETE / — les comptes affichés au modal doivent
+    correspondre exactement à ce que la purge fera. per_app = top 5 apps émettrices.
+    """
+    now = utcnow()
+    ACTIVE = UserMessage.status == "active"
+
+    # Prédicats imposés (partagés avec DELETE /) :
+    #   « lu par tous » : total_targets > 0 ET read_count >= total_targets
+    READ_ALL = and_(UserMessage.total_targets > 0, UserMessage.read_count >= UserMessage.total_targets)
+    #   « expiré » : date passée ET toujours actif
+    EXPIRED = and_(UserMessage.expires_at.isnot(None), UserMessage.expires_at <= now, UserMessage.status == "active")
+    #   garde urgent jamais lu (même prédicat que DELETE /exclude_urgent_unread)
+    BASE = [ACTIVE]
+    if exclude_urgent_unread:
+        BASE.append(or_(UserMessage.priority != "urgent", UserMessage.read_count >= 1))
+
+    read = await db.scalar(
+        select(func.count(UserMessage.id)).where(and_(*BASE, READ_ALL))
+    ) or 0
+    expired = await db.scalar(
+        select(func.count(UserMessage.id)).where(EXPIRED, *BASE)
+    ) or 0
+    older = await db.scalar(
+        select(func.count(UserMessage.id)).where(and_(
+            *BASE,
+            UserMessage.created_at < now - timedelta(days=older_than_days),
+        ))
+    ) or 0
+
+    app_rows = await db.execute(
+        select(UserMessage.sender_app_slug, func.count(UserMessage.id))
+        .where(and_(*BASE, UserMessage.sender_app_slug.isnot(None)))
+        .group_by(UserMessage.sender_app_slug)
+        .order_by(desc(func.count(UserMessage.id)))
+        .limit(5)
+    )
+    per_app = [{"sender_app_slug": slug, "count": cnt} for slug, cnt in app_rows.all()]
+
+    return {
+        "read": read,
+        "expired": expired,
+        "older_than_days": {"days": older_than_days, "count": older},
+        "per_app": per_app,
     }
 
 
@@ -684,81 +773,155 @@ async def export_messages_csv(
 
 @router.get("/me")
 async def get_my_messages(
+    page: int = Query(1, ge=1, description="Numéro de page (1-based)"),
+    page_size: int = Query(20, ge=1, le=100, description="Taille de page"),
+    unread: bool = Query(False, description="Uniquement les non-lus"),
+    priority: Optional[str] = Query(None, description="Filtrer par priorité (info|warning|urgent)"),
+    sender_app: Optional[str] = Query(None, description="Filtrer par slug de l'app source"),
+    search: Optional[str] = Query(None, description="Recherche dans titre + corps"),
+    group_similar: bool = Query(False, description="Regrouper les messages identiques (titre+priorité+app)"),
     include_archived: bool = Query(False, description="Inclure les messages archivés par l'admin"),
     include_expired: bool = Query(True, description="Inclure les messages expirés"),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """Messages de l'utilisateur connecté (ciblés + broadcasts).
+    """Messages de l'utilisateur connecté (ciblés + broadcasts), TOUJOURS paginés.
 
-    Marque automatiquement les messages comme "livrés" (delivered_at) au passage,
-    pour le tracking d'engagement (rentre dans la même transaction).
+    Réponse enveloppée (PaginatedMyMessages). Marque automatiquement les
+    messages de la page comme "livrés" (delivered_at), pour le tracking
+    d'engagement (rentre dans la même transaction). Les messages masqués par
+    le destinataire (receipt.hidden_at) sont exclus du résultat ET de
+    unread_total. group_similar regroupe les messages identiques (titre +
+    priorité + app) : un représentant par groupe (le plus récent) + occurrences.
     """
     now = utcnow()
 
-    msg_filters = [
+    # Jointure receipts de cet utilisateur (alias réutilisé par les Tasks 2-4)
+    rcpt = aliased(MessageReadReceipt)
+    RCPT_JOIN = and_(rcpt.message_id == UserMessage.id, rcpt.user_id == current_user.id)
+    HIDDEN_OK = or_(rcpt.id.is_(None), rcpt.hidden_at.is_(None))
+    UNREAD_COND = or_(rcpt.id.is_(None), rcpt.read_at.is_(None))
+
+    base_filters = [
         or_(
             UserMessage.target_user_id == current_user.id,
             UserMessage.target_type == "broadcast",
         )
     ]
     if not include_archived:
-        msg_filters.append(UserMessage.status == "active")
+        base_filters.append(UserMessage.status == "active")
     if not include_expired:
-        msg_filters.append(or_(UserMessage.expires_at.is_(None), UserMessage.expires_at > now))
+        base_filters.append(or_(UserMessage.expires_at.is_(None), UserMessage.expires_at > now))
 
-    query = (
-        select(UserMessage)
-        .where(and_(*msg_filters))
-        .order_by(desc(UserMessage.created_at))
-        .limit(200)
-    )
-    result = await db.execute(query)
-    messages = result.scalars().all()
+    extra_filters = []
+    if unread:
+        extra_filters.append(UNREAD_COND)
+    if priority:
+        extra_filters.append(UserMessage.priority == priority)
+    if sender_app:
+        extra_filters.append(UserMessage.sender_app_slug == sender_app)
+    if search:
+        like = f"%{search}%"
+        extra_filters.append(or_(UserMessage.title.ilike(like), UserMessage.body.ilike(like)))
 
-    # Récupérer les receipts existants de cet utilisateur pour ces messages
-    msg_ids = [m.id for m in messages]
-    receipts_by_msg: dict[int, MessageReadReceipt] = {}
-    if msg_ids:
-        rr_result = await db.execute(
-            select(MessageReadReceipt).where(and_(
-                MessageReadReceipt.message_id.in_(msg_ids),
-                MessageReadReceipt.user_id == current_user.id,
-            ))
+    conditions = base_filters + [HIDDEN_OK] + extra_filters
+
+    if group_similar:
+        # 1 ligne par groupe (titre, priorité, app) : représentant = plus récent,
+        # occurrences = taille du groupe. Window functions → portable SQLite/PG.
+        grp = func.coalesce(UserMessage.sender_app_slug, UserMessage.sender_type)
+        PART = (UserMessage.title, UserMessage.priority, grp)
+        rn = func.row_number().over(
+            partition_by=PART,
+            order_by=(desc(UserMessage.created_at), desc(UserMessage.id)),
+        ).label("rn")
+        occ = func.count().over(partition_by=PART).label("occurrences")
+        subq = (
+            select(UserMessage, rcpt.id.label("rcpt_id"), rn, occ)
+            .outerjoin(rcpt, RCPT_JOIN)
+            .where(and_(*conditions))
+            .subquery()
         )
-        for r in rr_result.scalars().all():
-            receipts_by_msg[r.message_id] = r
+        um = aliased(UserMessage, subq)
+        rows = (await db.execute(
+            select(um, subq.c.occurrences, subq.c.rcpt_id)
+            .where(subq.c.rn == 1)
+            .order_by(subq.c.created_at.desc(), subq.c.id.desc())
+            .offset((page - 1) * page_size)
+            .limit(page_size)
+        )).all()
+        total = await db.scalar(
+            select(func.count()).select_from(subq).where(subq.c.rn == 1)
+        ) or 0
 
-    # Auto-delivery : pour chaque message visible non encore livré, créer ou mettre
-    # à jour le receipt avec delivered_at + incrémenter delivered_count.
+        # Receipts des représentants de la page (is_read / auto-delivery) :
+        # la jointure vit dans la subquery → re-fetch ORM par id.
+        rcpt_ids = [row.rcpt_id for row in rows if row.rcpt_id is not None]
+        receipts_by_id: dict[int, MessageReadReceipt] = {}
+        if rcpt_ids:
+            res = await db.execute(
+                select(MessageReadReceipt).where(MessageReadReceipt.id.in_(rcpt_ids))
+            )
+            receipts_by_id = {r.id: r for r in res.scalars().all()}
+        page_items = [(row[0], receipts_by_id.get(row.rcpt_id), row.occurrences) for row in rows]
+    else:
+        rows = (await db.execute(
+            select(UserMessage, rcpt)
+            .outerjoin(rcpt, RCPT_JOIN)
+            .where(and_(*conditions))
+            .order_by(desc(UserMessage.created_at), desc(UserMessage.id))
+            .offset((page - 1) * page_size)
+            .limit(page_size)
+        )).all()
+        page_items = [(row[0], row[1], None) for row in rows]
+        total = await db.scalar(
+            select(func.count())
+            .select_from(UserMessage)
+            .outerjoin(rcpt, RCPT_JOIN)
+            .where(and_(*conditions))
+        ) or 0
+
+    # unread_total (badge) : base + cachés exclus, SANS les filtres de recherche
+    unread_total = await db.scalar(
+        select(func.count())
+        .select_from(UserMessage)
+        .outerjoin(rcpt, RCPT_JOIN)
+        .where(and_(*base_filters, HIDDEN_OK, UNREAD_COND))
+    ) or 0
+
+    # Auto-delivery : pour chaque message de la page non encore livré, créer ou
+    # mettre à jour le receipt avec delivered_at + incrémenter delivered_count.
+    messages: list[MessageBrief] = []
     new_deliveries = 0
-    for m in messages:
-        rcpt = receipts_by_msg.get(m.id)
-        if rcpt is None:
-            rcpt = MessageReadReceipt(
+    for m, r, occurrences in page_items:
+        if r is None:
+            r = MessageReadReceipt(
                 message_id=m.id,
                 user_id=current_user.id,
                 delivered_at=now,
             )
-            db.add(rcpt)
-            receipts_by_msg[m.id] = rcpt
+            db.add(r)
             m.delivered_count = (m.delivered_count or 0) + 1
             new_deliveries += 1
-        elif rcpt.delivered_at is None:
-            rcpt.delivered_at = now
+        elif r.delivered_at is None:
+            r.delivered_at = now
             m.delivered_count = (m.delivered_count or 0) + 1
             new_deliveries += 1
+        brief_data = _message_to_brief(m, is_read=(r.read_at is not None), receipt=r)
+        brief_data["occurrences"] = occurrences
+        messages.append(MessageBrief(**brief_data))
     if new_deliveries:
         await db.commit()
 
-    return [
-        MessageBrief(**_message_to_brief(
-            m,
-            is_read=(receipts_by_msg.get(m.id) is not None and receipts_by_msg[m.id].read_at is not None),
-            receipt=receipts_by_msg.get(m.id),
-        ))
-        for m in messages
-    ]
+    pages = (total + page_size - 1) // page_size
+    return PaginatedMyMessages(
+        messages=messages,
+        total=total,
+        page=page,
+        page_size=page_size,
+        pages=pages,
+        unread_total=unread_total,
+    )
 
 
 @router.get("/me/unread-count")
@@ -775,6 +938,17 @@ async def get_unread_count(
         .where(and_(
             MessageReadReceipt.user_id == current_user.id,
             MessageReadReceipt.read_at.isnot(None),
+        ))
+        .scalar_subquery()
+    )
+    # Sous-requête : IDs des messages masqués par l'utilisateur (hidden_at) —
+    # un masqué non lu ne doit pas compter dans la cloche (alignement avec
+    # unread_total de GET /me).
+    hidden_subq = (
+        select(MessageReadReceipt.message_id)
+        .where(and_(
+            MessageReadReceipt.user_id == current_user.id,
+            MessageReadReceipt.hidden_at.isnot(None),
         ))
         .scalar_subquery()
     )
@@ -795,9 +969,119 @@ async def get_unread_count(
             )
         )
         .where(UserMessage.id.notin_(read_subq))
+        .where(UserMessage.id.notin_(hidden_subq))
     ) or 0
 
     return {"count": count}
+
+
+# ----- Suppression côté destinataire (avant /{message_id}/... : pas de shadowing) -----
+
+async def _hide_message_for_user(db: AsyncSession, message_id: int, user_id: int) -> Optional[str]:
+    """Masque un message pour un destinataire (receipt.hidden_at, suppression réelle côté user).
+
+    Le message reste visible des autres destinataires et de l'admin. Pattern
+    post-incident 3.83.3 : select + scalars().first() + upsert explicite (unicité
+    (message_id, user_id) via uq_message_read_receipts_message_user).
+
+    Retourne "hidden" | "already_hidden" | None (message inexistant ou non visible du user).
+    """
+    msg = await db.get(UserMessage, message_id)
+    if not msg:
+        return None
+    # Visible seulement si ciblé sur ce user ou broadcast
+    if msg.target_type != "broadcast" and msg.target_user_id != user_id:
+        return None
+
+    now = utcnow()
+    existing = await db.execute(
+        select(MessageReadReceipt).where(and_(
+            MessageReadReceipt.message_id == message_id,
+            MessageReadReceipt.user_id == user_id,
+        ))
+    )
+    receipt = existing.scalars().first()
+
+    if receipt is None:
+        db.add(MessageReadReceipt(
+            message_id=message_id,
+            user_id=user_id,
+            delivered_at=now,
+            hidden_at=now,
+        ))
+        msg.delivered_count = (msg.delivered_count or 0) + 1
+        return "hidden"
+    if receipt.hidden_at is not None:
+        return "already_hidden"
+    receipt.hidden_at = now
+    return "hidden"
+
+
+@router.delete("/me/{message_id}")
+async def hide_my_message(
+    message_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Suppression côté destinataire : masque le message (receipt.hidden_at).
+
+    Idempotent : un message déjà masqué retourne "already_hidden".
+    """
+    result = await _hide_message_for_user(db, message_id, current_user.id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Message introuvable")
+    await db.commit()
+    return {"status": result, "message_id": message_id}
+
+
+@router.post("/me/delete-batch")
+async def hide_my_messages_batch(
+    payload: dict,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Masque une liste de messages pour le destinataire (body dict brut, pattern DELETE /batch).
+
+    Les ids non visibles ou inexistants sont ignorés silencieusement.
+    """
+    ids = payload.get("ids", [])
+    if not ids or not isinstance(ids, list):
+        raise HTTPException(status_code=400, detail="Liste d'IDs requise")
+    if len(ids) > 500:
+        raise HTTPException(status_code=400, detail="Maximum 500 messages par requête")
+    try:
+        ids = [int(i) for i in ids]
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=400, detail="IDs invalides")
+
+    hidden = 0
+    for mid in ids:
+        result = await _hide_message_for_user(db, mid, current_user.id)
+        if result == "hidden":
+            hidden += 1
+    await db.commit()
+    return {"hidden": hidden}
+
+
+@router.post("/me/purge-read")
+async def purge_my_read_messages(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """« Vider les lus » : masque tous les messages déjà lus du destinataire."""
+    from sqlalchemy import update as sql_update
+    result = await db.execute(
+        sql_update(MessageReadReceipt)
+        .where(and_(
+            MessageReadReceipt.user_id == current_user.id,
+            MessageReadReceipt.read_at.isnot(None),
+            MessageReadReceipt.hidden_at.is_(None),
+        ))
+        .values(hidden_at=utcnow())
+    )
+    hidden = result.rowcount
+    await db.commit()
+    return {"hidden": hidden}
 
 
 @router.post("/read-all")
@@ -1266,9 +1550,14 @@ async def hard_delete_message(
 @router.delete("/")
 async def purge_messages(
     hours: Optional[int] = Query(None, ge=1, le=8760),
+    older_than_days: Optional[int] = Query(None, ge=1, le=3650, description="Limiter aux messages plus vieux que N jours (créés avant now-Nj) — inverse de `hours`"),
     priority: Optional[str] = Query(None),
     sender_app: Optional[str] = Query(None),
     target_type: Optional[str] = Query(None),
+    status: Optional[str] = Query(None, description="Filtrer par statut (ex: active — épargne les archivés même en hard)"),
+    read_only: bool = Query(False, description="Limiter aux messages lus par tous leurs destinataires"),
+    expired_only: bool = Query(False, description="Limiter aux messages expirés (date passée, encore actifs)"),
+    exclude_urgent_unread: bool = Query(False, description="Exclure les urgents jamais lus"),
     hard: bool = Query(False, description="Si true, suppression définitive (au lieu de simple archivage)"),
     current_user: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db)
@@ -1276,16 +1565,37 @@ async def purge_messages(
     """Archive (soft-delete) ou supprime définitivement (?hard=true) les messages filtrés (admin)."""
     from app.routes.audit import log_action
 
+    now = utcnow()
     filters = []
     if hours:
-        since = utcnow() - timedelta(hours=hours)
+        since = now - timedelta(hours=hours)
         filters.append(UserMessage.created_at >= since)
+    if older_than_days:
+        # « Plus vieux que N jours » : créés AVANT now-Nj (le miroir exact du
+        # purge-preview ?older_than_days ; `hours` reste une fenêtre récente)
+        filters.append(UserMessage.created_at < now - timedelta(days=older_than_days))
     if priority:
         filters.append(UserMessage.priority == priority)
     if sender_app:
         filters.append(UserMessage.sender_app_slug == sender_app)
     if target_type:
         filters.append(UserMessage.target_type == target_type)
+    if status:
+        filters.append(UserMessage.status == status)
+    # Nouveaux cas de purge (combinables entre eux et avec les filtres ci-dessus) :
+    if read_only:
+        # « lu par tous » : total_targets > 0 ET read_count >= total_targets
+        filters.append(and_(UserMessage.total_targets > 0, UserMessage.read_count >= UserMessage.total_targets))
+    if expired_only:
+        # « expiré » : date passée ET encore actif
+        filters.append(and_(
+            UserMessage.expires_at.isnot(None),
+            UserMessage.expires_at <= now,
+            UserMessage.status == "active",
+        ))
+    if exclude_urgent_unread:
+        # Survie des urgents jamais lus
+        filters.append(or_(UserMessage.priority != "urgent", UserMessage.read_count >= 1))
 
     if hard:
         stmt = delete(UserMessage)
@@ -1314,7 +1624,7 @@ async def purge_messages(
 
     await log_action(
         db, current_user.id, action,
-        details=f"affected={affected}, hours={hours}, priority={priority}, app={sender_app}, hard={hard}",
+        details=f"affected={affected}, hours={hours}, priority={priority}, app={sender_app}, hard={hard}, read_only={read_only}, expired_only={expired_only}, exclude_urgent_unread={exclude_urgent_unread}",
         notify_sse=False
     )
     await db.commit()

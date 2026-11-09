@@ -70,6 +70,23 @@ function escapeHtml(text) {
     return div.innerHTML;
 }
 
+/**
+ * Échappement pour CONTEXTES D'ATTRIBUT HTML (value="…", title="…", href="…",
+ * data-arg1="…") : escapeHtml ne neutralise ni les guillemets ni l'apostrophe,
+ * or les usernames/slug libres peuvent contenir `" onpointerover=… ` → XSS
+ * stockée par attribut. À utiliser partout où la valeur est placée ENTRE
+ * guillemets doubles d'un attribut ; escapeHtml reste pour le contenu texte.
+ */
+function escapeAttr(text) {
+    if (text === null || text === undefined) return '';
+    return String(text)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
 function formatAppVersionLabel(version) {
     if (version === null || version === undefined) return '';
     const raw = String(version).trim();
