@@ -874,6 +874,115 @@ async def get_unread_count(
     return {"count": count}
 
 
+# ----- Suppression côté destinataire (avant /{message_id}/... : pas de shadowing) -----
+
+async def _hide_message_for_user(db: AsyncSession, message_id: int, user_id: int) -> Optional[str]:
+    """Masque un message pour un destinataire (receipt.hidden_at, suppression réelle côté user).
+
+    Le message reste visible des autres destinataires et de l'admin. Pattern
+    post-incident 3.83.3 : select + scalars().first() + upsert explicite (unicité
+    (message_id, user_id) via uq_message_read_receipts_message_user).
+
+    Retourne "hidden" | "already_hidden" | None (message inexistant ou non visible du user).
+    """
+    msg = await db.get(UserMessage, message_id)
+    if not msg:
+        return None
+    # Visible seulement si ciblé sur ce user ou broadcast
+    if msg.target_type != "broadcast" and msg.target_user_id != user_id:
+        return None
+
+    now = utcnow()
+    existing = await db.execute(
+        select(MessageReadReceipt).where(and_(
+            MessageReadReceipt.message_id == message_id,
+            MessageReadReceipt.user_id == user_id,
+        ))
+    )
+    receipt = existing.scalars().first()
+
+    if receipt is None:
+        db.add(MessageReadReceipt(
+            message_id=message_id,
+            user_id=user_id,
+            delivered_at=now,
+            hidden_at=now,
+        ))
+        msg.delivered_count = (msg.delivered_count or 0) + 1
+        return "hidden"
+    if receipt.hidden_at is not None:
+        return "already_hidden"
+    receipt.hidden_at = now
+    return "hidden"
+
+
+@router.delete("/me/{message_id}")
+async def hide_my_message(
+    message_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Suppression côté destinataire : masque le message (receipt.hidden_at).
+
+    Idempotent : un message déjà masqué retourne "already_hidden".
+    """
+    result = await _hide_message_for_user(db, message_id, current_user.id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Message introuvable")
+    await db.commit()
+    return {"status": result, "message_id": message_id}
+
+
+@router.post("/me/delete-batch")
+async def hide_my_messages_batch(
+    payload: dict,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Masque une liste de messages pour le destinataire (body dict brut, pattern DELETE /batch).
+
+    Les ids non visibles ou inexistants sont ignorés silencieusement.
+    """
+    ids = payload.get("ids", [])
+    if not ids or not isinstance(ids, list):
+        raise HTTPException(status_code=400, detail="Liste d'IDs requise")
+    if len(ids) > 500:
+        raise HTTPException(status_code=400, detail="Maximum 500 messages par requête")
+    try:
+        ids = [int(i) for i in ids]
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=400, detail="IDs invalides")
+
+    hidden = 0
+    for mid in ids:
+        result = await _hide_message_for_user(db, mid, current_user.id)
+        if result == "hidden":
+            hidden += 1
+    await db.commit()
+    return {"hidden": hidden}
+
+
+@router.post("/me/purge-read")
+async def purge_my_read_messages(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """« Vider les lus » : masque tous les messages déjà lus du destinataire."""
+    from sqlalchemy import update as sql_update
+    result = await db.execute(
+        sql_update(MessageReadReceipt)
+        .where(and_(
+            MessageReadReceipt.user_id == current_user.id,
+            MessageReadReceipt.read_at.isnot(None),
+            MessageReadReceipt.hidden_at.is_(None),
+        ))
+        .values(hidden_at=utcnow())
+    )
+    hidden = result.rowcount
+    await db.commit()
+    return {"hidden": hidden}
+
+
 @router.post("/read-all")
 async def mark_all_read(
     current_user: User = Depends(get_current_user),
