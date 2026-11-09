@@ -5,6 +5,20 @@
 
 ---
 
+## [3.85.2] - 9 novembre 2026
+
+### ⚡ Fix : rate limit M2M keyé par client_id pour IP interne — fin des 429 en cascade
+
+Incident 09/11/2026 (84×429 dans error_logs sur `POST /api/auth/token`, visibles dans l'audit) : le durcissement M2M de 3.83.2 (audit 08/11) comptait **5 req/60 s par IP** sur le grant `client_credentials`, or toutes les apps du parc mintent derrière la **même IP gateway Docker (10.42.0.1)**. Dès que plus de 5 apps remintent leur token dans la même fenêtre (vagues synchronisées observées après reconnexion du beacon SSE — le TTL M2M 60 min fait reminter chaque heure), le 6ᵉ appel et suivants prennent un 429 ; les apps réessaient avec backoff et finissent par réussir — aucune app n'était cassée, mais l'audit se remplissait d'erreurs.
+
+| Élément | Détail |
+|---------|--------|
+| **`hub/app/routes/auth.py`** | Nouveau `_check_m2m_rate_limit(request, client_id)` pour la branche `client_credentials` : IP interne de confiance (`is_docker_network_ip` / whitelist `APP_WHITELIST_NETWORKS`) → compteur **keyé par client_id**, limite `_M2M_RATE_LIMIT_MAX_INTERNAL=20`/60 s (borne anti-hammering conservée PAR service account) ; IP externe → compteur **keyé par IP**, limite 5/60 s inchangée vs 3.83.2. Dict dédié `_m2m_attempts` (plus de partage du dict login) |
+| **Sécurité** | La borne visée par l'audit du 08/11 reste effective des deux côtés : guessing externe toujours 5/60 s/IP, hammering interne 20/60 s **par client_id** (vs non borné avant 3.83.2) ; bcrypt ~100 ms rend le guessing insensible (analyse 3.45.x inchangée) |
+| **Tests** | `tests/conftest.py` : `reset_rate_limiter` vide aussi `_m2m_attempts` (interférence inter-fichiers attrapée par la boucle graduée) ; +2 tests dans `test_m2m_hardening.py` (3 apps derrière la même gateway : 3×10 mints sans 429 ; borne interne par client_id tient : 20×401 puis 429). Suite hôte complète : 1618 vert — seuls les échecs préexistants documentés (`test_app_deploy`×2, `test_vpn_dns`) restent, identiques sur main |
+
+---
+
 ## [3.85.1] - 9 novembre 2026
 
 ### 🐛 Badge « divergé » affiché à tort sur le méta aligné
