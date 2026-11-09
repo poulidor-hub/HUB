@@ -20,6 +20,8 @@
  * - GET  /api/admin/system/update-job — TOLÉRANT :
  *   {state: "idle"|"running"|"success"|"failed", started_at?,
  *   finished_at?, exit_code?, log_path?, tail: [lignes]}.
+ *   Service hôte down (Hub up) ⇒ 200 {"service": "unreachable"}
+ *   (sans state) — traité comme un échec de poll, jamais un verdict.
  *
  * Front (spec §5.3/§6) :
  * - Badge navbar (admins only) : point orange à côté de
@@ -32,10 +34,14 @@
  *   Hub et le socle » (disabled si rien à mettre à jour ou job en
  *   cours, anti double-clic via btn.disabled).
  * - Suivi live : polling 2 s SANS plafond temporel tant que
- *   state == "running" — le Hub redémarre en cours de mise à jour, les
- *   fetchs échoués sont ignorés mais comptés (≥ 3 échecs consécutifs ⇒
- *   « Hub en redémarrage… » affiché, polling poursuivi ; le job survit
- *   côté hôte). Au verdict success/failed ⇒ stop, /api/health relue
+ *   state == "running" — le Hub redémarre en cours de mise à jour :
+ *   fetch KO ou réponse 200 sans état de job (ex.
+ *   {"service":"unreachable"}) sont ignorés mais comptés (≥ 3
+ *   consécutifs ⇒ « Hub en redémarrage… » affiché, polling poursuivi ;
+ *   le job survit côté hôte) — jamais traités comme un verdict.
+ *   Garde in-flight + jeton de session : un seul tick en vol, et tout
+ *   tick d'une session stoppée devient un no-op. Au verdict
+ *   success/failed ⇒ stop, /api/health relue
  *   (badge version navbar), statut re-rendu, verdict + tail du log
  *   affichés dans le <pre>.
  *
@@ -48,8 +54,10 @@
 
 let systemUpdateStatus = null;     // dernière réponse GET update-status
 let systemUpdateTimer = null;      // setInterval du polling de job
-let systemUpdatePollErrors = 0;    // échecs fetch consécutifs du polling
+let systemUpdatePollErrors = 0;    // échecs poll consécutifs (fetch KO ou réponse sans état)
 let systemUpdateJobActive = false; // job en cours côté vue (bouton disabled)
+let systemUpdatePollSession = 0;   // jeton de session : invalide les ticks en vol d'une session stoppée
+let systemUpdatePollInFlight = false; // garde : un seul tick en vol à la fois
 
 const SYSTEM_UPDATE_POLL_MS = 2000;
 const SYSTEM_UPDATE_MAX_POLL_ERRORS = 3; // ≥ 3 échecs consécutifs ⇒ « redémarrage… »
@@ -383,37 +391,69 @@ function attachToRunningSystemUpdateJob() {
 /**
  * Suit l'état du job côté hôte : setInterval 2 s, AUCUN plafond
  * temporel tant que state == "running" (le job survit au redémarrage du
- * Hub — reconnexion auto). Erreurs fetch ignorées mais comptées :
- * ≥ 3 échecs consécutifs ⇒ « Hub en redémarrage… » affiché dans le
- * panneau, polling poursuivi. success/failed ⇒ verdict (cf.
- * finishSystemUpdateJob).
+ * Hub — reconnexion auto). Deux gardes évitent les ticks parasites :
+ * une garde in-flight (un seul await en vol — un tick > 2 s n'ouvre pas
+ * de second tick concurrent) et un jeton de session incrémenté à chaque
+ * start/finish du polling (un tick en vol d'une session stoppée devient
+ * un no-op : aucun DOM, aucun verdict écrasé après finish). Erreurs
+ * ignorées mais comptées — fetch KO OU réponse 200 sans état de job
+ * (ex. {"service":"unreachable"}, service hôte down, Hub up) : ce
+ * n'est PAS un verdict ; ≥ 3 consécutifs ⇒ « Hub en redémarrage… »
+ * affiché dans le panneau, polling poursuivi. success/failed ⇒ verdict
+ * (cf. finishSystemUpdateJob).
  */
 function pollSystemUpdateJob() {
     if (systemUpdateTimer) return; // polling déjà actif
+    systemUpdatePollSession += 1;  // nouvelle session : les ticks résiduels ne comptent plus
+    systemUpdatePollInFlight = false;
     systemUpdatePollErrors = 0;
     systemUpdateTimer = setInterval(async function () {
-        let job;
+        if (systemUpdatePollInFlight) return; // tick précédent toujours en vol
+        systemUpdatePollInFlight = true;
+        const session = systemUpdatePollSession;
         try {
-            job = await api.getSystemUpdateJob();
-            systemUpdatePollErrors = 0;
-        } catch (e) {
-            // Hub en redémarrage : erreur transitoire ignorée mais
-            // comptée — retente au prochain tick (pattern pollDeployStatus).
-            systemUpdatePollErrors += 1;
-            if (systemUpdatePollErrors >= SYSTEM_UPDATE_MAX_POLL_ERRORS) {
-                showSystemUpdateJobPanel('running', SYSTEM_UPDATE_RESTART_MSG);
+            let job;
+            try {
+                job = await api.getSystemUpdateJob();
+            } catch (e) {
+                // Hub en redémarrage : erreur transitoire ignorée mais
+                // comptée — retente au prochain tick (pattern pollDeployStatus).
+                if (session !== systemUpdatePollSession) return; // session stoppée entre-temps
+                systemUpdatePollErrors += 1;
+                if (systemUpdatePollErrors >= SYSTEM_UPDATE_MAX_POLL_ERRORS) {
+                    showSystemUpdateJobPanel('running', SYSTEM_UPDATE_RESTART_MSG);
+                }
+                return;
             }
-            return;
+            if (session !== systemUpdatePollSession) return; // verdict déjà tombé : no-op
+            // 200 sans état de job (ex. {"service":"unreachable"} — Hub up,
+            // service hôte down) : ce n'est PAS un verdict. Compté comme un
+            // échec de poll, retente au prochain tick — sans cette garde,
+            // state === undefined finissait en faux « Échec » + polling tué.
+            if (!job || job.state === undefined || job.service === 'unreachable') {
+                systemUpdatePollErrors += 1;
+                if (systemUpdatePollErrors >= SYSTEM_UPDATE_MAX_POLL_ERRORS) {
+                    showSystemUpdateJobPanel('running', SYSTEM_UPDATE_RESTART_MSG);
+                }
+                return;
+            }
+            systemUpdatePollErrors = 0;
+            const state = job.state;
+            if (state === 'running' || state === 'idle') {
+                // idle = état réinitialisé côté hôte (job en cours de soumission).
+                showSystemUpdateJobPanel('running',
+                    state === 'running' ? 'Mise à jour en cours…' : 'En attente du service hôte…',
+                    job);
+                return;
+            }
+            finishSystemUpdateJob(state, job);
+        } finally {
+            // Session active : libère la garde pour le tick suivant.
+            // Session stoppée : la garde est réinitialisée par le prochain
+            // pollSystemUpdateJob (nouvelle session) — pas de reset tardif
+            // qui pourrait rouvrir un tick concurrent d'une autre session.
+            if (session === systemUpdatePollSession) systemUpdatePollInFlight = false;
         }
-        const state = job && job.state;
-        if (state === 'running' || state === 'idle') {
-            // idle = état réinitialisé côté hôte (job en cours de soumission).
-            showSystemUpdateJobPanel('running',
-                state === 'running' ? 'Mise à jour en cours…' : 'En attente du service hôte…',
-                job);
-            return;
-        }
-        finishSystemUpdateJob(state, job);
     }, SYSTEM_UPDATE_POLL_MS);
 }
 
@@ -423,9 +463,11 @@ function pollSystemUpdateJob() {
  * log affichés dans le <pre> (échec : exit_code + remèdes du journal).
  */
 function finishSystemUpdateJob(state, job) {
+    systemUpdatePollSession += 1; // invalide tout tick en vol de la session stoppée (aucun re-render « En cours » après le verdict)
     clearInterval(systemUpdateTimer);
     systemUpdateTimer = null;
     systemUpdatePollErrors = 0;
+    systemUpdatePollInFlight = false;
     systemUpdateJobActive = false;
 
     const ok = state === 'success';
