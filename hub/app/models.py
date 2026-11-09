@@ -904,7 +904,10 @@ class MessageReadReceipt(Base):
     read_at = Column(DateTime, nullable=True)
     delivered_at = Column(DateTime, nullable=True)  # Push SSE ou GET /me
     clicked_at = Column(DateTime, nullable=True)    # Clic sur action_url
-    
+    # Suppression côté destinataire (console notifications unifiée) :
+    # masqué par l'utilisateur, reste visible pour l'admin
+    hidden_at = Column(DateTime, nullable=True)
+
     # Relations
     message = relationship("UserMessage", back_populates="read_receipts")
     user = relationship("User", lazy="raise")
