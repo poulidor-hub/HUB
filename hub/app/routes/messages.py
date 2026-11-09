@@ -578,12 +578,15 @@ async def get_message_stats(
 @router.get("/purge-preview")
 async def purge_preview(
     older_than_days: int = Query(90, ge=1, le=3650, description="Seuil « vieux messages » en jours"),
+    exclude_urgent_unread: bool = Query(False, description="Exclure les urgents jamais lus des comptes (même garde que DELETE /)"),
     current_user: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db)
 ):
     """Aperçu des purges possibles : comptes par cas (lus / expirés / vieux / par app).
 
-    Tous les comptes portent sur les messages ACTIFS. per_app = top 5 apps émettrices.
+    Tous les comptes portent sur les messages ACTIFS, avec le même garde
+    exclude_urgent_unread que DELETE / — les comptes affichés au modal doivent
+    correspondre exactement à ce que la purge fera. per_app = top 5 apps émettrices.
     """
     now = utcnow()
     ACTIVE = UserMessage.status == "active"
@@ -593,23 +596,27 @@ async def purge_preview(
     READ_ALL = and_(UserMessage.total_targets > 0, UserMessage.read_count >= UserMessage.total_targets)
     #   « expiré » : date passée ET toujours actif
     EXPIRED = and_(UserMessage.expires_at.isnot(None), UserMessage.expires_at <= now, UserMessage.status == "active")
+    #   garde urgent jamais lu (même prédicat que DELETE /exclude_urgent_unread)
+    BASE = [ACTIVE]
+    if exclude_urgent_unread:
+        BASE.append(or_(UserMessage.priority != "urgent", UserMessage.read_count >= 1))
 
     read = await db.scalar(
-        select(func.count(UserMessage.id)).where(and_(ACTIVE, READ_ALL))
+        select(func.count(UserMessage.id)).where(and_(*BASE, READ_ALL))
     ) or 0
     expired = await db.scalar(
-        select(func.count(UserMessage.id)).where(EXPIRED)
+        select(func.count(UserMessage.id)).where(EXPIRED, *BASE)
     ) or 0
     older = await db.scalar(
         select(func.count(UserMessage.id)).where(and_(
-            ACTIVE,
+            *BASE,
             UserMessage.created_at < now - timedelta(days=older_than_days),
         ))
     ) or 0
 
     app_rows = await db.execute(
         select(UserMessage.sender_app_slug, func.count(UserMessage.id))
-        .where(and_(ACTIVE, UserMessage.sender_app_slug.isnot(None)))
+        .where(and_(*BASE, UserMessage.sender_app_slug.isnot(None)))
         .group_by(UserMessage.sender_app_slug)
         .order_by(desc(func.count(UserMessage.id)))
         .limit(5)

@@ -207,3 +207,22 @@ async def test_purge_status_active_spares_archived(client: AsyncClient, async_se
                                 headers=get_auth_header(admin_token))
     assert resp2.status_code == 200
     assert (await async_session.get(UserMessage, autre_actif.id)) is None
+
+@pytest.mark.asyncio
+async def test_purge_preview_exclude_urgent_unread(client: AsyncClient, async_session: AsyncSession,
+                                                   admin_user, admin_token):
+    """Le preview applique le même garde que la purge : urgent jamais lu exclu des comptes."""
+    await _make_broadcast(async_session, admin_user, title="vieux-urgent-non-lu",
+                          priority="urgent", read_count=0,
+                          created_at=utcnow() - timedelta(days=100))
+
+    resp_all = await client.get("/api/messages/purge-preview",
+                                params={"older_than_days": "90"}, headers=get_auth_header(admin_token))
+    assert resp_all.status_code == 200
+    assert resp_all.json()["older_than_days"]["count"] == 1, "sans garde, l'urgent compte"
+
+    resp_guarded = await client.get("/api/messages/purge-preview",
+                                    params={"older_than_days": "90", "exclude_urgent_unread": "true"},
+                                    headers=get_auth_header(admin_token))
+    assert resp_guarded.status_code == 200
+    assert resp_guarded.json()["older_than_days"]["count"] == 0, "avec garde, l'urgent ne compte pas"
