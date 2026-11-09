@@ -231,11 +231,10 @@ function showPage(page) {
     document.getElementById('usersSection').classList.add('d-none');
     document.getElementById('appsHealthSection').classList.add('d-none');
     document.getElementById('adminSection').classList.add('d-none');
-    document.getElementById('messagesSection').classList.add('d-none');
-    document.getElementById('userInboxSection')?.classList.add('d-none');
+    document.getElementById('notificationsSection').classList.add('d-none');
     document.getElementById('adminUserTagsSection')?.classList.add('d-none');
-    _clearInboxMarkReadTimer();
-    _resetInboxDetailView();
+    window._clearNotifMarkReadTimer?.();
+    window._resetNotifDetailView?.();
     
     // Arrêter les timers admin si on quitte la page admin
     stopConnectivityRefresh();
@@ -297,13 +296,13 @@ function showPage(page) {
             startConnectivityRefresh();
             break;
         case 'messages':
-            if (!currentUser?.is_admin) {
-                showToast('Accès refusé', 'Vous devez être administrateur', 'danger');
-                return;
-            }
-            document.getElementById('messagesSection').classList.remove('d-none');
+            // Page publique : Ma boîte pour tous, Gestion si admin (le mode se
+            // garde lui-même — plus de garde ici).
+            document.getElementById('notificationsSection').classList.remove('d-none');
             document.getElementById('navMessages')?.classList.add('active');
-            loadMessagesPage();
+            if (typeof showNotificationsPage === 'function') {
+                showNotificationsPage(currentUser?.is_admin ? 'manage' : 'inbox');
+            }
             break;
         case 'admin-user-tags':
             document.getElementById('adminUserTagsSection').classList.remove('d-none');
@@ -316,8 +315,12 @@ function showPage(page) {
             }
             break;
         case 'inbox':
-            document.getElementById('userInboxSection').classList.remove('d-none');
-            loadInboxPage();
+        case 'notifications':
+            document.getElementById('notificationsSection').classList.remove('d-none');
+            document.getElementById('navMessages')?.classList.add('active');
+            if (typeof showNotificationsPage === 'function') {
+                showNotificationsPage('inbox');
+            }
             break;
     }
 }
@@ -400,12 +403,11 @@ function showLoginScreen() {
     document.getElementById('downloadCertBtn')?.classList.add('d-none');
     document.getElementById('adminBtn').classList.add('d-none');
     document.getElementById('adminNavigation').classList.add('d-none');
-    document.getElementById('messagesSection').classList.add('d-none');
-    document.getElementById('userInboxSection')?.classList.add('d-none');
+    document.getElementById('notificationsSection').classList.add('d-none');
     document.getElementById('messageBellContainer')?.classList.add('d-none');
     document.getElementById('loginForm').reset();
-    _clearInboxMarkReadTimer();
-    _resetInboxDetailView();
+    window._clearNotifMarkReadTimer?.();
+    window._resetNotifDetailView?.();
 
     // Fail-closed : masquer le bouton avant le fetch, ne l'afficher que si le setting le confirme
     const accountBtn = document.getElementById('accountRequestButton');

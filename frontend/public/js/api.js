@@ -1631,23 +1631,30 @@ class HubAPI {
     // MESSAGES
     // =========================================================================
 
+    /**
+     * Sérialise un objet de params en query-string. Règle établie (pre-flight
+     * console notifications) : sérialisation GÉNÉRIQUE — les clés arbitraires
+     * (group_similar, read_only, expired_only, exclude_urgent_unread, …)
+     * passent telles quelles au lieu d'une liste figée de clés.
+     * camelCase → snake_case ; valeurs undefined/null/false/''/0 ignorées
+     * (sémantique des anciens `if (x)`), true → "true", valeurs encodées.
+     */
+    _apiQuery(params = {}) {
+        const parts = [];
+        for (const [key, value] of Object.entries(params)) {
+            if (value === undefined || value === null || value === false || value === '' || value === 0) continue;
+            const k = String(key).replace(/[A-Z]/g, c => '_' + c.toLowerCase());
+            parts.push(`${k}=${value === true ? 'true' : encodeURIComponent(value)}`);
+        }
+        return parts.length > 0 ? '?' + parts.join('&') : '';
+    }
+
     async sendMessage(data) {
         return this.request('/messages/send', { method: 'POST', body: JSON.stringify(data) });
     }
 
     async getMessages(params = {}) {
-        const { page = 1, perPage = 50, priority, senderType, senderApp, targetUserId, targetType, search, hours, status, expiringWithinHours } = params;
-        let url = `/messages/?page=${page}&per_page=${perPage}`;
-        if (priority) url += `&priority=${encodeURIComponent(priority)}`;
-        if (senderType) url += `&sender_type=${encodeURIComponent(senderType)}`;
-        if (senderApp) url += `&sender_app=${encodeURIComponent(senderApp)}`;
-        if (targetUserId) url += `&target_user_id=${targetUserId}`;
-        if (targetType) url += `&target_type=${encodeURIComponent(targetType)}`;
-        if (search) url += `&search=${encodeURIComponent(search)}`;
-        if (hours) url += `&hours=${hours}`;
-        if (status) url += `&status=${encodeURIComponent(status)}`;
-        if (expiringWithinHours) url += `&expiring_within_hours=${expiringWithinHours}`;
-        return this.request(url);
+        return this.request(`/messages/${this._apiQuery({ page: 1, perPage: 50, ...params })}`);
     }
 
     async getMessageStats(hours = null, targetType = null) {
@@ -1671,8 +1678,26 @@ class HubAPI {
         return this.request(`/messages/${id}`);
     }
 
-    async getMyMessages() {
-        return this.request('/messages/me');
+    async getMyMessages(params = {}) {
+        return this.request(`/messages/me${this._apiQuery(params)}`);
+    }
+
+    // ----- Suppression côté destinataire (console notifications) -----
+
+    async deleteMyMessage(id) {
+        return this.request(`/messages/me/${id}`, { method: 'DELETE' });
+    }
+
+    async deleteMyBatch(ids) {
+        return this.request('/messages/me/delete-batch', { method: 'POST', body: JSON.stringify({ ids }) });
+    }
+
+    async purgeMyRead() {
+        return this.request('/messages/me/purge-read', { method: 'POST' });
+    }
+
+    async purgePreview(params = {}) {
+        return this.request(`/messages/purge-preview${this._apiQuery(params)}`);
     }
 
     async getUnreadCount() {
@@ -1710,16 +1735,7 @@ class HubAPI {
     }
 
     async purgeMessages(params = {}) {
-        const { hours, priority, senderApp, targetType, hard } = params;
-        let url = '/messages/';
-        const p = [];
-        if (hours) p.push(`hours=${hours}`);
-        if (priority) p.push(`priority=${encodeURIComponent(priority)}`);
-        if (senderApp) p.push(`sender_app=${encodeURIComponent(senderApp)}`);
-        if (targetType) p.push(`target_type=${encodeURIComponent(targetType)}`);
-        if (hard) p.push('hard=true');
-        if (p.length > 0) url += '?' + p.join('&');
-        return this.request(url, { method: 'DELETE' });
+        return this.request(`/messages/${this._apiQuery(params)}`, { method: 'DELETE' });
     }
 
     async deleteMessagesByIds(ids, hard = false) {

@@ -44,6 +44,12 @@
                             <i class="bi bi-sliders2 me-1"></i>Préférences
                         </a>
                     </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="#" data-action="showPage" data-args="notifications" id="navMessages">
+                            <i class="bi bi-chat-dots me-1"></i>Messages
+                            <span class="badge bg-info ms-1" id="navMessagesBadge" style="display: none; font-size: 0.65em;">0</span>
+                        </a>
+                    </li>
                 </ul>
 
                 <!-- Navigation Admin (masquée pour non-admins) -->
@@ -63,12 +69,6 @@
                         <li class="nav-item">
                             <a class="nav-link" href="#" data-action="showPage" data-args="appsHealth" id="navAppsHealth">
                                 <i class="bi bi-heart-pulse me-1"></i>Apps
-                            </a>
-                        </li>
-                        <li class="nav-item">
-                            <a class="nav-link" href="#" data-action="showPage" data-args="messages" id="navMessages">
-                                <i class="bi bi-chat-dots me-1"></i>Messages
-                                <span class="badge bg-info ms-1" id="navMessagesBadge" style="display: none; font-size: 0.65em;">0</span>
                             </a>
                         </li>
                     </ul>
@@ -2232,146 +2232,112 @@
 </div>
 
     <!-- ================================================================= -->
-    <!-- Section Messages (Admin) — Layout 3 volets -->
+    <!-- Section Notifications unifiée — Ma boîte (tous) / Gestion (admin) -->
     <!-- ================================================================= -->
-    <div id="messagesSection" class="d-none" style="margin-top: 70px;">
-        <div class="msg-admin-layout">
-            <aside class="msg-sidebar" id="msgSidebar">
-                <div class="msg-sidebar-header">
-                    <h5 class="mb-0"><i class="bi bi-chat-dots me-2"></i>Messages</h5>
+    <div id="notificationsSection" class="d-none notif-console" style="margin-top: 70px;">
+        <!-- Barre de titre + boutons propres au mode -->
+        <div class="d-flex flex-wrap align-items-center gap-2 px-3 pt-3 pb-2">
+            <h4 class="mb-0 me-2" id="notifHeading"><i class="bi bi-bell me-2"></i>Mes notifications</h4>
+            <div class="btn-group btn-group-sm d-none" id="notifModeSwitch" role="group" aria-label="Mode de la console">
+                <button type="button" class="btn btn-outline-secondary" id="notifModeBtnInbox" data-action="notifSetMode" data-args="inbox">Ma boîte</button>
+                <button type="button" class="btn btn-outline-secondary" id="notifModeBtnManage" data-action="notifSetMode" data-args="manage">Gestion</button>
+            </div>
+            <div class="ms-auto d-flex flex-wrap align-items-center gap-2">
+                <div id="notifModeInbox">
+                    <button type="button" class="btn btn-sm btn-outline-secondary" id="btnPurgeRead" data-action="notifPurgeRead" title="Supprimer toutes les notifications lues de votre boîte">
+                        <i class="bi bi-eraser me-1"></i>Vider les lus
+                    </button>
                 </div>
-                <div class="msg-sidebar-body">
-                    <div class="msg-tab-cards" id="msgTabCards">
-                        <button class="msg-tab-card active" data-action="switchMessageTab" data-args="all" id="msgTabAll">
-                            <div class="msg-tab-card-label">Tous</div>
-                            <div class="msg-tab-card-count" id="msgTabAllBadge">0</div>
+                <div id="notifModeManage" class="d-none">
+                    <button type="button" class="btn btn-sm btn-primary me-1" id="btnCompose" data-action="openComposePanel">
+                        <i class="bi bi-plus-lg me-1"></i>Nouveau
+                    </button>
+                    <button type="button" class="btn btn-sm btn-outline-secondary me-1" id="btnExportCsv" data-action="exportMessages" title="Export CSV">
+                        <i class="bi bi-download"></i>
+                    </button>
+                    <button type="button" class="btn btn-sm btn-outline-danger me-1" id="btnOpenPurge" data-action="openPurgeModal">
+                        <i class="bi bi-eraser me-1"></i>Purger
+                    </button>
+                    <div class="dropdown d-inline-block">
+                        <button type="button" class="btn btn-sm btn-outline-secondary" id="btnBadgePrefs" data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-expanded="false" title="Priorités comptées dans le badge de la navbar" aria-label="Priorités comptées dans le badge de la navbar">
+                            <i class="bi bi-gear"></i>
                         </button>
-                        <button class="msg-tab-card" data-action="switchMessageTab" data-args="broadcast" id="msgTabBroadcast">
-                            <div class="msg-tab-card-label">Globaux</div>
-                            <div class="msg-tab-card-count" id="msgTabBroadcastBadge">0</div>
-                        </button>
-                        <button class="msg-tab-card" data-action="switchMessageTab" data-args="user" id="msgTabUser">
-                            <div class="msg-tab-card-label">Users</div>
-                            <div class="msg-tab-card-count" id="msgTabUserBadge">0</div>
-                        </button>
-                    </div>
-
-                    <div class="msg-sidebar-section">
-                        <div class="msg-sidebar-section-title">Statut</div>
-                        <div class="msg-chip-row" id="msgChipStatus">
-                            <button class="msg-chip active" data-filter="status" data-value="all" data-action="toggleMsgChip" data-args="$el">Tous</button>
-                            <button class="msg-chip" data-filter="status" data-value="active" data-action="toggleMsgChip" data-args="$el">Actif</button>
-                            <button class="msg-chip" data-filter="status" data-value="expired" data-action="toggleMsgChip" data-args="$el">Expire</button>
-                            <button class="msg-chip" data-filter="status" data-value="archived" data-action="toggleMsgChip" data-args="$el">Archive</button>
-                        </div>
-                    </div>
-
-                    <div class="msg-sidebar-section">
-                        <div class="msg-sidebar-section-title d-flex justify-content-between align-items-center">
-                            <span>Priorite</span>
-                            <div class="dropdown">
-                                <button class="btn btn-sm btn-link text-secondary p-0 lh-1" id="msgBadgePrefsBtn" data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-expanded="false" title="Priorites comptees dans le badge de la navbar" aria-label="Priorites comptees dans le badge de la navbar">
-                                    <i class="bi bi-gear"></i>
-                                </button>
-                                <div class="dropdown-menu dropdown-menu-end p-3 shadow-sm" aria-labelledby="msgBadgePrefsBtn" style="min-width: 230px;">
-                                    <h6 class="dropdown-header px-0">Badge navbar : priorites comptees</h6>
-                                    <div class="form-check">
-                                        <input class="form-check-input" type="checkbox" id="msgBadgePref-info" checked>
-                                        <label class="form-check-label" for="msgBadgePref-info">Info</label>
-                                    </div>
-                                    <div class="form-check">
-                                        <input class="form-check-input" type="checkbox" id="msgBadgePref-warning" checked>
-                                        <label class="form-check-label" for="msgBadgePref-warning">Warning</label>
-                                    </div>
-                                    <div class="form-check">
-                                        <input class="form-check-input" type="checkbox" id="msgBadgePref-urgent" checked>
-                                        <label class="form-check-label" for="msgBadgePref-urgent">Urgent</label>
-                                    </div>
-                                    <div class="form-text mt-2 px-0">Tout decocher masque le badge. Preference globale (tous les admins).</div>
-                                </div>
+                        <div class="dropdown-menu dropdown-menu-end p-3 shadow-sm" aria-labelledby="btnBadgePrefs" style="min-width: 230px;">
+                            <h6 class="dropdown-header px-0">Badge navbar : priorités comptées</h6>
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" id="msgBadgePref-info" checked>
+                                <label class="form-check-label" for="msgBadgePref-info">Info</label>
                             </div>
-                        </div>
-                        <div class="msg-chip-row" id="msgChipPriority">
-                            <button class="msg-chip active" data-filter="priority" data-value="" data-action="toggleMsgChip" data-args="$el">Toutes</button>
-                            <button class="msg-chip msg-chip-info" data-filter="priority" data-value="info" data-action="toggleMsgChip" data-args="$el">Info</button>
-                            <button class="msg-chip msg-chip-warning" data-filter="priority" data-value="warning" data-action="toggleMsgChip" data-args="$el">Warning</button>
-                            <button class="msg-chip msg-chip-urgent" data-filter="priority" data-value="urgent" data-action="toggleMsgChip" data-args="$el">Urgent</button>
-                        </div>
-                    </div>
-
-                    <div class="msg-sidebar-section">
-                        <div class="msg-sidebar-section-title">Source</div>
-                        <div class="msg-chip-row" id="msgChipSender">
-                            <button class="msg-chip active" data-filter="sender" data-value="" data-action="toggleMsgChip" data-args="$el">Tous</button>
-                            <button class="msg-chip" data-filter="sender" data-value="admin" data-action="toggleMsgChip" data-args="$el">Admin</button>
-                            <button class="msg-chip" data-filter="sender" data-value="app" data-action="toggleMsgChip" data-args="$el">App</button>
-                            <button class="msg-chip" data-filter="sender" data-value="system" data-action="toggleMsgChip" data-args="$el">Systeme</button>
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" id="msgBadgePref-warning" checked>
+                                <label class="form-check-label" for="msgBadgePref-warning">Warning</label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" id="msgBadgePref-urgent" checked>
+                                <label class="form-check-label" for="msgBadgePref-urgent">Urgent</label>
+                            </div>
+                            <div class="form-text mt-2 px-0">Tout décocher masque le badge. Préférence globale (tous les admins).</div>
                         </div>
                     </div>
-
                 </div>
-            </aside>
-
-            <section class="msg-list" id="msgList">
-                <div class="msg-list-header">
-                    <div class="input-group input-group-sm" style="max-width: 320px;">
-                        <span class="input-group-text"><i class="bi bi-search"></i></span>
-                        <input type="text" class="form-control" id="msgFilterSearch" placeholder="Rechercher..." data-action="debounceMsgSearch">
-                    </div>
-                    <div class="d-flex gap-2">
-                        <button class="btn btn-primary btn-sm" data-action="openComposePanel">
-                            <i class="bi bi-plus-lg me-1"></i>Nouveau
-                        </button>
-                        <button class="btn btn-outline-secondary btn-sm" data-action="exportMessages" title="Export CSV">
-                            <i class="bi bi-download"></i>
-                        </button>
-                        <button class="btn btn-outline-secondary btn-sm" data-action="loadMessagesPage" title="Rafraichir">
-                            <i class="bi bi-arrow-clockwise"></i>
-                        </button>
-                    </div>
-                </div>
-
-                <div class="msg-list-toolbar">
-                    <div class="btn-group btn-group-sm">
-                        <button class="btn btn-outline-secondary active" id="msgViewCards" data-action="setMsgView" data-args="cards">
-                            <i class="bi bi-grid-3x3-gap-fill me-1"></i>Cartes
-                        </button>
-                        <button class="btn btn-outline-secondary" id="msgViewCompact" data-action="setMsgView" data-args="compact">
-                            <i class="bi bi-list-ul me-1"></i>Compact
-                        </button>
-                    </div>
-                    <select class="form-select form-select-sm" id="msgSortBy" data-action="loadMessagesPage" style="width: auto;">
-                        <option value="created_at">Plus recent</option>
-                        <option value="priority">Priorite</option>
-                        <option value="read_count">Taux lecture</option>
-                    </select>
-                    <div class="ms-auto d-flex gap-2 align-items-center">
-                        <span class="text-muted small" id="msgSelectionCount" style="display:none">
-                            <span id="msgSelectedNum">0</span> selectionnés
-                        </span>
-                        <button class="btn btn-outline-secondary btn-sm" id="btnArchiveSelected" data-action="archiveSelectedMessages" style="display:none">
-                            <i class="bi bi-archive me-1"></i>Archiver
-                        </button>
-                        <button class="btn btn-outline-danger btn-sm" id="btnDeleteSelected" data-action="hardDeleteSelectedMessages" style="display:none">
-                            <i class="bi bi-trash me-1"></i>Supprimer
-                        </button>
-                    </div>
-                </div>
-
-                <div class="msg-list-body" id="msgListBody">
-                    <div class="text-center text-muted py-5">Chargement...</div>
-                </div>
-
-                <nav id="messagesPagination" class="px-3 pb-2"></nav>
-            </section>
-
-            <section class="msg-detail" id="msgDetail">
-                <div class="msg-detail-empty">
-                    <i class="bi bi-chat-square-text" style="font-size: 3rem; opacity: .2;"></i>
-                    <p class="mt-3 text-muted">Selectionnez un message pour voir son detail</p>
-                </div>
-            </section>
+                <button type="button" class="btn btn-sm btn-outline-secondary" data-action="loadNotifications" title="Rafraîchir">
+                    <i class="bi bi-arrow-clockwise"></i>
+                </button>
+            </div>
         </div>
+
+        <!-- Filtres : chips + source + recherche -->
+        <div class="d-flex flex-wrap align-items-center gap-2 px-3 pb-2 notif-toolbar">
+            <div class="d-flex flex-wrap gap-1" id="notifChips">
+                <button type="button" class="btn btn-sm btn-outline-secondary rounded-pill active" id="notifChipAll" data-action="notifSetChip" data-args="all">
+                    Tous <span class="badge bg-secondary ms-1" id="notifChipAllCount">0</span>
+                </button>
+                <button type="button" class="btn btn-sm btn-outline-danger rounded-pill" id="notifChipUnread" data-action="notifSetChip" data-args="unread">
+                    Non lus <span class="badge bg-danger ms-1" id="notifChipUnreadCount">0</span>
+                </button>
+                <button type="button" class="btn btn-sm btn-outline-warning rounded-pill" id="notifChipUrgent" data-action="notifSetChip" data-args="urgent">
+                    Urgents <span class="badge bg-warning text-dark ms-1" id="notifChipUrgentCount">0</span>
+                </button>
+                <!-- Chips de statut : visibles uniquement en mode Gestion -->
+                <button type="button" class="btn btn-sm btn-outline-secondary rounded-pill d-none" id="notifChipActive" data-action="notifSetChip" data-args="active">Actifs</button>
+                <button type="button" class="btn btn-sm btn-outline-secondary rounded-pill d-none" id="notifChipArchived" data-action="notifSetChip" data-args="archived">Archivés</button>
+                <button type="button" class="btn btn-sm btn-outline-secondary rounded-pill d-none" id="notifChipExpired" data-action="notifSetChip" data-args="expired">Expirés</button>
+            </div>
+            <select class="form-select form-select-sm" id="notifAppFilter" style="width: auto;" data-action="notifSetAppFilter" data-args="$el" title="Filtrer par application source">
+                <option value="">Toutes les sources</option>
+            </select>
+            <div class="input-group input-group-sm ms-auto" style="max-width: 280px;">
+                <span class="input-group-text"><i class="bi bi-search"></i></span>
+                <input type="text" class="form-control" id="notifSearch" placeholder="Rechercher..." data-action="notifSearchInput" data-args="$el">
+            </div>
+        </div>
+
+        <!-- Barre d'actions sur la sélection -->
+        <div id="notifSelectionBar" class="alert alert-warning py-1 px-3 mx-3 mb-2 d-none notif-selection-bar">
+            <div class="d-flex flex-wrap align-items-center gap-2">
+                <span><strong id="notifSelCount">0</strong> sélectionnée(s)</span>
+                <button type="button" class="btn btn-sm btn-outline-success" id="btnBulkRead" data-action="notifBulkRead">
+                    <i class="bi bi-check2-all me-1"></i>Marquer lu
+                </button>
+                <button type="button" class="btn btn-sm btn-outline-secondary d-none" id="btnBulkArchive" data-action="notifBulkArchive">
+                    <i class="bi bi-archive me-1"></i>Archiver
+                </button>
+                <button type="button" class="btn btn-sm btn-outline-danger" id="btnBulkDelete" data-action="notifBulkDelete">
+                    <i class="bi bi-trash me-1"></i>Supprimer
+                </button>
+            </div>
+        </div>
+
+        <!-- Tableau (thead re-render par mode) -->
+        <div class="table-responsive px-3">
+            <table class="table table-hover align-middle notif-table" id="notifTable">
+                <thead id="notifTableHead"></thead>
+                <tbody id="notifTableBody">
+                    <tr><td class="text-center text-muted py-5">Chargement...</td></tr>
+                </tbody>
+            </table>
+        </div>
+        <nav id="notifPagination" class="px-3 pb-3"></nav>
     </div>
 
     <!-- Panneau de composition slide-in -->
@@ -2473,55 +2439,70 @@
     </div>
 
     <!-- ================================================================= -->
-    <!-- Section Mes Notifications (Utilisateur) — Boîte de réception 3 volets -->
+    <!-- Slide-over détail notification (même pattern que #composeSlideIn) -->
     <!-- ================================================================= -->
-    <div id="userInboxSection" class="d-none" style="margin-top: 70px;">
-        <div class="inbox-layout">
-            <!-- Volet gauche : sidebar -->
-            <aside class="inbox-sidebar">
-                <div class="inbox-sidebar-header">
-                    <h6 class="mb-0"><i class="bi bi-bell-fill text-primary me-2"></i>Mes Notifications</h6>
+    <div id="notifDetailPanel" class="msg-compose-overlay d-none">
+        <div class="msg-compose-panel">
+            <div class="msg-compose-header">
+                <div class="d-flex align-items-center gap-2">
+                    <span id="notifDetailPriority"></span>
+                    <h6 class="mb-0" id="notifDetailTitle">Notification</h6>
                 </div>
-                <div class="inbox-sidebar-body">
-                    <button class="inbox-tab inbox-tab-active" id="inboxTabInbox" data-action="selectInboxTab" data-args="inbox">
-                        <i class="bi bi-inbox me-2"></i>Boîte de réception
-                        <span class="badge bg-primary ms-auto" id="inboxUnreadBadge" style="display: none;">0</span>
-                    </button>
-                    <button class="inbox-tab" id="inboxTabHistory" data-action="selectInboxTab" data-args="history">
-                        <i class="bi bi-clock-history me-2"></i>Historique
-                    </button>
-                    <div class="inbox-sidebar-section">Par application</div>
-                    <div id="inboxAppList">
-                        <div class="text-muted small px-3 py-2">Aucune source</div>
+                <button class="btn-close" data-action="closeNotifDetail"></button>
+            </div>
+            <div class="msg-compose-body" id="notifDetailBody">
+                <div class="text-muted small">Sélectionnez une notification dans le tableau.</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal purge des messages (mode Gestion — admin) -->
+    <div class="modal fade" id="purgeModal" tabindex="-1" aria-labelledby="purgeModalTitle" aria-hidden="true">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="purgeModalTitle"><i class="bi bi-eraser me-2"></i>Purger les messages</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Fermer"></button>
+                </div>
+                <div class="modal-body">
+                    <p class="text-muted small mb-3">Archive (ou supprime définitivement) les messages correspondant au critère choisi.</p>
+                    <div class="form-check">
+                        <input class="form-check-input" type="radio" name="purgeOpt" id="purgeOptRead" value="read" checked data-action="purgeSelectOption">
+                        <label class="form-check-label" for="purgeOptRead">Messages lus par tous leurs destinataires</label>
                     </div>
+                    <div class="form-check">
+                        <input class="form-check-input" type="radio" name="purgeOpt" id="purgeOptExpired" value="expired" data-action="purgeSelectOption">
+                        <label class="form-check-label" for="purgeOptExpired">Messages expirés (les urgents jamais lus sont épargnés)</label>
+                    </div>
+                    <div class="form-check">
+                        <input class="form-check-input" type="radio" name="purgeOpt" id="purgeOptOlder" value="older" data-action="purgeSelectOption">
+                        <label class="form-check-label" for="purgeOptOlder">Messages plus vieux qu'un seuil (jours)</label>
+                    </div>
+                    <div class="input-group input-group-sm mb-2 ms-4" style="max-width: 12rem;">
+                        <input type="number" class="form-control" id="purgeOlderDays" value="90" min="1" max="3650" data-action="purgePreviewRefresh" aria-label="Seuil en jours">
+                        <span class="input-group-text">jours</span>
+                    </div>
+                    <div class="form-check">
+                        <input class="form-check-input" type="radio" name="purgeOpt" id="purgeOptApp" value="app" data-action="purgeSelectOption">
+                        <label class="form-check-label" for="purgeOptApp">Messages d'une application source</label>
+                    </div>
+                    <select class="form-select form-select-sm ms-4 mb-2" id="purgeAppSelect" style="max-width: 16rem;" data-action="purgePreviewRefresh" aria-label="Application source">
+                        <option value="">Chargement...</option>
+                    </select>
+                    <hr class="my-2">
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" id="purgeHardCheck">
+                        <label class="form-check-label" for="purgeHardCheck">Suppression définitive (irréversible)</label>
+                    </div>
+                    <div class="text-muted small mt-2" id="purgeCountLabel">Choisissez un critère pour voir le nombre de messages concernés.</div>
                 </div>
-                <div class="inbox-sidebar-footer">
-                    <button class="btn btn-sm btn-link text-decoration-none" data-action="markAllUserMessagesRead">
-                        <i class="bi bi-check2-all me-1"></i>Tout marquer comme lu
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuler</button>
+                    <button type="button" class="btn btn-danger" id="purgeConfirmBtn" data-action="confirmPurge">
+                        <i class="bi bi-eraser me-1"></i>Purger
                     </button>
                 </div>
-            </aside>
-
-            <!-- Volet centre : liste des messages -->
-            <section class="inbox-list">
-                <div class="inbox-list-header">
-                    <strong id="inboxListTitle">Boîte de réception</strong>
-                    <button class="btn btn-sm btn-link text-decoration-none p-0" data-action="loadInboxPage" title="Rafraîchir">
-                        <i class="bi bi-arrow-clockwise"></i>
-                    </button>
-                </div>
-                <div class="inbox-list-body" id="inboxListBody">
-                    <div class="text-center text-muted small py-4">Chargement…</div>
-                </div>
-            </section>
-
-            <!-- Volet droit : détail message -->
-            <section class="inbox-detail" id="inboxDetail">
-                <div class="inbox-detail-empty">
-                    <i class="bi bi-envelope-open" style="font-size: 3rem; opacity: 0.3;"></i>
-                    <p class="mt-3">Sélectionnez un message pour le lire</p>
-                </div>
-            </section>
+            </div>
         </div>
     </div>
 
@@ -4603,7 +4584,8 @@
     <script src="js/modules/admin-snapshots.js?v=3.83.3"></script>
     <script src="js/modules/admin-vault.js?v=3.83.3"></script>
     <script src="js/modules/bulk-users-csv.js?v=3.83.3"></script>
-    <script src="js/modules/messages-inbox.js?v=3.83.3"></script>
+    <script src="js/modules/notifications.js?v=3.83.3"></script>
+    <script src="js/modules/messages-compose.js?v=3.83.3"></script>
     <script src="js/modules/account-requests.js?v=3.83.3"></script>
     <script src="js/modules/admin-apps-github.js?v=3.83.3"></script>
     <script src="js/modules/admin-app-deploy.js?v=3.83.3"></script>
