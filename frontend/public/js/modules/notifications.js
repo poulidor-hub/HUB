@@ -382,12 +382,12 @@ function _notifStateChip(m) {
  */
 function _notifSourceBadge(m) {
     if (m.sender_app_slug) {
-        return `<span class="notif-source-badge app" title="${escapeHtml(m.sender_app_slug)}">${escapeHtml(m.sender_app_slug)}</span>`;
+        return `<span class="notif-source-badge app" title="${escapeAttr(m.sender_app_slug)}">${escapeHtml(m.sender_app_slug)}</span>`;
     }
     if (m.sender_type === 'system') {
         return '<span class="notif-source-badge system" title="Système">Système</span>';
     }
-    const by = m.sender_username ? ` title="Par ${escapeHtml(m.sender_username)}"` : '';
+    const by = m.sender_username ? ` title="Par ${escapeAttr(m.sender_username)}"` : '';
     return `<span class="notif-source-badge admin"${by}>Administration</span>`;
 }
 
@@ -569,7 +569,7 @@ function _renderNotifAppFilter() {
     if (current && !slugs.includes(current)) slugs.unshift(current);
     let html = '<option value="">Toutes les sources</option>';
     for (const slug of slugs) {
-        html += `<option value="${escapeHtml(slug)}"${slug === current ? ' selected' : ''}>${escapeHtml(slug)}</option>`;
+        html += `<option value="${escapeAttr(slug)}"${slug === current ? ' selected' : ''}>${escapeHtml(slug)}</option>`;
     }
     sel.innerHTML = html;
 }
@@ -801,22 +801,24 @@ function _purgeSelectedOption() {
 /**
  * Mapping imposé option → query params (partagés par /purge-preview et
  * DELETE /messages) :
- *   lus     → read_only:true
- *   expirés → expired_only:true & exclude_urgent_unread:true
- *   vieux   → hours: jours*24 (+ older_than_days, forme native de l'aperçu)
- *   app     → sender_app:<slug>
+ *   lus     → read_only:true (+ status:active)
+ *   expirés → expired_only:true & exclude_urgent_unread:true (+ status:active)
+ *   vieux   → older_than_days:jours — NE PAS utiliser `hours` (fenêtre RÉCENTE
+ *             côté serveur : l'option doit viser le VIEUX) (+ status:active)
+ *   app     → sender_app:<slug> (+ status:active)
+ * Garde spec §3.3 : les urgents jamais lus ne sont JAMAIS purgés par ce modal
+ * → exclude_urgent_unread:true sur toutes les options ; scope limité aux actifs
+ * (aligné sur les comptes du preview, y compris en hard).
  */
 function _purgeBuildParams() {
     const opt = _purgeSelectedOption();
-    const params = {};
+    const params = { status: 'active', exclude_urgent_unread: true };
     if (opt === 'read') {
         params.read_only = true;
     } else if (opt === 'expired') {
         params.expired_only = true;
-        params.exclude_urgent_unread = true;
     } else if (opt === 'older') {
         const days = Math.min(3650, Math.max(1, parseInt(document.getElementById('purgeOlderDays')?.value, 10) || 90));
-        params.hours = days * 24;
         params.older_than_days = days;
     } else if (opt === 'app') {
         const slug = document.getElementById('purgeAppSelect')?.value || '';
@@ -864,7 +866,7 @@ async function _purgePopulateApps() {
         const byApp = stats?.by_app || {};
         const slugs = Object.keys(byApp).sort();
         sel.innerHTML = slugs.length > 0
-            ? slugs.map(s => `<option value="${escapeHtml(s)}">${escapeHtml(s)} (${byApp[s]})</option>`).join('')
+            ? slugs.map(s => `<option value="${escapeAttr(s)}">${escapeHtml(s)} (${byApp[s]})</option>`).join('')
             : '<option value="">Aucune app émettrice</option>';
     } catch (e) {
         sel.innerHTML = '<option value="">Liste indisponible</option>';
@@ -1088,7 +1090,7 @@ function _renderNotifDetail(m) {
         ? '<span class="badge bg-warning text-dark">Expire bientôt</span>' : '';
     const readBadge = m.is_read ? '<span class="badge bg-secondary">Lu</span>' : '<span class="badge bg-primary">Non lu</span>';
     const action = m.action_url
-        ? `<a href="${escapeHtml(m.action_url)}" target="_blank" rel="noopener" class="btn btn-primary btn-sm" data-action="notifClickAction" data-arg1="${m.id}" data-arg2="${escapeHtml(m.action_url)}"><i class="bi bi-box-arrow-up-right me-1"></i>${escapeHtml(m.action_label || 'Consulter')}</a>`
+        ? `<a href="${escapeAttr(m.action_url)}" target="_blank" rel="noopener" class="btn btn-primary btn-sm" data-action="notifClickAction" data-arg1="${m.id}" data-arg2="${escapeAttr(m.action_url)}"><i class="bi bi-box-arrow-up-right me-1"></i>${escapeHtml(m.action_label || 'Consulter')}</a>`
         : '';
 
     const titleEl = document.getElementById('notifDetailTitle');
@@ -1303,7 +1305,7 @@ function showNotificationCard(msgData) {
                 </button>
             </div>
             ${msgData.body ? `<p class="notif-card-body">${escapeHtml(msgData.body)}</p>` : ''}
-            ${msgData.action_url ? `<div class="notif-card-action-wrapper"><a href="${escapeHtml(msgData.action_url)}" target="_blank" rel="noopener noreferrer" class="notif-card-action" data-action="openNotificationAction" data-arg1="${id}" data-arg2="${escapeHtml(msgData.action_url)}">${escapeHtml(msgData.action_label || 'Consulter')}<svg class="notif-card-action-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg></a></div>` : ''}
+            ${msgData.action_url ? `<div class="notif-card-action-wrapper"><a href="${escapeAttr(msgData.action_url)}" target="_blank" rel="noopener noreferrer" class="notif-card-action" data-action="openNotificationAction" data-arg1="${id}" data-arg2="${escapeAttr(msgData.action_url)}">${escapeHtml(msgData.action_label || 'Consulter')}<svg class="notif-card-action-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg></a></div>` : ''}
             <div class="notif-card-meta">
                 ${(msgData.sender_app_slug || msgData.sender_type) ? `<span class="notif-card-sender"><span class="notif-card-sender-dot"></span>${escapeHtml(msgData.sender_app_slug || msgData.sender_type)}</span>` : ''}
                 <span class="notif-card-time"><svg class="notif-card-time-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>${time}</span>
