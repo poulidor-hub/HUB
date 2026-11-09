@@ -552,3 +552,33 @@ class TestStatusFilter:
         ids = [m["id"] for m in resp.json()["messages"]]
         assert expired.id in ids
         assert active.id not in ids
+
+
+class TestReceiptUniqueness:
+    """Unicité (message_id, user_id) des read receipts.
+
+    Incident 09/11/2026 : la table n'avait AUCUNE contrainte effective (l'UNIQUE
+    de la migration 014 est un no-op : create_all depuis un modèle sans
+    contrainte crée la table avant apply_migrations) → des doublons réels ont
+    fait planter scalar_one_or_none() (« Multiple rows were found ») sur
+    /api/messages/{id}/read en boucle.
+    """
+
+    @pytest.mark.asyncio
+    async def test_duplicate_receipt_rejected_by_unique_constraint(
+        self, async_session, admin_user
+    ):
+        from sqlalchemy.exc import IntegrityError
+
+        msg = await _make_user_message(async_session, admin_user, admin_user)
+        async_session.add(MessageReadReceipt(
+            message_id=msg.id, user_id=admin_user.id, delivered_at=utcnow(),
+        ))
+        await async_session.commit()
+
+        # Second receipt pour la même paire : doit être rejeté par la base.
+        async_session.add(MessageReadReceipt(
+            message_id=msg.id, user_id=admin_user.id, delivered_at=utcnow(),
+        ))
+        with pytest.raises(IntegrityError):
+            await async_session.commit()
