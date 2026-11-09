@@ -1034,7 +1034,13 @@ function showNotificationCard(msgData) {
     const container = document.getElementById('notificationBanner');
     if (!container) return;
 
-    const id = msgData.id || Date.now();
+    // Seul un id DB plausible (entier positif ≤ int32) autorise un mark-read.
+    // Sans id valide (ex. ancien payload d'alerte), id d'affichage anonyme :
+    // la carte se ferme sans POST /read — sinon on rappelait
+    // POST /api/messages/<Date.now()>/read → overflow int32 (incident 09/11/2026).
+    const dbId = Number(msgData.id);
+    const hasValidId = Number.isInteger(dbId) && dbId > 0 && dbId <= 2147483647;
+    const id = hasValidId ? dbId : `anon-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
     const priority = msgData.priority || 'normal';
 
     const icons = {
@@ -1089,7 +1095,7 @@ function dismissNotificationCard(id, markAsRead = false) {
             updateNotificationBannerControls();
         }, 250);
 
-        if (shouldMarkRead && id) {
+        if (shouldMarkRead && typeof id === 'number') {
             api.markMessageRead(id).then(() => {
                 const badge = document.getElementById('messageBellBadge');
                 const current = parseInt(badge?.textContent) || 0;
