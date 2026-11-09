@@ -430,6 +430,16 @@ class Settings(BaseSettings):
     # mais on laisse de la marge avant d'abandonner la réponse au client.
     vault_backup_timeout: float = 120.0
 
+    # === Mises à jour du parc (service hôte hubctl-update, port 8778) ===
+    # Servi par le service hôte hubctl update --serve, token réutilisé de
+    # l'atelier (atelier_service_token_file, monté :ro) — aucune nouvelle
+    # setting token. Ce timeout couvre le run (pull + build + up avec
+    # rollback auto, potentiellement longs) ET les GETs proxy tolérants
+    # status/job : à froid (cache TTL 60 s expiré) la collecte de statut
+    # côté hôte (git fetch des dépôts) prend ~10 s sur le parc réel.
+    update_service_url: str = "http://host.docker.internal:8778"
+    update_timeout: float = 30.0
+
     # Host du Hub (IP ou hostname accessible par les clients)
     # Si non défini, sera détecté automatiquement
     hub_host: str = ""
