@@ -5,6 +5,23 @@
 
 ---
 
+## [3.85.3] - 10 novembre 2026
+
+### ✨ Rechargement automatique de la page admin après une mise à jour
+
+Après le retour du Hub (mise à jour terminée), la page admin se recharge
+automatiquement : token, données chargées et SSE peuvent être périmés après le
+redémarrage — seule une page fraîche garantit un retour sain.
+
+| Élément | Détail |
+|---------|--------|
+| **Succès** | verdict visible + compte à rebours 8 s (« La page sera rechargée automatiquement… ») + bouton « Recharger maintenant » ; `#admin` posé pour revenir directement sur la vue admin |
+| **Échec** | verdict + journal + remède affichés, bouton « Recharger maintenant » seulement (l'admin lit le diagnostic avant de recharger) |
+| **Tests** | `node --check` ; navigation réelle vérifiée sur le déploiement 3.85.3 (voir rapport de session) |
+
+---
+
+
 ## [3.85.2] - 9 novembre 2026
 
 ### ⚡ Fix : rate limit M2M keyé par client_id pour IP interne — fin des 429 en cascade
