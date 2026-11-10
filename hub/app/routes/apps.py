@@ -1476,6 +1476,7 @@ async def register_app(
             workshop_auto_approved = False
             if is_now_workshop and existing_app.approval_status == ApprovalStatus.pending:
                 base_slug_rr = app_data.slug[:-3]  # retirer "-ws"
+                base_app_rr = None
                 if base_slug_rr:
                     result = await db.execute(
                         select(Application).where(
@@ -1484,17 +1485,41 @@ async def register_app(
                         )
                     )
                     base_app_rr = result.scalar_one_or_none()
-                    if base_app_rr:
-                        existing_app.approval_status = ApprovalStatus.approved
-                        existing_app.is_active = True
-                        existing_app.approved_at = utcnow()
-                        existing_app.approved_by_id = None
-                        workshop_auto_approved = True
-                        updated_fields.append("approval_status: pending → approved (atelier auto-approuvé)")
-                        logger.info(
-                            f"🚀 Atelier '{app_data.slug}' auto-approuvé au ré-enregistrement "
-                            f"(app de base '{base_slug_rr}' déjà approuvée)"
-                        )
+                    if base_app_rr is None:
+                        # Fallback par NOM (incident 09-10/11/2026) : le slug
+                        # de l'app principale peut différer du préfixe du slug
+                        # atelier (ex. `exemple-app-ws` vs `exemple-app`).
+                        # Sans ce fallback l'atelier reste pending à vie et
+                        # l'app martèle register/token (SA désactivé → 403).
+                        lookup_name = app_data.name or existing_app.name
+                        if lookup_name:
+                            result = await db.execute(
+                                select(Application).where(
+                                    Application.name == lookup_name,
+                                    Application.approval_status == ApprovalStatus.approved,
+                                    Application.is_workshop.is_(False),
+                                ).limit(2)
+                            )
+                            base_candidates_rr = result.scalars().all()
+                            if len(base_candidates_rr) == 1:
+                                base_app_rr = base_candidates_rr[0]
+                                logger.info(
+                                    f"🔁 Atelier '{app_data.slug}' : app de base "
+                                    f"résolue par nom '{lookup_name}' → "
+                                    f"'{base_app_rr.slug}' (slug dérivé "
+                                    f"'{base_slug_rr}' sans correspondance)"
+                                )
+                if base_app_rr:
+                    existing_app.approval_status = ApprovalStatus.approved
+                    existing_app.is_active = True
+                    existing_app.approved_at = utcnow()
+                    existing_app.approved_by_id = None
+                    workshop_auto_approved = True
+                    updated_fields.append("approval_status: pending → approved (atelier auto-approuvé)")
+                    logger.info(
+                        f"🚀 Atelier '{app_data.slug}' auto-approuvé au ré-enregistrement "
+                        f"(app de base '{base_app_rr.slug}' déjà approuvée)"
+                    )
 
             # Mettre à jour le nom si fourni et différent
             if app_data.name and existing_app.name != app_data.name:
@@ -1709,6 +1734,28 @@ async def register_app(
                 )
             )
             base_app = result.scalar_one_or_none()
+            if base_app is None and app_data.name:
+                # Fallback par NOM (incident 09-10/11/2026) : le slug de
+                # l'app principale peut différer du préfixe du slug atelier
+                # (ex. atelier `exemple-app-ws` vs app `exemple-app`).
+                # L'atelier hérite du nom de l'app principale : si une app
+                # approuvée NON-atelier porte ce nom, c'est la base.
+                result = await db.execute(
+                    select(Application).where(
+                        Application.name == app_data.name,
+                        Application.approval_status == ApprovalStatus.approved,
+                        Application.is_workshop.is_(False),
+                    ).limit(2)
+                )
+                base_candidates = result.scalars().all()
+                if len(base_candidates) == 1:
+                    base_app = base_candidates[0]
+                    base_slug = base_app.slug
+                    logger.info(
+                        f"🔁 Atelier '{app_data.slug}' : app de base résolue "
+                        f"par nom '{app_data.name}' → '{base_app.slug}' "
+                        f"(slug dérivé '{app_data.slug[:-3]}' sans correspondance)"
+                    )
             auto_approve_workshop = base_app is not None
             if auto_approve_workshop:
                 logger.info(
