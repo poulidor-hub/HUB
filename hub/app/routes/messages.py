@@ -14,6 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, and_, or_, delete, desc, case
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload, aliased
 from datetime import datetime, timedelta, timezone
 from typing import Optional, List, Union
@@ -911,7 +912,19 @@ async def get_my_messages(
         brief_data["occurrences"] = occurrences
         messages.append(MessageBrief(**brief_data))
     if new_deliveries:
-        await db.commit()
+        try:
+            await db.commit()
+        except IntegrityError:
+            # Course concurrente (incident 10/11 02:56) : un receipt (917/922,
+            # user 32) a été créé par une requête simultanée (double onglet,
+            # refresh, POST /read) entre le SELECT de page et ce commit →
+            # UniqueViolation sur uq_message_read_receipts_message_user.
+            # La livraison auto est best-effort : on rollback et l'inbox
+            # répond quand même — le prochain GET refera proprement.
+            await db.rollback()
+            logger.info(
+                "📭 Livraison auto annulée (receipt créé par une requête "
+                "concurrente) — inbox servie sans les nouveaux receipts")
 
     pages = (total + page_size - 1) // page_size
     return PaginatedMyMessages(

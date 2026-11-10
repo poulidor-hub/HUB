@@ -5,6 +5,19 @@
 
 ---
 
+## [3.85.5] - 10 novembre 2026
+
+### ⚡ Fix : livraison auto du GET /me tolérante aux courses — fin des 500 UniqueViolation sur l'inbox
+
+Incident 10/11 02:56 (user vpoulidor, messages 917+922) : l'auto-delivery de l'inbox insère les receipts manquants au commit du `GET /api/messages/me`. Si une requête concurrente (double onglet, refresh, POST /read simultané) crée le même receipt entre le SELECT de page et le commit, l'INSERT en masse lève `UniqueViolationError` sur `uq_message_read_receipts_message_user` → **500 sur un simple GET d'inbox** (`messages.py:914`). Le durcissement 3.83.3 couvrait read/delivered/click, pas ce chemin.
+
+| Élément | Détail |
+|---------|--------|
+| **`hub/app/routes/messages.py`** | Le commit de la livraison auto absorbe `IntegrityError` (rollback + log info `📭`) : la livraison est best-effort, l'inbox répond 200 avec ses messages — le prochain GET refera proprement (le receipt concurrent porte déjà `delivered_at`) |
+| **Tests** | `hub/tests/test_messages_me_delivery_race.py` +1 : commit #1 simulé en IntegrityError → **200** avec inbox complète, GET suivant nominal (rouge : 500). Domaine messages 74 vert ; suite hôte 1621 vert (préexistants + flaky xdist documentés inchangés) |
+
+---
+
 ## [3.85.4] - 10 novembre 2026
 
 ### ⚡ Fix : auto-approbation atelier par fallback nom — fin des boucles legacy_reregistration
