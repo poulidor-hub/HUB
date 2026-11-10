@@ -5,6 +5,20 @@
 
 ---
 
+## [3.85.6] - 10 novembre 2026
+
+### ⚡ Fix : actions groupées sur les notifications dédupliquées — « Marquer lu » et « Supprimer » traitent toute la pile
+
+Console « Mes notifications » (group_similar) : « Marquer lu » sur des lignes dédupliquées ×N laissait le badge **« Non lu »** (×22→×21, horodatage qui recule, unread_total -1 par ligne malgré le toast « N marquée(s) ») — et symétriquement, « Supprimer » ne masquait qu'une occurrence, la ligne réapparaissant au refetch avec un nouveau représentant. Cause : front et routes n'opéraient que sur le représentant (occurrence la plus récente du groupe), sans propagation — il fallait N clics pour vider une pile ×N.
+
+| Élément | Détail |
+|---------|--------|
+| **`hub/app/routes/messages.py`** | `POST /{id}/read` propage la lecture à toutes les occurrences visibles du groupe (titre + priorité + coalesce(sender_app_slug, sender_type), cible user/broadcast, actifs non expirés — miroir du group_similar), receipts strictement per-user ; helper `_apply_read_receipts` extrait de `/read-all` (même garde d'unicité `(message_id, user_id)`, incident 09/11) ; statut `already_read` préservé ; `marked_read` renvoyé. `DELETE /me/{id}` + `/me/delete-batch` : `_hide_group_for_user` masque tout le groupe, `hidden` = occurrences réellement masquées |
+| **`frontend/public/js/modules/notifications.js`** | toasts comptent les occurrences réelles (`marked_read` / `hidden`, fallback 1 par ligne pour compat ancien backend), mention « (groupe complet) » quand la propagation dépasse 1 ; badge cloche du slide-over décompte `marked_read` au lieu de 1 fixe |
+| **Tests** | +5 : propagation mark-read (vue groupée lue, ×N intactes), propagation suppression single + batch, 2 garde-fous per-user (aucun receipt créé pour les autres users) — rouges prouvés via stash avant implémentation. Domaine messages 62 vert (hôte, main fusionné avec 3.85.5) ; suite docker 1555 vert — échecs préexistants documentés inchangés (`test_vpn_dns`/`test_workshop_overrides` : env hôte, non liés) |
+
+---
+
 ## [3.85.5] - 10 novembre 2026
 
 ### ⚡ Fix : livraison auto du GET /me tolérante aux courses — fin des 500 UniqueViolation sur l'inbox
