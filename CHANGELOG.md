@@ -5,6 +5,21 @@
 
 ---
 
+## [3.85.4] - 10 novembre 2026
+
+### ⚡ Fix : auto-approbation atelier par fallback nom — fin des boucles legacy_reregistration
+
+Incident 09-10/11/2026 (nocturne) : ouverture de l'atelier `exemple-app-ws`. L'auto-approbation workshop matchait l'app de base **uniquement par slug dérivé** (`<slug>-ws` → `<slug>` = `exemple-app`), mais l'app principale porte le slug `exemple-app` → aucun match → atelier resté `pending`/`inactive` à vie, SA créé désactivé → 403 au mint → martèlement register/token sans état entre cycles : **2019 réinscriptions legacy + 2523×403 + 257×429 en 2h35** (22:38 → 01:14, fin à la fermeture de l'atelier). Le plafond M2M par client_id (3.85.2) a contenu la casse (257 429s au lieu de ~2500, **zéro collatéral** — les autres apps ont continué à minter normalement toute la nuit).
+
+| Élément | Détail |
+|---------|--------|
+| **`hub/app/routes/apps.py`** | Fallback dans les 2 sites d'auto-approbation de `register_app` (création + ré-enregistrement) : si le slug dérivé n'a pas de correspondance, chercher une app de base **approvée non-atelier au même nom** que l'atelier (les ateliers héritent du nom de l'app principale). Match ambigu (≥2 candidats) → pas d'auto-approbation (approbation manuelle). Logs `🔁` dédiés au fallback nom |
+| **Tests** | `hub/tests/test_workshop_autoapprove.py` +4 (création par nom, garde « sans base → pending », ré-enregistrement par nom d'un atelier orphelin pending, invariant slug dérivé prioritaire) — domaine register/workshop 148 vert, suite hôte complète 1622 vert (échecs préexistants documentés inchangés) |
+| **Filet socle** | Le martèlement applicatif est par ailleurs coupé à la source par HUBsocle 2.34.4 (cooldown M2M après 403 persistants) — défense en profondeur |
+| **Conflit release** | Deux 3.85.3 sorties simultanées (celle-ci, préparée sur branche, et « rechargement auto après maj » poussée à 02:55) — entrée renumérotée 3.85.4, merge CHANGELOG résolu en gardant les deux contenus |
+
+---
+
 ## [3.85.3] - 10 novembre 2026
 
 ### ✨ Rechargement automatique de la page admin après une mise à jour
