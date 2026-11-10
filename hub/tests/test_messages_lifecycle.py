@@ -674,3 +674,112 @@ class TestMarkReadGroupPropagation:
         )
         assert resp.status_code == 200
         assert resp.json()["unread_total"] == 2
+
+
+# =============================================================================
+# Résolution structurelle du groupe dédupliqué — actions ADMIN (vue Gestion)
+# =============================================================================
+
+class TestAdminGroupPropagation:
+    """Archive / restore / hard-delete (unitaires) et batch admin propagent à
+    TOUTES les occurrences du groupe dédupliqué (même clé titre+priorité+
+    expéditeur), comme les actions destinataires. La sélection d'une ligne
+    groupée dans la vue Gestion doit traiter la pile entière, pas seulement
+    son occurrence représentante (bug remonté le 10/11/2026)."""
+
+    @pytest.mark.asyncio
+    async def test_archive_admin_propagates_to_group(
+        self, client, async_session, admin_user, admin_token
+    ):
+        group = [
+            await _make_broadcast(async_session, admin_user,
+                                  title="App offline : nominatim", priority="urgent")
+            for _ in range(3)
+        ]
+        other = await _make_broadcast(async_session, admin_user,
+                                      title="Autre notif", priority="info")
+        h = get_auth_header(admin_token)
+
+        resp = await client.post(f"/api/messages/{group[-1].id}/archive", headers=h)
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["status"] == "archived"
+        assert body["affected"] == 3, "les 3 occurrences du groupe doivent être archivées"
+
+        for m in group:
+            await async_session.refresh(m)
+            assert m.status == "archived"
+            assert m.archived_at is not None
+        await async_session.refresh(other)
+        assert other.status == "active", "un message hors groupe ne doit pas être archivé"
+
+    @pytest.mark.asyncio
+    async def test_restore_admin_propagates_to_group(
+        self, client, async_session, admin_user, admin_token
+    ):
+        group = []
+        for _ in range(3):
+            m = await _make_broadcast(async_session, admin_user,
+                                      title="Pic d'erreurs Hub", priority="warning",
+                                      status="archived")
+            m.archived_at = utcnow()
+            group.append(m)
+        await async_session.commit()
+
+        resp = await client.post(f"/api/messages/{group[0].id}/restore",
+                                 headers=get_auth_header(admin_token))
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["status"] == "restored"
+        assert body["affected"] == 3
+
+        for m in group:
+            await async_session.refresh(m)
+            assert m.status == "active"
+            assert m.archived_at is None
+
+    @pytest.mark.asyncio
+    async def test_hard_delete_admin_propagates_to_group(
+        self, client, async_session, admin_user, admin_token
+    ):
+        group = [
+            await _make_broadcast(async_session, admin_user,
+                                  title="Échecs d'authentification en rafale", priority="warning")
+            for _ in range(2)
+        ]
+        other = await _make_broadcast(async_session, admin_user, title="Isolée")
+        h = get_auth_header(admin_token)
+
+        resp = await client.delete(f"/api/messages/{group[0].id}/hard", headers=h)
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["status"] == "hard_deleted"
+        assert resp.json()["affected"] == 2
+
+        resp = await client.get("/api/messages/", headers=h)
+        ids = {m["id"] for m in resp.json()["messages"]}
+        assert ids == {other.id}, "le groupe entier doit disparaître, l'isolé reste"
+
+    @pytest.mark.asyncio
+    async def test_batch_admin_propagates_to_group(
+        self, client, async_session, admin_user, admin_token
+    ):
+        g1 = await _make_broadcast(async_session, admin_user,
+                                   title="App offline : mon-app", priority="urgent")
+        g2 = await _make_broadcast(async_session, admin_user,
+                                   title="App offline : mon-app", priority="urgent")
+        other = await _make_broadcast(async_session, admin_user, title="Isolée")
+        h = get_auth_header(admin_token)
+
+        # 1 id du groupe + 1 isolé → 3 occurrences archivées
+        resp = await client.request(
+            "DELETE",
+            "/api/messages/batch",
+            headers=h,
+            json={"ids": [g2.id, other.id]},
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["affected"] == 3
+
+        for m in (g1, g2, other):
+            await async_session.refresh(m)
+            assert m.status == "archived"

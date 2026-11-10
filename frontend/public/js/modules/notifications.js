@@ -476,13 +476,18 @@ function _notifManageGroupSubRows(m) {
 }
 
 // ----- Lifecycle (une ligne) : archiver / restaurer / supprimer -----
+// Le serveur propage au groupe dédupliqué complet : affected = occurrences
+// réellement traitées (souvent > 1 sur une ligne ×N).
 
 async function notifArchiveOne(id) {
     id = parseInt(id, 10);
     if (!id) return;
     try {
-        await api.archiveMessage(id);
-        showToast('Archivé', 'Le message a été archivé.', 'success');
+        const r = await api.archiveMessage(id);
+        const n = r && typeof r.affected === 'number' ? r.affected : 1;
+        showToast('Archivé', n > 1
+            ? `${n} message(s) archivé(s) (groupe complet).`
+            : 'Le message a été archivé.', 'success');
         updateNavMessagesBadge();
         await loadNotifications();
     } catch (e) {
@@ -494,8 +499,11 @@ async function notifRestoreOne(id) {
     id = parseInt(id, 10);
     if (!id) return;
     try {
-        await api.restoreMessage(id);
-        showToast('Restauré', 'Le message a été restauré.', 'success');
+        const r = await api.restoreMessage(id);
+        const n = r && typeof r.affected === 'number' ? r.affected : 1;
+        showToast('Restauré', n > 1
+            ? `${n} message(s) restauré(s) (groupe complet).`
+            : 'Le message a été restauré.', 'success');
         await loadNotifications();
     } catch (e) {
         showToast('Erreur', e.message, 'danger');
@@ -506,11 +514,16 @@ async function notifHardDeleteOne(id) {
     id = parseInt(id, 10);
     if (!id) return;
     const m = _notifMessages.find(x => x.id === id);
-    if (!confirm(`Supprimer définitivement « ${m?.title || id} » ? Cette action est irréversible.`)) return;
+    const occ = m?.occurrences || 1;
+    const scope = occ > 1 ? ` ET LES ${occ} occurrences de son groupe — l'action est irréversible` : ' Cette action est irréversible';
+    if (!confirm(`Supprimer définitivement « ${m?.title || id} » ?${scope}.`)) return;
     try {
-        await api.hardDeleteMessage(id);
+        const r = await api.hardDeleteMessage(id);
+        const n = r && typeof r.affected === 'number' ? r.affected : 1;
         _notif.selection.delete(id);
-        showToast('Supprimé', 'Le message a été supprimé définitivement.', 'success');
+        showToast('Supprimé', n > 1
+            ? `${n} message(s) supprimé(s) définitivement (groupe complet).`
+            : 'Le message a été supprimé définitivement.', 'success');
         updateNavMessagesBadge();
         await loadNotifications();
     } catch (e) {
@@ -761,7 +774,7 @@ async function notifBulkDelete() {
 async function notifBulkArchive() {
     const ids = [..._notif.selection];
     if (ids.length === 0) return;
-    if (!confirm(`Archiver ${ids.length} message(s) sélectionné(s) ?`)) return;
+    if (!confirm(`Archiver ${ids.length} message(s) sélectionné(s) ? Chaque ligne groupée (×N) traite son groupe complet.`)) return;
     try {
         const result = await api.deleteMessagesByIds(ids, false);
         showToast('Succès', result.message || `${ids.length} message(s) archivé(s).`, 'success');
@@ -778,7 +791,7 @@ async function notifBulkArchive() {
  * Derrière le bouton « Supprimer » de la barre de sélection en mode Gestion.
  */
 async function _notifManageBulkHardDelete(ids) {
-    if (!confirm(`Suppression DÉFINITIVE de ${ids.length} message(s) ? Cette action est irréversible.`)) return;
+    if (!confirm(`Suppression DÉFINITIVE de ${ids.length} message(s) ? Chaque ligne groupée (×N) traite son groupe complet. Cette action est irréversible.`)) return;
     try {
         const result = await api.deleteMessagesByIds(ids, true);
         showToast('Succès', result.message || `${ids.length} message(s) supprimé(s).`, 'success');

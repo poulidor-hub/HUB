@@ -150,6 +150,75 @@ def _resolve_app_action_url(action_url: Optional[str], frontend_url: Optional[st
     return resolved[:500]
 
 
+# ---------------------------------------------------------------------------
+# Groupe de déduplication — SOURCE UNIQUE de la clé
+# ---------------------------------------------------------------------------
+
+def _group_partition() -> tuple:
+    """Clé de déduplication des notifications groupées (group_similar) :
+    titre + priorité + expéditeur résolu. Utilisée par les window functions
+    de GET /me et de la vue Gestion — miroir exact de _group_key_conditions()
+    pour les actions qui propagent."""
+    grp = func.coalesce(UserMessage.sender_app_slug, UserMessage.sender_type)
+    return (UserMessage.title, UserMessage.priority, grp)
+
+
+def _group_key_conditions(msg: UserMessage) -> list:
+    """Conditions SQLAlchemy « même groupe dédupliqué que msg » — miroir
+    exact de _group_partition(). SOURCE UNIQUE : toute évolution du
+    groupement passe par ces deux fonctions, jamais de copie locale."""
+    grp = func.coalesce(UserMessage.sender_app_slug, UserMessage.sender_type)
+    return [
+        UserMessage.title == msg.title,
+        UserMessage.priority == msg.priority,
+        grp == func.coalesce(msg.sender_app_slug, msg.sender_type),
+    ]
+
+
+async def _resolve_group(
+    db: AsyncSession, message_id: int, *, user_id: Optional[int] = None
+) -> Optional[List[UserMessage]]:
+    """Résout le groupe dédupliqué d'un message (fix structurel 10/11/2026 :
+    les actions opèrent sur la pile entière, jamais sur le seul représentant).
+
+    - user_id      : périmètre DESTINATAIRE — occurrences visibles de cet
+                     utilisateur (cible user/broadcast, actives, non expirées),
+                     miroir des filtres par défaut de GET /me.
+    - user_id=None : périmètre ADMIN — toutes les occurrences de la clé
+                     (tous statuts/dates/destinataires : l'admin gère le
+                     message système, pas une boîte utilisateur).
+
+    Le message demandé est toujours inclus. Retourne None si le message
+    n'existe pas (ou, en périmètre destinataire, ne lui est pas destiné) —
+    le 404/403 reste porté par l'appelant.
+    """
+    msg = await db.get(UserMessage, message_id)
+    if not msg:
+        return None
+    if user_id is not None and msg.target_type != "broadcast" and msg.target_user_id != user_id:
+        return None
+
+    conds = _group_key_conditions(msg)
+    if user_id is not None:
+        now = utcnow()
+        conds += [
+            or_(
+                UserMessage.target_user_id == user_id,
+                UserMessage.target_type == "broadcast",
+            ),
+            UserMessage.status == "active",
+            or_(
+                UserMessage.expires_at.is_(None),
+                UserMessage.expires_at > now,
+            ),
+        ]
+    result = await db.execute(select(UserMessage).where(and_(*conds)))
+    group = list(result.scalars().all())
+    if all(m.id != message_id for m in group):
+        group.append(msg)
+    return group
+
+
 async def purge_old_messages(db: AsyncSession, retention_days: int) -> int:
     """Purge les messages plus anciens que retention_days jours."""
     if retention_days <= 0:
@@ -347,8 +416,7 @@ async def list_messages(
         # 1 ligne par groupe (titre, priorité, app) : représentant = plus récent,
         # occurrences = taille du groupe. Même pattern window que GET /me (Task 2),
         # sans jointure receipts (vue système admin).
-        grp = func.coalesce(UserMessage.sender_app_slug, UserMessage.sender_type)
-        PART = (UserMessage.title, UserMessage.priority, grp)
+        PART = _group_partition()
         rn = func.row_number().over(
             partition_by=PART,
             order_by=(desc(UserMessage.created_at), desc(UserMessage.id)),
@@ -830,8 +898,7 @@ async def get_my_messages(
     if group_similar:
         # 1 ligne par groupe (titre, priorité, app) : représentant = plus récent,
         # occurrences = taille du groupe. Window functions → portable SQLite/PG.
-        grp = func.coalesce(UserMessage.sender_app_slug, UserMessage.sender_type)
-        PART = (UserMessage.title, UserMessage.priority, grp)
+        PART = _group_partition()
         rn = func.row_number().over(
             partition_by=PART,
             order_by=(desc(UserMessage.created_at), desc(UserMessage.id)),
@@ -1032,10 +1099,8 @@ async def _hide_message_for_user(db: AsyncSession, message_id: int, user_id: int
 
 async def _hide_group_for_user(db: AsyncSession, message_id: int, user_id: int) -> Optional[int]:
     """Masque le groupe de déduplication complet d'un message pour un
-    destinataire : toutes les occurrences visibles partageant la clé
-    (titre, priorité, coalesce(sender_app_slug, sender_type)) — le miroir
-    exact du group_similar de GET /me. Sinon la ligne groupée réapparaît au
-    refetch avec un nouveau représentant (bug symétrique du mark-read).
+    destinataire (résolution via _resolve_group, périmètre destinataire) :
+    sinon la ligne groupée réapparaît au refetch avec un nouveau représentant.
 
     Retourne le nombre d'occurrences réellement masquées (0 si déjà toutes
     masquées), ou None si le message demandé est inexistant/non visible —
@@ -1043,36 +1108,12 @@ async def _hide_group_for_user(db: AsyncSession, message_id: int, user_id: int) 
 
     Mutation en attente : l'appelant fait le commit.
     """
-    msg = await db.get(UserMessage, message_id)
-    if not msg:
+    group = await _resolve_group(db, message_id, user_id=user_id)
+    if group is None:
         return None
-    if msg.target_type != "broadcast" and msg.target_user_id != user_id:
-        return None
-
-    now = utcnow()
-    group_result = await db.execute(
-        select(UserMessage).where(and_(
-            UserMessage.title == msg.title,
-            UserMessage.priority == msg.priority,
-            func.coalesce(UserMessage.sender_app_slug, UserMessage.sender_type)
-            == func.coalesce(msg.sender_app_slug, msg.sender_type),
-            or_(
-                UserMessage.target_user_id == user_id,
-                UserMessage.target_type == "broadcast",
-            ),
-            UserMessage.status == "active",
-            or_(
-                UserMessage.expires_at.is_(None),
-                UserMessage.expires_at > now,
-            ),
-        ))
-    )
-    group_msgs = list(group_result.scalars().all())
-    if all(m.id != message_id for m in group_msgs):
-        group_msgs.append(msg)
 
     hidden = 0
-    for m in group_msgs:
+    for m in group:
         if await _hide_message_for_user(db, m.id, user_id) == "hidden":
             hidden += 1
     return hidden
@@ -1277,29 +1318,11 @@ async def mark_message_read(
     receipt = existing.scalars().first()
     was_read = receipt is not None and receipt.read_at is not None
 
-    # Occurrences du même groupe visibles par cet utilisateur. Le message
-    # demandé est toujours inclus (même archivé/expiré : le marquage unitaire
-    # reste possible, la propagation ne cible que les visibles).
-    group_result = await db.execute(
-        select(UserMessage).where(and_(
-            UserMessage.title == msg.title,
-            UserMessage.priority == msg.priority,
-            func.coalesce(UserMessage.sender_app_slug, UserMessage.sender_type)
-            == func.coalesce(msg.sender_app_slug, msg.sender_type),
-            or_(
-                UserMessage.target_user_id == current_user.id,
-                UserMessage.target_type == "broadcast",
-            ),
-            UserMessage.status == "active",
-            or_(
-                UserMessage.expires_at.is_(None),
-                UserMessage.expires_at > now,
-            ),
-        ))
-    )
-    group_msgs = list(group_result.scalars().all())
-    if all(m.id != message_id for m in group_msgs):
-        group_msgs.append(msg)
+    # Occurrences du même groupe visibles par cet utilisateur (résolveur
+    # générique, périmètre destinataire — source unique de la clé).
+    group_msgs = await _resolve_group(db, message_id, user_id=current_user.id)
+    if not group_msgs:
+        group_msgs = [msg]
 
     marked = await _apply_read_receipts(db, group_msgs, current_user.id, now)
     await db.commit()
@@ -1567,28 +1590,39 @@ async def archive_message(
     current_user: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db)
 ):
-    """Archive un message (soft-delete admin). Reste consultable côté user dans l'historique."""
+    """Archive un message (soft-delete admin). Reste consultable côté user dans l'historique.
+
+    Résolution structurelle : l'action porte sur TOUTES les occurrences du
+    groupe dédupliqué (même titre+priorité+expéditeur) — la sélection d'une
+    ligne groupée dans la vue Gestion traite la pile entière, pas seulement
+    son représentant. `affected` = occurrences réellement archivées."""
     from app.routes.audit import log_action
 
     msg = await db.get(UserMessage, message_id)
     if not msg:
         raise HTTPException(status_code=404, detail="Message introuvable")
-    if msg.status == "archived":
-        return {"status": "already_archived", "message_id": message_id}
 
-    msg.status = "archived"
-    msg.archived_at = utcnow()
+    group = await _resolve_group(db, message_id)
+    affected = 0
+    for m in group:
+        if m.status != "archived":
+            m.status = "archived"
+            m.archived_at = utcnow()
+            affected += 1
     await db.commit()
+
+    if affected == 0:
+        return {"status": "already_archived", "message_id": message_id, "affected": 0}
 
     await log_action(
         db, current_user.id, "archive_message",
         target=f"message:{message_id}",
-        details=f"title={msg.title}",
+        details=f"title={msg.title}, affected={affected} (groupe deduplique)",
         notify_sse=False,
     )
     await db.commit()
-    _notify_message("messages_updated", {"action": "archived", "id": message_id})
-    return {"status": "archived", "message_id": message_id}
+    _notify_message("messages_updated", {"action": "archived", "id": message_id, "affected": affected})
+    return {"status": "archived", "message_id": message_id, "affected": affected}
 
 
 @router.post("/{message_id}/restore")
@@ -1597,28 +1631,35 @@ async def restore_message(
     current_user: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db)
 ):
-    """Restaure un message archivé (status -> active)."""
+    """Restaure un message archivé (status -> active) — groupe dédupliqué complet
+    (cf. archive_message). `affected` = occurrences réellement restaurées."""
     from app.routes.audit import log_action
 
     msg = await db.get(UserMessage, message_id)
     if not msg:
         raise HTTPException(status_code=404, detail="Message introuvable")
-    if msg.status != "archived":
-        return {"status": "not_archived", "message_id": message_id}
 
-    msg.status = "active"
-    msg.archived_at = None
+    group = await _resolve_group(db, message_id)
+    affected = 0
+    for m in group:
+        if m.status == "archived":
+            m.status = "active"
+            m.archived_at = None
+            affected += 1
     await db.commit()
+
+    if affected == 0:
+        return {"status": "not_archived", "message_id": message_id, "affected": 0}
 
     await log_action(
         db, current_user.id, "restore_message",
         target=f"message:{message_id}",
-        details=f"title={msg.title}",
+        details=f"title={msg.title}, affected={affected} (groupe deduplique)",
         notify_sse=False,
     )
     await db.commit()
-    _notify_message("messages_updated", {"action": "restored", "id": message_id})
-    return {"status": "restored", "message_id": message_id}
+    _notify_message("messages_updated", {"action": "restored", "id": message_id, "affected": affected})
+    return {"status": "restored", "message_id": message_id, "affected": affected}
 
 
 @router.delete("/{message_id}/hard")
@@ -1627,25 +1668,31 @@ async def hard_delete_message(
     current_user: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db)
 ):
-    """Suppression définitive d'un message (purge la DB, supprime les receipts)."""
+    """Suppression définitive d'un message (purge la DB, supprime les receipts)
+    — groupe dédupliqué complet (cf. archive_message). `affected` = occurrences
+    réellement supprimées."""
     from app.routes.audit import log_action
 
     msg = await db.get(UserMessage, message_id)
     if not msg:
         raise HTTPException(status_code=404, detail="Message introuvable")
+
+    group = await _resolve_group(db, message_id)
     title = msg.title
-    await db.delete(msg)
+    affected = len(group)
+    for m in group:
+        await db.delete(m)
     await db.commit()
 
     await log_action(
         db, current_user.id, "hard_delete_message",
         target=f"message:{message_id}",
-        details=f"title={title}",
+        details=f"title={title}, affected={affected} (groupe deduplique)",
         notify_sse=False,
     )
     await db.commit()
-    _notify_message("messages_updated", {"action": "hard_deleted", "id": message_id})
-    return {"status": "hard_deleted", "message_id": message_id}
+    _notify_message("messages_updated", {"action": "hard_deleted", "id": message_id, "affected": affected})
+    return {"status": "hard_deleted", "message_id": message_id, "affected": affected}
 
 
 @router.delete("/")
@@ -1756,10 +1803,22 @@ async def delete_messages_batch(
     except (ValueError, TypeError):
         raise HTTPException(status_code=400, detail="IDs invalides")
 
+    # Résolution structurelle : chaque id sélectionné est une ligne GROUPÉE
+    # (représentant du groupe dédupliqué, cf. group_similar) — l'action porte
+    # sur les groupes complets (union, sans doublon). Les ids inexistants sont
+    # ignorés silencieusement.
+    target_ids: set[int] = set()
+    for mid in ids:
+        group = await _resolve_group(db, mid)
+        if group is None:
+            continue
+        target_ids.update(m.id for m in group)
+
     if hard:
-        result = await db.execute(
-            delete(UserMessage).where(UserMessage.id.in_(ids))
-        )
+        stmt = delete(UserMessage)
+        if target_ids:
+            stmt = stmt.where(UserMessage.id.in_(target_ids))
+        result = await db.execute(stmt)
         affected = result.rowcount
         await db.commit()
         action = "delete_messages_batch_hard"
@@ -1767,14 +1826,12 @@ async def delete_messages_batch(
         sse_action = "deleted"
     else:
         from sqlalchemy import update as sql_update
-        result = await db.execute(
-            sql_update(UserMessage).values(
-                status="archived", archived_at=utcnow()
-            ).where(and_(
-                UserMessage.id.in_(ids),
-                UserMessage.status == "active",
-            ))
-        )
+        stmt = sql_update(UserMessage).values(
+            status="archived", archived_at=utcnow()
+        ).where(UserMessage.status == "active")
+        if target_ids:
+            stmt = stmt.where(UserMessage.id.in_(target_ids))
+        result = await db.execute(stmt)
         affected = result.rowcount
         await db.commit()
         action = "archive_messages_batch"
