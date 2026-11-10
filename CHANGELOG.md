@@ -5,6 +5,24 @@
 
 ---
 
+## [3.85.7] - 10 novembre 2026
+
+### ✨ Nav : retrait de l'onglet « Messages » — accès aux notifications par la cloche uniquement
+
+La console notifications unifiée (« Ma boîte » / « Gestion ») est accessible
+depuis la cloche 🔔 de la navbar (`showPage=inbox`, même section) : l'onglet
+« Messages » était un doublon depuis la fusion messages/notifications
+(choix utilisateur du 10/11/2026).
+
+| Élément | Détail |
+|---------|--------|
+| **`frontend/public/index.html`** | Retrait du `<li>` de l'onglet « Messages » (id `navMessages` + badge `navMessagesBadge`) |
+| **`frontend/public/js/modules/notifications.js`** | `updateMessageBellBadge` ne pilote plus que la cloche ; `updateNavMessagesBadge` devenue no-op documentée (9 appels conservés dans `notifications.js`/`sse.js` — le fetch stats mort est supprimé) ; `_applyNavMessagesBadgeCount` / `_badgeCountFromStats` supprimées |
+| **`frontend/public/js/modules/auth-navigation.js`** | 2 lignes mortes retirées (`navMessages?.classList`) |
+| **Conservé** | Préférence « badge navbar par priorité » (Préférences + GET/PUT `badge-priorities`) : ne pilote plus d'affichage, retrait à décider séparément |
+
+---
+
 ## [3.85.6] - 10 novembre 2026
 
 ### ⚡ Fix : actions groupées sur les notifications dédupliquées — « Marquer lu » et « Supprimer » traitent toute la pile
