@@ -1119,17 +1119,32 @@ async def mark_all_read(
         )
         .where(UserMessage.id.notin_(read_subq))
     )
-    msgs = result.scalars().all()
+    msgs = list(result.scalars().all())
 
+    marked = await _apply_read_receipts(db, msgs, current_user.id, now)
+    await db.commit()
+    return {"marked_read": marked}
+
+
+async def _apply_read_receipts(
+    db: AsyncSession, msgs: list[UserMessage], user_id: int, now
+) -> int:
+    """Crée ou passe à « lu » les receipts (message, user_id) pour msgs, avec
+    mise à jour des compteurs delivered/read. Idempotent : les messages déjà
+    lus par cet utilisateur sont ignorés. Retourne le nombre de messages
+    passés lus. Mutation en attente : l'appelant fait le commit.
+
+    Partagé par /read-all et la propagation de groupe de /{id}/read (même
+    mécanique, mêmes garde-fous d'unicité (message_id, user_id))."""
     if not msgs:
-        return {"marked_read": 0}
+        return 0
 
-    # Charger les receipts existants (delivered-only) pour ces messages
+    # Charger les receipts existants (delivered-only ou lus) pour ces messages
     msg_ids = [m.id for m in msgs]
     existing_receipts = await db.execute(
         select(MessageReadReceipt).where(and_(
             MessageReadReceipt.message_id.in_(msg_ids),
-            MessageReadReceipt.user_id == current_user.id,
+            MessageReadReceipt.user_id == user_id,
         ))
     )
     by_msg = {r.message_id: r for r in existing_receipts.scalars().all()}
@@ -1140,7 +1155,7 @@ async def mark_all_read(
         if rcpt is None:
             db.add(MessageReadReceipt(
                 message_id=m.id,
-                user_id=current_user.id,
+                user_id=user_id,
                 delivered_at=now,
                 read_at=now,
             ))
@@ -1154,9 +1169,7 @@ async def mark_all_read(
             continue
         m.read_count = (m.read_count or 0) + 1
         marked += 1
-
-    await db.commit()
-    return {"marked_read": marked}
+    return marked
 
 
 @router.post("/{message_id}/read")
@@ -1165,7 +1178,14 @@ async def mark_message_read(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """Marquer un message comme lu."""
+    """Marquer un message comme lu.
+
+    Le message appartient au groupe de déduplication de « Mes notifications »
+    (même titre + priorité + expéditeur, cf. GET /me?group_similar=true) :
+    la lecture est propagée à TOUTES les occurrences visibles de l'utilisateur,
+    sinon la ligne groupée resterait « Non lu » (l'occurrence suivante devenant
+    le nouveau représentant, cf. bug remonté le 10/11/2026).
+    """
     msg = await db.get(UserMessage, message_id)
     if not msg:
         raise HTTPException(status_code=404, detail="Message introuvable")
@@ -1181,31 +1201,38 @@ async def mark_message_read(
         ))
     )
     receipt = existing.scalars().first()
+    was_read = receipt is not None and receipt.read_at is not None
 
-    if receipt is None:
-        receipt = MessageReadReceipt(
-            message_id=message_id,
-            user_id=current_user.id,
-            delivered_at=now,
-            read_at=now,
-        )
-        db.add(receipt)
-        msg.delivered_count = (msg.delivered_count or 0) + 1
-        msg.read_count = (msg.read_count or 0) + 1
-        await db.commit()
-        return {"status": "read", "message_id": message_id}
+    # Occurrences du même groupe visibles par cet utilisateur. Le message
+    # demandé est toujours inclus (même archivé/expiré : le marquage unitaire
+    # reste possible, la propagation ne cible que les visibles).
+    group_result = await db.execute(
+        select(UserMessage).where(and_(
+            UserMessage.title == msg.title,
+            UserMessage.priority == msg.priority,
+            func.coalesce(UserMessage.sender_app_slug, UserMessage.sender_type)
+            == func.coalesce(msg.sender_app_slug, msg.sender_type),
+            or_(
+                UserMessage.target_user_id == current_user.id,
+                UserMessage.target_type == "broadcast",
+            ),
+            UserMessage.status == "active",
+            or_(
+                UserMessage.expires_at.is_(None),
+                UserMessage.expires_at > now,
+            ),
+        ))
+    )
+    group_msgs = list(group_result.scalars().all())
+    if all(m.id != message_id for m in group_msgs):
+        group_msgs.append(msg)
 
-    if receipt.read_at is not None:
-        return {"status": "already_read", "message_id": message_id}
-
-    # Receipt existe (delivered-only) : on marque la lecture
-    receipt.read_at = now
-    if receipt.delivered_at is None:
-        receipt.delivered_at = now
-        msg.delivered_count = (msg.delivered_count or 0) + 1
-    msg.read_count = (msg.read_count or 0) + 1
+    marked = await _apply_read_receipts(db, group_msgs, current_user.id, now)
     await db.commit()
-    return {"status": "read", "message_id": message_id}
+
+    if was_read and marked == 0:
+        return {"status": "already_read", "message_id": message_id, "marked_read": 0}
+    return {"status": "read", "message_id": message_id, "marked_read": marked}
 
 
 @router.post("/{message_id}/delivered")
