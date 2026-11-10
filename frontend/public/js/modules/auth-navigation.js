@@ -299,7 +299,6 @@ function showPage(page) {
             // Page publique : Ma boîte pour tous, Gestion si admin (le mode se
             // garde lui-même — plus de garde ici).
             document.getElementById('notificationsSection').classList.remove('d-none');
-            document.getElementById('navMessages')?.classList.add('active');
             if (typeof showNotificationsPage === 'function') {
                 showNotificationsPage(currentUser?.is_admin ? 'manage' : 'inbox');
             }
@@ -317,7 +316,6 @@ function showPage(page) {
         case 'inbox':
         case 'notifications':
             document.getElementById('notificationsSection').classList.remove('d-none');
-            document.getElementById('navMessages')?.classList.add('active');
             if (typeof showNotificationsPage === 'function') {
                 showNotificationsPage('inbox');
             }

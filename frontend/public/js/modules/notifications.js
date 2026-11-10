@@ -1179,7 +1179,8 @@ async function loadUnreadMessageCount() {
 }
 
 function updateMessageBellBadge(count) {
-    // Cloche de notifications (tous les utilisateurs)
+    // Cloche de notifications (tous les utilisateurs) — seule entrée badge
+    // depuis le retrait de l'onglet « Messages » de la navbar.
     const bellBadge = document.getElementById('messageBellBadge');
     if (bellBadge) {
         if (count > 0) {
@@ -1189,40 +1190,13 @@ function updateMessageBellBadge(count) {
             bellBadge.style.display = 'none';
         }
     }
-    // Badge du lien navbar Messages (public depuis la console unifiée)
-    const navBadge = document.getElementById('navMessagesBadge');
-    if (navBadge) {
-        if (count > 0) {
-            navBadge.textContent = count > 99 ? '99+' : count;
-            navBadge.style.display = 'inline';
-        } else {
-            navBadge.style.display = 'none';
-        }
-    }
-}
-
-function _badgeCountFromStats(stats) {
-    if (!stats) return 0;
-    const byPriority = stats.by_priority || {};
-    return messagesBadgePriorities.reduce((sum, p) => sum + (byPriority[p] || 0), 0);
-}
-
-function _applyNavMessagesBadgeCount(count) {
-    const navBadge = document.getElementById('navMessagesBadge');
-    if (!navBadge) return;
-    if (count > 0) {
-        navBadge.textContent = count > 99 ? '99+' : count;
-        navBadge.style.display = 'inline';
-    } else {
-        navBadge.style.display = 'none';
-    }
 }
 
 async function updateNavMessagesBadge() {
-    try {
-        const stats = await api.getMessageStats(null, undefined);
-        _applyNavMessagesBadgeCount(_badgeCountFromStats(stats));
-    } catch (e) { /* Silencieux */ }
+    // Ancien badge de l'onglet navbar « Messages » : l'onglet a été retiré de
+    // la nav (accès aux notifications par la cloche uniquement, cf.
+    // updateMessageBellBadge). Conservée en no-op : 9 appels répartis dans
+    // notifications.js et sse.js — le fetch de stats est supprimé avec lui.
 }
 
 // =============================================================================
