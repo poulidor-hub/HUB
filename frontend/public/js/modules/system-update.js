@@ -78,6 +78,12 @@ document.addEventListener('DOMContentLoaded', () => {
             loadSystemUpdates(true);
         });
     }
+
+    // Après le rechargement post-mise à jour (armSystemUpdateReload pose
+    // #admin) : revenir directement sur la vue admin.
+    if (window.location.hash === '#admin' && typeof showPage === 'function') {
+        try { showPage('admin'); } catch (e) { /* vue par défaut sinon */ }
+    }
 });
 
 /**
@@ -489,6 +495,58 @@ function finishSystemUpdateJob(state, job) {
         ok ? 'Mise à jour terminée — versions à jour.'
            : `Mise à jour échouée (exit_code=${exitCode})`,
         job);
+    // La page admin (token, données chargées, SSE) peut être irrécupérable
+    // après le redémarrage du Hub : elle se recharge automatiquement.
+    // Succès : compte à rebours court pour lire le verdict. Échec :
+    // rechargement manuel seulement (l'admin lit d'abord journal et remède).
+    armSystemUpdateReload(ok ? 8 : 0);
+}
+
+/**
+ * Rechargement automatique de la page admin après une mise à jour terminée
+ * (retour du Hub = token/données/SSE potentiellement périmés). Injecte dans
+ * le panneau une ligne « La page sera rechargée dans N s » + bouton
+ * « Recharger maintenant » ; delaySec = 0 ⇒ bouton seul (cas échec).
+ * Pose #admin pour que le rechargement revienne sur la vue admin.
+ */
+function armSystemUpdateReload(delaySec) {
+    const logEl = document.getElementById('systemUpdateLog');
+    const panel = document.getElementById('systemUpdateJobPanel');
+    if (!panel || !logEl) return;
+    try { window.location.hash = 'admin'; } catch (e) { /* hash refusé : reload simple */ }
+
+    let row = document.getElementById('systemUpdateReloadRow');
+    if (!row) {
+        row = document.createElement('div');
+        row.id = 'systemUpdateReloadRow';
+        row.className = 'mt-2 d-flex align-items-center flex-wrap gap-2';
+        logEl.parentNode.insertBefore(row, logEl.nextSibling);
+    }
+    row.innerHTML = '';
+
+    const txt = document.createElement('span');
+    txt.className = 'text-muted';
+    row.appendChild(txt);
+
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'btn btn-primary btn-sm';
+    btn.textContent = 'Recharger maintenant';
+    btn.addEventListener('click', () => { window.location.reload(); });
+    row.appendChild(btn);
+
+    if (!delaySec || delaySec <= 0) {
+        txt.textContent = 'Rechargez la page pour repartir sur un état sain.';
+        return;
+    }
+    let left = delaySec;
+    const tick = () => {
+        if (left <= 0) { window.location.reload(); return; }
+        txt.textContent = 'La page sera rechargée automatiquement dans ' + left + ' s.';
+        left -= 1;
+    };
+    tick();
+    setInterval(tick, 1000);
 }
 
 /** Rattache la vue au job si un job est déjà en cours (au chargement de l'onglet). */
