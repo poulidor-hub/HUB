@@ -1030,6 +1030,54 @@ async def _hide_message_for_user(db: AsyncSession, message_id: int, user_id: int
     return "hidden"
 
 
+async def _hide_group_for_user(db: AsyncSession, message_id: int, user_id: int) -> Optional[int]:
+    """Masque le groupe de déduplication complet d'un message pour un
+    destinataire : toutes les occurrences visibles partageant la clé
+    (titre, priorité, coalesce(sender_app_slug, sender_type)) — le miroir
+    exact du group_similar de GET /me. Sinon la ligne groupée réapparaît au
+    refetch avec un nouveau représentant (bug symétrique du mark-read).
+
+    Retourne le nombre d'occurrences réellement masquées (0 si déjà toutes
+    masquées), ou None si le message demandé est inexistant/non visible —
+    auquel cas rien n'est masqué (le 404 reste porté par l'appelant).
+
+    Mutation en attente : l'appelant fait le commit.
+    """
+    msg = await db.get(UserMessage, message_id)
+    if not msg:
+        return None
+    if msg.target_type != "broadcast" and msg.target_user_id != user_id:
+        return None
+
+    now = utcnow()
+    group_result = await db.execute(
+        select(UserMessage).where(and_(
+            UserMessage.title == msg.title,
+            UserMessage.priority == msg.priority,
+            func.coalesce(UserMessage.sender_app_slug, UserMessage.sender_type)
+            == func.coalesce(msg.sender_app_slug, msg.sender_type),
+            or_(
+                UserMessage.target_user_id == user_id,
+                UserMessage.target_type == "broadcast",
+            ),
+            UserMessage.status == "active",
+            or_(
+                UserMessage.expires_at.is_(None),
+                UserMessage.expires_at > now,
+            ),
+        ))
+    )
+    group_msgs = list(group_result.scalars().all())
+    if all(m.id != message_id for m in group_msgs):
+        group_msgs.append(msg)
+
+    hidden = 0
+    for m in group_msgs:
+        if await _hide_message_for_user(db, m.id, user_id) == "hidden":
+            hidden += 1
+    return hidden
+
+
 @router.delete("/me/{message_id}")
 async def hide_my_message(
     message_id: int,
@@ -1038,13 +1086,23 @@ async def hide_my_message(
 ):
     """Suppression côté destinataire : masque le message (receipt.hidden_at).
 
+    Le message appartient au groupe de déduplication de « Mes notifications »
+    (même titre + priorité + expéditeur, cf. GET /me?group_similar=true) :
+    la suppression est propagée à TOUTES les occurrences visibles de
+    l'utilisateur, sinon la ligne groupée réapparaîtrait au refetch avec
+    l'occurrence suivante comme nouveau représentant (bug symétrique du
+    mark-read, remonté le 10/11/2026).
     Idempotent : un message déjà masqué retourne "already_hidden".
     """
     result = await _hide_message_for_user(db, message_id, current_user.id)
     if result is None:
         raise HTTPException(status_code=404, detail="Message introuvable")
+    # hidden = le message demandé (si fraîchement masqué) + les autres
+    # occurrences du groupe masquées par la propagation.
+    hidden = (1 if result == "hidden" else 0)
+    hidden += await _hide_group_for_user(db, message_id, current_user.id) or 0
     await db.commit()
-    return {"status": result, "message_id": message_id}
+    return {"status": result, "message_id": message_id, "hidden": hidden}
 
 
 @router.post("/me/delete-batch")
@@ -1055,7 +1113,10 @@ async def hide_my_messages_batch(
 ):
     """Masque une liste de messages pour le destinataire (body dict brut, pattern DELETE /batch).
 
-    Les ids non visibles ou inexistants sont ignorés silencieusement.
+    Suppression propagée au groupe dédupliqué de chaque id (cf. DELETE
+    /me/{id}) : `hidden` compte les occurrences réellement masquées, souvent
+    supérieur au nombre d'ids envoyés. Les ids non visibles ou inexistants
+    sont ignorés silencieusement.
     """
     ids = payload.get("ids", [])
     if not ids or not isinstance(ids, list):
@@ -1069,9 +1130,9 @@ async def hide_my_messages_batch(
 
     hidden = 0
     for mid in ids:
-        result = await _hide_message_for_user(db, mid, current_user.id)
-        if result == "hidden":
-            hidden += 1
+        result = await _hide_group_for_user(db, mid, current_user.id)
+        if result is not None:
+            hidden += result
     await db.commit()
     return {"hidden": hidden}
 
@@ -1132,17 +1193,32 @@ async def mark_all_read(
         )
         .where(UserMessage.id.notin_(read_subq))
     )
-    msgs = result.scalars().all()
+    msgs = list(result.scalars().all())
 
+    marked = await _apply_read_receipts(db, msgs, current_user.id, now)
+    await db.commit()
+    return {"marked_read": marked}
+
+
+async def _apply_read_receipts(
+    db: AsyncSession, msgs: list[UserMessage], user_id: int, now
+) -> int:
+    """Crée ou passe à « lu » les receipts (message, user_id) pour msgs, avec
+    mise à jour des compteurs delivered/read. Idempotent : les messages déjà
+    lus par cet utilisateur sont ignorés. Retourne le nombre de messages
+    passés lus. Mutation en attente : l'appelant fait le commit.
+
+    Partagé par /read-all et la propagation de groupe de /{id}/read (même
+    mécanique, mêmes garde-fous d'unicité (message_id, user_id))."""
     if not msgs:
-        return {"marked_read": 0}
+        return 0
 
-    # Charger les receipts existants (delivered-only) pour ces messages
+    # Charger les receipts existants (delivered-only ou lus) pour ces messages
     msg_ids = [m.id for m in msgs]
     existing_receipts = await db.execute(
         select(MessageReadReceipt).where(and_(
             MessageReadReceipt.message_id.in_(msg_ids),
-            MessageReadReceipt.user_id == current_user.id,
+            MessageReadReceipt.user_id == user_id,
         ))
     )
     by_msg = {r.message_id: r for r in existing_receipts.scalars().all()}
@@ -1153,7 +1229,7 @@ async def mark_all_read(
         if rcpt is None:
             db.add(MessageReadReceipt(
                 message_id=m.id,
-                user_id=current_user.id,
+                user_id=user_id,
                 delivered_at=now,
                 read_at=now,
             ))
@@ -1167,9 +1243,7 @@ async def mark_all_read(
             continue
         m.read_count = (m.read_count or 0) + 1
         marked += 1
-
-    await db.commit()
-    return {"marked_read": marked}
+    return marked
 
 
 @router.post("/{message_id}/read")
@@ -1178,7 +1252,14 @@ async def mark_message_read(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """Marquer un message comme lu."""
+    """Marquer un message comme lu.
+
+    Le message appartient au groupe de déduplication de « Mes notifications »
+    (même titre + priorité + expéditeur, cf. GET /me?group_similar=true) :
+    la lecture est propagée à TOUTES les occurrences visibles de l'utilisateur,
+    sinon la ligne groupée resterait « Non lu » (l'occurrence suivante devenant
+    le nouveau représentant, cf. bug remonté le 10/11/2026).
+    """
     msg = await db.get(UserMessage, message_id)
     if not msg:
         raise HTTPException(status_code=404, detail="Message introuvable")
@@ -1194,31 +1275,38 @@ async def mark_message_read(
         ))
     )
     receipt = existing.scalars().first()
+    was_read = receipt is not None and receipt.read_at is not None
 
-    if receipt is None:
-        receipt = MessageReadReceipt(
-            message_id=message_id,
-            user_id=current_user.id,
-            delivered_at=now,
-            read_at=now,
-        )
-        db.add(receipt)
-        msg.delivered_count = (msg.delivered_count or 0) + 1
-        msg.read_count = (msg.read_count or 0) + 1
-        await db.commit()
-        return {"status": "read", "message_id": message_id}
+    # Occurrences du même groupe visibles par cet utilisateur. Le message
+    # demandé est toujours inclus (même archivé/expiré : le marquage unitaire
+    # reste possible, la propagation ne cible que les visibles).
+    group_result = await db.execute(
+        select(UserMessage).where(and_(
+            UserMessage.title == msg.title,
+            UserMessage.priority == msg.priority,
+            func.coalesce(UserMessage.sender_app_slug, UserMessage.sender_type)
+            == func.coalesce(msg.sender_app_slug, msg.sender_type),
+            or_(
+                UserMessage.target_user_id == current_user.id,
+                UserMessage.target_type == "broadcast",
+            ),
+            UserMessage.status == "active",
+            or_(
+                UserMessage.expires_at.is_(None),
+                UserMessage.expires_at > now,
+            ),
+        ))
+    )
+    group_msgs = list(group_result.scalars().all())
+    if all(m.id != message_id for m in group_msgs):
+        group_msgs.append(msg)
 
-    if receipt.read_at is not None:
-        return {"status": "already_read", "message_id": message_id}
-
-    # Receipt existe (delivered-only) : on marque la lecture
-    receipt.read_at = now
-    if receipt.delivered_at is None:
-        receipt.delivered_at = now
-        msg.delivered_count = (msg.delivered_count or 0) + 1
-    msg.read_count = (msg.read_count or 0) + 1
+    marked = await _apply_read_receipts(db, group_msgs, current_user.id, now)
     await db.commit()
-    return {"status": "read", "message_id": message_id}
+
+    if was_read and marked == 0:
+        return {"status": "already_read", "message_id": message_id, "marked_read": 0}
+    return {"status": "read", "message_id": message_id, "marked_read": marked}
 
 
 @router.post("/{message_id}/delivered")

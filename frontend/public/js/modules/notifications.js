@@ -675,7 +675,13 @@ async function notifMarkRead(id) {
     id = parseInt(id, 10);
     if (!id) return;
     try {
-        await api.markMessageRead(id);
+        // Le backend propage la lecture au groupe dédupliqué complet : on
+        // l'annonce quand plus d'une occurrence a été passée en lu.
+        const r = await api.markMessageRead(id);
+        const marked = (r && typeof r.marked_read === 'number') ? r.marked_read : 1;
+        if (marked > 1) {
+            showToast('Succès', `${marked} notification(s) marquée(s) comme lu(s) (groupe complet).`, 'success');
+        }
         if (_notifSelectedId === id) {
             const m = _notifMessages.find(x => x.id === id);
             if (m) m.is_read = true;
@@ -691,10 +697,16 @@ async function notifDeleteOne(id) {
     if (!id) return;
     if (!confirm('Supprimer cette notification de votre boîte ?')) return;
     try {
-        await api.deleteMyMessage(id);
+        const result = await api.deleteMyMessage(id);
         _notif.selection.delete(id);
         if (_notifSelectedId === id) closeNotifDetail();
-        showToast('Supprimée', 'La notification a été retirée de votre boîte.', 'success');
+        // Propagation groupe : hidden = occurrences réellement retirées.
+        const n = result && typeof result.hidden === 'number' ? result.hidden : 1;
+        if (n > 1) {
+            showToast('Supprimées', `${n} notification(s) retirée(s) de votre boîte (groupe complet).`, 'success');
+        } else {
+            showToast('Supprimée', 'La notification a été retirée de votre boîte.', 'success');
+        }
         await loadNotifications();
     } catch (e) {
         showToast('Erreur', e.message, 'danger');
@@ -705,8 +717,17 @@ async function notifBulkRead() {
     const ids = [..._notif.selection];
     if (ids.length === 0) return;
     try {
-        await Promise.all(ids.map(id => api.markMessageRead(id).catch(() => {})));
-        showToast('Succès', `${ids.length} notification(s) marquée(s) comme lu(s).`, 'success');
+        // Le backend propage la lecture au groupe dédupliqué complet :
+        // marked_read = nombre RÉEL d'occurrences passées en lu (souvent
+        // supérieur au nombre de lignes sélectionnées). Fallback : 1 par
+        // ligne si le backend ne renvoie pas le champ.
+        const results = await Promise.all(
+            ids.map(id => api.markMessageRead(id).catch(() => null))
+        );
+        const marked = results.every(r => r && typeof r.marked_read === 'number')
+            ? results.reduce((sum, r) => sum + r.marked_read, 0)
+            : ids.length;
+        showToast('Succès', `${marked} notification(s) marquée(s) comme lu(s).`, 'success');
         _notif.selection.clear();
         await loadNotifications();
     } catch (e) {
@@ -1053,14 +1074,17 @@ function openNotifDetail(id) {
     document.getElementById('notifDetailPanel')?.classList.remove('d-none');
 
     if (!m.is_read) {
-        // Auto mark-read après 1 s (timer historique de la boîte de réception)
+        // Auto mark-read après 1 s (timer historique de la boîte de réception).
+        // Propagation groupe : le badge décompte le nombre RÉEL d'occurrences
+        // passées en lu (marked_read), pas seulement 1.
         _notifMarkReadTimer = setTimeout(() => {
             _notifMarkReadTimer = null;
             const section = document.getElementById('notificationsSection');
             if (_notifSelectedId !== id || !section || section.classList.contains('d-none')) return;
-            api.markMessageRead(id).then(() => {
+            api.markMessageRead(id).then((r) => {
+                const marked = (r && typeof r.marked_read === 'number') ? r.marked_read : 1;
                 m.is_read = true;
-                _notifUnreadTotal = Math.max(0, _notifUnreadTotal - 1);
+                _notifUnreadTotal = Math.max(0, _notifUnreadTotal - marked);
                 renderNotifTable();
                 renderNotifChips();
                 updateMessageBellBadge(_notifUnreadTotal);

@@ -582,3 +582,95 @@ class TestReceiptUniqueness:
         ))
         with pytest.raises(IntegrityError):
             await async_session.commit()
+
+
+# =============================================================================
+# MARK READ — propagation au groupe dédupliqué (bug « la ligne ×N reste Non lu »)
+# =============================================================================
+
+class TestMarkReadGroupPropagation:
+    """Marquer lu une notification groupée doit marquer TOUTES les occurrences
+    visibles du groupe (même titre + priorité + expéditeur) pour l'utilisateur.
+
+    Symptôme corrigé (console « Mes notifications », group_similar=true) : la
+    liste envoie POST /{id}/read sur le représentant du groupe (occurrence la
+    plus récente) ; seul CE message passait lu, l'occurrence suivante devenait
+    le nouveau représentant → badge « Non lu », ×N→×N-1, horodatage qui recule,
+    et unread_total qui ne baissait que de 1 par groupe malgré le toast « N
+    notification(s) marquée(s) comme lu(s) ».
+    """
+
+    @pytest.mark.asyncio
+    async def test_mark_read_propagates_to_group_occurrences(
+        self, client, async_session, admin_user, admin_token
+    ):
+        group = [
+            await _make_broadcast(async_session, admin_user,
+                                  title="App offline : nominatim", priority="urgent")
+            for _ in range(3)
+        ]
+        other = await _make_broadcast(async_session, admin_user,
+                                      title="Autre notif", priority="info")
+        h = get_auth_header(admin_token)
+
+        # L'utilisateur marque lu l'occurrence la plus récente du groupe
+        resp = await client.post(f"/api/messages/{group[-1].id}/read", headers=h)
+        assert resp.status_code == 200, resp.text
+
+        # Vue groupée « non lus » : le groupe ne doit plus apparaître du tout
+        resp = await client.get(
+            "/api/messages/me",
+            params={"group_similar": "true", "unread": "true"},
+            headers=h,
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["unread_total"] == 1  # seul « Autre notif » reste non lu
+        assert [m["title"] for m in data["messages"]] == ["Autre notif"]
+
+        # Vue groupée complète : représentant lu, occurrences intactes (×3)
+        resp = await client.get(
+            "/api/messages/me", params={"group_similar": "true"}, headers=h
+        )
+        assert resp.status_code == 200
+        rows = {m["title"]: m for m in resp.json()["messages"]}
+        assert rows["App offline : nominatim"]["is_read"] is True
+        assert rows["App offline : nominatim"]["occurrences"] == 3
+
+    @pytest.mark.asyncio
+    async def test_group_propagation_is_per_user(
+        self, client, async_session, admin_user, admin_token, test_user, user_token
+    ):
+        """La propagation ne crée des receipts que pour l'utilisateur qui marque :
+        lire un groupe de broadcasts ne doit pas le lire pour les autres users."""
+        b1 = await _make_broadcast(async_session, admin_user,
+                                   title="Pic d'erreurs Hub", priority="warning")
+        b2 = await _make_broadcast(async_session, admin_user,
+                                   title="Pic d'erreurs Hub", priority="warning")
+
+        # admin lit UNE occurrence du groupe
+        resp = await client.post(f"/api/messages/{b2.id}/read",
+                                 headers=get_auth_header(admin_token))
+        assert resp.status_code == 200, resp.text
+
+        # Le groupe est lu pour admin (propagation sur les 2 occurrences)…
+        admin_receipts = (await async_session.execute(
+            select(MessageReadReceipt).where(
+                MessageReadReceipt.user_id == admin_user.id)
+        )).scalars().all()
+        assert {r.message_id for r in admin_receipts} == {b1.id, b2.id}
+
+        # …mais AUCUN receipt n'a été créé pour test_user
+        test_receipts = (await async_session.execute(
+            select(MessageReadReceipt).where(
+                MessageReadReceipt.user_id == test_user.id)
+        )).scalars().all()
+        assert test_receipts == []
+
+        # et le groupe reste entièrement non lu pour test_user
+        resp = await client.get(
+            "/api/messages/me", params={"group_similar": "true"},
+            headers=get_auth_header(user_token),
+        )
+        assert resp.status_code == 200
+        assert resp.json()["unread_total"] == 2

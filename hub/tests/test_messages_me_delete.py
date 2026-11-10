@@ -11,6 +11,7 @@ Task 3 : endpoints user — suppression réelle côté serveur
 import pytest
 from datetime import datetime, timezone
 from httpx import AsyncClient
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import User, MessageReadReceipt, UserMessage, utcnow
@@ -200,3 +201,85 @@ async def test_unread_count_excludes_hidden(client: AsyncClient, async_session: 
     after = await client.get("/api/messages/me/unread-count", headers=get_auth_header(admin_token))
     assert after.status_code == 200
     assert after.json()["count"] == 1, "un message masqué non lu ne doit plus compter dans la cloche"
+
+
+# -----------------------------------------------------------------------------
+# Suppression propagée au groupe dédupliqué (symétrique du fix mark-read
+# 10/11/2026 : supprimer la ligne groupée ne masquait qu'UNE occurrence,
+# le groupe réapparaissait au refetch avec ×N-1 et un nouveau représentant).
+# -----------------------------------------------------------------------------
+
+class TestDeleteGroupPropagation:
+
+    @pytest.mark.asyncio
+    async def test_delete_propagates_to_group_occurrences(
+        self, client, async_session, admin_user, admin_token
+    ):
+        group = [
+            await _make_broadcast(async_session, admin_user,
+                                  title="App offline : nominatim", priority="urgent")
+            for _ in range(3)
+        ]
+        other = await _make_broadcast(async_session, admin_user,
+                                      title="Autre notif", priority="info")
+        h = get_auth_header(admin_token)
+
+        # L'utilisateur supprime la ligne groupée (représentant)
+        resp = await client.delete(f"/api/messages/me/{group[-1].id}", headers=h)
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["status"] == "hidden"
+        assert resp.json()["hidden"] == 3, "les 3 occurrences du groupe doivent être masquées"
+
+        # Le groupe entier disparaît de /me (pas de nouveau représentant)
+        resp = await client.get("/api/messages/me", headers=h)
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["total"] == 1
+        assert [m["id"] for m in data["messages"]] == [other.id]
+
+    @pytest.mark.asyncio
+    async def test_delete_batch_propagates_to_group(
+        self, client, async_session, admin_user, admin_token
+    ):
+        g1 = await _make_broadcast(async_session, admin_user,
+                                   title="Pic d'erreurs Hub", priority="warning")
+        g2 = await _make_broadcast(async_session, admin_user,
+                                   title="Pic d'erreurs Hub", priority="warning")
+        other = await _make_broadcast(async_session, admin_user, title="Isolée")
+
+        # 1 id du groupe + 1 id isolé → 3 occurrences masquées
+        resp = await client.post("/api/messages/me/delete-batch",
+                                 json={"ids": [g2.id, other.id]},
+                                 headers=get_auth_header(admin_token))
+        assert resp.status_code == 200
+        assert resp.json() == {"hidden": 3}
+
+        resp = await client.get("/api/messages/me", headers=get_auth_header(admin_token))
+        assert resp.json()["messages"] == []
+
+    @pytest.mark.asyncio
+    async def test_delete_group_propagation_is_per_user(
+        self, client, async_session, admin_user, admin_token, test_user, user_token
+    ):
+        """Supprimer un groupe de broadcasts ne masque rien pour les autres users."""
+        b1 = await _make_broadcast(async_session, admin_user,
+                                   title="Pic d'erreurs Hub", priority="warning")
+        b2 = await _make_broadcast(async_session, admin_user,
+                                   title="Pic d'erreurs Hub", priority="warning")
+
+        resp = await client.delete(f"/api/messages/me/{b1.id}",
+                                   headers=get_auth_header(admin_token))
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["hidden"] == 2
+
+        # test_user : aucun receipt masqué créé, le groupe reste visible
+        user_receipts = (await async_session.execute(
+            select(MessageReadReceipt).where(
+                MessageReadReceipt.user_id == test_user.id)
+        )).scalars().all()
+        assert user_receipts == []
+
+        resp = await client.get("/api/messages/me", headers=get_auth_header(user_token))
+        assert resp.status_code == 200
+        ids = {m["id"] for m in resp.json()["messages"]}
+        assert ids == {b1.id, b2.id}
