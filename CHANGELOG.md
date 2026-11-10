@@ -5,6 +5,20 @@
 
 ---
 
+## [3.85.8] - 10 novembre 2026
+
+### ⚡ Refactor : résolution structurelle du groupe dédupliqué — archivage/restauration/suppression admin propagent à toute la pile
+
+Suite des remontées du 10/11 (mark-read 3.85.6, suppression destinataire) : dans la vue Gestion, archiver / restaurer / supprimer définitivement une ligne groupée ×N ne traitait que son occurrence représentante — le reste de la pile réapparaissait au refetch. Défect structurel : la clé de déduplication était copiée-collée dans chaque action, sans propagation admin.
+
+| Élément | Détail |
+|---------|--------|
+| **`hub/app/routes/messages.py`** | SOURCE UNIQUE de la clé : `_group_partition()` (window functions de GET /me et de la vue Gestion refactorées dessus, plus aucune copie locale) + `_group_key_conditions()` ; résolveur générique `_resolve_group(db, message_id, user_id=None)` à deux périmètres (destinataire : visibles/actifs/non expirés ; admin : toutes occurrences de la clé). `mark_message_read` et `_hide_group_for_user` refactorés dessus. Actions admin propagées : `POST /{id}/archive`, `POST /{id}/restore`, `DELETE /{id}/hard` → `affected` = occurrences réellement traitées ; `DELETE /batch` étend les ids sélectionnés aux groupes complets (union sans doublon). La purge par filtres (`DELETE /`) reste hors périmètre (opère déjà sur des ensembles), `delivered`/`click` restent par occurrence (tracking technique) |
+| **`frontend/public/js/modules/notifications.js`** | Gestion : toasts au compte réel (« N message(s) archivé(s) (groupe complet) »), confirms explicites sur la propagation groupe (unitaire ×N et actions en masse) |
+| **Tests** | +4 : archive/restore/hard/batch propagent au groupe (message hors groupe épargné, `affected` exacts) — rouges prouvés avant implémentation. Domaine messages : 66 vert (hôte) ; suite docker 1564 vert — échecs préexistants documentés inchangés (`test_vpn_dns`/`test_workshop_overrides` : env hôte, non liés) |
+
+---
+
 ## [3.85.7] - 10 novembre 2026
 
 ### ✨ Nav : retrait de l'onglet « Messages » — accès aux notifications par la cloche uniquement
