@@ -697,10 +697,16 @@ async function notifDeleteOne(id) {
     if (!id) return;
     if (!confirm('Supprimer cette notification de votre boîte ?')) return;
     try {
-        await api.deleteMyMessage(id);
+        const result = await api.deleteMyMessage(id);
         _notif.selection.delete(id);
         if (_notifSelectedId === id) closeNotifDetail();
-        showToast('Supprimée', 'La notification a été retirée de votre boîte.', 'success');
+        // Propagation groupe : hidden = occurrences réellement retirées.
+        const n = result && typeof result.hidden === 'number' ? result.hidden : 1;
+        if (n > 1) {
+            showToast('Supprimées', `${n} notification(s) retirée(s) de votre boîte (groupe complet).`, 'success');
+        } else {
+            showToast('Supprimée', 'La notification a été retirée de votre boîte.', 'success');
+        }
         await loadNotifications();
     } catch (e) {
         showToast('Erreur', e.message, 'danger');

@@ -1017,6 +1017,54 @@ async def _hide_message_for_user(db: AsyncSession, message_id: int, user_id: int
     return "hidden"
 
 
+async def _hide_group_for_user(db: AsyncSession, message_id: int, user_id: int) -> Optional[int]:
+    """Masque le groupe de déduplication complet d'un message pour un
+    destinataire : toutes les occurrences visibles partageant la clé
+    (titre, priorité, coalesce(sender_app_slug, sender_type)) — le miroir
+    exact du group_similar de GET /me. Sinon la ligne groupée réapparaît au
+    refetch avec un nouveau représentant (bug symétrique du mark-read).
+
+    Retourne le nombre d'occurrences réellement masquées (0 si déjà toutes
+    masquées), ou None si le message demandé est inexistant/non visible —
+    auquel cas rien n'est masqué (le 404 reste porté par l'appelant).
+
+    Mutation en attente : l'appelant fait le commit.
+    """
+    msg = await db.get(UserMessage, message_id)
+    if not msg:
+        return None
+    if msg.target_type != "broadcast" and msg.target_user_id != user_id:
+        return None
+
+    now = utcnow()
+    group_result = await db.execute(
+        select(UserMessage).where(and_(
+            UserMessage.title == msg.title,
+            UserMessage.priority == msg.priority,
+            func.coalesce(UserMessage.sender_app_slug, UserMessage.sender_type)
+            == func.coalesce(msg.sender_app_slug, msg.sender_type),
+            or_(
+                UserMessage.target_user_id == user_id,
+                UserMessage.target_type == "broadcast",
+            ),
+            UserMessage.status == "active",
+            or_(
+                UserMessage.expires_at.is_(None),
+                UserMessage.expires_at > now,
+            ),
+        ))
+    )
+    group_msgs = list(group_result.scalars().all())
+    if all(m.id != message_id for m in group_msgs):
+        group_msgs.append(msg)
+
+    hidden = 0
+    for m in group_msgs:
+        if await _hide_message_for_user(db, m.id, user_id) == "hidden":
+            hidden += 1
+    return hidden
+
+
 @router.delete("/me/{message_id}")
 async def hide_my_message(
     message_id: int,
@@ -1025,13 +1073,23 @@ async def hide_my_message(
 ):
     """Suppression côté destinataire : masque le message (receipt.hidden_at).
 
+    Le message appartient au groupe de déduplication de « Mes notifications »
+    (même titre + priorité + expéditeur, cf. GET /me?group_similar=true) :
+    la suppression est propagée à TOUTES les occurrences visibles de
+    l'utilisateur, sinon la ligne groupée réapparaîtrait au refetch avec
+    l'occurrence suivante comme nouveau représentant (bug symétrique du
+    mark-read, remonté le 10/11/2026).
     Idempotent : un message déjà masqué retourne "already_hidden".
     """
     result = await _hide_message_for_user(db, message_id, current_user.id)
     if result is None:
         raise HTTPException(status_code=404, detail="Message introuvable")
+    # hidden = le message demandé (si fraîchement masqué) + les autres
+    # occurrences du groupe masquées par la propagation.
+    hidden = (1 if result == "hidden" else 0)
+    hidden += await _hide_group_for_user(db, message_id, current_user.id) or 0
     await db.commit()
-    return {"status": result, "message_id": message_id}
+    return {"status": result, "message_id": message_id, "hidden": hidden}
 
 
 @router.post("/me/delete-batch")
@@ -1042,7 +1100,10 @@ async def hide_my_messages_batch(
 ):
     """Masque une liste de messages pour le destinataire (body dict brut, pattern DELETE /batch).
 
-    Les ids non visibles ou inexistants sont ignorés silencieusement.
+    Suppression propagée au groupe dédupliqué de chaque id (cf. DELETE
+    /me/{id}) : `hidden` compte les occurrences réellement masquées, souvent
+    supérieur au nombre d'ids envoyés. Les ids non visibles ou inexistants
+    sont ignorés silencieusement.
     """
     ids = payload.get("ids", [])
     if not ids or not isinstance(ids, list):
@@ -1056,9 +1117,9 @@ async def hide_my_messages_batch(
 
     hidden = 0
     for mid in ids:
-        result = await _hide_message_for_user(db, mid, current_user.id)
-        if result == "hidden":
-            hidden += 1
+        result = await _hide_group_for_user(db, mid, current_user.id)
+        if result is not None:
+            hidden += result
     await db.commit()
     return {"hidden": hidden}
 
