@@ -5,6 +5,25 @@
 
 ---
 
+## [3.86.0] - 11 novembre 2026
+
+### ✨ Feat : notifications actionnables — aperçu du contenu et lien d'action direct
+
+Les notifications système n'offraient qu'un titre : le body (compteurs, seuils)
+était caché dans le panneau de détail et aucune action n'était proposée —
+« Voir dashboard Audit » restait une phrase à suivre à la main. Côté apps, le
+bouton d'action (`action_url`/`action_label`, supporté par le modèle et le
+schéma M2M de longue date) n'était visible qu'après ouverture du détail.
+
+| Élément | Détail |
+|---------|--------|
+| **`hub/app/alert_checker.py`** | `ALERT_ACTIONS` : pic d'erreurs → onglet Erreurs d'Audit, échecs auth en rafale → filtre code 401. `deliver_alerts()` persiste `action_url`/`action_label` (modèle inchangé, champs simplement remplis). Sans action volontairement : Storm 401 SSE / charge SSE / erreurs écriture DB (compteurs mémoire ou 401 exclus d'`error_logs` par design anti log-storm — un deeplink donnerait une liste vide) et app offline (pas de cible Audit naturelle). M2M inchangé (les apps envoient déjà body + action) |
+| **`frontend/public/js/modules/notifications.js`** | Lignes des deux modes (Ma boîte + Gestion, y compris sous-lignes ×N) : aperçu du body sur 1 ligne sous le titre + lien d'action inline. Deeplink `#audit?tab=…&f_…=…` → navigation in-app (showPage audit + `auditAlertDetails`, filtres pré-remplis — mécanisme existant simplement alimenté depuis les notifications) ; `http(s)` apps → nouvel onglet. Dans les deux cas : tracking clic existant + marquage lu automatique (« traiter = lire »), badge et lignes resynchronisés sans reload complet en Ma boîte (sync groupe ×N). Bouton du panneau de détail routé par le même handler (`notifOpenAction`) ; `notifClickAction` (mort) supprimé ; `action_url` ne transite plus par un attribut `href` |
+| **`frontend/public/css/style.css`** | `.notif-snippet` (ellipsis CSS strict, aucune animation) + `.notif-open-link` (bleu apps / ambre Audit) |
+| **Tests** | +8 (rouges constatés avant implémentation) : mapping d'actions par alerte + persistance `deliver_alerts`. alert_checker 20 vert, périmètre messages 93 vert (hôte) |
+
+---
+
 ## [3.85.9] - 11 novembre 2026
 
 ### 🐛 Fix : console notifications lisible en mobile — largeur minimale de table + scroll horizontal
