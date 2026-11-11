@@ -1463,6 +1463,14 @@ body {
 .notif-table {
     font-size: 0.875rem;
     margin-bottom: 0;
+    /* Mobile : largeur minimale de lecture. Sans elle, la colonne Titre
+       (text-break, min ≈ 1 caractère) s'écrase en pile verticale et
+       .table-responsive ne déclenche jamais son scroll — la table « rentre »
+       toujours en écrasant le titre. 46rem = ~34rem de colonnes fixes
+       (case+App+Reçu+État+Actions) + ~12rem de titre lisible ; en dessous,
+       le scroll horizontal prend le relais (seul scroll local autorisé par
+       la charte HUBCSS). Desktop (> 46rem de contenu) : aucun effet. */
+    min-width: 46rem;
 }
 .notif-table thead th {
     font-size: 0.72rem;
