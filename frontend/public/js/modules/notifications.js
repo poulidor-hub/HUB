@@ -227,6 +227,28 @@ function _notifPriorityIcon(p) {
     return '<i class="bi bi-info-circle-fill text-info me-1" title="Info"></i>';
 }
 
+/**
+ * Aperçu du body sur 1 ligne (grisé, tronqué par ellipsis CSS) sous le titre.
+ * Rendu vide quand le body est absent — cf. .notif-snippet (style.css).
+ */
+function _notifSnippetHtml(m) {
+    if (!m.body) return '';
+    return `<div class="notif-snippet">${escapeHtml(m.body)}</div>`;
+}
+
+/**
+ * Lien d'action inline sous le snippet : ambre pour les deeplinks Audit
+ * in-app (#audit?…), bleu pour les URLs http(s) d'apps (design validé).
+ * Le clic passe par notifOpenAction (tracking + navigation + mark-read) ;
+ * la colonne Actions (✓/🗑) reste inchangée.
+ */
+function _notifOpenLinkHtml(m) {
+    if (!m.action_url) return '';
+    const warn = m.action_url.startsWith('#audit?') ? ' notif-open-link-warn' : '';
+    const label = m.action_label || 'Ouvrir';
+    return `<button type="button" class="notif-open-link${warn}" data-action="notifOpenAction" data-arg1="${m.id}" title="${escapeAttr(label)}">${escapeHtml(label)}<span class="notif-open-link-arrow" aria-hidden="true">→</span></button>`;
+}
+
 function _notifRowHtml(m) {
     const prio = m.priority || 'info';
     const occ = m.occurrences || 1;
@@ -243,7 +265,7 @@ function _notifRowHtml(m) {
 
     return `<tr class="${m.is_read ? '' : 'fw-semibold'}">
         <td><input type="checkbox" class="form-check-input" ${_notif.selection.has(m.id) ? 'checked' : ''} aria-label="Sélectionner" data-action="notifToggleSelect" data-arg1="${m.id}" data-arg2="$el"></td>
-        <td role="button" data-action="openNotifDetail" data-arg1="${m.id}" class="text-break">${expander}${_notifPriorityIcon(prio)}${escapeHtml(m.title)}</td>
+        <td role="button" data-action="openNotifDetail" data-arg1="${m.id}" class="text-break">${expander}${_notifPriorityIcon(prio)}${escapeHtml(m.title)}${_notifSnippetHtml(m)}${_notifOpenLinkHtml(m)}</td>
         <td class="small text-muted">${escapeHtml(appLabel)}</td>
         <td class="small text-muted" title="${received.toLocaleString('fr-FR')}">${_relativeTime(received)}</td>
         <td>${stateBadge}${expiredBadge}</td>
@@ -266,7 +288,7 @@ function _notifGroupSubRows(m) {
         const source = x.sender_app_slug || (x.sender_type === 'system' ? 'Système' : 'Administration');
         return `<tr class="table-light small">
         <td></td>
-        <td class="ps-4 text-break"><i class="bi bi-arrow-return-right text-muted me-1"></i>${escapeHtml(x.title)}</td>
+        <td class="ps-4 text-break"><i class="bi bi-arrow-return-right text-muted me-1"></i>${escapeHtml(x.title)}${_notifSnippetHtml(x)}${_notifOpenLinkHtml(x)}</td>
         <td class="text-muted">${escapeHtml(source)}</td>
         <td class="text-muted" title="${received.toLocaleString('fr-FR')}">${_relativeTime(received)}</td>
         <td>${x.is_read ? '<span class="badge bg-secondary">Lu</span>' : '<span class="badge bg-primary">Non lu</span>'}</td>
@@ -431,7 +453,7 @@ function _notifManageRowHtml(m) {
     return `<tr class="${dimmed}">
         <td><input type="checkbox" class="form-check-input" ${_notif.selection.has(m.id) ? 'checked' : ''} aria-label="Sélectionner" data-action="notifToggleSelect" data-arg1="${m.id}" data-arg2="$el"></td>
         <td>${_notifPriorityChip(m.priority)}</td>
-        <td class="text-break">${expander}${escapeHtml(m.title)}</td>
+        <td class="text-break">${expander}${escapeHtml(m.title)}${_notifSnippetHtml(m)}${_notifOpenLinkHtml(m)}</td>
         <td>${_notifSourceBadge(m)}</td>
         <td>${_notifTargetBadge(m)}</td>
         <td class="small text-muted" title="${received.toLocaleString('fr-FR')}">${_relativeTime(received)}</td>
@@ -459,7 +481,7 @@ function _notifManageGroupSubRows(m) {
         return `<tr class="table-light small${dimmed}">
         <td></td>
         <td>${_notifPriorityChip(x.priority)}</td>
-        <td class="ps-4 text-break"><i class="bi bi-arrow-return-right text-muted me-1"></i>${escapeHtml(x.title)}</td>
+        <td class="ps-4 text-break"><i class="bi bi-arrow-return-right text-muted me-1"></i>${escapeHtml(x.title)}${_notifSnippetHtml(x)}${_notifOpenLinkHtml(x)}</td>
         <td>${_notifSourceBadge(x)}</td>
         <td>${_notifTargetBadge(x)}</td>
         <td class="text-muted" title="${received.toLocaleString('fr-FR')}">${_relativeTime(received)}</td>
@@ -1127,7 +1149,7 @@ function _renderNotifDetail(m) {
         ? '<span class="badge bg-warning text-dark">Expire bientôt</span>' : '';
     const readBadge = m.is_read ? '<span class="badge bg-secondary">Lu</span>' : '<span class="badge bg-primary">Non lu</span>';
     const action = m.action_url
-        ? `<a href="${escapeAttr(m.action_url)}" target="_blank" rel="noopener" class="btn btn-primary btn-sm" data-action="notifClickAction" data-arg1="${m.id}" data-arg2="${escapeAttr(m.action_url)}"><i class="bi bi-box-arrow-up-right me-1"></i>${escapeHtml(m.action_label || 'Consulter')}</a>`
+        ? `<button type="button" class="btn btn-primary btn-sm" data-action="notifOpenAction" data-arg1="${m.id}" title="${escapeAttr(m.action_label || 'Consulter')}"><i class="bi bi-box-arrow-up-right me-1"></i>${escapeHtml(m.action_label || 'Consulter')}</button>`
         : '';
 
     const titleEl = document.getElementById('notifDetailTitle');
@@ -1158,12 +1180,87 @@ function _renderNotifDetail(m) {
 }
 
 /**
- * Lien d'action d'une notification : track le clic (idempotent côté serveur)
- * puis ouvre l'URL.
+ * Retrouve un message par id dans la page courante OU dans les membres des
+ * groupes dépliés (les sous-lignes ×N portent leurs propres ids).
  */
-async function notifClickAction(id, url) {
+function _notifFindMessage(id) {
+    return _notifMessages.find(x => x.id === id)
+        || [..._notifGroupMembers.values()].flat().find(x => x.id === id)
+        || null;
+}
+
+/**
+ * Lecture propagée au groupe : synchronise l'état lu local du représentant et
+ * des membres du groupe contenant id (miroir de la propagation serveur), pour
+ * que le re-render sans reload complet reflète le groupe entier.
+ */
+function _notifSyncGroupRead(id) {
+    for (const [gid, members] of _notifGroupMembers) {
+        if (gid === id || members.some(x => x.id === id)) {
+            const rep = _notifMessages.find(x => x.id === gid);
+            if (rep) rep.is_read = true;
+            members.forEach(x => { x.is_read = true; });
+        }
+    }
+}
+
+/**
+ * Deeplink in-app « #audit?tab=<tab>&f_<clé>=<valeur>… » : navigation SPA vers
+ * la page Audit (showPage) puis filtres + onglet via auditAlertDetails — le
+ * mécanisme deeplink existant des alertes audit (audit-page.js, global).
+ * URLSearchParams décode les params f_* ; le défaut tab='errors' retombe sur
+ * le comportement par défaut d'auditAlertDetails (onglet Logs).
+ */
+function _notifOpenAuditDeeplink(url) {
+    const params = new URLSearchParams(url.slice('#audit?'.length));
+    const filters = {};
+    for (const [key, value] of params.entries()) {
+        if (key.startsWith('f_')) filters[key.slice(2)] = value;
+    }
+    showPage('audit');
+    if (typeof auditAlertDetails === 'function') {
+        auditAlertDetails({ tab: params.get('tab') || 'errors', filters });
+    }
+}
+
+/**
+ * Lien d'action d'une notification (lignes des deux tableaux + panneau de
+ * détail) : track le clic (POST idempotent, best-effort), navigue — page
+ * Audit in-app si deeplink #audit?, sinon nouvel
+ * onglet — puis marque lu (même endpoint que le flux auto mark-read du
+ * panneau de détail : badge + état des lignes mis à jour sans reload complet
+ * en Ma boîte, reload liste en Gestion). « Traiter = lire » : la navigation
+ * est try/catch silencieux et ne bloque jamais le suivi ni le mark-read.
+ */
+async function notifOpenAction(id) {
+    id = parseInt(id, 10);
+    const m = _notifFindMessage(id);
+    if (!m || !m.action_url) return;
+
     try { await api.markMessageClicked(id); } catch { /* suivi du clic best-effort */ }
-    if (url) window.open(url, '_blank', 'noopener');
+
+    try {
+        if (m.action_url.startsWith('#audit?')) _notifOpenAuditDeeplink(m.action_url);
+        else window.open(m.action_url, '_blank', 'noopener');
+    } catch { /* navigation silencieuse : ne bloque pas le mark-read */ }
+
+    if (m.is_read) return;
+    try {
+        const r = await api.markMessageRead(id);
+        const marked = (r && typeof r.marked_read === 'number') ? r.marked_read : 1;
+        m.is_read = true;
+        if (_notifSelectedId === id) _clearNotifMarkReadTimer(); // déjà traité : le timer 1 s du détail ne sert plus
+        if (_notif.mode === 'manage') {
+            await loadNotifications(); // vue système : pas de pattern local → reload liste
+            loadUnreadMessageCount();  // badge cloche resynchronisé
+        } else {
+            _notifSyncGroupRead(id);
+            _notifUnreadTotal = Math.max(0, _notifUnreadTotal - marked);
+            renderNotifTable();
+            renderNotifChips();
+            updateMessageBellBadge(_notifUnreadTotal);
+        }
+    } catch { /* mark-read best-effort */ }
 }
 
 // =============================================================================

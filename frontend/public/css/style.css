@@ -1485,6 +1485,38 @@ body {
 .notif-table .progress { background: #e9ecef; }
 .notif-table .progress-bar { transition: none; }
 
+/* Aperçu du body (1 ligne grisée tronquée) sous le titre — Ma boîte + Gestion.
+   Ellipsis CSS strict : nowrap + hidden, aucune animation (charte). */
+.notif-table .notif-snippet {
+    font-weight: 400;
+    color: #6c757d;
+    font-size: 0.8rem;
+    margin-top: 2px;
+    max-width: 330px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* Lien d'action inline sous le snippet : bouton stylé lien, bleu (#0d6efd)
+   pour les URLs d'apps, ambre (#b45309) pour les deeplinks Audit in-app.
+   Souligné simple, aucune transition. */
+.notif-table .notif-open-link {
+    display: inline-block;
+    font-weight: 600;
+    font-size: 0.8rem;
+    color: #0d6efd;
+    background: none;
+    border: none;
+    padding: 0;
+    margin-top: 3px;
+    cursor: pointer;
+    text-decoration: underline;
+    text-underline-offset: 2px;
+}
+.notif-table .notif-open-link-warn { color: #b45309; }
+.notif-table .notif-open-link-arrow { margin-left: 3px; }
+
 .notif-selection-bar {
     border-left: 4px solid #f59e0b;
 }
