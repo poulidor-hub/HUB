@@ -528,6 +528,10 @@ class HubAPI {
         return this.request(`/apps/all?workshop_filter=${encodeURIComponent(workshopFilter)}`);
     }
 
+    async getAppDependencies() {
+        return this.request('/apps/dependencies');
+    }
+
     async createApp(appData) {
         return this.request('/apps/', {
             method: 'POST',

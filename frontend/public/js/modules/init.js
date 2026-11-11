@@ -81,6 +81,9 @@ document.addEventListener('DOMContentLoaded', () => {
                     refreshServiceAccountsStatus();
                 } else if (targetId === '#tabAppBackups') {
                     currentPage = 'app-backups';
+                } else if (targetId === '#tabDependencies') {
+                    currentPage = 'app-dependencies';
+                    loadDependenciesGraph();
                 } else if (targetId === '#tabOidcClients') {
                     currentPage = 'oidc-clients';
                     loadOidcClients();
