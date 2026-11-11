@@ -5,6 +5,24 @@
 
 ---
 
+## [3.85.9] - 11 novembre 2026
+
+### 🐛 Fix : console notifications lisible en mobile — largeur minimale de table + scroll horizontal
+
+Sur mobile (~390 px), la colonne Titre de la console notifications s'écrasait en pile verticale
+caractère par caractère (modes « Ma boîte » et « Gestion ») : les colonnes latérales à largeur
+fixe (~34 rem au total — case 2,2 + App 11 + Reçu 7,5 + État 7 + Actions 6) laissaient le Titre
+(`text-break`, largeur minimale ≈ 1 caractère) se comprimer à volonté. `.table-responsive` ne
+déclenche son scroll horizontal que si la table ne peut pas rentrer — or elle « rentrait »
+toujours, en écrasant le titre.
+
+| Élément | Détail |
+|---------|--------|
+| **`frontend/public/css/style.css`** | `.notif-table { min-width: 46rem }` — largeur de lecture minimale (colonnes fixes ~34 rem + ~12 rem de titre) ; en dessous, le scroll horizontal natif Bootstrap prend le relais (seul scroll local autorisé par la charte HUBCSS). Desktop (> 46 rem de contenu) : aucun effet |
+| **Vérification** | Rebuild `hub-frontend` : CSS servi contenant `min-width: 46rem` (curl), logs nginx propres, rendu contrôlé à largeur 390 px |
+
+---
+
 ## [3.85.8] - 10 novembre 2026
 
 ### ⚡ Refactor : résolution structurelle du groupe dédupliqué — archivage/restauration/suppression admin propagent à toute la pile
