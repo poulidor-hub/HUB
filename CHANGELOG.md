@@ -5,6 +5,28 @@
 
 ---
 
+## [3.87.0] - 11 novembre 2026
+
+### ✨ Feat : onglet « Dépendances » — graphe des dépendances inter-apps dans le dashboard admin
+
+La table Hub `app_dependencies` (déclarations `depends.yaml` poussées au
+register par `_push_deps_to_hub`) n'avait aucune exposition UI : le endpoint
+admin `GET /api/apps/dependencies` (`apps.py`) existait sans vue. Nouvel
+onglet admin « Dépendances » (après « Applications ») :
+
+| Élément | Détail |
+|---------|--------|
+| **`frontend/public/js/modules/admin-app-dependencies.js`** (nouveau) | Graphe SVG statique, sans lib externe ni animation (perf/stabilité) : nœuds classés appelants / mixtes / services appelés ; statut par nœud (active / inactive / **hors registre** — visualise immédiatement les cibles déclarées inexistantes au registre, ex. `exemple-apps` ou `exemple-app`) ; couleur d'arête par fraîcheur `last_sync_at` (≤ 7 j / 7–30 j / jamais) ; tooltip HTML (note métier, dates, nom d'app) ; clic nœud = focus des liens connexes. Tableau compact sous le graphe (source → cible, badge fraîcheur, dernière synchro, note), clic ligne = même focus. |
+| **`frontend/public/js/api.js`** | `getAppDependencies()` sur le pattern `HubAPI.request`. |
+| **`frontend/public/index.html`** | Onglet `#deps-tab` → pane `#tabDependencies` (statut, wrapper + tooltip, table), include du module. |
+| **`frontend/public/js/modules/init.js`** | Dispatch `shown.bs.tab` → `loadDependenciesGraph()`. |
+
+Backend inchangé (endpoint admin réutilisé tel quel). Aucune dépendance
+nouvelle ; rendu `innerHTML` + `escapeHtml`, interactions par délégation
+d'événements, aucun timer.
+
+---
+
 ## [3.86.0] - 11 novembre 2026
 
 ### ✨ Feat : notifications actionnables — aperçu du contenu et lien d'action direct
