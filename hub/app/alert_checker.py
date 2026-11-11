@@ -26,6 +26,33 @@ _offline_since: Dict[str, float] = {}
 
 _alert_task = None
 
+# Cibles in-app actionnables (deeplink Audit). Format figé par l'intégrateur :
+# action_url = "#audit?tab=<onglet>&f_<clé>=<valeur>" — f_* deviennent les
+# filtres de l'onglet (auditAlertDetails attend {"tab": ..., "filters": {...}}).
+# Une alerte absente du mapping = pas de bouton : on n'ajoute une action QUE si
+# l'onglet ciblé montre vraiment les lignes comptées par l'alerte.
+# - error_rate : compte les lignes error_logs → onglet Erreurs, sans filtre.
+# - auth_failures : compte les 401+403 (auth_failures_10m) ; 401 est le code
+#   dominant (tokens expirés/invalides, logins échoués) et une option réelle
+#   du filtre Audit → f_code=401.
+# SANS action (les lignes ne sont pas dans l'onglet Erreurs) :
+# - sse_auth_failures : les 401 /api/events/stream sont exclus de error_logs
+#   (http_exception_handler, main.py) et seulement comptés en mémoire ;
+# - sse_capacity : compteur mémoire de clients connectés (aucune ligne Audit) ;
+# - db_write_errors : échecs d'écriture DB sur chemins SSE (compteur mémoire,
+#   pas de ligne error_logs puisque la DB a échoué) ;
+# - app_offline:{slug} : état santé, pas d'erreur HTTP loggée.
+ALERT_ACTIONS: Dict[str, dict] = {
+    "error_rate": {
+        "action_url": "#audit?tab=errors",
+        "action_label": "Ouvrir dans l'Audit",
+    },
+    "auth_failures": {
+        "action_url": "#audit?tab=errors&f_code=401",
+        "action_label": "Ouvrir dans l'Audit",
+    },
+}
+
 
 # ---------------------------------------------------------------------------
 # Partie pure (testée) : seuils + cooldown
@@ -50,7 +77,12 @@ def evaluate_alerts(
         if last is not None and now - last < cooldown_s:
             return
         state[key] = now
-        alerts.append({"key": key, "title": title, "body": body, "priority": priority})
+        alert = {"key": key, "title": title, "body": body, "priority": priority}
+        action = ALERT_ACTIONS.get(key)
+        if action:
+            alert["action_url"] = action["action_url"]
+            alert["action_label"] = action["action_label"]
+        alerts.append(alert)
 
     if metrics["error_count_10m"] > thresholds["error_rate_10m"]:
         fire(
@@ -212,6 +244,8 @@ async def deliver_alerts(alerts: List[dict]) -> int:
                     priority=alert["priority"],
                     title=alert["title"][:200],
                     body=alert["body"],
+                    action_url=alert.get("action_url"),
+                    action_label=alert.get("action_label"),
                     total_targets=1,
                 )
                 db.add(msg)
