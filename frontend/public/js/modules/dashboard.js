@@ -152,7 +152,7 @@ function renderAppTile(app, opts = {}) {
         : `data-arg1="${escapeHtml(unavailableMessage || '')}"`;
 
     return `
-        <div class="col-sm-6 col-md-4 col-lg-3">
+        <div class="${opts.inModal ? 'col-12 col-sm-6' : 'col-sm-6 col-md-4 col-lg-3'}">
             <div class="card app-card shadow-sm h-100 ${isUnavailable ? 'app-inactive' : ''}"
                  data-app-slug="${app.slug}"
                  data-action="${cardAction}" ${cardArgs}>
@@ -299,6 +299,15 @@ function renderAppsGrid(apps) {
                 ungroupedApps.push(app);
             }
         }
+        // Un groupe ne comptant qu'une seule app visible n'a pas d'utilité :
+        // on rend directement la carte de l'app (badge du groupe conservé),
+        // elle rejoint les apps hors groupe (tri alphabétique).
+        for (const [groupId, entry] of [...groupsMap]) {
+            if (entry.apps.length === 1) {
+                ungroupedApps.push(entry.apps[0]);
+                groupsMap.delete(groupId);
+            }
+        }
         const sortedGroups = [...groupsMap.values()]
             .sort((a, b) => a.group.name.localeCompare(b.group.name, 'fr', { sensitivity: 'base' }));
         const sortedUngrouped = [...ungroupedApps]
@@ -306,7 +315,7 @@ function renderAppsGrid(apps) {
 
         grid.innerHTML =
             sortedGroups.map(({ group, apps: ga }) => renderGroupTile(group, ga)).join('') +
-            sortedUngrouped.map(app => renderAppTile(app)).join('');
+            sortedUngrouped.map(app => renderAppTile(app, { showGroupBadge: true })).join('');
         return;
     }
 
