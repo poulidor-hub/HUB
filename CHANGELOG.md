@@ -5,6 +5,24 @@
 
 ---
 
+## [3.87.1] - 12 novembre 2026
+
+### 🐛 Fix : dashboard — modale de groupe lisible + groupes à une seule app affichés en carte directe
+
+Deux défauts d'affichage du regroupement d'applications du dashboard
+(`frontend/public/js/modules/dashboard.js`) :
+
+| Élément | Détail |
+|---------|--------|
+| **Cartes écrasées dans la modale de groupe** | Les tuiles réutilisaient `col-sm-6 col-md-4 col-lg-3` : sur desktop, les breakpoints Bootstrap s'appliquant au viewport (et non à la largeur de la modale `modal-lg`), la modale affichait 4 colonnes de ~180 px — titres tronqués, descriptions écrasées, badges et sélecteur de rôle tassés. `renderAppTile` rend désormais `col-12 col-sm-6` quand `opts.inModal` est actif : 2 colonnes de ~390 px quel que soit le viewport (1 colonne sous 576 px). |
+| **Carte de groupe inutile pour une seule app** | Un groupe ne comptant qu'une seule application visible pour l'utilisateur ouvrait une modale… pour une carte. `renderAppsGrid` éclate désormais ces groupes : la carte de l'app rejoint la grille (tri alphabétique) avec le badge du groupe conservé (`showGroupBadge: true`, la catégorie prime si elle existe, comportement identique à la vue filtrée). |
+
+Vérifié en runtime (conteneur hub-frontend) : modale 800 px / 2 colonnes,
+carte directe avec badge groupe, aucune régression sur les apps hors groupe
+ni sur la vue filtrée. Aucun changement backend ni CSS additionnel.
+
+---
+
 ## [3.87.0] - 11 novembre 2026
 
 ### ✨ Feat : onglet « Dépendances » — graphe des dépendances inter-apps dans le dashboard admin
