@@ -60,6 +60,8 @@ async def close_open_segments(
                 AppUsageSegment.ended_at == None,  # noqa: E711
             )
         )
+        # Filet anti-deadlock : ordre déterministe des UPDATE multi-lignes
+        .order_by(AppUsageSegment.id)
     )
     segments = result.scalars().all()
     for seg in segments:
@@ -79,6 +81,8 @@ async def close_app_segment(
             AppUsageSegment.app_slug == app_slug,
             AppUsageSegment.ended_at == None,  # noqa: E711
         ))
+        # Filet anti-deadlock : ordre déterministe des UPDATE multi-lignes
+        .order_by(AppUsageSegment.id)
     )
     segments = result.scalars().all()
     for seg in segments:

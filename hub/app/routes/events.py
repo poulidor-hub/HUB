@@ -378,7 +378,7 @@ async def _flush_presence_to_db(db: AsyncSession) -> int:
 async def handle_app_disconnect(user_id: int, app_slug: str):
     """Ferme le segment d'usage de l'app quand sa dernière connexion SSE part."""
     from app.database import async_session_maker
-    from app.routes.audit import get_active_session_for_user
+    from app.routes.audit import get_active_session_for_user, lock_session_for_close
     from app.usage_tracking import close_app_segment
 
     await asyncio.sleep(DISCONNECT_GRACE_S)  # tolère un churn de reconnexion
@@ -389,12 +389,21 @@ async def handle_app_disconnect(user_id: int, app_slug: str):
         async with async_session_maker() as db:
             session = await get_active_session_for_user(db, user_id)
             if session:
-                closed = await close_app_segment(db, session.id, app_slug, utcnow(), "disconnect")
-                if session.current_app_slug == app_slug:
-                    session.current_app_slug = None
-                await db.commit()
-                if closed > 0:
-                    notify_active_users_changed()
+                # Anti-deadlock : verrou ligne session AVANT close_app_segment
+                # (cf. lock_session_for_close). Sans lui, le flush au commit
+                # émet les segments AVANT la session (tri des mappers) => AB-BA
+                # avec end_session dont l'autoflush fait l'inverse.
+                session = await lock_session_for_close(db, session.id)
+                if session is not None and session.logout_at is None:
+                    with db.no_autoflush:
+                        closed = await close_app_segment(
+                            db, session.id, app_slug, utcnow(), "disconnect"
+                        )
+                    if session.current_app_slug == app_slug:
+                        session.current_app_slug = None
+                    await db.commit()
+                    if closed > 0:
+                        notify_active_users_changed()
     except Exception as e:
         record_db_write_error()
         logger.warning(f"⚠️ Fermeture segment app {app_slug} user {user_id}: {e}")
