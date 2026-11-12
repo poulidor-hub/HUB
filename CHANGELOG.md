@@ -5,6 +5,56 @@
 
 ---
 
+## [3.87.2] - 12 novembre 2026
+
+### 🐛 Fix : deadlocks PostgreSQL sur les fermetures SSE — ordre de verrouillage global sessions → segments
+
+Bug du 12/11/2026 sur le hub 60 : 31 deadlocks PostgreSQL en 33 h
+(`deadlock detected`, AB-BA `user_sessions` ↔ `app_usage_segments`),
+fermetures de segments/sessions parfois perdues (`ended_at`/`logout_at`
+NULL), warnings récurrents alimentant le compteur d'alerte
+`db_write_errors_last_hour`, et messages « 📴 Session fermée » mensongers.
+
+Cause racine (prouvée, cf. rapport du 12/11) : deux ordres de verrouillage
+opposés sur les mêmes lignes —
+- `handle_app_disconnect` (events.py) : tout est flushé au `commit()`, et le
+  tri des mappers SQLAlchemy (`_sort_key` alphabétique :
+  `app.models.AppUsageSegment` < `app.models.UserSession`) émet
+  `UPDATE app_usage_segments` **avant** `UPDATE user_sessions` ;
+- `end_session` (audit.py) : l'autoflush déclenché par le SELECT segments de
+  `close_open_segments` émet `UPDATE user_sessions` **avant** les segments
+  (signature « Query-invoked autoflush » des logs hub-db).
+
+Correctif — ordre de verrouillage global unique : toute transaction touchant
+la paire {session, ses segments} verrouille d'abord la ligne `user_sessions`
+(`SELECT ... FOR UPDATE`), puis seulement les segments :
+
+| Élément | Détail |
+|---------|--------|
+| **`hub/app/routes/audit.py`** | Nouveau helper `lock_session_for_close(db, session_id)` : re-sélection de la ligne avec `.with_for_update()` et retour de la ligne **rafraîchie sous verrou**. Appliqué à `end_session` et aux deux boucles de `cleanup_stale_sessions` (doublons + stalées). Fermetures de segments encapsulées dans `no_autoflush` (émission déterministe au commit, verrou déjà tenu). Fermeture idempotente : ligne déjà fermée sous verrou par un writer concurrent → no-op (et `end_session` retourne `None`, supprimant les fermetures mensongères). |
+| **`hub/app/routes/events.py`** | `handle_app_disconnect` : même préambule `lock_session_for_close` avant `close_app_segment` — c'est le seul chemin « segments-first » (flush au commit), au cœur de l'AB-BA. |
+| **`hub/app/usage_tracking.py`** | Filet : `close_open_segments` et `close_app_segment` ordonnent les segments par `id` (ordre déterministe des UPDATE multi-lignes). |
+| Chemins inchangés | `start_session`, `update_session_activity`, `revoke_session`, `ensure_session_presence` émettaient déjà sessions → segments (autoflush) : plus aucun chemin segments-first, la classe de deadlock est éliminée (les segments d'une session ne sont accessibles qu'en tenant son verrou → sérialisation). |
+
+Tests (TDD rouge/vert) :
+
+| Test | Preuve |
+|------|--------|
+| **`hub/tests/test_sse_deadlock_lock_order.py`** (nouveau) | 5 tests : la première prise de verrou de `end_session`/`handle_app_disconnect`/`cleanup_stale_sessions` doit être un `SELECT user_sessions FOR UPDATE` (vérifié par recompilation du statement avec le dialecte PostgreSQL via l'événement `before_execute`, SQLite ignorant `FOR UPDATE`) ; aucun UPDATE session intercalé par autoflush avant le premier statement segments ; `ORDER BY app_usage_segments.id` émis ; régression fermetures successives. Rouge sans le fix (4/4), vert avec (5/5). |
+| **`hub/tests/test_pg_deadlock_concurrency.py`** (nouveau, PG réel via `TEST_DATABASE_URL`) | Reproduit le scénario prod : `handle_app_disconnect` + `handle_user_disconnect` en parallèle sur la même session. **Pré-fix : `asyncpg.exceptions.DeadlockDetectedError` + session non fermée dès l'itération 3.** Post-fix : 20 itérations concurrentes, compteur `db_write_errors_last_hour` à zéro, tout fermé. |
+
+Suites : hôte 1645 passed, conteneur (image runtime) 1574 passed ; échecs
+restants pré-existants sur main (tests env-dépendants `test_app_deploy`,
+`test_vpn_dns`, artefact conteneur éphémère `test_purge_orphan_backups`,
+flaky xdist `test_oidc_authorize`) — identiques avec et sans le fix.
+
+Post-déploiement (hub 60, surveillance 24 h attendue) : `deadlock detected`
+et « Fermeture segment » à 0 dans les logs hub-db/hub-api, compteur
+`db_write_errors_last_hour` retombé à 0, `app_usage_segments`/`user_sessions`
+sans ligne ouverte > 1 jour.
+
+---
+
 ## [3.87.1] - 12 novembre 2026
 
 ### 🐛 Fix : dashboard — modale de groupe lisible + groupes à une seule app affichés en carte directe
