@@ -321,6 +321,30 @@ async def get_active_session_for_user(
     return result.scalar_one_or_none()
 
 
+async def lock_session_for_close(db: AsyncSession, session_id: int) -> Optional[UserSession]:
+    """Verrou de ligne (SELECT ... FOR UPDATE) à poser AVANT toute écriture
+    sur user_sessions ou app_usage_segments.
+
+    Ordre de verrouillage global unique — bug deadlocks 12/11/2026 (31 en 33 h) :
+    handle_app_disconnect flushait au commit, et le tri des mappers SQLAlchemy
+    (_sort_key alphabétique : app.models.AppUsageSegment < app.models.UserSession)
+    émettait UPDATE segments AVANT UPDATE sessions, en AB-BA avec end_session
+    dont l'autoflush émet UPDATE sessions AVANT les segments. Toute transaction
+    touchant la paire {session, ses segments} doit donc verrouiller la ligne
+    session D'ABORD, puis seulement toucher les segments (les segments d'une
+    session ne sont accessibles qu'en tenant son verrou -> sérialisation, plus
+    de cycle possible).
+
+    Retourne la ligne RAFRAÎCHIE sous verrou : si un writer concurrent l'a
+    fermée entre-temps (logout_at posé), l'appelant doit no-op — fermeture
+    idempotente, un seul writer ferme.
+    """
+    result = await db.execute(
+        select(UserSession).where(UserSession.id == session_id).with_for_update()
+    )
+    return result.scalar_one_or_none()
+
+
 async def end_session(
     db: AsyncSession,
     user_id: int,
@@ -350,15 +374,25 @@ async def end_session(
     session = result.scalar_one_or_none()
 
     if session:
-        session.logout_at = utcnow()
-        session.logout_reason = reason
-        session.current_app_slug = None  # Plus d'app active
-        await close_segments_for_session(
-            db, session, SEGMENT_REASON_MAP.get(reason, "logout")
-        )
-        # Notifier les clients SSE
-        _notify_audit()
-        _notify_active_users()
+        # Anti-deadlock : verrou ligne session AVANT toute écriture
+        # (cf. lock_session_for_close — ordre sessions -> segments obligatoire)
+        session = await lock_session_for_close(db, session.id)
+        if session is not None and session.logout_at is None:
+            session.logout_at = utcnow()
+            session.logout_reason = reason
+            session.current_app_slug = None  # Plus d'app active
+            # no_autoflush : le SELECT segments ne doit pas émettre l'UPDATE
+            # session ici ; émission déterministe au commit, verrou déjà tenu.
+            with db.no_autoflush:
+                await close_segments_for_session(
+                    db, session, SEGMENT_REASON_MAP.get(reason, "logout")
+                )
+            # Notifier les clients SSE
+            _notify_audit()
+            _notify_active_users()
+        else:
+            # Déjà fermée sous verrou par un writer concurrent : no-op
+            session = None
 
     return session
 
@@ -436,6 +470,10 @@ async def cleanup_stale_sessions(db: AsyncSession) -> int:
     seen_users = set()
     for session in result.scalars().all():
         if session.user_id in seen_users:
+            # Anti-deadlock : verrou ligne AVANT écritures (lock_session_for_close)
+            session = await lock_session_for_close(db, session.id)
+            if session is None or session.logout_at is not None:
+                continue  # fermée entre-temps par un writer concurrent
             last_activity = session.last_activity_at or session.login_at
             session.logout_at = min(
                 last_activity + timedelta(minutes=settings.session_timeout_minutes),
@@ -443,7 +481,8 @@ async def cleanup_stale_sessions(db: AsyncSession) -> int:
             )
             session.logout_reason = "timeout"
             session.current_app_slug = None
-            await close_segments_for_session(db, session, "timeout", ended_at=session.logout_at)
+            with db.no_autoflush:
+                await close_segments_for_session(db, session, "timeout", ended_at=session.logout_at)
             duplicate_closed += 1
         else:
             seen_users.add(session.user_id)
@@ -460,13 +499,18 @@ async def cleanup_stale_sessions(db: AsyncSession) -> int:
     stale_sessions = result.scalars().all()
     
     for session in stale_sessions:
+        # Anti-deadlock : verrou ligne AVANT écritures (lock_session_for_close)
+        session = await lock_session_for_close(db, session.id)
+        if session is None or session.logout_at is not None:
+            continue  # fermée entre-temps par un writer concurrent
         # Utiliser last_activity_at pour le logout_at réel
         session.logout_at = session.last_activity_at + timedelta(minutes=settings.session_timeout_minutes)
         session.logout_reason = "timeout"
         session.current_app_slug = None
-        await close_segments_for_session(
-            db, session, "timeout", ended_at=session.logout_at
-        )
+        with db.no_autoflush:
+            await close_segments_for_session(
+                db, session, "timeout", ended_at=session.logout_at
+            )
 
     if stale_sessions or duplicate_closed:
         await db.commit()
