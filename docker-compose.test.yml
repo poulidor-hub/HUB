@@ -16,12 +16,22 @@
 services:
   db:
     container_name: hub-test-db
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"
 
   docker-socket-proxy:
     # Renommé comme db/api/frontend : container_name est global (non namespacé
     # par -p) — sans override, la pile de test entre en conflit avec le
     # conteneur hub-docker-socket-proxy du Hub en production.
     container_name: hub-test-docker-socket-proxy
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   hub-api:
     container_name: hub-test-api

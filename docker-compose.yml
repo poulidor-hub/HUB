@@ -20,6 +20,11 @@ services:
       - hub-network
     mem_limit: 1g
     memswap_limit: 1g
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"
     security_opt:
       - no-new-privileges:true
     cap_drop:
@@ -76,6 +81,11 @@ services:
       - hub-network
     mem_limit: 128m
     memswap_limit: 128m
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     security_opt:
       - no-new-privileges:true
     cap_drop:
@@ -104,6 +114,11 @@ services:
     network_mode: host
     mem_limit: 64m
     memswap_limit: 64m
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"
     security_opt:
       - no-new-privileges:true
     cap_drop:
@@ -332,6 +347,11 @@ services:
       - TZ=${TZ:-Europe/Paris}
     volumes:
       - vpn-config:/config
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"
     # Cycle de vie géré par hubctl vpn + boot hook (côté POULIDOR).
     restart: "no"
 
