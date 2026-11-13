@@ -5,6 +5,20 @@
 
 ---
 
+## [3.87.6] - 13 novembre 2026
+
+### ⚡ Allocation ports/subnets : revendications .env de la flotte
+
+Bug 13/11/2026 : l'ajout d'intendance a ré-attribué 10.50.16.0/24 (claim .env de contrat-w-pr, réseau prunable) et le port API 9019 (claim exemple-app, conteneurs down au moment de l'allocation) → « Pool overlaps with other one » puis « port is already allocated » au premier make up. Cause racine : l'allocateur ne consultait que port_allocations (la flotte legacy n'y figure jamais — 4 lignes seulement) et les scans Docker, qui ne voient que le vivant.
+
+- Nouveau hub/app/fleet_env_scanner.py : lit les .env de la flotte (montage apps_host_path) → (sous-réseaux, ports) revendiqués ; un seul niveau de dossiers, fichier exact .env uniquement (sauvegardes .env.pre-* ignorées), valeurs invalides ignorées
+- port_allocator.py : fleet_env_occupied() (thread, host local uniquement, flag fleet_env_scan_enabled, best-effort jamais levé) fusionnée dans les deux chemins d'allocation — backfill rétroactif du subnet et nouvelle allocation (ports via extra_used, subnets directs)
+- config.py : flag fleet_env_scan_enabled: bool = True
+- Tests hub/tests/test_fleet_env_scanner.py (8) : parsing, cas invalides, sauvegardes ignorées, intégration allocateur (cycle rouge → vert vérifié : sans correctif, l'allocateur réattribue 10.50.0.0/24)
+- Non-régression : 388 tests passants ; test_app_deploy::test_run_deployment_success en échec préexistant sur main (écriture /code impossible hors conteneur — environnemental, hors scope)
+
+---
+
 ## [3.87.5] - 13 novembre 2026
 
 ### ⚡ Dimensionnement du pool DB hub-api (tempêtes d'ajout d'app)
