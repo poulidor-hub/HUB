@@ -5,6 +5,19 @@
 
 ---
 
+## [3.87.3] - 13 novembre 2026
+
+### ⚡ Rotation des logs Docker + snapshot apps_code sans artefacts
+
+Diagnostic disque (13/11/2026) : `hub-docker-socket-proxy` accumulait 1,7GB de logs json en 5 jours (chaque healthcheck `GET /_ping` loggé par haproxy), sans aucune rotation ; le snapshot PRA du 08/11 pesait 3,5GB car `apps_code` embarquait les artefacts de build des APPS (target Rust 3GB, vendor 700MB, .docker/addok/data 2,3GB…).
+
+| Fonctionnalité | Description |
+|----------------|-------------|
+| **Rotation logs compose** | Bloc `logging:` (json-file, max-size/max-file) ajouté aux services `db`, `docker-socket-proxy` (10m×3), `hub-dns`, `wireguard-server` de `docker-compose.yml` et aux services `db`, `docker-socket-proxy` de `docker-compose.test.yml` — tous les services du Hub ont désormais une rotation bornée. S'applique aux containers au moment de leur recréation (`docker compose up -d --force-recreate`). |
+| **Snapshot apps_code filtré** | `snapshot_collectors.run_apps_code_tar` exclut désormais les répertoires d'artefacts (`__pycache__`, `node_modules`, `target`, `dist`, `build`, `.pytest_cache`, `.venv`, `venv`, `.next`, `coverage`, `.turbo`) et tout fichier individuel > 50MB (modèles gguf, addok.db… — les données utilisateur restent couvertes par `include_app_backups`). Réduction attendue d'un snapshot complet : ~3,5GB → ~0,5GB. Nouveau test `test_apps_code_tar_excludes_oversized_files_and_build_dirs`. |
+
+---
+
 ## [3.87.2] - 12 novembre 2026
 
 ### 🐛 Fix : deadlocks PostgreSQL sur les fermetures SSE — ordre de verrouillage global sessions → segments
