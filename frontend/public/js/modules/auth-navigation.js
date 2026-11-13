@@ -210,6 +210,12 @@ function showDashboard() {
     // sans avoir à ouvrir le menu correspondant.
     refreshAllBadges();
 
+    // Badge navbar « mise à jour disponible » (admins only) : appelé ici
+    // plutôt qu'au DOMContentLoaded pour que currentUser (/auth/me) soit
+    // chargé — le gate is_admin de initSystemUpdateBadge n'y sonde l'API
+    // que pour les admins (sinon 401/403 récurrents dans le journal).
+    if (typeof initSystemUpdateBadge === 'function') initSystemUpdateBadge();
+
     loadApps();
 
     // Initialiser le flux des préférences (visibilité navbar + popup d'onboarding)
