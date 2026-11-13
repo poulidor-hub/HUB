@@ -52,7 +52,7 @@ def _extract_apps_code(extract_dir: Path) -> bool:
         )
         return False
     logger.info("Extraction apps_code.tar...")
-    shutil.unpack_archive(str(apps_code_tar), str(APPS_SOURCE_DIR), filter="data")
+    _extract_tar_archive(apps_code_tar, APPS_SOURCE_DIR)
     logger.info(f"Code apps restaure vers {APPS_SOURCE_DIR}")
     return True
 

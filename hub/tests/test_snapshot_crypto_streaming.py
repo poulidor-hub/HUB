@@ -168,6 +168,22 @@ def test_decrypt_snapshot_to_file_repli_keyring_multi_candidates(tmp_path):
     assert out.read_bytes() == payload
 
 
+def test_extract_apps_code_tolere_symlink_absolu(tmp_path, monkeypatch):
+    """F4 suite : l'extraction dédiée d'apps_code.tar (filter 'data' explicite
+    avant le fix) levait AbsoluteLinkError sur les symlinks socle absolus."""
+    extract_dir = tmp_path / "extract"
+    tar_path = extract_dir / "apps" / "apps_code.tar"
+    tar_path.parent.mkdir(parents=True)
+    _make_tar_with_absolute_link(tar_path, tmp_path)
+    apps_source = tmp_path / "apps_source"
+    apps_source.mkdir()
+    monkeypatch.setattr(rs, "APPS_SOURCE_DIR", apps_source)
+
+    assert rs._extract_apps_code(extract_dir) is True
+    assert (apps_source / "app" / "fichier.txt").read_bytes() == b"hello"
+    assert os.readlink(apps_source / "app" / "socle") == "/opt/hub/HUBsocle"
+
+
 def test_decrypt_snapshot_bytes_petit_fichier_compat(tmp_path):
     """Non-régression : decrypt_snapshot_bytes (one-shot) reste compatible
     avec le format produit par encrypt_file pour un petit payload."""
