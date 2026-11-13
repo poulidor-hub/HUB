@@ -5,6 +5,39 @@
 
 ---
 
+## [3.87.7] - 14 novembre 2026
+
+### ⚡ Restore snapshot en streaming — PRA fonctionnel pour les snapshots multi-Go
+
+Fixes issus du test PRA réel sur VM Debian vierge (snapshot 3,5 Go, 13/11/2026) :
+l'ancien chemin de restauration était bloqué par deux pannes systémiques
+(OOM memcg du conteneur hub-api à 2g, puis dépassement int32 du backend
+openssl sur le déchiffrement one-shot). Aucun snapshot multi-Go n'était
+restorable — en VM comme en prod.
+
+- `snapshot_crypto.py` : `decrypt_snapshot_to_file()` — déchiffrement en
+  chunks de 4 Mo (symétrique de `encrypt_file`, format byte-compatible,
+  boucle candidates + `finalize_with_tag`), `decrypt_snapshot_bytes`
+  conservé pour les petits snapshots.
+- `restore_snapshot.py` : pipeline `zstd stream_reader → tarfile r|`
+  (aucun tar intermédiaire sur disque), purge du ciphertext déchiffré et
+  du tar.zst dès consommés (pic disque ~17 Go → ~8 Go), extraction
+  `_extract_tar_archive()` en filter `tar` (symlinks absolus `socle`
+  des apps préservés et loggés — Python 3.12 les refusait), purge du
+  contenu d'APPS_SOURCE avant extraction apps_code (résidus `.git`
+  read-only d'un run partiel).
+- Tests : `hub/tests/test_snapshot_crypto_streaming.py` — 9 tests
+  (roundtrip multi-chunks, sans clé, corruption GCM, repli keyring,
+  compat one-shot, pipeline zstd→tar streamé, symlinks absolus,
+  purge résidus RO). 1673 passed, suite complète.
+
+| Fonctionnalité | Description |
+|----------------|-------------|
+| **Restauration PRA** | Les snapshots multi-Go (3,5 Go réels) sont restaurables : déchiffrement streaming + pipeline zstd, fin des OOM et du blocage openssl |
+| **Robustesse extraction** | Symlinks absolus des apps et résidus read-only gérés sans échec d'extraction |
+
+---
+
 ## [3.87.6] - 13 novembre 2026
 
 ### ⚡ Allocation ports/subnets : revendications .env de la flotte
