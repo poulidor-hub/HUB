@@ -35,7 +35,40 @@ APPS_CODE_TAR_EXCLUDES = [
     "node_modules", "__pycache__", ".opencode", ".worktrees",
     ".pytest_cache", ".mypy_cache", "dist", ".next", "target",
     "htmlcov", "*.pyc", ".coverage",
+    # Build/artefacts lourds repérés par le diagnostic disque (08/11) :
+    # target Rust 3GB, vendor/node artefacts, venvs Python, caches turbo.
+    "build", ".venv", "venv", "coverage", ".turbo",
 ]
+
+# Un fichier individuel plus gros que cette limite n'entre PAS dans apps_code :
+# les données volumineuses (modèles gguf, addok.db...) sont couvertes par
+# include_app_backups ou retéléchargeables — pas capturées dans le code.
+APPS_CODE_MAX_FILE_BYTES = 50 * 1024 * 1024
+
+# Répertoires nommés dans APPS_CODE_TAR_EXCLUDES (les patterns globbed comme
+# "*.pyc" ne ciblent pas des répertoires) — utilisés pour élaguer le scan
+# des fichiers trop gros (inutile de traverser des Go de build déjà exclus).
+_APP_CODE_EXCLUDED_DIRS = {p for p in APPS_CODE_TAR_EXCLUDES if "*" not in p}
+
+
+def _collect_oversized_files(apps_root: Path, max_bytes: int) -> list[str]:
+    """Liste les chemins relatifs (POSIX) des fichiers individuels > max_bytes.
+
+    Parcours élagué : les répertoires d'artefacts (_APP_CODE_EXCLUDED_DIRS) sont
+    sautés — déjà exclus du tar par pattern, inutile de les traverser. Les
+    fichiers disparus pendant le scan sont ignorés (le tar vivant gère déjà ce
+    cas via le exit 1 toléré).
+    """
+    oversized: list[str] = []
+    for root, dirs, files in os.walk(apps_root):
+        dirs[:] = [d for d in dirs if d not in _APP_CODE_EXCLUDED_DIRS]
+        for name in files:
+            try:
+                if (Path(root) / name).stat().st_size > max_bytes:
+                    oversized.append((Path(root) / name).relative_to(apps_root).as_posix())
+            except OSError:
+                continue
+    return oversized
 
 
 async def run_pg_dump(temp_dir: Path, db_url: str) -> dict:
@@ -125,6 +158,11 @@ async def run_files_tar(temp_dir: Path) -> dict:
 async def run_apps_code_tar(temp_dir: Path) -> dict:
     """Capture le code + config + .git de tout APPS/ vers apps/apps_code.tar.
 
+    Exclusions : artefacts régénérables (APPS_CODE_TAR_EXCLUDES, à toute
+    profondeur) et tout fichier individuel > APPS_CODE_MAX_FILE_BYTES — les
+    données volumineuses utilisateur sont couvertes par include_app_backups,
+    les gros binaires (modèles gguf, addok.db...) sont retéléchargeables.
+
     Dégradation gracieuse : si le montage /code/apps_source est absent
     (déploiement sans bind mount), log un warning et retourne des stats vides
     sans faire échouer le snapshot.
@@ -141,12 +179,25 @@ async def run_apps_code_tar(temp_dir: Path) -> dict:
         return {
             "size_bytes": 0,
             "apps_count": 0,
+            "oversized_excluded": 0,
             "duration_ms": int((time.monotonic() - start) * 1000),
         }
 
     cmd = ["tar", "-cf", str(out_path)]
     for pattern in APPS_CODE_TAR_EXCLUDES:
         cmd += ["--exclude", pattern]
+    # Fichiers individuels trop gros : exclus explicitement par chemin (tar
+    # ne filtre pas par taille). Scan en to_thread — jamais dans la boucle
+    # (l'arbre APPS/ peut compter des centaines de milliers d'entrées).
+    oversized = await asyncio.to_thread(
+        _collect_oversized_files, APPS_SOURCE_DIR, APPS_CODE_MAX_FILE_BYTES
+    )
+    for rel_path in oversized:
+        cmd += ["--exclude", f"./{rel_path}"]
+    if oversized:
+        max_mb = APPS_CODE_MAX_FILE_BYTES // (1024 * 1024)
+        preview = ", ".join(oversized[:5]) + ("..." if len(oversized) > 5 else "")
+        logger.info(f"apps_code: {len(oversized)} fichier(s) > {max_mb}MB exclus: {preview}")
     cmd += ["-C", str(APPS_SOURCE_DIR), "."]
 
     proc = await asyncio.create_subprocess_exec(
@@ -169,7 +220,12 @@ async def run_apps_code_tar(temp_dir: Path) -> dict:
     size = out_path.stat().st_size
     duration_ms = int((time.monotonic() - start) * 1000)
     logger.info(f"apps_code_tar termine: {size} bytes, {apps_count} apps en {duration_ms}ms")
-    return {"size_bytes": size, "apps_count": apps_count, "duration_ms": duration_ms}
+    return {
+        "size_bytes": size,
+        "apps_count": apps_count,
+        "oversized_excluded": len(oversized),
+        "duration_ms": duration_ms,
+    }
 
 
 async def run_app_backups(db: AsyncSession, temp_dir: Path, snapshot: HubSnapshot) -> dict:

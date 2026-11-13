@@ -44,6 +44,54 @@ async def test_apps_code_tar_includes_git_excludes_regenerables(tmp_path, monkey
 
 
 @pytest.mark.asyncio
+async def test_apps_code_tar_excludes_oversized_files_and_build_dirs(tmp_path, monkeypatch):
+    """Diagnostic disque 08/11 : le snapshot apps_code ne doit PAS embarquer
+    les artefacts de build (target Rust, .venv, build...) ni les fichiers
+    individuels > 50MB (modèles gguf, addok.db... couverts par include_app_backups
+    ou retéléchargeables)."""
+    src = tmp_path / "apps_source"
+    app = src / "monapp"
+    (app / "src").mkdir(parents=True)
+    (app / "src" / "main.py").write_text("print('hi')")
+    # Fichier 61MB (sparse : taille réelle sans coût d'écriture disque)
+    big = app / "modeles" / "grand_modele.gguf"
+    big.parent.mkdir(parents=True)
+    with big.open("wb") as fh:
+        fh.truncate(61 * 1024 * 1024)
+    # Fichier 10MB sous la limite : doit rester dans le tar
+    medium = app / "data" / "medium.bin"
+    medium.parent.mkdir(parents=True)
+    with medium.open("wb") as fh:
+        fh.truncate(10 * 1024 * 1024)
+    # Répertoires de build/artefacts exclus à toute profondeur
+    for dirname in ("target", "build", ".venv", "coverage", ".turbo"):
+        artifact_dir = app / dirname
+        artifact_dir.mkdir()
+        (artifact_dir / "artifact.bin").write_bytes(b"x" * 1024)
+    # target imbriqué dans un sous-répertoire de l'app (cas réel du diagnostic)
+    nested_target = app / "rust_service" / "target" / "release"
+    nested_target.mkdir(parents=True)
+    (nested_target / "monapp").write_bytes(b"\x00" * 2048)
+
+    monkeypatch.setattr(snapshot_collectors, "APPS_SOURCE_DIR", src)
+
+    stats = await run_apps_code_tar(tmp_path / "out")
+
+    members = [m.name for m in tarfile.open(tmp_path / "out" / "apps" / "apps_code.tar")]
+    assert any(m.endswith("monapp/src/main.py") for m in members)
+    assert any(m.endswith("monapp/data/medium.bin") for m in members)
+    # Fichier > 50MB exclu
+    assert not any("grand_modele.gguf" in m for m in members)
+    assert stats["oversized_excluded"] == 1
+    # Répertoires de build exclus, y compris imbriqués
+    assert not any("/target/" in m or m.endswith("/target") for m in members)
+    assert not any("/build/" in m or m.endswith("/build") for m in members)
+    assert not any(".venv" in m for m in members)
+    assert not any("/coverage" in m for m in members)
+    assert not any(".turbo" in m for m in members)
+
+
+@pytest.mark.asyncio
 async def test_apps_code_tar_missing_mount_degrades_gracefully(tmp_path, monkeypatch):
     monkeypatch.setattr(snapshot_collectors, "APPS_SOURCE_DIR", tmp_path / "inexistant")
 
