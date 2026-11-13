@@ -10,12 +10,14 @@ import asyncio
 import ipaddress
 import logging
 from datetime import timedelta
+from pathlib import Path
 from urllib.parse import urlparse
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.docker_scanner import docker_scanner
+from app.fleet_env_scanner import read_env_claims
 from app.models import Application, PortAllocation, utcnow
 
 logger = logging.getLogger(__name__)
@@ -69,6 +71,34 @@ async def docker_occupied_subnets(settings, host: str) -> set[str]:
     except Exception as e:
         logger.warning("Scan Docker des sous-réseaux occupés échoué (host=%s): %s", host, e)
         return set()
+
+
+async def fleet_env_occupied(settings, host: str) -> tuple[set[str], set[int]]:
+    """Revendications APP_SUBNET/ports des .env de la flotte locale (best-effort).
+
+    Les scans Docker ne voient que le VIVANT : une app legacy (absente du
+    registre Hub) ou arrêtée au moment de l'allocation — réseau pruné,
+    conteneurs down — était invisible et se faisait ré-attribuer ports et
+    sous-réseau (bug 2026-11-13 : intendance vs contrat-w-pr / exemple-app).
+    Les `.env` de la flotte (montage `apps_host_path`) sont la source de
+    vérité durable : leurs `APP_SUBNET`/`API_PORT`/`FRONTEND_PORT`/
+    `FRONTEND_HTTPS_PORT` comptent comme occupés même sans conteneur vivant.
+
+    - Désactivé si `fleet_env_scan_enabled` est faux.
+    - Claims de la flotte LOCALE : ignorés pour un host distant (symétrique
+      des scans Docker).
+    - La lecture disque est exécutée dans un thread (comme les scans Docker).
+    - Ne lève jamais : renvoie (set(), set()) en cas d'échec.
+    """
+    if not getattr(settings, "fleet_env_scan_enabled", True):
+        return set(), set()
+    if host != settings.get_hub_host():
+        return set(), set()
+    try:
+        return await asyncio.to_thread(read_env_claims, Path(settings.apps_host_path))
+    except Exception as e:
+        logger.warning("Scan des claims flotte (.env) échoué (host=%s): %s", host, e)
+        return set(), set()
 
 
 def pick_free_ports(
@@ -361,6 +391,8 @@ async def allocate_ports_for_app(
             # paresseusement le sous-réseau (idempotent à partir d'ici).
             used_subnets = await _used_subnets(db, cutoff=cutoff)
             used_subnets |= await docker_occupied_subnets(settings, host)
+            env_subnets, _ = await fleet_env_occupied(settings, host)
+            used_subnets |= env_subnets
             existing.subnet = pick_free_subnet(
                 used_subnets,
                 pool=settings.app_subnet_pool,
@@ -374,7 +406,8 @@ async def allocate_ports_for_app(
             )
         return existing, True
 
-    extra_used = await docker_occupied_ports(settings, host)
+    env_subnets, env_ports = await fleet_env_occupied(settings, host)
+    extra_used = await docker_occupied_ports(settings, host) | env_ports
     used_api, used_frontend = await _used_ports_for_host(
         db, host, extra_used=extra_used, cutoff=cutoff
     )
@@ -386,6 +419,7 @@ async def allocate_ports_for_app(
     )
     used_subnets = await _used_subnets(db, cutoff=cutoff)
     used_subnets |= await docker_occupied_subnets(settings, host)
+    used_subnets |= env_subnets
     subnet = pick_free_subnet(
         used_subnets,
         pool=settings.app_subnet_pool,

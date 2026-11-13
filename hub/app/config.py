@@ -389,6 +389,12 @@ class Settings(BaseSettings):
     # Scan best-effort via le socket Docker, à l'allocation.
     subnet_scan_docker_enabled: bool = True
 
+    # Exclure de l'attribution les ports/sous-réseaux revendiqués par les .env
+    # de la flotte (montage apps_host_path) : couvre les apps legacy absentes
+    # du registre et les apps arrêtées au moment de l'allocation, invisibles
+    # des scans Docker (bug 2026-11-13 : 10.50.16.0/24 et 9019 ré-attribués).
+    fleet_env_scan_enabled: bool = True
+
     # Durée (minutes) d'une RÉSERVATION de ports : allocation sans application
     # associée (prepare du catalogue GitHub, /allocate-ports orphelin). Passé
     # ce délai, ports et sous-réseau redeviennent attribuables et la ligne est
