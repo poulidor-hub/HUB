@@ -135,12 +135,21 @@ async def _reconcile_forked_migrations(engine) -> list:
     return reconciled
 
 
-def _decompress_zst(src: Path, dst: Path) -> None:
-    """Décompression zstd streamée : le payload ne transite jamais entier en RAM
-    (snapshots multi-Go — incidents PRA VM 13/11/2026)."""
+def _extract_zst_tar_streamed(tar_zst_path: Path, dest: Path) -> None:
+    """Décompresse zstd ET extrait le tar en pipeline (streaming).
+
+    Aucun tar intermédiaire sur disque ni en RAM : le pic disque du restore
+    (enc + tar_zst + tar + extract) dépassait le disque disponible
+    (ENOSPC — test PRA VM 13/11/2026, F5). Le payload multi-Go n'apparaît
+    qu'une seule fois, dans le tar.zst consommé au fil de la lecture.
+    """
+    import tarfile
+
     dctx = zstd.ZstdDecompressor()
-    with open(src, "rb") as fin, open(dst, "wb") as fout:
-        dctx.copy_stream(fin, fout)
+    with open(tar_zst_path, "rb") as fin:
+        stream = dctx.stream_reader(fin)
+        with tarfile.open(fileobj=stream, mode="r|") as tar:
+            tar.extractall(dest, filter="tar")
 
 
 def _extract_tar_archive(tar_path: Path, dest: Path) -> None:
@@ -228,13 +237,13 @@ async def run_restore(snapshot_id: str):
             logger.error("Déchiffrement du snapshot impossible : %s", exc)
             return False
         logger.info("Snapshot déchiffré (clé : %s)", key_desc)
-
-        tar_path_data = tmp / "snapshot.tar"
-        _decompress_zst(tar_zst_path, tar_path_data)
+        # Libère le ciphertext dès qu'il est consommé (pics disque du restore)
+        enc_path.unlink(missing_ok=True)
 
         extract_dir = tmp / "extract"
         extract_dir.mkdir()
-        _extract_tar_archive(tar_path_data, extract_dir)
+        _extract_zst_tar_streamed(tar_zst_path, extract_dir)
+        tar_zst_path.unlink(missing_ok=True)
 
         dump_path = extract_dir / "postgres" / "full_dump.pgdump"
         if dump_path.exists():

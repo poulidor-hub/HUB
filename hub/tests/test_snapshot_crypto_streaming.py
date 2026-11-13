@@ -199,18 +199,26 @@ def test_decrypt_snapshot_bytes_petit_fichier_compat(tmp_path):
     assert key_desc == "backup"
 
 
-def test_decompress_zst_streamed_roundtrip(tmp_path):
-    """Décompression zstd via fichiers (jamais le payload entier en RAM)."""
-    payload = os.urandom(2 * _ENCRYPT_CHUNK + 555)
-    compressed = tmp_path / "payload.tar.zst"
+def test_extract_zst_tar_streamed_roundtrip(tmp_path):
+    """Pipeline décompression zstd → extraction tar en streaming : aucun
+    tar intermédiaire sur disque ni en RAM (ENOSPC incident PRA VM
+    13/11/2026), symlink absolu préservé (F4)."""
+    import tarfile
     import zstandard as zstd
 
-    with open(compressed, "wb") as dst:
-        compressor = zstd.ZstdCompressor()
-        compressor.copy_stream(_bytes_io(payload), dst)
-    out = tmp_path / "payload.tar"
-    rs._decompress_zst(compressed, out)
-    assert out.read_bytes() == payload
+    tar_path = tmp_path / "payload.tar"
+    _make_tar_with_absolute_link(tar_path, tmp_path)
+    zst = tmp_path / "payload.tar.zst"
+    with open(tar_path, "rb") as fin, open(zst, "wb") as fout:
+        zstd.ZstdCompressor().copy_stream(fin, fout)
+
+    dest = tmp_path / "extract"
+    dest.mkdir()
+    rs._extract_zst_tar_streamed(zst, dest)
+
+    assert (dest / "app" / "fichier.txt").read_bytes() == b"hello"
+    assert os.readlink(dest / "app" / "socle") == "/opt/hub/HUBsocle"
+    assert not (dest / "payload.tar").exists()
 
 
 def _bytes_io(data: bytes):
