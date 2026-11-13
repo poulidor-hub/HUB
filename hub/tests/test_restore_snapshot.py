@@ -124,3 +124,132 @@ async def test_reconcile_tolerates_missing_schema_migrations():
         assert reconciled == []
     finally:
         await engine.dispose()
+
+
+# ── Fourches 028 (colonne email) et 029 (DROP backup_clusters) ──────────────
+# Un dump legacy (hub-legacy 3.9.x) marque 028 = create_hub_snapshots et
+# 029 = add_snapshot_settings : nos 028/029 ne sont JAMAIS rejouées après un
+# restore → colonne account_requests.email manquante (crash runtime prouvé
+# 12/11/2026) et tables backup_clusters résiduelles.
+
+_ACCOUNT_REQUESTS_SANS_EMAIL_DDL = """
+    CREATE TABLE account_requests (
+        id INTEGER PRIMARY KEY,
+        username VARCHAR(50) NOT NULL
+    )
+"""
+
+_ACCOUNT_REQUESTS_AVEC_EMAIL_DDL = """
+    CREATE TABLE account_requests (
+        id INTEGER PRIMARY KEY,
+        username VARCHAR(50) NOT NULL,
+        email VARCHAR(100)
+    )
+"""
+
+_BACKUP_CLUSTERS_DDL = """
+    CREATE TABLE backup_clusters (
+        id INTEGER PRIMARY KEY,
+        name VARCHAR(50) NOT NULL
+    )
+"""
+
+
+async def _make_restore_db_legacy(monkeypatch, applied_versions, *,
+                                  account_requests="sans_email",
+                                  with_backup_clusters=True):
+    """DB SQLite mimant un dump legacy : schema_migrations + tables legacy typiques.
+
+    account_requests : "sans_email" (structure legacy) | "avec_email" (notre 028)
+                       | None (table absente).
+    """
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as conn:
+        await conn.execute(text(_SCHEMA_MIGRATIONS_DDL))
+        for v in applied_versions:
+            await conn.execute(
+                text("INSERT INTO schema_migrations (version, filename) VALUES (:v, :f)"),
+                {"v": v, "f": f"{v}_quelque_chose.sql"},
+            )
+        if account_requests == "sans_email":
+            await conn.execute(text(_ACCOUNT_REQUESTS_SANS_EMAIL_DDL))
+        elif account_requests == "avec_email":
+            await conn.execute(text(_ACCOUNT_REQUESTS_AVEC_EMAIL_DDL))
+        if with_backup_clusters:
+            await conn.execute(text(_BACKUP_CLUSTERS_DDL))
+    return engine
+
+
+@pytest.mark.asyncio
+async def test_reconcile_purges_forked_028_when_email_column_missing():
+    """Dump legacy : 028 marquée (create_hub_snapshots) sans notre colonne email → purge."""
+    engine = await _make_restore_db_legacy(None, {"027", "028", "029"})
+    try:
+        reconciled = await _reconcile_forked_migrations(engine)
+        assert "028" in reconciled
+        async with engine.connect() as conn:
+            rows = {r[0] for r in (await conn.execute(text("SELECT version FROM schema_migrations"))).fetchall()}
+        assert "028" not in rows  # purgée → le boot rejugera notre 028 (colonne email)
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_reconcile_noop_when_028_email_column_exists():
+    """Restore normal (même repo) : la colonne email existe → 028 conservée."""
+    engine = await _make_restore_db_legacy(None, {"028"}, account_requests="avec_email",
+                                           with_backup_clusters=False)
+    try:
+        reconciled = await _reconcile_forked_migrations(engine)
+        assert "028" not in reconciled
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_reconcile_purges_028_when_table_entirely_missing():
+    """Table account_requests absente mais 028 marquée → purge (le boot recrée tout)."""
+    engine = await _make_restore_db_legacy(None, {"028"}, account_requests=None,
+                                           with_backup_clusters=False)
+    try:
+        reconciled = await _reconcile_forked_migrations(engine)
+        assert "028" in reconciled
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_reconcile_purges_forked_029_when_backup_clusters_present():
+    """Dump legacy : 029 marquée (add_snapshot_settings) et backup_clusters encore là → purge."""
+    engine = await _make_restore_db_legacy(None, {"027", "028", "029"})
+    try:
+        reconciled = await _reconcile_forked_migrations(engine)
+        assert "029" in reconciled
+        async with engine.connect() as conn:
+            rows = {r[0] for r in (await conn.execute(text("SELECT version FROM schema_migrations"))).fetchall()}
+        assert "029" not in rows  # purgée → le boot rejugera notre 029 (DROP clusters)
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_reconcile_noop_when_backup_clusters_already_dropped():
+    """Notre 029 a tourné (clusters supprimées) → 029 conservée."""
+    engine = await _make_restore_db_legacy(None, {"029"}, account_requests="avec_email",
+                                           with_backup_clusters=False)
+    try:
+        reconciled = await _reconcile_forked_migrations(engine)
+        assert "029" not in reconciled
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_reconcile_purges_all_three_forks_from_legacy_dump():
+    """Dump legacy complet : 027+028+029 fourchues → les trois purgées, l'ordre est trié."""
+    engine = await _make_restore_db_legacy(None, {"025", "026", "027", "028", "029"})
+    try:
+        reconciled = await _reconcile_forked_migrations(engine)
+        assert reconciled == ["027", "028", "029"]
+    finally:
+        await engine.dispose()
