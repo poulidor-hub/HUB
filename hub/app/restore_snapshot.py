@@ -58,21 +58,52 @@ def _extract_apps_code(extract_dir: Path) -> bool:
 
 
 # Migrations dont le contenu diverge entre ce repo et les hubs legacy derives
-# (ex. hub-legacy) : même numero, SQL différent. La 027 du hub neuf cree
-# port_allocations ; celle d'un hub legacy est une normalisation de données.
+# (ex. hub-legacy) : même numero, SQL différent. Apres un pg_restore legacy, ces
+# numeros restent marques appliques alors que NOTRE SQL n'a jamais tourne :
+# - 027 : le legacy normalise les sources de rôles ; nous créons port_allocations.
+# - 028 : le legacy crée hub_snapshots ; nous ajoutons account_requests.email
+#         (colonne manquante = crash runtime prouve 12/11/2026).
+# - 029 : le legacy ajoute snapshot_settings ; nous créons hub_snapshots ET
+#         supprimons backup_clusters (le legacy les garde encore en base).
+# Format : (version, type_de_controle, cible) — contrôle satisfait ⇒ purge :
+#   "table_absent"  : la table cible n'existe pas (comportement historique 027)
+#   "column_absent" : la colonne cible "table.colonne" n'existe pas
+#   "table_present" : la table cible existe ENCORE (notre SQL doit la supprimer)
+# Même liste que hubctl_cli/park_restore.py (repo Hubctl).
 FORKED_MIGRATIONS = (
-    # (version, table attendue par notre 027)
-    ("027", "port_allocations"),
+    ("027", "table_absent", "port_allocations"),
+    ("028", "column_absent", "account_requests.email"),
+    ("029", "table_present", "backup_clusters"),
 )
+
+
+def _fork_condition_met(inspector, kind: str, target: str) -> bool:
+    """Évalue le contrôle de divergence pour une migration fourchue.
+
+    `inspector` est un inspecteur SQLAlchemy (has_table / has_column).
+    has_column sur une table absente renvoie False → purge (sans risque :
+    le boot recrée table + colonne en rejouant l'historique).
+    """
+    if kind == "table_absent":
+        return not inspector.has_table(target)
+    if kind == "column_absent":
+        table, _, column = target.partition(".")
+        if not inspector.has_table(table):
+            return True  # table absente → colonne absente a fortiori
+        return column not in {c["name"] for c in inspector.get_columns(table)}
+    if kind == "table_present":
+        return inspector.has_table(target)
+    raise ValueError(f"Type de contrôle FORKED_MIGRATIONS inconnu : {kind!r}")
 
 
 async def _reconcile_forked_migrations(engine) -> list:
     """Apres un pg_restore venu d'un hub legacy, purge les lignes schema_migrations
     dont le contenu a diverge, pour que le boot rejoue NOS migrations idempotentes.
 
-    Detection : la version est marquee appliquee mais la table qu'elle cree ici
-    n'existe pas → c'est la migration homonyme d'un autre repo qui a tourne.
-    No-op sur un restore normal (tables presentes). Retourne les versions purgees.
+    Detection : la version est marquee appliquee mais le contrôle associé
+    (FORKED_MIGRATIONS) constate que notre SQL n'a pas produit son effet
+    (table absente, colonne absente ou table legacy encore présente).
+    No-op sur un restore normal (tables/colonnes presentes). Retourne les versions purgees.
     """
     reconciled = []
     try:
@@ -83,12 +114,14 @@ async def _reconcile_forked_migrations(engine) -> list:
         logger.warning(f"schema_migrations illisible, reconciliation ignoree: {e}")
         return reconciled
 
-    for version, table in FORKED_MIGRATIONS:
+    for version, kind, target in FORKED_MIGRATIONS:
         if version not in applied:
             continue
         async with engine.connect() as conn:
-            has_table = await conn.run_sync(lambda c: sa_inspect(c).has_table(table))
-        if has_table:
+            condition = await conn.run_sync(
+                lambda c: _fork_condition_met(sa_inspect(c), kind, target)
+            )
+        if not condition:
             continue
         async with engine.begin() as conn:
             await conn.execute(
@@ -96,8 +129,8 @@ async def _reconcile_forked_migrations(engine) -> list:
             )
         reconciled.append(version)
         logger.warning(
-            f"Migration {version} divergee (hub legacy) purgee de schema_migrations : "
-            f"table '{table}' absente → elle sera rejouee au boot."
+            f"Migration {version} divergee (hub legacy) purgee de schema_migrations "
+            f"({kind} : {target}) → elle sera rejouee au boot."
         )
     return reconciled
 
