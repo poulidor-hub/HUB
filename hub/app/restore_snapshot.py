@@ -143,6 +143,31 @@ def _decompress_zst(src: Path, dst: Path) -> None:
         dctx.copy_stream(fin, fout)
 
 
+def _extract_tar_archive(tar_path: Path, dest: Path) -> None:
+    """Extraction tar tolérante aux symlinks à cible absolue.
+
+    apps_code.tar embarque les symlinks `socle` des apps (liens absolus vers
+    HUBsocle — 17 apps en 13/11/2026). Python 3.12 les refuse par défaut
+    (filter 'data' → AbsoluteLinkError) : F4 du test PRA sur VM vierge.
+    Archive de confiance (produite par notre snapshot engine) → filter 'tar'
+    (comportement legacy), liens absolus préservés et loggés.
+    """
+    import tarfile
+
+    absolute_links = 0
+    with tarfile.open(tar_path, "r:") as tar:
+        for member in tar.getmembers():
+            if member.issym() and member.linkname.startswith("/"):
+                absolute_links += 1
+        tar.extractall(dest, filter="tar")
+    if absolute_links:
+        logger.warning(
+            "Extraction : %d symlink(s) a cible absolue preserve(s) — a recree "
+            "localement si besoin (liens hors-machine, ex: socle -> HUBsocle)",
+            absolute_links,
+        )
+
+
 async def run_restore(snapshot_id: str):
     engine = create_async_engine(DATABASE_URL, echo=False)
     session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
@@ -209,7 +234,7 @@ async def run_restore(snapshot_id: str):
 
         extract_dir = tmp / "extract"
         extract_dir.mkdir()
-        shutil.unpack_archive(str(tar_path_data), str(extract_dir), "tar")
+        _extract_tar_archive(tar_path_data, extract_dir)
 
         dump_path = extract_dir / "postgres" / "full_dump.pgdump"
         if dump_path.exists():

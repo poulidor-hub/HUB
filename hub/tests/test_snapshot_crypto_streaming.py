@@ -29,6 +29,38 @@ from app.snapshot_crypto import (
 from app import restore_snapshot as rs
 
 
+def _make_tar_with_absolute_link(tar_path: Path, tmp_path: Path) -> None:
+    """Archive de test : un fichier + un symlink à cible absolue
+    (motif réel : APPS/<slug>/socle -> chemin absolu HUBsocle, 17 apps)."""
+    import io
+    import tarfile
+
+    with tarfile.open(tar_path, "w:") as tar:
+        data = b"hello"
+        info = tarfile.TarInfo("app/fichier.txt")
+        info.size = len(data)
+        tar.addfile(info, io.BytesIO(data))
+        link = tarfile.TarInfo("app/socle")
+        link.type = tarfile.SYMTYPE
+        link.linkname = "/opt/hub/HUBsocle"
+        tar.addfile(link)
+
+
+def test_extract_tar_archive_tolere_symlink_absolu(tmp_path):
+    """F4 (PRA VM 13/11/2026) : l'extraction ne doit pas échouer sur les
+    symlinks à cible absolue embarqués dans apps_code.tar — archive de
+    confiance produite par notre snapshot engine ; le lien est préservé."""
+    tar_path = tmp_path / "apps_code.tar"
+    _make_tar_with_absolute_link(tar_path, tmp_path)
+
+    dest = tmp_path / "extract"
+    dest.mkdir()
+    rs._extract_tar_archive(tar_path, dest)
+
+    assert (dest / "app" / "fichier.txt").read_bytes() == b"hello"
+    assert os.readlink(dest / "app" / "socle") == "/opt/hub/HUBsocle"
+
+
 def _make_secrets_dir(tmp_path: Path) -> Path:
     """secrets_dir de test avec la paire backup (RSA PEM)."""
     secrets_dir = tmp_path / "secrets"
