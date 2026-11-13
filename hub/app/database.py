@@ -12,12 +12,21 @@ logger = logging.getLogger(__name__)
 
 settings = get_settings()
 
+# Dimensionnement du pool (incidents 13/11/2026 : auto-register + approve de
+# 'exemple-app') — les événements d'ajout d'app déclenchent des tempêtes de
+# requêtes (broadcast SSE → vagues /api/apps/pending, /api/apps/,
+# token/refresh, unread-count) dont la demande concurrente dépassait le
+# défaut 5 + 10 = 15 connexions → QueuePool TimeoutError (500 en cascade).
+# 25 + 25 = plafond 50, marge conservée sous max_connections PG (100).
+DB_POOL_SIZE = 25
+DB_MAX_OVERFLOW = 25
+
 engine = create_async_engine(
     settings.database_url,
     echo=False,
     pool_pre_ping=True,
-    pool_size=5,
-    max_overflow=10
+    pool_size=DB_POOL_SIZE,
+    max_overflow=DB_MAX_OVERFLOW
 )
 
 
