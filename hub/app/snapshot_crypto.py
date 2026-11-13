@@ -19,6 +19,7 @@ import logging
 import os
 from pathlib import Path
 
+from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
@@ -128,3 +129,91 @@ def decrypt_snapshot_bytes(data: bytes, *, secrets_dir: Path | None = None) -> t
         "Aucune clé candidate (backup, trousseau jwt_keys/, jwt legacy) "
         "n'a pu déchiffrer ce snapshot"
     )
+
+
+def decrypt_snapshot_to_file(src_path: Path, dst_path: Path, *, secrets_dir: Path | None = None) -> str:
+    """Déchiffre une enveloppe snapshot vers `dst_path`, en streaming.
+
+    Symétrique de `encrypt_file` (chunks de 4 Mo) : ni le ciphertext ni le
+    plaintext ne transitent entiers en RAM. Deux incidents PRA (VM 13/11/2026,
+    snapshot réel 3,5 Go) rendaient l'ancien chemin one-shot inutilisable :
+    - `AESGCM.decrypt` dépasse la limite int32 du backend openssl
+      (`TryFromIntError(PosOverflow)`) au-delà de ~2,1 Go ;
+    - `restore_snapshot.py` chargeait en plus tout en mémoire → OOM memcg.
+
+    Le format reste byte-compatible avec `encrypt_file` :
+    `[4B key_len][enc_key][12B nonce][ciphertext…][16B tag]`.
+    Retourne la description de la clé utilisée (comme `decrypt_snapshot_bytes`).
+    """
+    src_path, dst_path = Path(src_path), Path(dst_path)
+    candidates = list_candidate_private_keys(secrets_dir)
+    if not candidates:
+        raise SnapshotDecryptError(
+            "Aucune clé candidate (backup, trousseau jwt_keys/, jwt legacy) "
+            "disponible pour déchiffrer ce snapshot"
+        )
+    if src_path.stat().st_size < 4 + 12 + 16:
+        raise SnapshotDecryptError("Enveloppe trop courte")
+
+    key_desc: str | None = None
+    aes_key: bytes | None = None
+    nonce: bytes = b""
+    header_end = 0
+    with open(src_path, "rb") as src:
+        for desc, pem_path in candidates:
+            src.seek(0)
+            key_len = int.from_bytes(src.read(4), "big")
+            enc_key = src.read(key_len)
+            nonce = src.read(12)
+            header_end = src.tell()
+            try:
+                with open(pem_path, "rb") as f:
+                    priv_key = serialization.load_pem_private_key(f.read(), password=None)
+                aes_key = priv_key.decrypt(
+                    enc_key,
+                    padding.OAEP(mgf=padding.MGF1(algorithm=hashes.SHA256()),
+                                 algorithm=hashes.SHA256(), label=None),
+                )
+            except Exception:  # noqa: BLE001 — mauvaise clé candidate, on essaie la suivante
+                continue
+            key_desc = desc
+            break
+
+    if aes_key is None or key_desc is None:
+        raise SnapshotDecryptError(
+            "Aucune clé candidate (backup, trousseau jwt_keys/, jwt legacy) "
+            "n'a pu déchiffrer ce snapshot"
+        )
+
+    total = src_path.stat().st_size
+    if total < header_end + 16:
+        raise SnapshotDecryptError("Enveloppe trop courte (tag manquant)")
+    tag_offset = total - 16
+    ciphertext_len = tag_offset - header_end
+
+    decryptor = Cipher(algorithms.AES(aes_key), modes.GCM(nonce)).decryptor()
+    buffer = bytearray(_ENCRYPT_CHUNK + 16)
+    with open(src_path, "rb") as src, open(dst_path, "wb") as dst:
+        src.seek(header_end)
+        remaining = ciphertext_len
+        while remaining > 0:
+            chunk = src.read(min(_ENCRYPT_CHUNK, remaining))
+            if not chunk:
+                raise SnapshotDecryptError("Snapshot tronqué (ciphertext incomplet)")
+            written = decryptor.update_into(chunk, buffer)
+            dst.write(buffer[:written])
+            remaining -= len(chunk)
+        src.seek(tag_offset)
+        tag = src.read(16)
+        try:
+            decryptor.finalize_with_tag(tag)
+        except InvalidTag as exc:
+            raise SnapshotDecryptError(
+                "Tag GCM invalide — snapshot corrompu ou clé inadaptée"
+            ) from exc
+
+    if key_desc == "backup":
+        logger.info("Snapshot déchiffré (streaming) avec la clé backup")
+    else:
+        logger.warning("Snapshot déchiffré (streaming) avec la clé %s (repli legacy)", key_desc)
+    return key_desc

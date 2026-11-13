@@ -22,7 +22,7 @@ from sqlalchemy.inspection import inspect as sa_inspect
 
 import zstandard as zstd
 
-from app.snapshot_crypto import SnapshotDecryptError, decrypt_snapshot_bytes
+from app.snapshot_crypto import SnapshotDecryptError, decrypt_snapshot_bytes, decrypt_snapshot_to_file
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [RESTORE] %(message)s")
 logger = logging.getLogger("snapshot_restore")
@@ -52,7 +52,16 @@ def _extract_apps_code(extract_dir: Path) -> bool:
         )
         return False
     logger.info("Extraction apps_code.tar...")
-    shutil.unpack_archive(str(apps_code_tar), str(APPS_SOURCE_DIR), filter="data")
+    # Purge préalable : un restore PRA écrase le code apps. Sans elle, les
+    # résidus d'un run partiel (.git/objects en 0444 — les objets git sont
+    # read-only par nature) font échouer l'extraction (Permission denied,
+    # F6 — test PRA VM 13/11/2026 run 8).
+    for child in APPS_SOURCE_DIR.iterdir():
+        if child.is_dir() and not child.is_symlink():
+            shutil.rmtree(child)
+        else:
+            child.unlink(missing_ok=True)
+    _extract_tar_archive(apps_code_tar, APPS_SOURCE_DIR)
     logger.info(f"Code apps restaure vers {APPS_SOURCE_DIR}")
     return True
 
@@ -135,6 +144,48 @@ async def _reconcile_forked_migrations(engine) -> list:
     return reconciled
 
 
+def _extract_zst_tar_streamed(tar_zst_path: Path, dest: Path) -> None:
+    """Décompresse zstd ET extrait le tar en pipeline (streaming).
+
+    Aucun tar intermédiaire sur disque ni en RAM : le pic disque du restore
+    (enc + tar_zst + tar + extract) dépassait le disque disponible
+    (ENOSPC — test PRA VM 13/11/2026, F5). Le payload multi-Go n'apparaît
+    qu'une seule fois, dans le tar.zst consommé au fil de la lecture.
+    """
+    import tarfile
+
+    dctx = zstd.ZstdDecompressor()
+    with open(tar_zst_path, "rb") as fin:
+        stream = dctx.stream_reader(fin)
+        with tarfile.open(fileobj=stream, mode="r|") as tar:
+            tar.extractall(dest, filter="tar")
+
+
+def _extract_tar_archive(tar_path: Path, dest: Path) -> None:
+    """Extraction tar tolérante aux symlinks à cible absolue.
+
+    apps_code.tar embarque les symlinks `socle` des apps (liens absolus vers
+    HUBsocle — 17 apps en 13/11/2026). Python 3.12 les refuse par défaut
+    (filter 'data' → AbsoluteLinkError) : F4 du test PRA sur VM vierge.
+    Archive de confiance (produite par notre snapshot engine) → filter 'tar'
+    (comportement legacy), liens absolus préservés et loggés.
+    """
+    import tarfile
+
+    absolute_links = 0
+    with tarfile.open(tar_path, "r:") as tar:
+        for member in tar.getmembers():
+            if member.issym() and member.linkname.startswith("/"):
+                absolute_links += 1
+        tar.extractall(dest, filter="tar")
+    if absolute_links:
+        logger.warning(
+            "Extraction : %d symlink(s) a cible absolue preserve(s) — a recree "
+            "localement si besoin (liens hors-machine, ex: socle -> HUBsocle)",
+            absolute_links,
+        )
+
+
 async def run_restore(snapshot_id: str):
     engine = create_async_engine(DATABASE_URL, echo=False)
     session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
@@ -188,24 +239,20 @@ async def run_restore(snapshot_id: str):
             logger.error("Snapshot non disponible (ni local, ni S3)")
             return False
 
-        data = enc_path.read_bytes()
+        tar_zst_path = tmp / "snapshot.tar.zst"
         try:
-            plaintext, key_desc = decrypt_snapshot_bytes(data, secrets_dir=SECRETS_DIR)
+            key_desc = decrypt_snapshot_to_file(enc_path, tar_zst_path, secrets_dir=SECRETS_DIR)
         except SnapshotDecryptError as exc:
             logger.error("Déchiffrement du snapshot impossible : %s", exc)
             return False
         logger.info("Snapshot déchiffré (clé : %s)", key_desc)
-
-        tar_zst_path = tmp / "snapshot.tar.zst"
-        tar_zst_path.write_bytes(plaintext)
-
-        dctx = zstd.ZstdDecompressor()
-        tar_path_data = tmp / "snapshot.tar"
-        tar_path_data.write_bytes(dctx.decompress(tar_zst_path.read_bytes()))
+        # Libère le ciphertext dès qu'il est consommé (pics disque du restore)
+        enc_path.unlink(missing_ok=True)
 
         extract_dir = tmp / "extract"
         extract_dir.mkdir()
-        shutil.unpack_archive(str(tar_path_data), str(extract_dir), "tar")
+        _extract_zst_tar_streamed(tar_zst_path, extract_dir)
+        tar_zst_path.unlink(missing_ok=True)
 
         dump_path = extract_dir / "postgres" / "full_dump.pgdump"
         if dump_path.exists():
