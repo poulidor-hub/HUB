@@ -22,7 +22,7 @@ from sqlalchemy.inspection import inspect as sa_inspect
 
 import zstandard as zstd
 
-from app.snapshot_crypto import SnapshotDecryptError, decrypt_snapshot_bytes
+from app.snapshot_crypto import SnapshotDecryptError, decrypt_snapshot_bytes, decrypt_snapshot_to_file
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [RESTORE] %(message)s")
 logger = logging.getLogger("snapshot_restore")
@@ -135,6 +135,14 @@ async def _reconcile_forked_migrations(engine) -> list:
     return reconciled
 
 
+def _decompress_zst(src: Path, dst: Path) -> None:
+    """Décompression zstd streamée : le payload ne transite jamais entier en RAM
+    (snapshots multi-Go — incidents PRA VM 13/11/2026)."""
+    dctx = zstd.ZstdDecompressor()
+    with open(src, "rb") as fin, open(dst, "wb") as fout:
+        dctx.copy_stream(fin, fout)
+
+
 async def run_restore(snapshot_id: str):
     engine = create_async_engine(DATABASE_URL, echo=False)
     session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
@@ -188,20 +196,16 @@ async def run_restore(snapshot_id: str):
             logger.error("Snapshot non disponible (ni local, ni S3)")
             return False
 
-        data = enc_path.read_bytes()
+        tar_zst_path = tmp / "snapshot.tar.zst"
         try:
-            plaintext, key_desc = decrypt_snapshot_bytes(data, secrets_dir=SECRETS_DIR)
+            key_desc = decrypt_snapshot_to_file(enc_path, tar_zst_path, secrets_dir=SECRETS_DIR)
         except SnapshotDecryptError as exc:
             logger.error("Déchiffrement du snapshot impossible : %s", exc)
             return False
         logger.info("Snapshot déchiffré (clé : %s)", key_desc)
 
-        tar_zst_path = tmp / "snapshot.tar.zst"
-        tar_zst_path.write_bytes(plaintext)
-
-        dctx = zstd.ZstdDecompressor()
         tar_path_data = tmp / "snapshot.tar"
-        tar_path_data.write_bytes(dctx.decompress(tar_zst_path.read_bytes()))
+        _decompress_zst(tar_zst_path, tar_path_data)
 
         extract_dir = tmp / "extract"
         extract_dir.mkdir()
