@@ -5,6 +5,18 @@
 
 ---
 
+## [3.87.5] - 13 novembre 2026
+
+### ⚡ Dimensionnement du pool DB hub-api (tempêtes d'ajout d'app)
+
+Incidents 13/11/2026 : l'auto-register (11:09) puis l'approbation (11:18) de `exemple-app` ont déclenché des tempêtes de requêtes (broadcast SSE → vagues `/api/apps/pending` ~1/s, rafales `GET /api/apps/`, herds `POST /api/auth/token/refresh`, `unread-count` jusqu'à 123/min) dont la demande concurrente de sessions a dépassé le pool SQLAlchemy 5 + 10 = 15 connexions → `QueuePool TimeoutError` après 30 s d'attente → 500 en cascade pendant ~50 s (139 erreurs pool en 24 h, readtimeout M2M côté app qui s'enregistre). Diagnostic : aucune fuite de connexion (sessions toutes fermées correctement dans `get_db`, pipeline deploy, ateliers, SSE) — pur sous-dimensionnement face aux pics ; hub-db disposait de 100 `max_connections` avec ~7 utilisées.
+
+- `hub/app/database.py` : `pool_size` 5 → 25, `max_overflow` 10 → 25 (plafond 50, marge conservée sous `max_connections` PG = 100) via constantes `DB_POOL_SIZE` / `DB_MAX_OVERFLOW`
+- Nouveau `hub/tests/test_database_pool_config.py` : couverture tempêtes (pool ≥ 20 + overflow ≥ 20), plafond global ≤ 60, conformité de l'engine réel aux constantes (cycle rouge → vert vérifié dans le conteneur hub-api)
+- Non-régression : 67 tests auth (`token/refresh` inclus) passants
+
+---
+
 ## [3.87.4] - 13 novembre 2026
 
 ### ⚡ Réconciliation des fourches 028/029 après restore legacy
