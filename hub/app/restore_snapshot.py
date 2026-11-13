@@ -52,6 +52,15 @@ def _extract_apps_code(extract_dir: Path) -> bool:
         )
         return False
     logger.info("Extraction apps_code.tar...")
+    # Purge préalable : un restore PRA écrase le code apps. Sans elle, les
+    # résidus d'un run partiel (.git/objects en 0444 — les objets git sont
+    # read-only par nature) font échouer l'extraction (Permission denied,
+    # F6 — test PRA VM 13/11/2026 run 8).
+    for child in APPS_SOURCE_DIR.iterdir():
+        if child.is_dir() and not child.is_symlink():
+            shutil.rmtree(child)
+        else:
+            child.unlink(missing_ok=True)
     _extract_tar_archive(apps_code_tar, APPS_SOURCE_DIR)
     logger.info(f"Code apps restaure vers {APPS_SOURCE_DIR}")
     return True

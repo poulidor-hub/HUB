@@ -184,6 +184,27 @@ def test_extract_apps_code_tolere_symlink_absolu(tmp_path, monkeypatch):
     assert os.readlink(apps_source / "app" / "socle") == "/opt/hub/HUBsocle"
 
 
+def test_extract_apps_code_purge_residus_readonly(tmp_path, monkeypatch):
+    """F6 (run 8) : les résidus d'un run partiel (.git/objects en 0444,
+    motif typique des objets git) faisaient échouer la ré-extraction en
+    Permission denied. La purge préalable les évacue."""
+    extract_dir = tmp_path / "extract"
+    tar_path = extract_dir / "apps" / "apps_code.tar"
+    tar_path.parent.mkdir(parents=True)
+    _make_tar_with_absolute_link(tar_path, tmp_path)
+    apps_source = tmp_path / "apps_source"
+    apps_source.mkdir()
+    stale_dir = apps_source / "app"
+    stale_dir.mkdir()
+    ro_file = stale_dir / "fichier.txt"
+    ro_file.write_bytes(b"ANCIEN")
+    ro_file.chmod(0o444)
+    monkeypatch.setattr(rs, "APPS_SOURCE_DIR", apps_source)
+
+    assert rs._extract_apps_code(extract_dir) is True
+    assert (apps_source / "app" / "fichier.txt").read_bytes() == b"hello"
+
+
 def test_decrypt_snapshot_bytes_petit_fichier_compat(tmp_path):
     """Non-régression : decrypt_snapshot_bytes (one-shot) reste compatible
     avec le format produit par encrypt_file pour un petit payload."""
