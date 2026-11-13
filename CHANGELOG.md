@@ -5,6 +5,21 @@
 
 ---
 
+## [3.87.4] - 13 novembre 2026
+
+### ⚡ Réconciliation des fourches 028/029 après restore legacy
+
+Un dump hub legacy (hub-legacy 3.9.x) marque 028 = `create_hub_snapshots` et 029 = `add_snapshot_settings` : les migrations homonymes du hub neuf n'étaient jamais rejouées après un restore → colonne `account_requests.email` manquante (crash runtime prouvé sur le hub 12/11/2026 : 44 tracebacks `UndefinedColumnError` en 48h) et tables `backup_clusters` résiduelles.
+
+- `FORKED_MIGRATIONS` (hub/app/restore_snapshot.py) passe de `(version, table)` à `(version, type_contrôle, cible)` :
+  - `027 table_absent port_allocations` (comportement historique inchangé) ;
+  - `028 column_absent account_requests.email` — purge si marquée et colonne absente (table entière absente couverte aussi) ;
+  - `029 table_present backup_clusters` — purge si marquée et tables legacy encore présentes (notre 029 doit les DROP).
+- Même sémantique que `hubctl_cli/park_restore.py` (release Hubctl à suivre — accès écriture requis).
+- Tests : 6 nouveaux cas SQLite dans `tests/test_restore_snapshot.py` (purge/no-op par type de contrôle, table absente, dump legacy complet 027+028+029) — 92 tests du périmètre restore/migrations passent.
+
+---
+
 ## [3.87.3] - 13 novembre 2026
 
 ### ⚡ Rotation des logs Docker + snapshot apps_code sans artefacts
