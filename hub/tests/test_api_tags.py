@@ -8,6 +8,7 @@ import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 
 from app.auth import create_access_token
 from app.models import User, UserTag
@@ -140,6 +141,7 @@ class TestUserTags:
     async def test_update_my_tags_invalid_value(
         self, client: AsyncClient, admin_user: User, test_user: User
     ):
+        """Valeur hors snapshot → filtrée dans `ignored` (200), jamais 400 (spec §4.2)."""
         admin_headers = _make_admin_headers(admin_user)
         user_headers = _make_user_headers(test_user)
         await client.post("/api/tags/categories", json={
@@ -148,7 +150,10 @@ class TestUserTags:
         response = await client.put("/api/tags/my", json={
             "tags": {"sec": ["Ouest"]}
         }, headers=user_headers)
-        assert response.status_code == 400
+        assert response.status_code == 200
+        data = response.json()
+        assert data["ignored"] == {"sec": ["Ouest"]}
+        assert data["tags"] == {}
 
     @pytest.mark.asyncio
     async def test_update_my_tags_single_select_enforcement(
@@ -446,6 +451,208 @@ class TestLiveValues:
 
         assert values == ["B", "A", "C"]
         assert flag == "live"
+
+
+class TestPutMy:
+    """PUT /my : upsert diff + secteur principal, valeurs obsolètes ignorées."""
+
+    async def _create_category(
+        self, client, admin_headers, slug="secteurs", values=("Nord", "Sud", "Est"),
+        primary_enabled=False, is_multiple=True,
+    ):
+        from app.models import TagCategory
+        response = await client.post("/api/tags/categories", json={
+            "slug": slug, "label": slug.title(), "source": "csv",
+            "is_multiple": is_multiple, "values": list(values),
+            "primary_enabled": primary_enabled,
+        }, headers=admin_headers)
+        assert response.status_code == 201
+        result = await client.get("/api/tags/categories", headers=admin_headers)
+        return response.json()
+
+    async def _fetch_rows(self, async_session, user_id, slug):
+        from app.models import TagCategory, UserTag
+        from sqlalchemy import select
+        result = await async_session.execute(
+            select(UserTag)
+            .options(selectinload(UserTag.category))
+            .where(UserTag.user_id == user_id, TagCategory.slug == slug)
+        )
+        return result.scalars().all()
+
+    @pytest.mark.asyncio
+    async def test_put_my_upsert_diff_preserves_created_at(
+        self, client, async_session, admin_user, test_user
+    ):
+        """Upsert diff : la ligne inchangée garde id + created_at (fini le delete-all)."""
+        admin_headers = _make_admin_headers(admin_user)
+        user_headers = _make_user_headers(test_user)
+        await self._create_category(client, admin_headers)
+
+        r1 = await client.put("/api/tags/my", json={
+            "tags": {"secteurs": ["Nord", "Sud"]}
+        }, headers=user_headers)
+        assert r1.status_code == 200
+
+        rows1 = await self._fetch_rows(async_session, test_user.id, "secteurs")
+        nord1 = next(r for r in rows1 if r.value == "Nord")
+
+        r2 = await client.put("/api/tags/my", json={
+            "tags": {"secteurs": ["Nord", "Est"]}
+        }, headers=user_headers)
+        assert r2.status_code == 200
+
+        rows2 = await self._fetch_rows(async_session, test_user.id, "secteurs")
+        nord2 = next(r for r in rows2 if r.value == "Nord")
+        assert r2.json()["tags"]["secteurs"] == ["Nord", "Est"]
+        # Ligne inchangée : même ligne physique (id + created_at préservés)
+        assert nord2.id == nord1.id
+        assert nord2.created_at == nord1.created_at
+        # Sud retirée, Est ajoutée
+        assert {r.value for r in rows2} == {"Nord", "Est"}
+
+    @pytest.mark.asyncio
+    async def test_put_my_unknown_value_ignored_200(
+        self, client, async_session, admin_user, test_user
+    ):
+        """Valeur obsolète (retirée côté source) → 200 + ignored, jamais 400."""
+        admin_headers = _make_admin_headers(admin_user)
+        user_headers = _make_user_headers(test_user)
+        await self._create_category(client, admin_headers)
+
+        response = await client.put("/api/tags/my", json={
+            "tags": {"secteurs": ["Nord", "RenommeeAilleurs"]}
+        }, headers=user_headers)
+        assert response.status_code == 200
+        data = response.json()
+        assert data["ignored"] == {"secteurs": ["RenommeeAilleurs"]}
+        assert data["tags"]["secteurs"] == ["Nord"]
+
+    @pytest.mark.asyncio
+    async def test_put_my_primary_ok(
+        self, client, async_session, admin_user, test_user
+    ):
+        admin_headers = _make_admin_headers(admin_user)
+        user_headers = _make_user_headers(test_user)
+        await self._create_category(client, admin_headers, primary_enabled=True)
+
+        response = await client.put("/api/tags/my", json={
+            "tags": {"secteurs": ["Nord", "Sud"]}, "primary": {"secteurs": "Sud"}
+        }, headers=user_headers)
+        assert response.status_code == 200
+        data = response.json()
+        assert data["primary"] == {"secteurs": "Sud"}
+        assert data["tags"]["secteurs"] == ["Nord", "Sud"]
+
+        rows = await self._fetch_rows(async_session, test_user.id, "secteurs")
+        primaries = [r for r in rows if r.is_primary]
+        assert len(primaries) == 1
+        assert primaries[0].value == "Sud"
+
+    @pytest.mark.asyncio
+    async def test_put_my_primary_not_in_tags_400(
+        self, client, admin_user, test_user
+    ):
+        """Primaire hors tags[slug] du même payload → seul cas 400 métier."""
+        admin_headers = _make_admin_headers(admin_user)
+        user_headers = _make_user_headers(test_user)
+        await self._create_category(client, admin_headers, primary_enabled=True)
+
+        response = await client.put("/api/tags/my", json={
+            "tags": {"secteurs": ["Nord"]}, "primary": {"secteurs": "Sud"}
+        }, headers=user_headers)
+        assert response.status_code == 400
+
+    @pytest.mark.asyncio
+    async def test_put_my_primary_category_not_enabled_400(
+        self, client, admin_user, test_user
+    ):
+        admin_headers = _make_admin_headers(admin_user)
+        user_headers = _make_user_headers(test_user)
+        await self._create_category(client, admin_headers, slug="lang",
+                                    values=("fr", "en"), primary_enabled=False)
+
+        response = await client.put("/api/tags/my", json={
+            "tags": {"lang": ["fr"]}, "primary": {"lang": "fr"}
+        }, headers=user_headers)
+        assert response.status_code == 400
+
+    @pytest.mark.asyncio
+    async def test_put_my_primary_null_clears(
+        self, client, async_session, admin_user, test_user
+    ):
+        """primary[slug]=null → suppression explicite de la primaire."""
+        admin_headers = _make_admin_headers(admin_user)
+        user_headers = _make_user_headers(test_user)
+        await self._create_category(client, admin_headers, primary_enabled=True)
+
+        r1 = await client.put("/api/tags/my", json={
+            "tags": {"secteurs": ["Nord"]}, "primary": {"secteurs": "Nord"}
+        }, headers=user_headers)
+        assert r1.json()["primary"] == {"secteurs": "Nord"}
+
+        r2 = await client.put("/api/tags/my", json={
+            "tags": {"secteurs": ["Nord"]}, "primary": {"secteurs": None}
+        }, headers=user_headers)
+        assert r2.status_code == 200
+        assert r2.json()["primary"] == {}
+
+        rows = await self._fetch_rows(async_session, test_user.id, "secteurs")
+        assert all(not r.is_primary for r in rows)
+
+    @pytest.mark.asyncio
+    async def test_put_my_primary_resets_existing(
+        self, client, async_session, admin_user, test_user
+    ):
+        """Primaire A puis PUT avec primaire B → une seule ligne is_primary (B).
+
+        Review Focus #5 : deux PUT concurrents ne doivent pas lever
+        d'IntegrityError sur l'index partiel (reset avant pose)."""
+        admin_headers = _make_admin_headers(admin_user)
+        user_headers = _make_user_headers(test_user)
+        await self._create_category(client, admin_headers, primary_enabled=True)
+
+        r1 = await client.put("/api/tags/my", json={
+            "tags": {"secteurs": ["Nord", "Sud"]}, "primary": {"secteurs": "Nord"}
+        }, headers=user_headers)
+        assert r1.status_code == 200
+
+        r2 = await client.put("/api/tags/my", json={
+            "tags": {"secteurs": ["Nord", "Sud"]}, "primary": {"secteurs": "Sud"}
+        }, headers=user_headers)
+        assert r2.status_code == 200
+
+        rows = await self._fetch_rows(async_session, test_user.id, "secteurs")
+        primaries = [r for r in rows if r.is_primary]
+        assert len(primaries) == 1
+        assert primaries[0].value == "Sud"
+
+    @pytest.mark.asyncio
+    async def test_get_my_returns_primary(
+        self, client, admin_user, test_user
+    ):
+        admin_headers = _make_admin_headers(admin_user)
+        user_headers = _make_user_headers(test_user)
+        await self._create_category(client, admin_headers, primary_enabled=True)
+
+        await client.put("/api/tags/my", json={
+            "tags": {"secteurs": ["Nord", "Sud"]}, "primary": {"secteurs": "Nord"}
+        }, headers=user_headers)
+
+        response = await client.get("/api/tags/my", headers=user_headers)
+        assert response.status_code == 200
+        data = response.json()
+        assert data["primary"] == {"secteurs": "Nord"}
+        assert data["tags"]["secteurs"] == ["Nord", "Sud"]
+
+
+class TestOnboardingReason:
+    """GET /my?with_reason=1 — raison d'onboarding calculée serveur (spéc §5)."""
+
+    @pytest.mark.skip(reason="implémenté en Task 5")
+    @pytest.mark.asyncio
+    async def test_placeholder(self):
+        pass
 
 
 class TestUserTagsAcknowledge:

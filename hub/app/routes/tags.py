@@ -7,7 +7,7 @@ Routes pour la gestion des tags utilisateur globaux.
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, delete
+from sqlalchemy import select, delete, update
 from sqlalchemy.orm import selectinload
 from datetime import timedelta
 import httpx
@@ -49,6 +49,7 @@ async def _get_user_tags(db: AsyncSession, user_id: int) -> dict[str, list[str]]
         select(UserTag)
         .options(selectinload(UserTag.category))
         .where(UserTag.user_id == user_id)
+        .order_by(UserTag.id)  # ordre d'insertion : stable avec l'upsert diff
     )
     tags: dict[str, list[str]] = {}
     for ut in result.scalars():
@@ -65,6 +66,124 @@ async def _get_user_seen(db: AsyncSession, user_id: int) -> list[str]:
         .where(UserTagSeen.user_id == user_id, TagCategory.is_active == True)
     )
     return [row[0] for row in result.all()]
+
+
+async def _get_user_primary(db: AsyncSession, user_id: int) -> dict[str, str]:
+    """Secteur principal de l'utilisateur : {category_slug: value}.
+
+    Catégories actives + primary_enabled uniquement (cohérent avec
+    User.get_tags_primary côté claims JWT).
+    """
+    result = await db.execute(
+        select(UserTag)
+        .options(selectinload(UserTag.category))
+        .where(UserTag.user_id == user_id, UserTag.is_primary == True)  # noqa: E712
+    )
+    primary: dict[str, str] = {}
+    for ut in result.scalars():
+        if ut.category.is_active and ut.category.primary_enabled:
+            primary[ut.category.slug] = ut.value
+    return primary
+
+
+async def _apply_user_tags(
+    db: AsyncSession,
+    user_id: int,
+    tags: dict[str, list[str]],
+    valid_categories: dict[str, TagCategory],
+    primary: dict[str, str | None] | None = None,
+) -> tuple[dict[str, list[str]], dict[str, list[str]]]:
+    """Upsert diff des tags d'un utilisateur + pose de la primaire.
+
+    - Valeurs hors snapshot (`cat.values`) → `ignored[slug]`, jamais d'erreur
+      (valeurs obsolètes suite à un renommage/réimport côté source) ;
+    - Catégorie inconnue ou inactive → ignorée silencieusement (les choix
+      existants sur catégories désactivées sont préservés — pas de delete-all) ;
+    - Écriture ciblée : seules les lignes ajoutées/retirées sont touchées
+      (`created_at` préservé sur les lignes inchangées) ;
+    - `primary[slug]` : reset `is_primary` sur la (user, catégorie) puis pose
+      sur la valeur désignée (respecte l'index partiel unique) ;
+      `primary[slug] = None` → suppression explicite.
+
+    Retourne (stored_tags, ignored). Ne commite pas : la route commite.
+    """
+    stored: dict[str, list[str]] = {}
+    ignored: dict[str, list[str]] = {}
+
+    for slug, selected_values in (tags or {}).items():
+        cat = valid_categories.get(slug)
+        if cat is None:
+            # Catégorie inconnue ou inactive : ignorée silencieusement.
+            continue
+        allowed = set(cat.values or [])
+        kept: list[str] = []
+        rejected: list[str] = []
+        for val in selected_values:
+            (kept.append(val) if val in allowed else rejected.append(val))
+        if rejected:
+            ignored[slug] = rejected
+        if kept:
+            stored[slug] = kept
+
+    # État existant : {category_id: {value: UserTag}}
+    result = await db.execute(select(UserTag).where(UserTag.user_id == user_id))
+    by_cat: dict[int, dict[str, UserTag]] = {}
+    for ut in result.scalars():
+        by_cat.setdefault(ut.category_id, {})[ut.value] = ut
+
+    # 1. Diff par catégorie : retraits ciblés + ajouts.
+    for slug, kept in stored.items():
+        cat = valid_categories[slug]
+        current = by_cat.get(cat.id, {})
+        for val, ut in current.items():
+            if val not in kept:
+                await db.delete(ut)
+        for val in kept:
+            if val not in current:
+                db.add(UserTag(user_id=user_id, category_id=cat.id, value=val))
+
+    # 2. Reset des primaires sur les lignes qui survivent (catégories visées).
+    primary_targets: dict[str, str | None] = {
+        slug: value for slug, value in (primary or {}).items()
+        if slug in valid_categories
+    }
+    for slug in primary_targets:
+        cat = valid_categories[slug]
+        current = by_cat.get(cat.id, {})
+        for val, ut in current.items():
+            if val in stored.get(slug, []) and ut.is_primary:
+                ut.is_primary = False
+
+    await db.flush()
+
+    # 3. Pose / suppression de la primaire (lignes fraîchement flushées).
+    for slug, value in primary_targets.items():
+        cat = valid_categories[slug]
+        if value is None:
+            # Suppression explicite : plus aucune ligne is_primary.
+            await db.execute(
+                update(UserTag)
+                .where(
+                    UserTag.user_id == user_id,
+                    UserTag.category_id == cat.id,
+                    UserTag.is_primary == True,  # noqa: E712
+                )
+                .values(is_primary=False)
+            )
+            continue
+        result = await db.execute(
+            select(UserTag).where(
+                UserTag.user_id == user_id,
+                UserTag.category_id == cat.id,
+                UserTag.value == value,
+            )
+        )
+        target = result.scalar_one_or_none()
+        if target is not None:
+            # Ligne absente (valeur filtrée comme obsolète) → primaire non posée.
+            target.is_primary = True
+
+    return stored, ignored
 
 
 # ─── Résolveur valeurs live (exemple-app) ────────────────────────
@@ -286,6 +405,7 @@ async def create_category(
         source_app_id=data.source_app_id,
         m2m_endpoint=data.m2m_endpoint,
         values=data.values,
+        primary_enabled=data.primary_enabled,
     )
     db.add(category)
     await db.commit()
@@ -442,8 +562,9 @@ async def get_my_tags(
     current_user: User = Depends(get_current_user),
 ):
     tags = await _get_user_tags(db, current_user.id)
+    primary = await _get_user_primary(db, current_user.id)
     seen = await _get_user_seen(db, current_user.id)
-    return UserTagsResponse(tags=tags, seen_categories=seen)
+    return UserTagsResponse(tags=tags, primary=primary, seen_categories=seen)
 
 
 @router.put("/my", response_model=UserTagsResponse)
@@ -452,43 +573,51 @@ async def update_my_tags(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    # Valider que toutes les catégories et valeurs existent
+    # Garde structurelle inchangée : une catégorie single-select n'accepte qu'une valeur.
     all_categories = await db.execute(
         select(TagCategory).where(TagCategory.is_active == True)
     )
     valid_categories = {c.slug: c for c in all_categories.scalars()}
 
-    for slug in data.tags:
-        if slug not in valid_categories:
-            raise HTTPException(status_code=400, detail=f"Catégorie '{slug}' introuvable ou inactive")
-
     for slug, selected_values in data.tags.items():
-        cat = valid_categories[slug]
-        allowed = set(cat.values or [])
-        for val in selected_values:
-            if val not in allowed:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"La valeur '{val}' n'est pas autorisée pour la catégorie '{slug}'"
-                )
-        if not cat.is_multiple and len(selected_values) > 1:
+        cat = valid_categories.get(slug)
+        if cat is not None and not cat.is_multiple and len(selected_values) > 1:
             raise HTTPException(
                 status_code=400,
                 detail=f"La catégorie '{slug}' n'accepte qu'une seule valeur"
             )
 
-    await db.execute(
-        delete(UserTag).where(UserTag.user_id == current_user.id)
+    # Validation primaire — seul cas 400 métier avec la garde single-select :
+    # (a) la valeur doit figurer dans tags[slug] du même payload,
+    # (b) la catégorie doit être primary_enabled.
+    if data.primary:
+        for slug, value in data.primary.items():
+            if value is None:
+                continue  # suppression explicite : rien à valider
+            cat = valid_categories.get(slug)
+            if cat is None or not cat.primary_enabled:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"La catégorie '{slug}' n'accepte pas de secteur principal"
+                )
+            if slug not in data.tags or value not in data.tags[slug]:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"Le secteur principal '{value}' doit faire partie des "
+                        f"valeurs cochées pour '{slug}'"
+                    )
+                )
+
+    # Upsert diff : valeurs inconnues filtrées dans `ignored`, catégories
+    # inactives préservées (jamais de delete-all).
+    stored, ignored = await _apply_user_tags(
+        db, current_user.id, data.tags, valid_categories, data.primary
     )
-
-    for slug, selected_values in data.tags.items():
-        cat = valid_categories[slug]
-        for val in selected_values:
-            db.add(UserTag(user_id=current_user.id, category_id=cat.id, value=val))
-
     await db.commit()
 
     tags = await _get_user_tags(db, current_user.id)
+    primary = await _get_user_primary(db, current_user.id)
     seen = await _get_user_seen(db, current_user.id)
 
     notify_event("tags_updated", {
@@ -497,7 +626,9 @@ async def update_my_tags(
         "username": current_user.username,
     })
 
-    return UserTagsResponse(tags=tags, seen_categories=seen)
+    return UserTagsResponse(
+        tags=tags, primary=primary, ignored=ignored, seen_categories=seen
+    )
 
 
 @router.post("/my/acknowledge", response_model=UserTagsAcknowledgeResponse)
