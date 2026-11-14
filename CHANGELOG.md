@@ -5,6 +5,29 @@
 
 ---
 
+## [3.88.2] - 14 novembre 2026
+
+### ⚡ Hygiène tests : éradication des `get_settings.cache_clear()` résiduels
+
+- `test_vpn.py` : les 4 `cache_clear()` (fixture `vpn_temp_dir`,
+  `test_download_config`) remplacés par un patch ciblé du singleton via
+  `monkeypatch.setattr` — les routes VPN lisent la config à la requête
+  (`vpn.py:136,239,263`), le patch suffit et se restaure au teardown.
+  Le `cache_clear` y jouait un rôle de pansement accidentel : il masquait
+  une fuite d'état (voir ci-dessous).
+- Dette cachée révélée par la suppression du pansement :
+  `test_github_catalog.py` mutait `settings.github_token` sans snapshot →
+  fuite vers `test_workshop_service::test_github_token_from_db`
+  (`deploy_service._get_github_token` fait gagner le champ sur la DB).
+  Fix : `github_token` ajouté au snapshot de la fixture `settings` (conftest).
+- Vérifié sans risque : `get_instance_id.cache_clear()` de test_config_ports
+  (aucune capture module-level, preuves grep) ; pattern documenté de
+  `test_pki_wildcard.py` inchangé.
+- Suite complète : 1685 passed, 1 skipped, 0 failed (comptage identique
+  à la 3.88.1). Test-only — zéro code runtime modifié.
+
+---
+
 ## [3.88.1] - 14 novembre 2026
 
 ### 📣 Pour les utilisateurs
