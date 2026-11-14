@@ -493,6 +493,7 @@ class TestPutMy:
         result = await async_session.execute(
             select(UserTag)
             .options(selectinload(UserTag.category))
+            .join(UserTag.category)
             .where(UserTag.user_id == user_id, TagCategory.slug == slug)
         )
         return result.scalars().all()
