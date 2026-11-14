@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (C) 2026 POULIDOR Audit & Développement (Valérian Poulidor)
 
+import asyncio
 import jwt
 import secrets
 import hashlib
@@ -16,7 +17,18 @@ from sqlalchemy.orm import selectinload
 from app.config import get_settings
 from app import jwt_keyring
 from app.database import get_db
-from app.models import User, ServiceAccount, RefreshToken, RevokedToken, UserAppRole, UserTag, PasswordResetCode, utcnow
+from app.models import (
+    User,
+    ServiceAccount,
+    RefreshToken,
+    RevokedToken,
+    UserAppRole,
+    UserTag,
+    PasswordResetCode,
+    OAuthAuthorizationCode,
+    OAuthRefreshToken,
+    utcnow,
+)
 
 settings = get_settings()
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -26,6 +38,16 @@ optional_oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/token", auto_e
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     return pwd_context.verify(plain_password, hashed_password)
+
+
+async def verify_password_async(plain_password: str, hashed_password: str) -> bool:
+    """verify_password offloadé dans un thread (asyncio.to_thread).
+
+    Le bcrypt cost 12 dure ~200 ms : appelé en sync depuis un endpoint async,
+    il bloque l'event loop du worker unique (freeze du Hub en heure de pointe).
+    `verify_password` sync reste disponible pour les tâches de fond (main.py).
+    """
+    return await asyncio.to_thread(verify_password, plain_password, hashed_password)
 
 
 def get_password_hash(password: str) -> str:
@@ -130,7 +152,7 @@ def create_access_token(
 
     token = jwt.encode(
         payload,
-        jwt_keyring.get_active_private_pem(),
+        jwt_keyring.get_active_private_key(),
         algorithm=settings.jwt_algorithm,
         headers=headers
     )
@@ -155,7 +177,7 @@ def create_reset_token(username: str, hashed_password: str) -> str:
     }
     return jwt.encode(
         payload,
-        jwt_keyring.get_active_private_pem(),
+        jwt_keyring.get_active_private_key(),
         algorithm=settings.jwt_algorithm,
         headers={"kid": jwt_keyring.get_active_kid()},
     )
@@ -205,8 +227,13 @@ async def create_refresh_token(
     )
     
     db.add(refresh_token)
-    await db.commit()
-    
+    # flush (pas commit) : le commit final appartient à l'appelant — rotation
+    # (auth.rotate_refresh_token), login/launch (routes/auth) et auto-login
+    # (account_requests) committent tous la même session en fin de flow.
+    # La rotation est ainsi une transaction unique (1 fsync au lieu de 2, et
+    # jamais un état moitié-committé entre révocation et remplaçant).
+    await db.flush()
+
     return token
 
 
@@ -353,9 +380,30 @@ async def cleanup_expired_tokens(db: AsyncSession) -> int:
         )
         .values(replaced_by_token=None)
     )
-    
+
+    # Purge OIDC : codes d'autorisation périmés. Marge de 1 h au-delà du
+    # TTL (30 s) : jamais un code encore dans sa fenêtre d'échange.
+    oauth_code_cutoff = now - timedelta(hours=1)
+    result4 = await db.execute(
+        delete(OAuthAuthorizationCode).where(
+            OAuthAuthorizationCode.expires_at < oauth_code_cutoff
+        )
+    )
+
+    # Purge OIDC : refresh tokens OAuth expirés (expires_at NULL = sans
+    # expiration : épargné par la comparaison SQL à trois états).
+    result5 = await db.execute(
+        delete(OAuthRefreshToken).where(OAuthRefreshToken.expires_at < now)
+    )
+
     await db.commit()
-    return result1.rowcount + result2.rowcount + result3.rowcount
+    return (
+        result1.rowcount
+        + result2.rowcount
+        + result3.rowcount
+        + result4.rowcount
+        + result5.rowcount
+    )
 
 
 async def revoke_all_user_tokens(db: AsyncSession, user_id: int) -> None:

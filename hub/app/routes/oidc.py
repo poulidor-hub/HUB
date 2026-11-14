@@ -6,6 +6,7 @@
 Approche C : implémentation from-scratch avec pyjwt[crypto] déjà présent.
 Réutilise settings.jwt_private_key, JWKS endpoint, hash_token(), get_password_hash().
 """
+import asyncio
 from datetime import timedelta
 from typing import List, Optional
 from urllib.parse import urlencode, urlparse, quote
@@ -485,7 +486,7 @@ async def _authenticate_client(
     oauth_client = result.scalar_one_or_none()
     if not oauth_client or not oauth_client.is_active:
         raise HTTPException(401, "Client inconnu ou inactif")
-    if not oauth_client.check_client_secret(client_secret):
+    if not await asyncio.to_thread(oauth_client.check_client_secret, client_secret):
         raise HTTPException(401, "client_secret invalide")
     return oauth_client
 

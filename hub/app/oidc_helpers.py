@@ -102,7 +102,7 @@ def create_id_token(sub: str, username: str, client_id: str, nonce: Optional[str
 
     return pyjwt.encode(
         claims,
-        jwt_keyring.get_active_private_pem(),
+        jwt_keyring.get_active_private_key(),
         algorithm="RS256",
         headers=headers,
     )
@@ -128,7 +128,7 @@ def create_access_token_jwt(sub: str, client_id: str, scope: str,
     }
     headers = {"kid": jwt_keyring.get_active_kid()}
     return pyjwt.encode(
-        claims, jwt_keyring.get_active_private_pem(), algorithm="RS256", headers=headers
+        claims, jwt_keyring.get_active_private_key(), algorithm="RS256", headers=headers
     )
 
 
@@ -163,7 +163,7 @@ def generate_logout_token(client_id: str, sub: Optional[str],
 
     headers = {"kid": jwt_keyring.get_active_kid()}
     return pyjwt.encode(
-        claims, jwt_keyring.get_active_private_pem(), algorithm="RS256", headers=headers
+        claims, jwt_keyring.get_active_private_key(), algorithm="RS256", headers=headers
     )
 
 
@@ -215,7 +215,7 @@ def create_oidc_session_cookie(sub: str, settings) -> str:
     }
     headers = {"kid": jwt_keyring.get_active_kid()}
     return pyjwt.encode(
-        claims, jwt_keyring.get_active_private_pem(), algorithm="RS256", headers=headers
+        claims, jwt_keyring.get_active_private_key(), algorithm="RS256", headers=headers
     )
 
 

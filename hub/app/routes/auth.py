@@ -24,7 +24,7 @@ from app.schemas import (
 )
 from app.routes.events import notify_stats_update, notify_event
 from app.auth import (
-    verify_password,
+    verify_password_async,
     create_access_token,
     create_refresh_token,
     verify_refresh_token,
@@ -329,7 +329,7 @@ async def login_for_token(
         )
         service_account = result.scalar_one_or_none()
         
-        if not service_account or not verify_password(client_secret, service_account.client_secret_hash):
+        if not service_account or not await verify_password_async(client_secret, service_account.client_secret_hash):
             # Traçabilité : client_id tenté (SA introuvable OU secret invalide —
             # l'un comme l'autre, on trace ce qui a été soumis, jamais le secret).
             exc = HTTPException(
@@ -398,7 +398,7 @@ async def login_for_token(
     )
     user = result.scalar_one_or_none()
     
-    if not user or not verify_password(password, user.hashed_password):
+    if not user or not await verify_password_async(password, user.hashed_password):
         # Audit sécurité : tracer la tentative avec l'identifiant soumis,
         # même lorsque l'utilisateur n'existe pas. JAMAIS le mot de passe.
         await log_action(
@@ -539,7 +539,7 @@ async def login_with_redirect(
     )
     user = result.scalar_one_or_none()
     
-    if not user or not verify_password(login_data.password, user.hashed_password):
+    if not user or not await verify_password_async(login_data.password, user.hashed_password):
         # Audit sécurité : tracer la tentative avec l'identifiant soumis,
         # même lorsque l'utilisateur n'existe pas. JAMAIS le mot de passe.
         await log_action(
@@ -697,14 +697,14 @@ async def change_password(
         )
     
     # Vérifier l'ancien mot de passe
-    if not verify_password(password_data.current_password, current_user.hashed_password):
+    if not await verify_password_async(password_data.current_password, current_user.hashed_password):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Mot de passe actuel incorrect"
         )
     
     # Vérifier que le nouveau mot de passe est différent
-    if verify_password(password_data.new_password, current_user.hashed_password):
+    if await verify_password_async(password_data.new_password, current_user.hashed_password):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Le nouveau mot de passe doit être différent de l'ancien"
@@ -797,7 +797,7 @@ async def totp_disable(
     db: AsyncSession = Depends(get_db),
 ):
     """Désactive le TOTP après vérification du mot de passe actuel."""
-    if not verify_password(payload.current_password, current_user.hashed_password):
+    if not await verify_password_async(payload.current_password, current_user.hashed_password):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Mot de passe actuel incorrect")
 
     current_user.totp_enabled = False
@@ -841,7 +841,7 @@ async def recover_verify(
         # Fonctionne pour tout utilisateur ACTIF, 2FA ou non : l'admin a délivré
         # le code délibérément. Erreurs toutes génériques (anti-énumération).
         if not user or not user.is_active:
-            verify_password(normalize_reset_code(payload.reset_code), _RESET_CODE_DUMMY_HASH)
+            await verify_password_async(normalize_reset_code(payload.reset_code), _RESET_CODE_DUMMY_HASH)
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=_RECOVER_GENERIC_ERROR)
         row = (await db.execute(
             select(PasswordResetCode)
@@ -851,9 +851,9 @@ async def recover_verify(
             .order_by(PasswordResetCode.id.desc())
         )).scalars().first()
         if row is None:
-            verify_password(normalize_reset_code(payload.reset_code), _RESET_CODE_DUMMY_HASH)
+            await verify_password_async(normalize_reset_code(payload.reset_code), _RESET_CODE_DUMMY_HASH)
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=_RECOVER_GENERIC_ERROR)
-        if not verify_password(normalize_reset_code(payload.reset_code), row.code_hash):
+        if not await verify_password_async(normalize_reset_code(payload.reset_code), row.code_hash):
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=_RECOVER_GENERIC_ERROR)
         # Consommé IMMÉDIATEMENT (fail-safe) : un code vérifié mais jamais
         # complété oblige à demander un nouveau code à l'admin.
@@ -1313,7 +1313,7 @@ async def sso_login(
     )
     user = result.scalar_one_or_none()
     
-    if not user or not verify_password(password, user.hashed_password):
+    if not user or not await verify_password_async(password, user.hashed_password):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Identifiants incorrects"
