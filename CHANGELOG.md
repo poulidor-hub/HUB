@@ -5,6 +5,16 @@
 
 ---
 
+## [3.90.1] - 14 novembre 2026
+
+### ⚡ Fix : gitigne `secrets/atelier_token` — fin du statut « arbre sale » permanent
+
+- **`secrets/atelier_token` ajouté au `.gitignore` versionné** (à côté de `secrets/hub_instance_id`) : token runtime créé hors git par `hubctl init` (`hubctl_cli/actions.py:553`), jusqu'ici couvert uniquement par un contournement local non versionné (`.git/modules/HUB_base/info/exclude`), perdu au re-clone.
+- **Effet** : le service d'update qui calcule le statut sur le porcelain brut remontait un état « sale » permanent pour HUB_base dans l'UI Mises à jour (remède « committer ou nettoyer » inapplicable à un secret) — l'entrée versionnée survit au re-clone (prouvé en clone frais @ 8e3e385b).
+- **Complément hors dépôt** : l'harmonisation du dirty-check (filtrage des non-suivis) est faite côté hubctl (`Hubctl` 0.18.5, `update_serve.py` + `hub_state.py` alignés sur `park_checks._dirty_tracked`).
+
+---
+
 ## [3.90.0] - 14 novembre 2026
 
 ### 📣 Pour les utilisateurs
