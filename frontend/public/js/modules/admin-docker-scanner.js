@@ -263,7 +263,7 @@ function updateDockerSelectionSummary() {
     } else {
         const slugs = Object.keys(dockerGroupSelection);
         const maxShow = 3;
-        let html = slugs.slice(0, maxShow).map(s => `<span class="badge bg-info me-1">${escapeHtml(s)}</span>`).join('');
+        let html = slugs.slice(0, maxShow).map(s => `<span class="badge bg-info text-dark me-1">${escapeHtml(s)}</span>`).join('');
         if (slugs.length > maxShow) {
             html += `<span class="text-muted small">+${slugs.length - maxShow} autre(s)</span>`;
         }

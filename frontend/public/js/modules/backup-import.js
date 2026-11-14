@@ -347,7 +347,7 @@ function displayImportResult(result) {
             <div class="text-center p-2 border rounded">
                 <div class="small text-muted">Utilisateurs</div>
                 <span class="badge bg-success">${result.users_created || 0} créés</span>
-                <span class="badge bg-info">${result.users_updated || 0} maj</span>
+                <span class="badge bg-info text-dark">${result.users_updated || 0} maj</span>
                 <span class="badge bg-secondary">${result.users_skipped || 0} skip</span>
             </div>
         </div>
@@ -355,7 +355,7 @@ function displayImportResult(result) {
             <div class="text-center p-2 border rounded">
                 <div class="small text-muted">Applications</div>
                 <span class="badge bg-success">${result.apps_created || 0} créées</span>
-                <span class="badge bg-info">${result.apps_updated || 0} maj</span>
+                <span class="badge bg-info text-dark">${result.apps_updated || 0} maj</span>
                 <span class="badge bg-secondary">${result.apps_skipped || 0} skip</span>
             </div>
         </div>
@@ -363,7 +363,7 @@ function displayImportResult(result) {
             <div class="text-center p-2 border rounded">
                 <div class="small text-muted">Service Accounts</div>
                 <span class="badge bg-success">${result.service_accounts_created || 0} créés</span>
-                <span class="badge bg-info">${result.service_accounts_updated || 0} maj</span>
+                <span class="badge bg-info text-dark">${result.service_accounts_updated || 0} maj</span>
                 <span class="badge bg-secondary">${result.service_accounts_skipped || 0} skip</span>
             </div>
         </div>

@@ -358,7 +358,7 @@ async function loadAppBackupsOverview() {
                     modeBadge = '<span class="badge bg-secondary">Désactivé</span>';
                     break;
                 case 'manual':
-                    modeBadge = '<span class="badge bg-info">Manuel</span>';
+                    modeBadge = '<span class="badge bg-info text-dark">Manuel</span>';
                     break;
                 case 'scheduled':
                     modeBadge = `<span class="badge bg-success">Planifié</span>`;
