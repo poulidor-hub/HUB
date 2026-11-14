@@ -718,10 +718,22 @@ class HubAPI {
         });
     }
 
-    async getMyTags() {
-        return this.request('/tags/my');
+    /**
+     * Préférences de l'utilisateur courant.
+     * @param {boolean} withReason - ajoute ?with_reason=1 : la réponse inclut
+     *        onboarding_reason ("newcat" | "primary_lost" | "primary_missing" |
+     *        "onboarding" | null), calculé côté serveur.
+     */
+    async getMyTags(withReason = false) {
+        return this.request(`/tags/my${withReason ? '?with_reason=1' : ''}`);
     }
 
+    /**
+     * Enregistre secteurs gérés + secteur principal. Retourne la réponse
+     * complète : { tags, primary, seen_categories, ignored } — valeurs
+     * inconnues filtrées par le serveur (jamais de 400), `ignored` listant
+     * les rejets par catégorie.
+     */
     async updateMyTags(data) {
         return this.request('/tags/my', {
             method: 'PUT', body: JSON.stringify(data)

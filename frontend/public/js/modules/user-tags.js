@@ -97,6 +97,87 @@ function buildPrefFieldHTML(cat, selected, idPrefix) {
     </div>`;
 }
 
+// ===== Secteur principal (radios ★ parmi les valeurs cochées en ①) =====
+
+/** Métadonnées des catégories primary_enabled vues à la construction (slug → catégorie). */
+const _prefPrimaryCats = {};
+
+/**
+ * Construit la section « Secteur principal » d'une catégorie primary_enabled :
+ * radios ★ (même style chips) parmi les valeurs cochées. Affiche un message
+ * tant qu'aucune valeur n'est cochée en ①.
+ * @param {Object} cat - catégorie ({slug, label, ...})
+ * @param {Array} selectedValues - valeurs cochées en ①
+ * @param {string|null} primaryValue - primaire courante (null = aucune)
+ * @param {string} idPrefix - préfixe du groupe radio (unique par conteneur :
+ *        page / modale) pour éviter tout couplage document-wide des radios
+ * @returns {string} HTML
+ */
+function buildPrimaryFieldHTML(cat, selectedValues, primaryValue, idPrefix = 'prefPrimary') {
+    const slug = cat.slug;
+    if (slug) _prefPrimaryCats[slug] = cat;
+    const prefix = idPrefix || 'prefPrimary';
+    const sel = Array.isArray(selectedValues) ? selectedValues : [];
+    const groupName = prefix + '_primary_' + slug;
+    const body = sel.length === 0
+        ? '<p class="pref-primary-empty text-muted small mb-0">Cochez d\'abord vos choix ci-dessus pour désigner un secteur principal.</p>'
+        : `<div class="pref-chips">${sel.map(val => {
+            const checked = val === primaryValue ? ' checked' : '';
+            return `<label class="pref-chip">
+                <input type="radio" name="${groupName}" value="${escapeAttr(val)}" data-primary-category="${escapeAttr(slug)}"${checked}>
+                <i class="bi bi-star-fill pref-chip-check" aria-hidden="true"></i><span>${escapeHtml(val)}</span>
+            </label>`;
+        }).join('')}</div>`;
+    return `<div class="pref-primary mt-2" data-primary-slug="${escapeAttr(slug)}" data-primary-prefix="${escapeAttr(prefix)}" role="radiogroup" aria-label="Secteur principal — ${escapeAttr(cat.label || slug)}">
+        <div class="text-secondary small mb-1"><i class="bi bi-star-fill text-warning me-1" aria-hidden="true"></i>Secteur principal</div>
+        ${body}
+    </div>`;
+}
+
+/**
+ * Lit les radios « secteur principal » cochés d'un conteneur.
+ * Les radios portent data-primary-category (et non data-category) pour rester
+ * hors de collectTagsFromForm — la primaire appartient au payload `primary`.
+ * @param {Element} rootEl - conteneur (défaut : document)
+ * @returns {Object} { category_slug: value }
+ */
+function collectPrimaryFromForm(rootEl) {
+    const scope = (rootEl && typeof rootEl.querySelectorAll === 'function') ? rootEl : document;
+    const primary = {};
+    scope.querySelectorAll('.pref-primary input[type="radio"]:checked').forEach(input => {
+        const cat = input.getAttribute('data-primary-category');
+        if (cat && input.value) primary[cat] = input.value;
+    });
+    return primary;
+}
+
+/**
+ * Reconstruit les radios « principal » d'une catégorie après un changement des
+ * chips/sélecteur : la primaire ne peut viser que les valeurs encore cochées.
+ * La sélection courante est conservée si elle reste cochée.
+ * @param {Element} el - input modifié (data-category) ou champ (.pref-select)
+ */
+function prefRebuildPrimaryAround(el) {
+    if (!el) return;
+    const slug = el.getAttribute('data-category') || el.getAttribute('data-pref-slug');
+    if (!slug) return;
+    const root = el.closest('[data-pref-root]');
+    if (!root) return;
+    const container = root.querySelector(`.pref-primary[data-primary-slug="${CSS.escape(slug)}"]`);
+    if (!container) return; // catégorie sans section primaire (primary_enabled=0)
+    const selected = [...root.querySelectorAll(`input[data-category="${CSS.escape(slug)}"]:checked`)].map(i => i.value);
+    const prev = container.querySelector('input[type="radio"]:checked');
+    const primary = (prev && selected.includes(prev.value)) ? prev.value : null;
+    container.innerHTML = buildPrimaryFieldHTML(
+        _prefPrimaryCats[slug] || { slug, label: slug },
+        selected,
+        primary,
+        container.getAttribute('data-primary-prefix') || 'prefPrimary'
+    );
+    // Notifie le conteneur (la modale de préférences met à jour son bouton).
+    root.dispatchEvent(new CustomEvent('pref:changed', { bubbles: true }));
+}
+
 // ─── Interactions (délégation data-action) ────────────────────────
 
 /** Recherche instantanée insensible à la casse et aux accents (event input). */
@@ -134,6 +215,7 @@ function prefSelectRemove(btnEl, slug, value) {
     const input = [...field.querySelectorAll('.pref-select-list input')].find(i => i.value === value);
     if (input) input.checked = false;
     prefSyncFieldByContainer(field);
+    prefRebuildPrimaryAround(field);
 }
 
 /** Lien « Tout effacer » (catégories multiples uniquement). */
@@ -142,11 +224,13 @@ function prefSelectClear(btnEl, slug) {
     if (!field) return;
     field.querySelectorAll('.pref-select-list input:checked').forEach(i => { i.checked = false; });
     prefSyncFieldByContainer(field);
+    prefRebuildPrimaryAround(field);
 }
 
 /** Change natif d'un input chips/sélecteur (souris ou clavier). */
 function prefFieldChange(inputEl) {
     prefSyncFieldByContainer(inputEl.closest('.pref-select, .pref-card'));
+    prefRebuildPrimaryAround(inputEl);
 }
 
 // Listener dédié : PAS de data-action sur ces inputs — le délégué click global
@@ -155,6 +239,11 @@ function prefFieldChange(inputEl) {
 document.addEventListener('change', (e) => {
     if (e.target.matches('.pref-chip input[data-category], .pref-select-option input[data-category]')) {
         prefFieldChange(e.target);
+    } else if (e.target.matches('.pref-primary input[type="radio"]')) {
+        // Radio « secteur principal » : pas de rebuild (les radios ne filtrent
+        // pas les chips), juste l'autosave de la page le cas échéant.
+        const pageRoot = e.target.closest('[data-pref-autosave]');
+        if (pageRoot) prefAutosave(pageRoot);
     }
 });
 
