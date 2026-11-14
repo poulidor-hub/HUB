@@ -264,7 +264,9 @@ function renderErrorsTable(data) {
 
 /**
  * Cellule « Utilisateur » : affiche l'appelant de l'erreur —
- * username (user), client_id tronqué avec badge M2M (service account), ou fallback id.
+ * username (user), client_id tronqué avec badge M2M (service account),
+ * client_id tenté avec badge « M2M tenté » (échec d'auth M2M, non authentifié),
+ * ou fallback id.
  */
 function errorActorHtml(e) {
     if (e.username) return `<i class="bi bi-person me-1"></i>${escapeHtml(e.username)}`;
@@ -272,6 +274,13 @@ function errorActorHtml(e) {
     if (cid) {
         const short = cid.length > 18 ? cid.slice(0, 15) + '…' : cid;
         return `<span class="badge bg-dark me-1">M2M</span><code title="${escapeHtml(cid)}">${escapeHtml(short)}</code>`;
+    }
+    // Identité TENTÉE sur échec d'auth M2M (SA désactivé / inconnu / rate limit) :
+    // pas d'acteur authentifié, mais on sait qui a tenté — marqueur distinct.
+    const attempted = e.attempted_client_id;
+    if (attempted) {
+        const short = attempted.length > 18 ? attempted.slice(0, 15) + '…' : attempted;
+        return `<span class="badge bg-dark me-1">M2M tenté</span><code title="${escapeHtml(attempted)}">${escapeHtml(short)}</code>`;
     }
     if (e.user_id) return `ID: ${e.user_id}`;
     if (e.service_account_id) return `SA #${e.service_account_id}`;

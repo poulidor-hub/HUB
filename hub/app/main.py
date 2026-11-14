@@ -742,7 +742,8 @@ async def _log_error_to_db(
     error_code: int,
     error_type: str,
     error_message: str,
-    stack: str = None
+    stack: str = None,
+    attempted_client_id: str = None
 ):
     """
     Fonction helper pour logger une erreur dans la table error_logs.
@@ -769,6 +770,9 @@ async def _log_error_to_db(
                 source_app_slug=source_app_slug,
                 request_method=request.method,
                 request_path=str(request.url.path)[:255],
+                # Identifiant public tenté sur échec d'auth M2M (jamais le secret),
+                # tronqué à la taille de la colonne par sécurité.
+                attempted_client_id=attempted_client_id[:255] if attempted_client_id else None,
                 ip_address=request.client.host if request.client else None,
                 user_agent=request.headers.get("User-Agent", "")[:255],
                 stack_trace=stack
@@ -817,7 +821,14 @@ async def http_exception_handler(request: Request, exc: StarletteHTTPException):
         elif error_code == 401 and str(request.url.path) == "/api/events/stream":
             should_log = False
         if should_log:
-            await _log_error_to_db(request, error_code, error_type, error_message)
+            # Traçabilité M2M : les échecs d'auth /api/auth/token attachent le
+            # client_id tenté à leur HTTPException (jamais le client_secret) —
+            # cf. incident 09/11/2026 (SA désactivé martelé en 403, non identifiable).
+            attempted_client_id = getattr(exc, "attempted_client_id", None)
+            await _log_error_to_db(
+                request, error_code, error_type, error_message,
+                attempted_client_id=attempted_client_id
+            )
     
     return JSONResponse(
         status_code=error_code,

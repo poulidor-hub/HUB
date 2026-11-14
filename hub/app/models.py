@@ -532,6 +532,10 @@ class ErrorLog(Base):
     user_id = Column(Integer, ForeignKey('users.id', ondelete='SET NULL'), nullable=True)
     service_account_id = Column(Integer, ForeignKey('service_accounts.id', ondelete='SET NULL'), nullable=True)
     source_app_slug = Column(String(50), index=True, nullable=True)
+    # Identifiant public TENTÉ sur échec d'auth M2M (jamais le client_secret) :
+    # permet d'identifier QUI martèle /api/auth/token alors que l'auth a échoué
+    # (SA désactivé, client_id inconnu, rate limit) et que service_account_id reste NULL.
+    attempted_client_id = Column(String(255), nullable=True)
     
     request_method = Column(String(10))
     request_path = Column(String(255), index=True)

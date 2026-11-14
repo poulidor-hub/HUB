@@ -5,6 +5,24 @@
 
 ---
 
+## [3.88.0] - 14 novembre 2026
+
+### ⚡ Audit erreurs : colonne `attempted_client_id` — identifier l'appelant d'un échec d'auth M2M
+
+- `error_logs` gagne `attempted_client_id VARCHAR(255) NULL` (migration 066,
+  modèle `ErrorLog` enrichi).
+- Les 3 sites d'échec M2M de `/api/auth/token` (401 identifiants invalides,
+  403 SA désactivé, 429 rate-limit) attachent le `client_id` tenté à la
+  `HTTPException` ; le handler global le transmet à `_log_error_to_db`
+  (jamais le client_secret). Les autres grants ne tracent rien (NULL).
+- GET /api/audit/errors expose le champ ; l'UI (colonne « Utilisateur »)
+  affiche un badge « M2M tenté » + client_id tronqué quand seul ce champ
+  identifie l'appelant.
+- Motivation : la boucle de 186 × 403 « Service account désactivé » du
+  10-13/11 n'était pas attribuable depuis error_logs (ni client_id ni body).
+
+---
+
 ## [3.87.9] - 14 novembre 2026
 
 ### ⚡ Fix UI : collision globale `renderPagination` — « undefined » affiché dans les paginations
