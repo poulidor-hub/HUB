@@ -5,6 +5,16 @@
 
 ---
 
+## [3.91.1] - 14 novembre 2026
+
+### ⚡ Fix contraste des badges `bg-info` (text-dark)
+
+- **Cause racine** : `.badge` impose `color: #fff` (bootstrap.min.css 5.3.2) et `bg-info` ne colore que le fond — tout contenu (glyphe ou texte) s'affichait en blanc sur cyan, quasi invisible à 0.75em. Le cas signalé : le glyphe `bi-share` du badge « API partagée » (admin-apps.js:588), interprété à tort comme un échec de chargement de la police bootstrap-icons (exclu : `\f52e` présent dans le woff2 vendored, servi 200, aucun header CSP effectivement envoyé — cf. héritage `add_header` nginx).
+- **Fix** : ajout de `text-dark` sur 12 badges `bg-info` (admin-apps, audit-errors ×3 dont badge code 404, app-backups, backup-import ×3, admin-docker-scanner, admin-user-tags, index.html ×2) — harmonisation sur le pattern `bg-info text-dark` déjà utilisé ailleurs (admin-vault, notifications, admin-routing, admin-users-profiles).
+- **Hors périmètre** : le `modal-header bg-info text-white` (index.html) est conservé (choix de design grand format).
+
+---
+
 ## [3.91.0] - 14 novembre 2026
 
 ### 📣 Pour les utilisateurs
