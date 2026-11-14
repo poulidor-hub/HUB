@@ -37,6 +37,39 @@ class TestUsersEndpoints:
         assert len(users) >= 2  # admin + test_user
     
     @pytest.mark.asyncio
+    async def test_list_users_profiles_sorted_alphabetically(
+        self, client: AsyncClient, admin_user: User, test_user: User, async_session: AsyncSession
+    ):
+        """Les profils d'un user sont retournés triés par nom, quel que soit
+        l'ordre d'attribution des droits (lisibilité colonne « Profil »)."""
+        # Attribution volontairement dans le désordre : Zeta, Alpha, Milieu
+        for name in ("Zeta", "Alpha", "Milieu"):
+            profile = Profile(name=name, description=f"Profil {name}", color="#123456")
+            async_session.add(profile)
+            await async_session.commit()
+            await async_session.refresh(profile)
+            await async_session.execute(
+                user_profiles.insert().values(user_id=test_user.id, profile_id=profile.id)
+            )
+            await async_session.commit()
+
+        token, _, _ = create_access_token(
+            username=admin_user.username,
+            apps={}
+        )
+
+        response = await client.get(
+            "/api/users/",
+            headers=get_auth_header(token)
+        )
+
+        assert response.status_code == 200
+        users = response.json()
+        target = next(u for u in users if u["username"] == test_user.username)
+        profile_names = [p["name"] for p in target["profiles"]]
+        assert profile_names == ["Alpha", "Milieu", "Zeta"]
+
+    @pytest.mark.asyncio
     async def test_list_users_forbidden_for_user(self, client: AsyncClient, test_user: User):
         """User standard ne peut pas lister les utilisateurs"""
         token, _, _ = create_access_token(
@@ -496,6 +529,37 @@ class TestM2MBulkUserRoles:
         assert data[second_user.username]["apps"] == [
             {"app_slug": "test-app", "role": "user"}
         ]
+
+    @pytest.mark.asyncio
+    async def test_m2m_bulk_roles_profiles_sorted_alphabetically(
+        self,
+        client: AsyncClient,
+        async_session,
+        service_account,
+        test_user: User,
+    ):
+        """Le endpoint M2M retourne aussi les profils triés par nom."""
+        for name in ("Zeta", "Alpha", "Milieu"):
+            profile = Profile(name=name, description=f"Profil {name}", color="#123456")
+            async_session.add(profile)
+            await async_session.commit()
+            await async_session.refresh(profile)
+            await async_session.execute(
+                user_profiles.insert().values(user_id=test_user.id, profile_id=profile.id)
+            )
+            await async_session.commit()
+
+        token = await self._get_service_account_token(client, service_account)
+        response = await client.post(
+            "/api/users/m2m/app-roles/bulk",
+            json={"identifiers": [test_user.username]},
+            headers=get_auth_header(token),
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        profile_names = [p["name"] for p in data[test_user.username]["profiles"]]
+        assert profile_names == ["Alpha", "Milieu", "Zeta"]
 
     @pytest.mark.asyncio
     async def test_m2m_bulk_roles_forbidden_for_human_user(self, client: AsyncClient, test_user: User):
