@@ -139,10 +139,33 @@ async def compute_dashboard_stats(db) -> dict:
     }
 
 
-async def broadcast_stats_update():
-    """
-    Calcule et diffuse les statistiques légères à tous les clients.
-    """
+# =============================================================================
+# THROTTLE DU BROADCAST stats_updated (anti-tempête SSE)
+# =============================================================================
+# Chaque notify_stats_update (login/logout/cleanup en série) déclenchait un
+# recalcul SQL + un broadcast stats_updated : tempêtes SSE mesurées en heure
+# de pointe. Fenêtre glissante : au plus 1 diffusion par 5 s ; les appels
+# tombés dans la fenêtre marquent `pending` et une tâche différée re-diffuse
+# à la fin — le DERNIER événement d'une rafale est toujours diffusé.
+# Les événements ciblés (send_to_user) et les autres types (broadcast_event)
+# ne sont PAS throttlés.
+STATS_BROADCAST_WINDOW_S = 5.0
+_FLUSH_POLL_S = 0.05  # granularité du sommeil du flush (réévalue l'horloge)
+
+_last_stats_broadcast: float = 0.0
+_stats_pending: bool = False
+_stats_flush_task: Optional[asyncio.Task] = None
+_stats_lock = asyncio.Lock()
+
+
+def _now() -> float:
+    """Horloge du throttle stats (monotonic) — isolée pour être
+    monkeypatchable dans les tests (avancer la fenêtre sans dormir 5 s)."""
+    return time.monotonic()
+
+
+async def _do_broadcast_stats() -> None:
+    """Calcule et diffuse les statistiques légères à tous les clients SSE."""
     from app.database import async_session_maker
 
     try:
@@ -153,6 +176,62 @@ async def broadcast_stats_update():
             await broadcast_event("stats_updated", stats)
     except Exception as e:
         logger.warning(f"⚠️ Erreur calcul stats SSE: {e}")
+
+
+async def _flush_pending_stats() -> None:
+    """Flush final du throttle : à la fin de la fenêtre, re-diffuse les stats
+    si des événements ont été supprimés pendant celle-ci. Garantit que le
+    DERNIER événement d'une rafale est toujours diffusé."""
+    global _stats_pending, _stats_flush_task, _last_stats_broadcast
+    try:
+        while True:
+            async with _stats_lock:
+                if not _stats_pending:
+                    _stats_flush_task = None
+                    return
+                wait = max(
+                    0.0,
+                    _last_stats_broadcast + STATS_BROADCAST_WINDOW_S - _now(),
+                )
+            if wait > 0:
+                # Sommeil par tranches courtes : réévalue l'horloge (tests)
+                # et reste réactif à un reset du pending.
+                await asyncio.sleep(min(wait, _FLUSH_POLL_S))
+                continue
+            async with _stats_lock:
+                if not _stats_pending:
+                    _stats_flush_task = None
+                    return
+                _stats_pending = False
+                _last_stats_broadcast = _now()
+            await _do_broadcast_stats()
+            # Boucle : si du pending est arrivé pendant la diffusion,
+            # la fenêtre fraîchement ouverte sera flushée à son tour.
+    except asyncio.CancelledError:
+        raise
+
+
+async def broadcast_stats_update() -> None:
+    """Calcule et diffuse les statistiques légères à tous les clients.
+
+    Throttle 5 s : le premier appel hors fenêtre diffuse immédiatement, les
+    suivants marquent `pending` ; une tâche différée re-diffuse à la fin de
+    la fenêtre (flush final — le dernier événement d'une rafale n'est jamais
+    perdu). Signature inchangée.
+    """
+    global _last_stats_broadcast, _stats_pending, _stats_flush_task
+    async with _stats_lock:
+        now = _now()
+        if now - _last_stats_broadcast < STATS_BROADCAST_WINDOW_S:
+            # Fenêtre ouverte : pas de diffusion immédiate, flush final armé
+            _stats_pending = True
+            if _stats_flush_task is None or _stats_flush_task.done():
+                _stats_flush_task = asyncio.get_running_loop().create_task(
+                    _flush_pending_stats()
+                )
+            return
+        _last_stats_broadcast = now
+    await _do_broadcast_stats()
 
 
 def notify_stats_update():
