@@ -5,6 +5,24 @@
 
 ---
 
+## [3.90.0] - 14 novembre 2026
+
+### 📣 Pour les utilisateurs
+- **Amélioré** : ouverture des applications nettement plus rapide aux heures de pointe (plusieurs secondes gagnées par ouverture).
+- **Amélioré** : le portail Hub se charge désormais entièrement depuis le serveur (plus d'attente sur des ressources externes) et réutilise les fichiers déjà téléchargés.
+- **Corrigé** : les sessions multi-onglets restent stables lors des rafraîchissements simultanés.
+
+### ⚡ Perf : fin du goulot CPU sérialisé à l'ouverture des apps (80+ utilisateurs)
+- **Cache mémoire de la clé privée RSA** (`jwt_keyring.py` : `_private_key_cache` + `get_active_private_key()`) — fin de la relecture disque + re-parse à chaque mint (~250 ms/mint sur RSA-4096) ; purge couvre `reload()` et toute mutation du manifest (`_save_entries`).
+- **bcrypt + secret client en thread pool** (`verify_password_async` via `asyncio.to_thread`, 10 sites + `check_client_secret` OIDC) — plus aucun gel de l'event loop.
+- **Migration 067** : purge automatique de `oauth_authorization_codes` (>1 h) et `oauth_refresh_tokens` (expirés) dans `cleanup_expired_tokens` + index hot-path : `refresh_tokens(user_id)`, `user_sessions(user_id) WHERE logout_at IS NULL`, `expires_at` des 2 tables OAuth.
+- **Rotation du refresh token en une seule transaction** (`create_refresh_token` : commit intermédiaire → flush) — crash-consistance améliorée (révocation + remplaçant committés ensemble) ; période de grâce inter-onglets préservée (test de re-délivrance).
+- **Throttle 5 s du broadcast SSE `stats_updated`** (fenêtre ancrée + flush final garanti ; `notify_event`/`send_to_user` ciblés non throttlés) — casse les tempêtes auto-amplifiées post-login.
+- **Frontend** : bootstrap@5.3.2/bootstrap-icons@1.11.2/echarts@5.5.1 vendored localement (fin du CDN jsdelivr bloquant, SRI retirés car git-épinglés) + cache 7 jours des assets versionnés `?v=` (`Cache-Control: public, max-age=604800, stale-while-revalidate=86400`, sans `always` → les 404 ne sont pas cachables) + `location ^~ /api/` ; `index.html` reste no-cache.
+- **Vérifié en stack de test isolée (`pouly-test`)** : jwks cold 40 ms → warm 1 ms ; `POST /launch` 30 ms ; burst 20 refreshes moyenne 14,9 ms (rotation single-commit confirmée en DB) ; migration 067 + 4 index appliqués sur volume frais ; suite in-container 1639 passed (1 échec préexistant `origin/main` : chmod root).
+
+---
+
 ## [3.89.0] - 14 novembre 2026
 
 ### ⚡ Admin : graphe des dépendances inter-apps lisible + vue matrice
