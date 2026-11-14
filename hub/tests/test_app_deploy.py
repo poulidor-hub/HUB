@@ -608,13 +608,9 @@ async def test_apps_host_path_setting_default(settings):
 @pytest.mark.asyncio
 async def test_apps_host_path_env_override(monkeypatch):
     """APPS_HOST_PATH est lu depuis l'environnement (injecté par compose)."""
-    from app.config import get_settings
+    from app.config import Settings
     monkeypatch.setenv("APPS_HOST_PATH", "/srv/poulidor/APPS")
-    get_settings.cache_clear()
-    try:
-        assert get_settings().apps_host_path == "/srv/poulidor/APPS"
-    finally:
-        get_settings.cache_clear()
+    assert Settings().apps_host_path == "/srv/poulidor/APPS"
 
 
 @pytest.mark.asyncio
