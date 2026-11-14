@@ -307,16 +307,28 @@ function setPrefSaveStatus(state) {
     el.textContent = '';
 }
 
-/** Autosave debouncé : relit tout le formulaire et envoie l'objet complet. */
+/**
+ * Autosave debouncé : relit tout le formulaire (tags + primaire) et envoie
+ * l'objet complet. Resynchronise le cache local depuis la réponse serveur et
+ * signale les valeurs obsolètes rejetées (`ignored`).
+ */
 function prefAutosave(pageRoot) {
     setPrefSaveStatus('pending');
     clearTimeout(_prefSaveTimer);
     _prefSaveTimer = setTimeout(async () => {
         const tags = collectTagsFromForm('#' + pageRoot.id);
+        const primary = collectPrimaryFromForm(pageRoot);
         const seq = ++_prefSaveSeq;
         try {
-            await api.updateMyTags({ tags });
-            if (seq === _prefSaveSeq) setPrefSaveStatus('saved');
+            const resp = await api.updateMyTags({ tags, primary });
+            if (seq === _prefSaveSeq) {
+                setPrefSaveStatus('saved');
+                if (_prefDataCache) {
+                    _prefDataCache.myTags = resp.tags || tags;
+                    _prefDataCache.primary = resp.primary || {};
+                }
+                prefNotifyIgnored(resp.ignored);
+            }
         } catch (e) {
             if (seq === _prefSaveSeq) {
                 setPrefSaveStatus('error');
@@ -395,22 +407,24 @@ function renderPrefsPage(categories, myTags) {
 
 // ===== Popup d'onboarding Préférences =====
 
-let _prefDataCache = null;            // { categories, myTags, seenCategories }
+let _prefDataCache = null;            // { categories, myTags, primary, seenCategories, onboardingReason }
 let _prefOnboardingInstance = null;
-let _prefOnboardingRaison = null;     // 'onboarding' | 'newcat' | null
+let _prefOnboardingRaison = null;     // 'onboarding' | 'newcat' | 'primary_missing' | 'primary_lost' | null
 let _prefOnboardingShownSlugs = [];   // slugs réellement affichés dans le popup
 
-/** Charge (et cache) les données préférences du user courant. */
+/** Charge (et cache) les données préférences du user courant (raison serveur incluse). */
 async function loadPreferencesData(force = false) {
     if (_prefDataCache && !force) return _prefDataCache;
     const [catsData, myData] = await Promise.all([
         api.getActiveTagCategories(),
-        api.getMyTags(),
+        api.getMyTags(true), // onboarding_reason calculé serveur (spec §5)
     ]);
     _prefDataCache = {
         categories: catsData.categories || [],
         myTags: myData.tags || {},
+        primary: myData.primary || {},
         seenCategories: myData.seen_categories || [],
+        onboardingReason: myData.onboarding_reason ?? null,
     };
     return _prefDataCache;
 }
@@ -440,9 +454,14 @@ async function initPreferencesFlow() {
     }
 }
 
-/** Décide d'afficher ou non le popup, selon la logique B + Oui. */
+/**
+ * Décide d'afficher ou non la modale selon la raison calculée SERVEUR
+ * (GET /my?with_reason=1 → onboarding_reason, spec §5). Le client n'est
+ * qu'un exécutant : null → aucune modale, quoi qu'il ait pu se passer
+ * dans la session (fini le sessionStorage prefOnboardingDismissed).
+ */
 async function maybeShowPreferencesOnboarding() {
-    // Garde-fous
+    // Garde-fous inchangés (callback en cours, mot de passe à changer, modale ouverte)
     if (typeof getPendingCallback === 'function' && getPendingCallback()) return;
     if (currentUser?.must_change_password) return;
     if (document.querySelector('.modal.show')) return;
@@ -451,23 +470,43 @@ async function maybeShowPreferencesOnboarding() {
     const cats = data.categories;
     if (!cats.length) return;
 
-    const seen = new Set(data.seenCategories);
-    const aChoisi = Object.values(data.myTags).some(arr => Array.isArray(arr) && arr.length > 0);
-    const nonVues = cats.filter(c => !seen.has(c.slug));
+    const raison = data.onboardingReason;
+    if (!raison) return; // choix complet + primaire valide + rien de nouveau
 
-    const raison = (!aChoisi) ? 'onboarding'
-                 : (nonVues.length > 0) ? 'newcat'
-                 : null;
-    if (!raison) return;
+    const catsToShow = (raison === 'newcat')
+        ? cats.filter(c => !data.seenCategories.includes(c.slug))
+        : cats;
+    if (!catsToShow.length) return;
 
-    // Session-guard : ne pas réafficher le popup onboarding déjà dismissé cette session
-    if (raison === 'onboarding' && sessionStorage.getItem('prefOnboardingDismissed') === '1') return;
-
-    const catsToShow = (raison === 'newcat') ? nonVues : cats;
     afficherPrefOnboarding(catsToShow, data.myTags, raison);
 }
 
-/** Affiche le modal avec les catégories données. */
+/** Bandeau Bootstrap des états ciblés (spec §5 : « n'existe plus, re-désignez »). */
+function _prefOnboardingBanner(raison) {
+    if (raison === 'primary_lost') {
+        return `<div class="alert alert-warning py-2 px-3 mb-3" role="alert">
+            <i class="bi bi-exclamation-triangle-fill me-1" aria-hidden="true"></i>
+            Votre secteur principal n'existe plus chez la source : re-désignez-en un parmi vos secteurs.
+        </div>`;
+    }
+    if (raison === 'primary_missing') {
+        return `<div class="alert alert-warning py-2 px-3 mb-3" role="alert">
+            <i class="bi bi-star-fill me-1" aria-hidden="true"></i>
+            Il ne manque qu'une chose : désignez votre secteur principal.
+        </div>`;
+    }
+    return '';
+}
+
+/**
+ * Affiche la modale (2 temps) : ① secteurs (chips, composant existant) puis
+ * ② secteur principal (radios parmi les cochées).
+ * États ciblés primary_missing / primary_lost : ① réduite en lecture seule
+ * (fieldset disabled — les tags sont conservés) + bandeau warning.
+ * @param {Array} catsToShow - catégories affichées
+ * @param {Object} selectedMap - { slug: [values] } cochées
+ * @param {string} raison - 'onboarding' | 'newcat' | 'primary_missing' | 'primary_lost'
+ */
 function afficherPrefOnboarding(catsToShow, selectedMap, raison) {
     const modalEl = document.getElementById('preferencesOnboardingModal');
     if (!modalEl) return;
@@ -480,74 +519,152 @@ function afficherPrefOnboarding(catsToShow, selectedMap, raison) {
     const introEl = document.getElementById('prefOnboardingIntro');
     const fieldsEl = document.getElementById('prefOnboardingFields');
 
+    const targeted = (raison === 'primary_missing' || raison === 'primary_lost');
+    const primaryMap = (_prefDataCache && _prefDataCache.primary) || {};
+
     if (raison === 'newcat') {
         const labels = catsToShow.map(c => escapeHtml(c.label)).join(', ');
         titleEl.innerHTML = '<i class="bi bi-stars me-1"></i>Nouvelle catégorie disponible';
         introEl.textContent = 'De nouvelles préférences sont disponibles : ' + labels + '.';
+    } else if (raison === 'primary_lost') {
+        titleEl.innerHTML = '<i class="bi bi-exclamation-triangle me-1"></i>Secteur principal à re-désigner';
+        introEl.textContent = 'Vos secteurs gérés sont conservés, mais le principal désigné n\'existe plus.';
+    } else if (raison === 'primary_missing') {
+        titleEl.innerHTML = '<i class="bi bi-star me-1"></i>Désignez votre secteur principal';
+        introEl.textContent = 'Vos secteurs gérés sont conservés : désignez votre favori pour finaliser.';
     } else {
         titleEl.innerHTML = '<i class="bi bi-sliders2 me-1"></i>Personnalisez votre expérience';
-        introEl.textContent = 'Choisissez vos préférences pour affiner votre portail.';
+        introEl.textContent = 'Choisissez vos secteurs gérés puis votre secteur principal.';
     }
 
-    fieldsEl.innerHTML = buildTagsFormHTML(catsToShow, selectedMap, 'prefOnb') ||
-        '<p class="text-muted mb-0">Aucune préférence disponible pour le moment.</p>';
+    // ① Mes secteurs (composant chips/sélecteur existant ; read-only si état ciblé)
+    const step1HTML = buildTagsFormHTML(catsToShow, selectedMap, 'prefOnb');
+    const step1Label = '<div class="text-secondary small mb-1"><i class="bi bi-check2-square me-1" aria-hidden="true"></i>Mes secteurs' + (targeted ? ' (conservés)' : '') + '</div>';
+    const step1 = step1HTML
+        ? (targeted
+            ? `<fieldset disabled aria-label="Secteurs conservés (non modifiables ici)">${step1Label}${step1HTML}</fieldset>`
+            : step1Label + step1HTML)
+        : '';
+
+    // ② Secteur principal : radios parmi les cochées, par catégorie primary_enabled affichée.
+    //    Filtrées sur les valeurs actives affichées en ① (stored ∩ live) : une primaire
+    //    obsolète ne doit jamais être re-proposée, le PUT la filtrerait en `ignored`.
+    const step2 = catsToShow.filter(c => c.primary_enabled)
+        .map(cat => {
+            const liveSelected = (selectedMap[cat.slug] || [])
+                .filter(v => (cat.values || []).includes(v));
+            return buildPrimaryFieldHTML(cat, liveSelected, primaryMap[cat.slug] || null, 'prefOnb');
+        })
+        .join('');
+
+    const body = _prefOnboardingBanner(raison) + step1 + step2;
+    fieldsEl.innerHTML = body
+        ? `<div data-pref-root="1">${body}</div>`
+        : '<p class="text-muted mb-0">Aucune préférence disponible pour le moment.</p>';
 
     _prefOnboardingInstance.show();
+    updatePrefOnboardingSaveState();
 }
 
-/** Bouton "Enregistrer mes choix" : enregistre les tags + ack toutes les cats affichées. */
-async function handleSavePrefOnboarding() {
+/**
+ * État du bouton « Enregistrer mes choix » : actif seulement avec ① au moins
+ * une valeur cochée ET ② une primaire pour chaque catégorie primary_enabled
+ * affichée. (Les chips d'un fieldset disabled restent collectées — état ciblé
+ * primary_missing/primary_lost : ① est déjà satisfaite.)
+ */
+function updatePrefOnboardingSaveState() {
+    const root = document.getElementById('prefOnboardingFields');
+    const btn = document.querySelector('#preferencesOnboardingModal [data-action="handleSavePrefOnboarding"]');
+    if (!root || !btn) return;
     const tags = collectTagsFromForm('#prefOnboardingFields');
+    const primary = collectPrimaryFromForm(root);
+    const needPrimary = [...root.querySelectorAll('.pref-primary[data-primary-slug]')]
+        .map(el => el.getAttribute('data-primary-slug'));
+    const hasTags = Object.values(tags).some(arr => Array.isArray(arr) && arr.length > 0);
+    const primaryOk = needPrimary.every(slug => !!primary[slug]);
+    btn.disabled = !(hasTags && primaryOk);
+}
+
+/** Toast warning pour les valeurs obsolètes rejetées par le serveur (PUT /my → ignored). */
+function prefNotifyIgnored(ignored) {
+    const entries = Object.entries(ignored || {});
+    if (!entries.length) return;
+    const count = entries.reduce((sum, [, vals]) => sum + (Array.isArray(vals) ? vals.length : 0), 0);
+    if (!count) return;
+    showToast(
+        count + ' choix retiré' + (count > 1 ? 's' : ''),
+        'N\'existe' + (count > 1 ? 'nt' : '') + ' plus chez la source — sélectionnez des valeurs à jour.',
+        'warning'
+    );
+}
+
+/**
+ * Bouton "Enregistrer mes choix" : PUT {tags, primary} PUIS ack des catégories
+ * affichées. Le cache local est resynchronisé depuis la réponse serveur
+ * (valeurs filtrées / `ignored`).
+ */
+async function handleSavePrefOnboarding() {
+    const fieldsRoot = document.getElementById('prefOnboardingFields');
+    const tags = collectTagsFromForm('#prefOnboardingFields');
+    const primary = fieldsRoot ? collectPrimaryFromForm(fieldsRoot) : {};
+    const btn = document.querySelector('#preferencesOnboardingModal [data-action="handleSavePrefOnboarding"]');
+    if (btn) btn.disabled = true;
     try {
-        // 1. Enregistrer les sélections (fusion avec l'existant pour ne pas écraser les cats non affichées)
+        // 1. Enregistrer sélections + primaire (fusion avec l'existant pour ne
+        //    pas écraser les catégories non affichées dans la modale).
         const existing = _prefDataCache ? _prefDataCache.myTags : {};
         const merged = { ...existing, ...tags };
-        await api.updateMyTags({ tags: merged });
+        const resp = await api.updateMyTags({ tags: merged, primary });
 
-        // 2. Ack toutes les catégories affichées (l'utilisateur a interagi)
+        // 2. Ack des catégories affichées (l'utilisateur a interagi) — combiné
+        //    au choix complet côté serveur, la fenêtre ne reviendra plus.
         if (_prefOnboardingShownSlugs.length) {
             await api.acknowledgeMyTags(_prefOnboardingShownSlugs);
         }
 
+        // 3. Resync du cache depuis la réponse (valeurs filtrées par la source).
+        if (_prefDataCache) {
+            _prefDataCache.myTags = resp.tags || merged;
+            _prefDataCache.primary = resp.primary || {};
+            _prefDataCache.onboardingReason = null;
+        }
+        prefNotifyIgnored(resp.ignored);
+
         _prefOnboardingRaison = null;
         _prefOnboardingShownSlugs = [];
         _prefOnboardingInstance.hide();
-        showToast('Préférences enregistrées', '', 'success');
-
-        // Invalider le cache pour les prochains calculs
-        _prefDataCache = null;
-        sessionStorage.removeItem('prefOnboardingDismissed');
+        showToast('Préférences enregistrées', 'Cette fenêtre ne s\'affichera plus.', 'success');
     } catch (e) {
         showToast('Erreur', e.message || 'Erreur lors de l\'enregistrement', 'danger');
+    } finally {
+        if (btn) btn.disabled = false;
     }
 }
 
-/** Au dismiss (fermeture / "Plus tard") : ack selon la raison. */
-async function handleDismissPrefOnboarding() {
-    const raison = _prefOnboardingRaison;
-    const shownSlugs = _prefOnboardingShownSlugs.slice();
+/**
+ * Au dismiss (« Plus tard » / ✕) : ne pose rien (spec §6.1) — aucune écriture,
+ * aucun ack : la raison recalculée par le serveur au prochain login décidera
+ * du réaffichage. (sessionStorage.prefOnboardingDismissed supprimé.)
+ */
+function handleDismissPrefOnboarding() {
     _prefOnboardingRaison = null;
     _prefOnboardingShownSlugs = [];
-
-    if (raison === 'onboarding') {
-        // B : pas d'ack serveur ; le popup reviendra au prochain login tant que rien n'est choisi.
-        sessionStorage.setItem('prefOnboardingDismissed', '1');
-        return;
-    }
-    if (raison === 'newcat' && shownSlugs.length) {
-        // Oui : ack persistant pour ne pas resurgir pour ces catégories.
-        try {
-            await api.acknowledgeMyTags(shownSlugs);
-        } catch (e) {
-            console.error('acknowledge failed:', e);
-        }
-    }
 }
 
-// Brancher le handler de fermeture une fois le DOM prêt
+// Brancher les handlers une fois le DOM prêt
 document.addEventListener('DOMContentLoaded', () => {
     const modalEl = document.getElementById('preferencesOnboardingModal');
     if (modalEl) {
         modalEl.addEventListener('hidden.bs.modal', handleDismissPrefOnboarding);
+    }
+    // Modale préférences : reconstruction des radios ② au changement des chips ①
+    // + mise à jour de l'état du bouton « Enregistrer mes choix ».
+    const fieldsEl = document.getElementById('prefOnboardingFields');
+    if (fieldsEl) {
+        fieldsEl.addEventListener('change', (e) => {
+            if (e.target.matches('input[data-category]')) prefRebuildPrimaryAround(e.target);
+            updatePrefOnboardingSaveState();
+        });
+        fieldsEl.addEventListener('pref:changed', () => updatePrefOnboardingSaveState());
     }
 });
