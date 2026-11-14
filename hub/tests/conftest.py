@@ -100,6 +100,7 @@ def _project_network_scan_neutralized(monkeypatch):
 # fixture `settings`.
 _SETTINGS_FIELDS_TO_SNAPSHOT = (
     "hub_host",
+    "github_token",
     "oidc_issuer",
     "oidc_email_template",
     "oidc_id_token_ttl_minutes",
@@ -118,7 +119,11 @@ def settings():
     etc.) sur le singleton lru_cache. On snapshot ces champs avant le test et on les
     restaure après pour éviter toute fuite d'état entre tests. hub_host y figure
     aussi : muté par les tests VPN/localité, sinon l'IP du .env réel (ou la valeur
-    fuie par un test précédent) traverse les frontières de test.
+    fuie par un test précédent) traverse les frontières de test. github_token :
+    muté sans restauration par test_github_catalog (TestRefresh) — sa fuite faisait
+    gagner le champ env sur la valeur DB dans test_workshop_service
+    (deploy_service._get_github_token) ; masquée jusqu'à 3.88.1 par le
+    get_settings.cache_clear() de test_vpn, exposée depuis sa suppression.
     """
     s = get_settings()
     snapshot = {field: getattr(s, field) for field in _SETTINGS_FIELDS_TO_SNAPSHOT}
