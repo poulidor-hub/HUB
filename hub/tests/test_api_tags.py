@@ -25,6 +25,25 @@ def _make_user_headers(test_user: User):
     return get_auth_header(token)
 
 
+def _make_sa_headers(service_account):
+    """Headers M2M pour /api/tags/user/{username} (get_current_entity)."""
+    token, _, _ = create_access_token(
+        username=service_account.client_id, apps={}, is_service_account=True
+    )
+    return get_auth_header(token)
+
+
+@pytest.fixture(autouse=True)
+def _clear_tags_values_cache():
+    """Le cache du résolveur live est un dict module-level : vidé entre chaque
+    test pour éviter toute fuite (les ids de catégories se répètent entre les
+    bases SQLite en mémoire)."""
+    from app.routes import tags as tags_module
+    tags_module._values_cache.clear()
+    yield
+    tags_module._values_cache.clear()
+
+
 class TestTagCategoriesAdmin:
 
     @pytest.mark.asyncio
@@ -317,15 +336,13 @@ class TestLiveValues:
     """Résolveur _resolve_active_values : live M2M → cache TTL 60 s → snapshot."""
 
     @pytest.fixture(autouse=True)
-    def _clear_values_cache(self):
-        from app.routes import tags as tags_module
-        tags_module._values_cache.clear()
-        # État classe-partagé du stub : remis à zéro pour chaque test.
+    def _reset_stub_state(self):
+        """État classe-partagé du stub : remis à zéro pour chaque test
+        (le cache du résolveur est vidé par la fixture module-level)."""
         type(self)._StubAsyncClient.calls = 0
         type(self)._StubAsyncClient.response = None
         type(self)._StubAsyncClient.exc = None
         yield
-        tags_module._values_cache.clear()
 
     class _StubResponse:
         def __init__(self, status_code=200, payload=None):
@@ -644,6 +661,176 @@ class TestPutMy:
         data = response.json()
         assert data["primary"] == {"secteurs": "Nord"}
         assert data["tags"]["secteurs"] == ["Nord", "Sud"]
+
+
+class TestAdminAndM2M:
+    """Admin PUT /user/{username} + M2M enrichi + catégories actives live."""
+
+    @pytest.mark.asyncio
+    async def test_admin_put_user_primary(
+        self, client, async_session, admin_user, test_user
+    ):
+        admin_headers = _make_admin_headers(admin_user)
+        await client.post("/api/tags/categories", json={
+            "slug": "secteurs", "label": "Secteurs", "source": "csv",
+            "is_multiple": True, "values": ["Nord", "Sud"],
+            "primary_enabled": True,
+        }, headers=admin_headers)
+
+        response = await client.put(
+            f"/api/tags/user/{test_user.username}",
+            json={"tags": {"secteurs": ["Nord", "Sud"]},
+                  "primary": {"secteurs": "Sud"}},
+            headers=admin_headers,
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["primary"] == {"secteurs": "Sud"}
+        assert data["tags"]["secteurs"] == ["Nord", "Sud"]
+
+        # Le user voit aussi sa primaire
+        my = await client.get("/api/tags/my", headers=_make_user_headers(test_user))
+        assert my.json()["primary"] == {"secteurs": "Sud"}
+
+    @pytest.mark.asyncio
+    async def test_admin_put_user_ignored_values(
+        self, client, admin_user, test_user
+    ):
+        """Admin : mêmes règles que PUT /my — valeurs obsolètes → ignored (200)."""
+        admin_headers = _make_admin_headers(admin_user)
+        await client.post("/api/tags/categories", json={
+            "slug": "secteurs", "label": "Secteurs", "source": "csv",
+            "is_multiple": True, "values": ["Nord", "Sud"],
+        }, headers=admin_headers)
+
+        response = await client.put(
+            f"/api/tags/user/{test_user.username}",
+            json={"tags": {"secteurs": ["Nord", "AncienneValeur"]}},
+            headers=admin_headers,
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["ignored"] == {"secteurs": ["AncienneValeur"]}
+        assert data["tags"]["secteurs"] == ["Nord"]
+
+    @pytest.mark.asyncio
+    async def test_m2m_user_endpoint_includes_primary(
+        self, client, async_session, admin_user, test_user, service_account
+    ):
+        """GET /api/tags/user/{username} (M2M) expose primary."""
+        admin_headers = _make_admin_headers(admin_user)
+        await client.post("/api/tags/categories", json={
+            "slug": "secteurs", "label": "Secteurs", "source": "csv",
+            "is_multiple": True, "values": ["Nord", "Sud"],
+            "primary_enabled": True,
+        }, headers=admin_headers)
+        await client.put("/api/tags/my", json={
+            "tags": {"secteurs": ["Nord", "Sud"]}, "primary": {"secteurs": "Nord"}
+        }, headers=_make_user_headers(test_user))
+
+        response = await client.get(
+            f"/api/tags/user/{test_user.username}",
+            headers=_make_sa_headers(service_account),
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["tags"] == {"secteurs": ["Nord", "Sud"]}
+        assert data["primary"] == {"secteurs": "Nord"}
+
+    @pytest.mark.asyncio
+    async def test_active_categories_source_flag_live(
+        self, client, async_session, monkeypatch, test_app, test_user
+    ):
+        """Source M2M répond → source_flag 'live' + valeurs fraîches."""
+        from app.models import TagCategory
+        cat = TagCategory(slug="secteurs", label="Secteurs", source="m2m",
+                          source_app_id=test_app.id, is_multiple=True,
+                          values=["Snapshot"])
+        async_session.add(cat)
+        await async_session.commit()
+
+        monkeypatch.setattr(
+            "app.routes.tags.httpx.AsyncClient", TestLiveValues._StubAsyncClient
+        )
+        TestLiveValues._StubAsyncClient.response = TestLiveValues._StubResponse(
+            200, {"values": ["FraicheA", "FraicheB"]}
+        )
+
+        response = await client.get(
+            "/api/tags/categories/active", headers=_make_user_headers(test_user)
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["total"] == 1
+        entry = data["categories"][0]
+        assert entry["source_flag"] == "live"
+        assert entry["values"] == ["FraicheA", "FraicheB"]
+
+    @pytest.mark.asyncio
+    async def test_active_categories_source_flag_cache(
+        self, client, async_session, monkeypatch, test_app, test_user
+    ):
+        """Source KO → source_flag 'cache' + valeurs du snapshot."""
+        import httpx
+        from app.models import TagCategory
+        cat = TagCategory(slug="secteurs", label="Secteurs", source="m2m",
+                          source_app_id=test_app.id, is_multiple=True,
+                          values=["Snapshot1", "Snapshot2"])
+        async_session.add(cat)
+        await async_session.commit()
+
+        monkeypatch.setattr(
+            "app.routes.tags.httpx.AsyncClient", TestLiveValues._StubAsyncClient
+        )
+        TestLiveValues._StubAsyncClient.exc = httpx.RequestError("down")
+
+        response = await client.get(
+            "/api/tags/categories/active", headers=_make_user_headers(test_user)
+        )
+        assert response.status_code == 200
+        entry = response.json()["categories"][0]
+        assert entry["source_flag"] == "cache"
+        assert entry["values"] == ["Snapshot1", "Snapshot2"]
+
+    @pytest.mark.asyncio
+    async def test_active_categories_primary_enabled_flag(
+        self, client, admin_user, test_user
+    ):
+        admin_headers = _make_admin_headers(admin_user)
+        await client.post("/api/tags/categories", json={
+            "slug": "secteurs", "label": "Secteurs", "source": "csv",
+            "is_multiple": True, "values": ["Nord"],
+            "primary_enabled": True,
+        }, headers=admin_headers)
+
+        response = await client.get(
+            "/api/tags/categories/active", headers=_make_user_headers(test_user)
+        )
+        entry = response.json()["categories"][0]
+        assert entry["primary_enabled"] is True
+        assert entry["source_flag"] == "csv"
+
+    @pytest.mark.asyncio
+    async def test_patch_category_primary_enabled(
+        self, client, admin_user
+    ):
+        admin_headers = _make_admin_headers(admin_user)
+        await client.post("/api/tags/categories", json={
+            "slug": "lang", "label": "Langues", "source": "csv",
+            "is_multiple": True, "values": ["fr", "en"],
+        }, headers=admin_headers)
+
+        response = await client.patch("/api/tags/categories/lang", json={
+            "primary_enabled": True
+        }, headers=admin_headers)
+        assert response.status_code == 200
+        assert response.json()["primary_enabled"] is True
+
+        # Bascule retour à False
+        response = await client.patch("/api/tags/categories/lang", json={
+            "primary_enabled": False
+        }, headers=admin_headers)
+        assert response.json()["primary_enabled"] is False
 
 
 class TestOnboardingReason:

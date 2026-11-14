@@ -7,7 +7,7 @@ Routes pour la gestion des tags utilisateur globaux.
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, delete, update
+from sqlalchemy import select, update
 from sqlalchemy.orm import selectinload
 from datetime import timedelta
 import httpx
@@ -367,15 +367,26 @@ async def list_active_categories(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Retourne uniquement les catégories actives (pour le widget utilisateur)."""
+    """Catégories actives avec valeurs fraîches (résolveur live → cache).
+
+    Pour une catégorie M2M : fetch live auprès de la source (snapshot DB
+    rafraîchi au passage), repli sur le cache/snapshot si injoignable ;
+    `source_flag` reflète la fraîcheur ("live" | "cache" | "csv").
+    """
     result = await db.execute(
         select(TagCategory).where(TagCategory.is_active == True).order_by(TagCategory.label)
     )
     categories = result.scalars().all()
-    return TagCategoryListResponse(
-        categories=[TagCategoryResponse.model_validate(c) for c in categories],
-        total=len(categories),
-    )
+
+    out: list[TagCategoryResponse] = []
+    for cat in categories:
+        values, flag = await _resolve_active_values(db, cat)
+        resp = TagCategoryResponse.model_validate(cat)
+        resp.values = values
+        resp.source_flag = flag
+        out.append(resp)
+
+    return TagCategoryListResponse(categories=out, total=len(out))
 
 
 @router.post("/categories", response_model=TagCategoryResponse, status_code=201)
@@ -437,6 +448,8 @@ async def update_category(
         category.is_active = data.is_active
     if data.m2m_endpoint is not None:
         category.m2m_endpoint = data.m2m_endpoint
+    if data.primary_enabled is not None:
+        category.primary_enabled = data.primary_enabled
 
     await db.commit()
     await db.refresh(category)
@@ -743,17 +756,10 @@ async def get_user_tags_m2m(
     if not user:
         raise HTTPException(status_code=404, detail=f"Utilisateur '{username}' introuvable")
 
-    tags_result = await db.execute(
-        select(UserTag)
-        .options(selectinload(UserTag.category))
-        .where(UserTag.user_id == user.id)
-    )
-    tags: dict[str, list[str]] = {}
-    for ut in tags_result.scalars():
-        if ut.category.is_active:
-            tags.setdefault(ut.category.slug, []).append(ut.value)
+    tags = await _get_user_tags(db, user.id)
+    primary = await _get_user_primary(db, user.id)
 
-    return UserTagsResponse(tags=tags)
+    return UserTagsResponse(tags=tags, primary=primary)
 
 
 # ─── Admin : gestion des préférences par utilisateur ──────────────
@@ -789,47 +795,55 @@ async def set_user_tags(
     db: AsyncSession = Depends(get_db),
     admin: User = Depends(get_current_admin),
 ):
-    """Admin définit les préférences d'un utilisateur."""
+    """Admin définit les préférences d'un utilisateur (mêmes règles que PUT /my)."""
     result = await db.execute(select(User).where(User.username == username))
     user = result.scalar_one_or_none()
     if not user:
         raise HTTPException(status_code=404, detail=f"Utilisateur '{username}' introuvable")
 
-    # Valider catégories et valeurs
     all_categories = await db.execute(
         select(TagCategory).where(TagCategory.is_active == True)
     )
     valid_categories = {c.slug: c for c in all_categories.scalars()}
 
-    for slug in data.tags:
-        if slug not in valid_categories:
-            raise HTTPException(status_code=400, detail=f"Catégorie '{slug}' introuvable ou inactive")
-
+    # Garde structurelle : single-select.
     for slug, selected_values in data.tags.items():
-        cat = valid_categories[slug]
-        allowed = set(cat.values or [])
-        for val in selected_values:
-            if val not in allowed:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"La valeur '{val}' n'est pas autorisée pour '{slug}'"
-                )
-        if not cat.is_multiple and len(selected_values) > 1:
+        cat = valid_categories.get(slug)
+        if cat is not None and not cat.is_multiple and len(selected_values) > 1:
             raise HTTPException(
                 status_code=400,
                 detail=f"La catégorie '{slug}' n'accepte qu'une seule valeur"
             )
 
-    await db.execute(delete(UserTag).where(UserTag.user_id == user.id))
+    # Validation primaire — seul cas 400 métier (mêmes règles que PUT /my).
+    if data.primary:
+        for slug, value in data.primary.items():
+            if value is None:
+                continue
+            cat = valid_categories.get(slug)
+            if cat is None or not cat.primary_enabled:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"La catégorie '{slug}' n'accepte pas de secteur principal"
+                )
+            if slug not in data.tags or value not in data.tags[slug]:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"Le secteur principal '{value}' doit faire partie des "
+                        f"valeurs cochées pour '{slug}'"
+                    )
+                )
 
-    for slug, selected_values in data.tags.items():
-        cat = valid_categories[slug]
-        for val in selected_values:
-            db.add(UserTag(user_id=user.id, category_id=cat.id, value=val))
-
+    # Upsert diff (fini le delete-all) : valeurs inconnues → ignored,
+    # catégories inactives préservées.
+    stored, ignored = await _apply_user_tags(
+        db, user.id, data.tags, valid_categories, data.primary
+    )
     await db.commit()
 
     tags = await _get_user_tags(db, user.id)
+    primary = await _get_user_primary(db, user.id)
 
     notify_event("tags_updated", {
         "action": "user_tags_changed",
@@ -837,4 +851,4 @@ async def set_user_tags(
         "username": user.username,
     })
 
-    return UserTagsResponse(tags=tags)
+    return UserTagsResponse(tags=tags, primary=primary, ignored=ignored)
