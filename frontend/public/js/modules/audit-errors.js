@@ -248,7 +248,7 @@ function renderErrorsTable(data) {
                         <td><small class="text-muted">${e.error_type || '-'}</small></td>
                         <td><code class="small">${e.request_method || '-'}</code></td>
                         <td><code class="small" title="${escapeHtml(e.request_path || '')}">${truncateText(e.request_path, 30)}</code></td>
-                        <td>${e.source_app_slug ? `<span class="badge bg-info">${escapeHtml(e.source_app_slug)}</span>` : '-'}</td>
+                        <td>${e.source_app_slug ? `<span class="badge bg-info text-dark">${escapeHtml(e.source_app_slug)}</span>` : '-'}</td>
                         <td><small>${errorActorHtml(e)}</small></td>
                         <td><small class="text-muted" title="${escapeHtml(e.error_message || '')}">${truncateText(e.error_message, 40)}</small></td>
                         <td><code class="small">${e.ip_address || '-'}</code></td>
@@ -290,7 +290,7 @@ function errorActorHtml(e) {
 function getErrorCodeBadge(code) {
     let bgClass = 'bg-secondary';
     if (code === 401) bgClass = 'bg-warning text-dark';    else if (code === 403) bgClass = 'bg-danger';
-    else if (code === 404) bgClass = 'bg-info';
+    else if (code === 404) bgClass = 'bg-info text-dark';
     else if (code === 422) bgClass = 'bg-warning text-dark';
     else if (code >= 500) bgClass = 'bg-danger';
     
@@ -347,7 +347,7 @@ async function showErrorDetail(errorId) {
                             <div class="row mb-3">
                                 <div class="col-md-4">
                                     <small class="text-muted">App Source</small>
-                                    <div>${error.source_app_slug ? `<span class="badge bg-info">${escapeHtml(error.source_app_slug)}</span>` : '-'}</div>
+                                    <div>${error.source_app_slug ? `<span class="badge bg-info text-dark">${escapeHtml(error.source_app_slug)}</span>` : '-'}</div>
                                 </div>
                                 <div class="col-md-4">
                                     <small class="text-muted">Utilisateur</small>

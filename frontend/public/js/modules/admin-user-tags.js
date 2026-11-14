@@ -56,7 +56,7 @@ function renderTagCategoriesTable(categories) {
         return `
         <tr>
             <td><strong>${escapeHtml(cat.label)}</strong></td>
-            <td>${cat.is_multiple ? '<span class="badge bg-info">Multiples</span>' : '<span class="badge bg-secondary">Unique</span>'}</td>
+            <td>${cat.is_multiple ? '<span class="badge bg-info text-dark">Multiples</span>' : '<span class="badge bg-secondary">Unique</span>'}</td>
             <td>${(cat.values || []).length} choix</td>
             <td>${cat.is_active ? '<span class="badge bg-success">Actif</span>' : '<span class="badge bg-danger">Inactif</span>'}</td>
             <td>
