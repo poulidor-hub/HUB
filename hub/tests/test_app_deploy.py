@@ -191,10 +191,17 @@ def _install_fake_exec(monkeypatch, results):
 
 
 async def _mk_deployment(async_session, slug="exemple-app", repo="https://github.com/o/r.git"):
+    # Contrat de l'allocateur : idempotent par (slug, host) — et _run_deployment
+    # passe host=get_settings().get_hub_host(). L'allocation de test doit donc
+    # viser le MÊME host, sinon le pipeline ré-alloue dynamiquement (9000 au
+    # lieu de 9002) et les assertions sur les ports/subnet écrits dans le .env
+    # deviennent dépendantes du HUB_HOST de l'environnement.
+    from app.config import get_settings
+    host = get_settings().get_hub_host()
     app_row = Application(name="exemple-app", slug=slug, api_url=f"http://h:9002",
                           git_repo_url=repo)
     async_session.add(app_row)
-    alloc = PortAllocation(app_slug=slug, host="192.0.2.10", api_port=9002,
+    alloc = PortAllocation(app_slug=slug, host=host, api_port=9002,
                            frontend_port=4204, frontend_https_port=4205,
                            subnet="10.50.0.7/24")
     async_session.add(alloc)
