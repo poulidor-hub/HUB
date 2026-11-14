@@ -434,6 +434,30 @@ class TestLiveValues:
         assert self._StubAsyncClient.calls == 1
 
     @pytest.mark.asyncio
+    async def test_resolve_timeout_negative_cache(
+        self, monkeypatch, async_session, test_app
+    ):
+        """Panne source : deux résolutions rapprochées → un seul fetch
+        (negative-cache à TTL court), les deux retournent le snapshot."""
+        import httpx
+        from app.routes.tags import _resolve_active_values
+
+        cat = await self._make_m2m_category(
+            async_session, test_app, values=["S1", "S2"]
+        )
+        self._patch_httpx(monkeypatch)
+        self._StubAsyncClient.exc = httpx.RequestError("connection refused")
+
+        values1, flag1 = await _resolve_active_values(async_session, cat)
+        values2, flag2 = await _resolve_active_values(async_session, cat)
+
+        assert values1 == ["S1", "S2"]
+        assert values2 == ["S1", "S2"]
+        assert flag1 == "cache"
+        assert flag2 == "cache"
+        assert self._StubAsyncClient.calls == 1
+
+    @pytest.mark.asyncio
     async def test_resolve_ttl_no_second_fetch(
         self, monkeypatch, async_session, test_app
     ):
@@ -545,6 +569,31 @@ class TestPutMy:
         data = response.json()
         assert data["ignored"] == {"secteurs": ["RenommeeAilleurs"]}
         assert data["tags"]["secteurs"] == ["Nord"]
+
+    @pytest.mark.asyncio
+    async def test_put_my_primary_on_filtered_value_drops_primary(
+        self, client, async_session, admin_user, test_user
+    ):
+        """Primaire visant une valeur filtrée (absente des valeurs actives) →
+        200, ignored rempli, primary={}, aucune ligne is_primary.
+        Chaînon direct du Review Focus #3 (gel de contrat — comportement
+        vérifié par la review, verrouillé ici)."""
+        admin_headers = _make_admin_headers(admin_user)
+        user_headers = _make_user_headers(test_user)
+        await self._create_category(client, admin_headers, primary_enabled=True)
+
+        response = await client.put("/api/tags/my", json={
+            "tags": {"secteurs": ["Production"]},
+            "primary": {"secteurs": "Production"},
+        }, headers=user_headers)
+        assert response.status_code == 200
+        data = response.json()
+        assert data["ignored"] == {"secteurs": ["Production"]}
+        assert data["primary"] == {}
+        assert data["tags"].get("secteurs", []) == []
+
+        rows = await self._fetch_rows(async_session, test_user.id, "secteurs")
+        assert rows == []
 
     @pytest.mark.asyncio
     async def test_put_my_primary_ok(

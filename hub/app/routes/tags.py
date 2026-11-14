@@ -179,8 +179,8 @@ async def _apply_user_tags(
             )
         )
         target = result.scalar_one_or_none()
+        # Ligne absente (valeur filtrée comme obsolète) → primaire non posée.
         if target is not None:
-            # Ligne absente (valeur filtrée comme obsolète) → primaire non posée.
             target.is_primary = True
 
     return stored, ignored
@@ -192,6 +192,12 @@ async def _apply_user_tags(
 # un redémarrage ou une invalidation (import-m2m, PATCH/POST catégorie)
 # suffit à resynchroniser.
 _VALUES_TTL = 60
+# Pendant une panne source, chaque appel refetcherait avec timeout complet
+# (+3 s par catégorie M2M sur chaque login). On met en cache le repli
+# snapshot avec un TTL court : re-tentative dès 15 s, mais les appels
+# rapprochés (login + page préférences, rafraîchissements) ne paient plus
+# le timeout en cascade.
+_VALUES_NEGATIVE_TTL = 15
 _values_cache: dict[int, tuple[float, list[str]]] = {}
 
 
@@ -230,7 +236,7 @@ async def _resolve_active_values(
 
     now = time.monotonic()
     cached = _values_cache.get(category.id)
-    if cached is not None and (now - cached[0]) < _VALUES_TTL:
+    if cached is not None and now < cached[0]:
         return list(cached[1]), "cache"
 
     app_result = await db.execute(
@@ -264,11 +270,17 @@ async def _resolve_active_values(
     except (httpx.RequestError, ValueError, TypeError):
         # Source injoignable ou réponse invalide : repli sur les dernières
         # valeurs connues (snapshot DB), jamais d'erreur exposée au user.
+        # Negative-cache à TTL court pour ne pas re-payer le timeout à
+        # chaque appel rapproché tant que la source est down.
+        _values_cache[category.id] = (
+            time.monotonic() + _VALUES_NEGATIVE_TTL,
+            list(category.values or []),
+        )
         return list(category.values or []), "cache"
 
     values = _dedup_preserve_order(exported_values)
     category.values = values
-    _values_cache[category.id] = (time.monotonic(), values)
+    _values_cache[category.id] = (time.monotonic() + _VALUES_TTL, values)
     await db.commit()
     return values, "live"
 
