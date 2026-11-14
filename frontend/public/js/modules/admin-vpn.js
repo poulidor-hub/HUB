@@ -358,7 +358,7 @@ function renderPeersGrouped(peers, fromFilter = false) {
     const pageUsers = filtered.slice(start, start + VPN_USERS_PER_PAGE);
 
     container.innerHTML = pageUsers.map(user => renderUserCard(user)).join('');
-    renderPagination(filtered.length, totalPages);
+    updateVpnPagination(filtered.length, totalPages);
 }
 
 function renderUserCard(user) {
@@ -441,7 +441,7 @@ function renderDeviceRow(d) {
     `;
 }
 
-function renderPagination(totalUsers, totalPages) {
+function updateVpnPagination(totalUsers, totalPages) {
     const pag = document.getElementById('vpnPagination');
     if (!pag) return;
     if (totalPages <= 1) {
