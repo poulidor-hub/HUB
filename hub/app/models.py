@@ -112,6 +112,8 @@ class TagCategory(Base):
     m2m_endpoint = Column(String(255), default='/api/tags/export')  # chemin endpoint M2M
     values = Column(JSON, nullable=False, default=list)
     is_active = Column(Boolean, default=True, nullable=False)
+    # Refonte préférences (068) : autorise le choix d'un secteur principal
+    primary_enabled = Column(Boolean, nullable=False, default=False)
     created_at = Column(DateTime, default=utcnow)
     updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
 
@@ -130,6 +132,9 @@ class UserTag(Base):
     category_id = Column(Integer, ForeignKey('tag_categories.id', ondelete='CASCADE'), nullable=False)
     value = Column(String(255), nullable=False)
     created_at = Column(DateTime, default=utcnow)
+    # Refonte préférences (068) : secteur principal — index partiel unique
+    # uq_user_tags_primary garantit une seule primaire par (user, catégorie).
+    is_primary = Column(Boolean, nullable=False, default=False)
 
     user = relationship("User", back_populates="tags", lazy="raise")
     category = relationship("TagCategory", back_populates="user_tags", lazy="raise")
@@ -251,6 +256,18 @@ class User(Base):
         for ut in self.tags:
             if ut.category.is_active:
                 result.setdefault(ut.category.slug, []).append(ut.value)
+        return result
+
+    def get_tags_primary(self) -> dict[str, str]:
+        """Retourne le secteur principal {category_slug: value}.
+
+        Catégories actives + primary_enabled uniquement (même convention de
+        filtrage que get_tags) ; claim JWT tags_primary.
+        """
+        result: dict[str, str] = {}
+        for ut in self.tags:
+            if ut.is_primary and ut.category.is_active and ut.category.primary_enabled:
+                result[ut.category.slug] = ut.value
         return result
 
     def __repr__(self):
