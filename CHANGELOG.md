@@ -5,6 +5,23 @@
 
 ---
 
+## [3.88.3] - 14 novembre 2026
+
+### ⚡ VPN : `restart: unless-stopped` — le tunnel survit aux restarts du daemon docker
+
+- Incident du 13/11 : restart du daemon docker (ou reboot) à 05h59 UTC →
+  `hub-wireguard` (policy `"no"`) jamais relancé → **tunnel mort 30 h**,
+  accès mobile impossible. Le boot hook systemd `hub-vpn-sync` ne couvre
+  que les boots de l'hôte, pas les restarts du daemon.
+- `wireguard-server` passe en `restart: unless-stopped` : honore un
+  `docker stop` explicite (hubctl vpn down — le conteneur arrêté volontairement
+  reste arrêté) tout en relançant le tunnel après un restart daemon ou un
+  reboot. Le cycle de vie DB (`vpn_enabled` via `hubctl vpn`) reste inchangé.
+- Corrige au passage le commentaire du compose : port réel 51821/udp
+  (`vpn_listen_port`), pas 51820.
+
+---
+
 ## [3.88.2] - 14 novembre 2026
 
 ### ⚡ Hygiène tests : éradication des `get_settings.cache_clear()` résiduels
