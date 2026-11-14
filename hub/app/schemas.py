@@ -2257,6 +2257,8 @@ class TagCategoryCreate(BaseModel):
     source_app_id: Optional[int] = None
     m2m_endpoint: str = Field(default='/api/tags/export', max_length=255)
     values: list[str] = Field(default_factory=list)
+    # Refonte préférences (068) : autorise le choix d'un secteur principal
+    primary_enabled: bool = Field(default=False)
 
     @model_validator(mode='after')
     def validate_source_app(self):
@@ -2271,6 +2273,7 @@ class TagCategoryUpdate(BaseModel):
     values: Optional[list[str]] = None
     is_active: Optional[bool] = None
     m2m_endpoint: Optional[str] = Field(None, max_length=255)
+    primary_enabled: Optional[bool] = None
 
 
 class TagCategoryResponse(BaseModel):
@@ -2283,8 +2286,13 @@ class TagCategoryResponse(BaseModel):
     m2m_endpoint: Optional[str] = '/api/tags/export'
     values: list[str]
     is_active: bool
+    primary_enabled: bool = False
     created_at: datetime
     updated_at: datetime
+    # Fraîcheur des valeurs affichées ("live" | "cache" | "csv") — champ
+    # calculé par la route (résolveur live) ; nom distinct de la colonne
+    # `source` (csv|m2m) pour éviter toute collision.
+    source_flag: str = "csv"
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -2296,11 +2304,17 @@ class TagCategoryListResponse(BaseModel):
 
 class UserTagsResponse(BaseModel):
     tags: dict[str, list[str]]
+    primary: dict[str, str] = Field(default_factory=dict)
+    ignored: dict[str, list[str]] = Field(default_factory=dict)
+    onboarding_reason: Optional[str] = None
     seen_categories: list[str] = Field(default_factory=list)
 
 
 class UserTagsUpdate(BaseModel):
     tags: dict[str, list[str]]
+    # {slug: value} pour poser la primaire, {slug: None} pour la retirer ;
+    # absent = primaires inchangées.
+    primary: Optional[dict[str, Optional[str]]] = None
 
 
 class UserTagsAcknowledge(BaseModel):

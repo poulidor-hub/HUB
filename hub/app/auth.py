@@ -103,6 +103,7 @@ def create_access_token(
     is_service_account: bool = False,
     is_workshop: bool = False,
     tags: Optional[dict[str, list[str]]] = None,
+    tags_primary: Optional[dict[str, str]] = None,
     uid: Optional[str] = None,
     prenom: Optional[str] = None,
     nom: Optional[str] = None,
@@ -115,6 +116,8 @@ def create_access_token(
         is_service_account: True si c'est un service account
         is_workshop: True si les apps liées sont toutes des ateliers (-ws)
         tags: Dict optionnel {category_slug: [values]} inclus si non vide
+        tags_primary: Dict optionnel {category_slug: value} inclus si non vide
+                      (secteur principal — refonte préférences 068)
     
     Returns:
         tuple: (token, expiration_datetime, jti)
@@ -138,6 +141,8 @@ def create_access_token(
 
     if tags:
         payload["tags"] = tags
+    if tags_primary:
+        payload["tags_primary"] = tags_primary
 
     # Claims identité (optionnels — uuid stable + état civil pour les apps)
     if uid:

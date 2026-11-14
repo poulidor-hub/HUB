@@ -226,6 +226,7 @@ async def auto_login_with_token(
         username=user.username,
         apps=apps,
         tags=user.get_tags(),
+        tags_primary=user.get_tags_primary(),
         uid=str(user.uuid) if user.uuid else None,
         prenom=user.prenom,
         nom=user.nom,

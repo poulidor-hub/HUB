@@ -84,6 +84,7 @@ async function showTagCategoryModal(slug) {
     document.getElementById('tagModalTitle').textContent = slug ? 'Modifier la préférence' : 'Nouvelle préférence';
     document.getElementById('tagFormLabel').value = '';
     document.getElementById('tagFormIsMultiple').checked = false;
+    document.getElementById('tagFormPrimaryEnabled').checked = false;
     document.getElementById('tagFormSourceCsv').checked = true;
     document.getElementById('tagFormSourceM2m').checked = false;
     document.getElementById('tagFormSourceApp').value = '';
@@ -102,6 +103,7 @@ async function showTagCategoryModal(slug) {
             if (cat) {
                 document.getElementById('tagFormLabel').value = cat.label;
                 document.getElementById('tagFormIsMultiple').checked = cat.is_multiple;
+                document.getElementById('tagFormPrimaryEnabled').checked = !!cat.primary_enabled;
                 if (cat.source === 'm2m') {
                     document.getElementById('tagFormSourceM2m').checked = true;
                     document.getElementById('tagFormSourceAppGroup').classList.remove('d-none');
@@ -192,6 +194,7 @@ function toggleTagSource() {
 async function handleSaveTagCategory() {
     const label = document.getElementById('tagFormLabel').value.trim();
     const isMultiple = document.getElementById('tagFormIsMultiple').checked;
+    const primaryEnabled = document.getElementById('tagFormPrimaryEnabled').checked;
     const source = document.getElementById('tagFormSourceM2m').checked ? 'm2m' : 'csv';
     const sourceAppId = source === 'm2m' ? parseInt(document.getElementById('tagFormSourceApp').value) || null : null;
     const m2mTable = source === 'm2m' ? document.getElementById('tagFormM2mTable').value : '';
@@ -210,7 +213,7 @@ async function handleSaveTagCategory() {
         const slug = existing ? existing.slug : slugify(label);
 
         if (existing) {
-            const updateData = { label, is_multiple: isMultiple, values, is_active: existing.is_active };
+            const updateData = { label, is_multiple: isMultiple, values, is_active: existing.is_active, primary_enabled: primaryEnabled };
             if (source === 'm2m') updateData.m2m_endpoint = m2mEndpoint;
             await api.updateTagCategory(slug, updateData);
             showToast('Préférence mise à jour', 'success');
@@ -218,7 +221,7 @@ async function handleSaveTagCategory() {
             if (!slug) { showToast('Le nom ne permet pas de générer un identifiant valide', 'danger'); return; }
             // m2m_endpoint: str non-Optional côté backend (default '/api/tags/export')
             // — ne pas envoyer la clé quand elle est nulle (source csv), sinon 422.
-            const payload = { slug, label, is_multiple: isMultiple, source, source_app_id: sourceAppId, values };
+            const payload = { slug, label, is_multiple: isMultiple, source, source_app_id: sourceAppId, values, primary_enabled: primaryEnabled };
             if (m2mEndpoint) payload.m2m_endpoint = m2mEndpoint;
             await api.createTagCategory(payload);
             showToast('Préférence créée', 'success');
@@ -298,6 +301,7 @@ async function handleSyncM2mFromModal(slug) {
     if (!label) { showToast('Saisissez d\'abord un nom de préférence', 'danger'); return; }
     try {
         const isMultiple = document.getElementById('tagFormIsMultiple').checked;
+        const primaryEnabled = document.getElementById('tagFormPrimaryEnabled').checked;
         const sourceAppId = parseInt(document.getElementById('tagFormSourceApp').value) || null;
         const m2mTable = document.getElementById('tagFormM2mTable').value;
         const m2mColumn = document.getElementById('tagFormM2mColumn').value;
@@ -305,7 +309,7 @@ async function handleSyncM2mFromModal(slug) {
         if (!m2mTable || !m2mColumn) { showToast('Sélectionnez une table et une colonne (cliquez sur  🔍  pour découvrir)', 'danger'); return; }
         const m2mEndpoint = `/api/hub/data/values?table=${encodeURIComponent(m2mTable)}&column=${encodeURIComponent(m2mColumn)}`;
         const newSlug = slugify(label);
-        await api.createTagCategory({ slug: newSlug, label, is_multiple: isMultiple, source: 'm2m', source_app_id: sourceAppId, m2m_endpoint: m2mEndpoint, values: [] });
+        await api.createTagCategory({ slug: newSlug, label, is_multiple: isMultiple, source: 'm2m', source_app_id: sourceAppId, m2m_endpoint: m2mEndpoint, values: [], primary_enabled: primaryEnabled });
         showToast('Préférence créée, synchronisation en cours...', 'success');
         await handleImportTagM2m(newSlug);
         tagModalInstance.hide();
@@ -321,7 +325,7 @@ async function loadAdminMyTags() {
         const [categoriesData, myTagsData] = await Promise.all([
             api.getActiveTagCategories(), api.getMyTags()
         ]);
-        renderPrefsPage(categoriesData.categories || [], myTagsData.tags || {});
+        renderPrefsPage(categoriesData.categories || [], myTagsData.tags || {}, myTagsData.primary || {});
     } catch (error) {
         console.error('Erreur chargement préférences:', error);
         const sections = document.getElementById('prefSections');

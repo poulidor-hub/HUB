@@ -267,6 +267,108 @@ class TestDefaultRoles:
         assert len(DEFAULT_ROLES) == 4
 
 
+class TestUserTagsPrimary:
+    """Migration 068 : colonnes is_primary / primary_enabled + User.get_tags_primary()."""
+
+    @pytest.mark.asyncio
+    async def test_get_tags_primary_returns_primary_value(self, async_session, test_user):
+        """Le secteur marqué is_primary dans une catégorie primary_enabled est retourné."""
+        from sqlalchemy import select
+        from sqlalchemy.orm import selectinload
+        from app.models import TagCategory, UserTag
+
+        cat = TagCategory(slug="secteurs", label="Secteurs", source="csv",
+                          is_multiple=True, values=["Nord", "Sud", "Est"],
+                          primary_enabled=True)
+        async_session.add(cat)
+        await async_session.flush()
+
+        async_session.add(UserTag(user_id=test_user.id, category_id=cat.id, value="Nord"))
+        async_session.add(UserTag(user_id=test_user.id, category_id=cat.id,
+                                  value="Sud", is_primary=True))
+        await async_session.commit()
+
+        result = await async_session.execute(
+            select(User)
+            .options(selectinload(User.tags).selectinload(UserTag.category))
+            .where(User.id == test_user.id)
+        )
+        user = result.scalar_one()
+        assert user.get_tags_primary() == {"secteurs": "Sud"}
+
+    @pytest.mark.asyncio
+    async def test_get_tags_primary_excludes_category_not_enabled(
+        self, async_session, test_user
+    ):
+        """Une is_primary posée sur une catégorie non primary_enabled est ignorée."""
+        from sqlalchemy import select
+        from sqlalchemy.orm import selectinload
+        from app.models import TagCategory, UserTag
+
+        cat = TagCategory(slug="langues", label="Langues", source="csv",
+                          is_multiple=True, values=["fr", "en"], primary_enabled=False)
+        async_session.add(cat)
+        await async_session.flush()
+        async_session.add(UserTag(user_id=test_user.id, category_id=cat.id,
+                                  value="fr", is_primary=True))
+        await async_session.commit()
+
+        result = await async_session.execute(
+            select(User)
+            .options(selectinload(User.tags).selectinload(UserTag.category))
+            .where(User.id == test_user.id)
+        )
+        user = result.scalar_one()
+        assert user.get_tags_primary() == {}
+
+    @pytest.mark.asyncio
+    async def test_get_tags_primary_excludes_inactive_category(
+        self, async_session, test_user
+    ):
+        """Une catégorie inactive est filtrée (même convention que get_tags)."""
+        from sqlalchemy import select
+        from sqlalchemy.orm import selectinload
+        from app.models import TagCategory, UserTag
+
+        cat = TagCategory(slug="zones", label="Zones", source="csv",
+                          is_multiple=True, values=["A", "B"],
+                          primary_enabled=True, is_active=False)
+        async_session.add(cat)
+        await async_session.flush()
+        async_session.add(UserTag(user_id=test_user.id, category_id=cat.id,
+                                  value="A", is_primary=True))
+        await async_session.commit()
+
+        result = await async_session.execute(
+            select(User)
+            .options(selectinload(User.tags).selectinload(UserTag.category))
+            .where(User.id == test_user.id)
+        )
+        user = result.scalar_one()
+        assert user.get_tags_primary() == {}
+
+    @pytest.mark.asyncio
+    async def test_columns_default_false(self, async_session):
+        """Les nouvelles colonnes valent False par défaut (aucune data-migration)."""
+        from app.models import TagCategory, UserTag
+
+        cat = TagCategory(slug="defcat", label="Def", source="csv", values=["X"])
+        async_session.add(cat)
+        await async_session.flush()
+        ut = UserTag(user_id=None, category_id=cat.id, value="X")
+        # user_id non nul requis : on crée via test_user pour rester simple
+        from app.models import User
+        user = User(username="primdefault", email="primdefault@example.com",
+                    hashed_password=get_password_hash("password123"))
+        async_session.add(user)
+        await async_session.flush()
+        ut.user_id = user.id
+        async_session.add(ut)
+        await async_session.flush()
+        assert cat.primary_enabled is False
+        assert ut.is_primary is False
+
+
 async def test_user_has_totp_fields(async_session):
     user = User(
         username="totpfields",

@@ -132,6 +132,70 @@ class TestJWTCreation:
         assert payload["sub"] == "sa_client123"
 
 
+class TestJWTTagsPrimaryClaim:
+    """Claim tags_primary (spéc §7) : émis si non vide, absent sinon.
+
+    Backward compatible : tokens anciens sans le claim → None côté socle.
+    """
+
+    def test_token_contains_tags_primary_when_set(self):
+        """tags_primary présent dans le payload quand fourni non vide."""
+        import jwt as pyjwt
+        token, _, _ = create_access_token(
+            username="testuser",
+            apps={},
+            tags={"secteurs": ["Nord", "Sud"]},
+            tags_primary={"secteurs": "Sud"},
+        )
+        payload = pyjwt.decode(
+            token, settings.jwt_public_key, algorithms=[settings.jwt_algorithm]
+        )
+        assert payload["tags"] == {"secteurs": ["Nord", "Sud"]}
+        assert payload["tags_primary"] == {"secteurs": "Sud"}
+
+    def test_token_omits_tags_primary_when_empty(self):
+        """tags_primary absent du payload si None ou dict vide (même convention que tags)."""
+        import jwt as pyjwt
+        for kwargs in ({}, {"tags_primary": None}, {"tags_primary": {}}):
+            token, _, _ = create_access_token(username="testuser", apps={}, **kwargs)
+            payload = pyjwt.decode(
+                token, settings.jwt_public_key, algorithms=[settings.jwt_algorithm]
+            )
+            assert "tags_primary" not in payload, f"kwargs={kwargs}"
+
+    @pytest.mark.asyncio
+    async def test_login_token_carries_primary(
+        self, client, async_session, test_user
+    ):
+        """Login password grant : le token porte tags + tags_primary du user."""
+        from app.models import TagCategory, UserTag
+        import jwt as pyjwt
+
+        cat = TagCategory(slug="secteurs", label="Secteurs", source="csv",
+                          is_multiple=True, values=["Nord", "Sud"],
+                          primary_enabled=True)
+        async_session.add(cat)
+        await async_session.flush()
+        async_session.add(UserTag(user_id=test_user.id, category_id=cat.id, value="Nord"))
+        async_session.add(UserTag(user_id=test_user.id, category_id=cat.id,
+                                  value="Sud", is_primary=True))
+        await async_session.commit()
+
+        response = await client.post("/api/auth/token", data={
+            "grant_type": "password",
+            "username": test_user.username,
+            "password": "testpass123",
+        })
+        assert response.status_code == 200
+        token = response.json()["access_token"]
+
+        payload = pyjwt.decode(
+            token, settings.jwt_public_key, algorithms=[settings.jwt_algorithm]
+        )
+        assert payload["tags"] == {"secteurs": ["Nord", "Sud"]}
+        assert payload["tags_primary"] == {"secteurs": "Sud"}
+
+
 class TestJWTVerification:
     """Tests pour la vérification de tokens JWT"""
     
