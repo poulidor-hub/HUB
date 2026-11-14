@@ -354,11 +354,17 @@ function prefScrollTo(slug) {
     if (card) card.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
-/** Rend la page complète (sommaire + cartes) à partir des catégories et tags. */
-function renderPrefsPage(categories, myTags) {
+/**
+ * Rend la page complète (sommaire + cartes) à partir des catégories et tags.
+ * @param {Array} categories - catégories actives (avec primary_enabled + source_flag)
+ * @param {Object} myTags - { slug: [values] } cochées
+ * @param {Object} primaryMap - { slug: value } primaires courantes
+ */
+function renderPrefsPage(categories, myTags, primaryMap) {
     const summaryBody = document.querySelector('#prefSummary .pref-summary-body');
     const sections = document.getElementById('prefSections');
     if (!summaryBody || !sections) return;
+    const primary = primaryMap || {};
 
     if (_prefObserver) { _prefObserver.disconnect(); _prefObserver = null; }
 
@@ -377,16 +383,34 @@ function renderPrefsPage(categories, myTags) {
             <span class="pref-summary-dot" aria-hidden="true"></span>${escapeHtml(cat.label)}
         </a>`).join('');
 
-    sections.innerHTML = categories.map(cat => `
-        <div class="pref-card card" id="prefCard_${cat.slug}" data-slug="${cat.slug}">
+    // Bandeau discret si au moins une catégorie est servie depuis le cache
+    // (exemple-app injoignable — spec §6.2).
+    const cacheBanner = categories.some(cat => cat.source_flag === 'cache')
+        ? `<div class="alert alert-info py-2 px-3 mb-3" role="status">
+               <i class="bi bi-cloud-slash me-1" aria-hidden="true"></i>
+               Valeurs en cache — exemple-app injoignable, synchronisation dès son retour.
+           </div>`
+        : '';
+
+    sections.innerHTML = cacheBanner + categories.map(cat => {
+        // Section « Secteur principal » sous les chips pour les catégories
+        // primary_enabled ; radios limitées aux valeurs actives affichées.
+        const liveSelected = (myTags[cat.slug] || []).filter(v => (cat.values || []).includes(v));
+        const primaryField = cat.primary_enabled
+            ? buildPrimaryFieldHTML(cat, liveSelected, primary[cat.slug] || null, 'page')
+            : '';
+        return `
+        <div class="pref-card card" id="prefCard_${cat.slug}" data-slug="${cat.slug}"${cat.primary_enabled ? ' data-pref-root="1"' : ''}>
             <div class="card-body">
                 <div class="pref-card-head">
                     <h2 class="pref-card-title">${escapeHtml(cat.label)}</h2>
                     <span class="pref-card-type">${cat.is_multiple ? 'plusieurs choix' : '1 choix'}</span>
                 </div>
                 ${buildPrefFieldHTML(cat, myTags[cat.slug] || [], 'page')}
+                ${primaryField}
             </div>
-        </div>`).join('');
+        </div>`;
+    }).join('');
 
     updatePrefSummaryDots(document.getElementById('prefPageRoot'));
     setPrefSaveStatus('idle');
