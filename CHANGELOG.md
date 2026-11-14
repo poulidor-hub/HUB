@@ -5,6 +5,29 @@
 
 ---
 
+## [3.88.1] - 14 novembre 2026
+
+### 📣 Pour les utilisateurs
+- **Fiabilité** : la suite de tests automatiques du Hub est de nouveau 100 % verte
+  (1685 tests). Les prochaines mises à jour sont mieux protégées contre les
+  régressions silencieuses — aucune fonctionnalité n'est modifiée dans cette version.
+
+### ⚡ Fix tests : 6 échecs pré-existants corrigés (suite complète verte)
+
+- `test_app_deploy` ×2 : le helper d'allocation ancre désormais la
+  `PortAllocation` sur le host courant du hub (`get_settings().get_hub_host()`)
+  au lieu d'un host arbitraire — l'idempotence slug+host de l'allocateur est
+  de nouveau exercée (9002 / 10.50.0.7/24 réutilisés).
+- `test_vpn_dns::test_get_dns_line_with_zone` : override explicite de
+  `settings.hub_host` (RFC 5737) via la fixture `settings` + `hub_host` ajouté
+  aux champs snapshot/restaurés par la fixture (il n'était jamais restauré).
+- Pollution d'état (oidc_discovery, oidc_authorize, slo_login) : cause prouvée —
+  `test_apps_host_path_env_override` appelait `get_settings.cache_clear()`,
+  désynchronisant les ~10 singletons Settings capturés à l'import. Le test
+  instancie `Settings()` directement (pattern `test_hub_host.py`).
+
+---
+
 ## [3.88.0] - 14 novembre 2026
 
 ### ⚡ Audit erreurs : colonne `attempted_client_id` — identifier l'appelant d'un échec d'auth M2M
