@@ -5,6 +5,24 @@
 
 ---
 
+## [3.90.2] - 14 novembre 2026
+
+### 📣 Pour les utilisateurs
+- **Corrigé** : le Hub en HTTPS profite maintenant lui aussi du chargement plus rapide (cache des fichiers statiques et bibliothèques servies localement).
+
+### ⚡ Fix : harmonisation nginx-ssl.conf avec nginx.conf (front HTTPS)
+
+- **Cache 7 jours des assets versionnés `?v=`** en HTTPS (`Cache-Control: public, max-age=604800, stale-while-revalidate=86400`) — la version SSL du frontend n'avait aucune des optimisations de la 3.90.0 (les utilisateurs réels passent par HTTPS).
+- **Pas de header de cache sur les 404** (`always` retiré des locations hashed-assets et css/js) — un asset manquant ne peut plus être mis en cache 7 jours par les navigateurs.
+- **`location ^~ /api/`** — une route API future terminant en `.js`/`.css` ne peut plus être capturée par la location statique.
+- **CSP sans `cdn.jsdelivr.net`** (script/style/font `self`) — les bibliothèques sont vendored localement depuis la 3.90.0 ; l'origine externe n'avait plus de raison d'être autorisée.
+
+| Fonctionnalité | Description |
+|----------------|-------------|
+| **À compléter** | Décrivez les changements de cette version |
+
+---
+
 ## [3.90.1] - 14 novembre 2026
 
 ### ⚡ Fix : gitigne `secrets/atelier_token` — fin du statut « arbre sale » permanent
