@@ -11,6 +11,7 @@ from sqlalchemy import select, delete
 from sqlalchemy.orm import selectinload
 from datetime import timedelta
 import httpx
+import time
 
 from app.database import get_db
 from app.auth import get_current_admin, get_current_user, get_current_entity, create_access_token
@@ -64,6 +65,93 @@ async def _get_user_seen(db: AsyncSession, user_id: int) -> list[str]:
         .where(UserTagSeen.user_id == user_id, TagCategory.is_active == True)
     )
     return [row[0] for row in result.all()]
+
+
+# ─── Résolveur valeurs live (exemple-app) ────────────────────────
+
+# Cache mémoire process : {category_id: (monotonic, [valeurs])}. TTL court :
+# un redémarrage ou une invalidation (import-m2m, PATCH/POST catégorie)
+# suffit à resynchroniser.
+_VALUES_TTL = 60
+_values_cache: dict[int, tuple[float, list[str]]] = {}
+
+
+def _invalidate_values_cache(category_id: int) -> None:
+    _values_cache.pop(category_id, None)
+
+
+def _dedup_preserve_order(raw_values: list) -> list[str]:
+    """Dédupliqué ordre-préservé, valeurs normalisées en str."""
+    seen: set[str] = set()
+    values: list[str] = []
+    for v in raw_values:
+        sv = str(v)
+        if sv not in seen:
+            seen.add(sv)
+            values.append(sv)
+    return values
+
+
+async def _resolve_active_values(
+    db: AsyncSession, category: TagCategory
+) -> tuple[list[str], str]:
+    """Valeurs actives d'une catégorie : fetch live M2M → cache TTL 60 s → snapshot.
+
+    Retourne (valeurs, flag) où flag vaut :
+    - "live"  : fetch M2M réussi (snapshot DB rafraîchi au passage) ;
+    - "cache" : source injoignable/erreur → dernières valeurs connues
+      (cache mémoire si fraîches, sinon snapshot DB) ;
+    - "csv"   : catégorie non M2M (pas de fetch, valeurs du snapshot).
+
+    Formats source tolérés (identiques à import_m2m) : liste directe ou
+    {"values": [...]}. Les doublons sont dédoublonnés ordre-préservé.
+    """
+    if category.source != "m2m" or not category.source_app_id:
+        return list(category.values or []), "csv"
+
+    now = time.monotonic()
+    cached = _values_cache.get(category.id)
+    if cached is not None and (now - cached[0]) < _VALUES_TTL:
+        return list(cached[1]), "cache"
+
+    app_result = await db.execute(
+        select(Application).where(Application.id == category.source_app_id)
+    )
+    source_app = app_result.scalar_one_or_none()
+    if not source_app or not source_app.api_url:
+        return list(category.values or []), "cache"
+
+    try:
+        target_url = (
+            f"{source_app.api_url.rstrip('/')}"
+            f"{(category.m2m_endpoint or '/api/tags/export')}"
+        )
+        async with httpx.AsyncClient(timeout=3.0) as client:
+            response = await client.get(
+                target_url,
+                headers=_m2m_headers(source_app.slug),
+            )
+            if response.status_code != 200:
+                raise httpx.RequestError(
+                    f"L'app source a retourné {response.status_code}"
+                )
+            exported = response.json()
+            if isinstance(exported, dict) and isinstance(exported.get("values"), list):
+                exported_values = exported["values"]
+            elif isinstance(exported, list):
+                exported_values = exported
+            else:
+                raise ValueError("Format de réponse M2M invalide")
+    except (httpx.RequestError, ValueError, TypeError):
+        # Source injoignable ou réponse invalide : repli sur les dernières
+        # valeurs connues (snapshot DB), jamais d'erreur exposée au user.
+        return list(category.values or []), "cache"
+
+    values = _dedup_preserve_order(exported_values)
+    category.values = values
+    _values_cache[category.id] = (time.monotonic(), values)
+    await db.commit()
+    return values, "live"
 
 
 # ─── Découverte M2M (proxy vers l'app source) ─────────────────────
@@ -203,6 +291,8 @@ async def create_category(
     await db.commit()
     await db.refresh(category)
 
+    _invalidate_values_cache(category.id)
+
     notify_event("tags_updated", {"action": "category_created", "slug": category.slug})
 
     return TagCategoryResponse.model_validate(category)
@@ -230,6 +320,8 @@ async def update_category(
 
     await db.commit()
     await db.refresh(category)
+
+    _invalidate_values_cache(category.id)
 
     notify_event("tags_updated", {"action": "category_updated", "slug": slug})
 
@@ -276,6 +368,8 @@ async def import_csv(
 
     await db.commit()
     await db.refresh(category)
+
+    _invalidate_values_cache(category.id)
 
     notify_event("tags_updated", {"action": "category_csv_import", "slug": slug})
 
@@ -331,6 +425,8 @@ async def import_m2m(
 
     await db.commit()
     await db.refresh(category)
+
+    _invalidate_values_cache(category.id)
 
     notify_event("tags_updated", {"action": "category_m2m_import", "slug": slug})
 

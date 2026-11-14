@@ -308,6 +308,146 @@ class TestJWTTagsClaim:
         assert "tags" not in payload
 
 
+class TestLiveValues:
+    """Résolveur _resolve_active_values : live M2M → cache TTL 60 s → snapshot."""
+
+    @pytest.fixture(autouse=True)
+    def _clear_values_cache(self):
+        from app.routes import tags as tags_module
+        tags_module._values_cache.clear()
+        # État classe-partagé du stub : remis à zéro pour chaque test.
+        type(self)._StubAsyncClient.calls = 0
+        type(self)._StubAsyncClient.response = None
+        type(self)._StubAsyncClient.exc = None
+        yield
+        tags_module._values_cache.clear()
+
+    class _StubResponse:
+        def __init__(self, status_code=200, payload=None):
+            self.status_code = status_code
+            self._payload = payload if payload is not None else []
+
+        def json(self):
+            return self._payload
+
+    class _StubAsyncClient:
+        """Remplace httpx.AsyncClient (pas de respx dans le projet)."""
+        response = None
+        exc = None
+        calls = 0
+
+        def __init__(self, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc_info):
+            return False
+
+        async def get(self, url, **kwargs):
+            type(self).calls += 1
+            if type(self).exc is not None:
+                raise type(self).exc
+            return type(self).response
+
+    def _patch_httpx(self, monkeypatch):
+        monkeypatch.setattr(
+            "app.routes.tags.httpx.AsyncClient", self._StubAsyncClient
+        )
+
+    async def _make_m2m_category(
+        self, async_session, test_app, slug="secteurs", values=None, **kwargs
+    ):
+        from app.models import TagCategory
+        cat = TagCategory(slug=slug, label=slug.title(), source="m2m",
+                          source_app_id=test_app.id,
+                          values=values if values is not None else [], **kwargs)
+        async_session.add(cat)
+        await async_session.commit()
+        await async_session.refresh(cat)
+        return cat
+
+    @pytest.mark.asyncio
+    async def test_resolve_live_updates_snapshot(
+        self, monkeypatch, async_session, test_app
+    ):
+        """Source répond → valeurs fraîches retournées + snapshot rafraîchi + 'live'."""
+        from app.routes.tags import _resolve_active_values
+        from app.models import TagCategory
+        from sqlalchemy import select
+
+        cat = await self._make_m2m_category(async_session, test_app, values=["Old"])
+        self._patch_httpx(monkeypatch)
+        self._StubAsyncClient.response = self._StubResponse(
+            200, {"values": ["Nord", "Sud"]}
+        )
+
+        values, flag = await _resolve_active_values(async_session, cat)
+
+        assert values == ["Nord", "Sud"]
+        assert flag == "live"
+        assert self._StubAsyncClient.calls == 1
+        result = await async_session.execute(
+            select(TagCategory).where(TagCategory.slug == "secteurs")
+        )
+        assert result.scalar_one().values == ["Nord", "Sud"]
+
+    @pytest.mark.asyncio
+    async def test_resolve_timeout_falls_back_to_cache(
+        self, monkeypatch, async_session, test_app
+    ):
+        """Source injoignable → snapshot renvoyé + 'cache'."""
+        import httpx
+        from app.routes.tags import _resolve_active_values
+
+        cat = await self._make_m2m_category(async_session, test_app, values=["S1", "S2"])
+        self._patch_httpx(monkeypatch)
+        self._StubAsyncClient.exc = httpx.RequestError("connection refused")
+
+        values, flag = await _resolve_active_values(async_session, cat)
+
+        assert values == ["S1", "S2"]
+        assert flag == "cache"
+        assert self._StubAsyncClient.calls == 1
+
+    @pytest.mark.asyncio
+    async def test_resolve_ttl_no_second_fetch(
+        self, monkeypatch, async_session, test_app
+    ):
+        """Deux résolutions < 60 s → un seul fetch (cache mémoire)."""
+        from app.routes.tags import _resolve_active_values
+
+        cat = await self._make_m2m_category(async_session, test_app, values=[])
+        self._patch_httpx(monkeypatch)
+        self._StubAsyncClient.response = self._StubResponse(200, ["V1", "V2"])
+
+        values1, flag1 = await _resolve_active_values(async_session, cat)
+        values2, flag2 = await _resolve_active_values(async_session, cat)
+
+        assert values1 == ["V1", "V2"]
+        assert flag1 == "live"
+        assert values2 == ["V1", "V2"]
+        assert flag2 == "cache"
+        assert self._StubAsyncClient.calls == 1
+
+    @pytest.mark.asyncio
+    async def test_resolve_values_dedup(self, monkeypatch, async_session, test_app):
+        """Réponse source avec doublons → dédoublonnage ordre-préservé (Review Focus #2)."""
+        from app.routes.tags import _resolve_active_values
+
+        cat = await self._make_m2m_category(async_session, test_app, values=[])
+        self._patch_httpx(monkeypatch)
+        self._StubAsyncClient.response = self._StubResponse(
+            200, {"values": ["B", "A", "B", "C", "A"]}
+        )
+
+        values, flag = await _resolve_active_values(async_session, cat)
+
+        assert values == ["B", "A", "C"]
+        assert flag == "live"
+
+
 class TestUserTagsAcknowledge:
 
     @pytest.mark.asyncio
