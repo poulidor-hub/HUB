@@ -258,6 +258,7 @@ async def login_for_token(
             sub = user.username
             beacon_token = generate_beacon_token(user.id)
             tags = user.get_tags()
+            tags_primary = user.get_tags_primary()
             uid = str(user.uuid) if user.uuid else None
             prenom = user.prenom
             nom = user.nom
@@ -287,6 +288,7 @@ async def login_for_token(
             apps = sa_apps_claim(sa)
             sub = sa.client_id
             tags = None  # Service accounts n'ont pas de tags utilisateur
+            tags_primary = None  # ni de secteur principal
             uid = prenom = nom = None
 
         token, expire, jti = create_access_token(
@@ -294,6 +296,7 @@ async def login_for_token(
             apps=apps,
             is_service_account=refresh_obj.service_account_id is not None,
             tags=tags,
+            tags_primary=tags_primary,
             uid=uid,
             prenom=prenom,
             nom=nom,
@@ -441,6 +444,7 @@ async def login_for_token(
         username=user.username,
         apps=apps,
         tags=user.get_tags(),
+        tags_primary=user.get_tags_primary(),
         uid=str(user.uuid) if user.uuid else None,
         prenom=user.prenom,
         nom=user.nom,
@@ -579,6 +583,7 @@ async def login_with_redirect(
         username=user.username,
         apps=apps,
         tags=user.get_tags(),
+        tags_primary=user.get_tags_primary(),
         uid=str(user.uuid) if user.uuid else None,
         prenom=user.prenom,
         nom=user.nom,
@@ -1145,6 +1150,7 @@ async def refresh_access_token(
         is_sa = False
         beacon_token = generate_beacon_token(user.id)
         tags = user.get_tags()
+        tags_primary = user.get_tags_primary()
         uid = str(user.uuid) if user.uuid else None
         prenom = user.prenom
         nom = user.nom
@@ -1161,6 +1167,7 @@ async def refresh_access_token(
         sub = sa.client_id
         is_sa = True
         tags = None  # Service accounts n'ont pas de tags utilisateur
+        tags_primary = None  # ni de secteur principal
         uid = prenom = nom = None
 
     token, expire, jti = create_access_token(
@@ -1168,6 +1175,7 @@ async def refresh_access_token(
         apps=apps,
         is_service_account=is_sa,
         tags=tags,
+        tags_primary=tags_primary,
         uid=uid,
         prenom=prenom,
         nom=nom,
@@ -1242,6 +1250,7 @@ async def create_app_launch_token(
         username=current_username,
         apps=apps,
         tags=current_user.get_tags(),
+        tags_primary=current_user.get_tags_primary(),
         uid=str(current_user.uuid) if current_user.uuid else None,
         prenom=current_user.prenom,
         nom=current_user.nom,
@@ -1364,6 +1373,7 @@ async def sso_login(
         username=user.username,
         apps=apps,
         tags=user.get_tags(),
+        tags_primary=user.get_tags_primary(),
         uid=str(user.uuid) if user.uuid else None,
         prenom=user.prenom,
         nom=user.nom,
