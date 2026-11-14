@@ -36,7 +36,12 @@ def test_client_conf_without_zone_has_no_dns_line():
     assert "DNS =" not in conf
 
 
-async def test_get_dns_line_with_zone(async_session):
+async def test_get_dns_line_with_zone(async_session, settings):
+    # Override explicite : le .env réel (HUB_HOST=IP LAN) ne doit pas rendre ce
+    # test dépendant de l'environnement. IP de documentation RFC 5737 — pattern
+    # documenté dans conftest (_hub_host_locality_neutralized) : on teste la
+    # MÉCANIQUE (propagation DNS aux peers), pas la valeur réelle du poste.
+    settings.hub_host = HUB_HOST
     async_session.add(AppSetting(key="hub_dns_zone", value="hub.example.lan"))
     await async_session.commit()
     assert await get_dns_line_for_peers(async_session) == f"DNS = {HUB_HOST}"
