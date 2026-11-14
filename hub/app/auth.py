@@ -227,8 +227,13 @@ async def create_refresh_token(
     )
     
     db.add(refresh_token)
-    await db.commit()
-    
+    # flush (pas commit) : le commit final appartient à l'appelant — rotation
+    # (auth.rotate_refresh_token), login/launch (routes/auth) et auto-login
+    # (account_requests) committent tous la même session en fin de flow.
+    # La rotation est ainsi une transaction unique (1 fsync au lieu de 2, et
+    # jamais un état moitié-committé entre révocation et remplaçant).
+    await db.flush()
+
     return token
 
 
