@@ -80,6 +80,9 @@ storage/snapshots/
 # Identité runtime du Hub (unique par installation — jamais committée)
 secrets/hub_instance_id
 
+# Token du service atelier (généré par hubctl init, unique par installation — jamais committé)
+secrets/atelier_token
+
 # Artefacts de couverture pytest (make test-cov)
 .coverage
 htmlcov/
