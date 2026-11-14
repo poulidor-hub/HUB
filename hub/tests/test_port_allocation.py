@@ -518,3 +518,48 @@ async def test_backfill_subnet_avoids_cross_host_collision(async_session):
     alloc, reused = await allocate_ports_for_app(async_session, "legacy-app", REMOTE_TEST_HOST, settings)
     assert reused is True
     assert alloc.subnet and alloc.subnet != "10.50.0.0/24"
+
+
+@pytest.mark.asyncio
+async def test_reconcile_subnet_dans_pool_daemon_est_trace(async_session, caplog):
+    """F15 (test PRA VM 14/11/2026) : la réconciliation épinglait en DB des
+    subnets auto-alloués par le daemon DANS ses pools par défaut
+    (172.20-23/16, 192.168.x/20 constatés en production) → chevauchement
+    avec les pools d'adresses de la machine hôte. Le cas doit être tracé
+    en warning pour permettre la migration (ré-épinglage APP_SUBNET)."""
+    import logging
+    from unittest.mock import patch
+
+    from app import port_allocator
+
+    hub_host = settings.get_hub_host()
+    alloc = PortAllocation(
+        app_slug="recon-app", host=hub_host, api_port=9000,
+        frontend_port=4200, frontend_https_port=4201,
+        subnet="10.50.3.0/24",
+    )
+    async_session.add(alloc)
+    await async_session.commit()
+    await async_session.refresh(alloc)
+
+    with patch("app.port_allocator.docker_scanner.get_project_network_subnets",
+               return_value={"172.20.0.0/16"}):
+        with caplog.at_level(logging.WARNING, logger="app.port_allocator"):
+            real = await port_allocator.reconcile_subnet_with_docker(
+                async_session, "recon-app", alloc, settings)
+
+    assert real == "172.20.0.0/16"
+    assert any("daemon" in r.getMessage().lower() or "pool" in r.getMessage().lower()
+               for r in caplog.records)
+
+
+def test_is_in_daemon_default_pool():
+    """Les pools par défaut du daemon : 172.16.0.0/12 et 192.168.0.0/16."""
+    from app.port_allocator import is_in_daemon_default_pool
+
+    assert is_in_daemon_default_pool("172.20.0.0/16") is True    # constaté PRA
+    assert is_in_daemon_default_pool("192.168.48.0/20") is True  # constaté PRA
+    assert is_in_daemon_default_pool("172.17.0.0/16") is True    # docker0
+    assert is_in_daemon_default_pool("10.50.3.0/24") is False    # pool app dédié
+    assert is_in_daemon_default_pool("10.200.5.0/24") is False   # pool daemon élargi
+    assert is_in_daemon_default_pool("garbage") is False

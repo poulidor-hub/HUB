@@ -22,6 +22,23 @@ from app.models import Application, PortAllocation, utcnow
 
 logger = logging.getLogger(__name__)
 
+# Pools d'adresses PAR DÉFAUT du daemon Docker (sans default-address-pools
+# surchargé) : 172.16.0.0/12 et 192.168.0.0/16. Les subnets des réseaux
+# auto-créés tombent dedans — épingler une app dessus crée un chevauchement
+# avec les pools de la machine hôte (F15, test PRA VM 14/11/2026 : claims
+# 172.20-23/16 et 192.168.x/20 constatés en production).
+_DAEMON_DEFAULT_POOLS = [ipaddress.ip_network("172.16.0.0/12"), ipaddress.ip_network("192.168.0.0/16")]
+
+
+def is_in_daemon_default_pool(cidr: str) -> bool:
+    """True si le CIDR est entièrement contenu dans un pool d'adresses
+    par défaut du daemon Docker. Valeurs invalides → False."""
+    try:
+        subnet = ipaddress.ip_network(cidr, strict=False)
+    except ValueError:
+        return False
+    return any(subnet.subnet_of(pool) for pool in _DAEMON_DEFAULT_POOLS)
+
 
 class PortPoolExhausted(Exception):
     """Levée quand plus aucun port libre n'est disponible dans une plage."""
@@ -317,10 +334,19 @@ async def reconcile_subnet_with_docker(
     real = next(iter(subnets))
     if allocation.subnet == real:
         return None
+    warning_extra = ""
+    if is_in_daemon_default_pool(real):
+        warning_extra = (
+            f" — ⚠️ {real} est dans les POOLS PAR DÉFAUT du daemon Docker "
+            "(172.16/12, 192.168/16) : chevauchement avec les pools de la "
+            "machine hôte (F15). Migration recommandée : ré-épingler "
+            f"APP_SUBNET sur le pool dédié ({settings.app_subnet_pool}) puis "
+            "`make up` pour recréer le réseau."
+        )
     logger.warning(
         "🔄 Réconciliation subnet pour '%s' : allocation Hub %s → réseau Docker "
-        "vivant %s (le réseau gagne, sinon Compose le recrée et casse le déploiement)",
-        slug, allocation.subnet, real,
+        "vivant %s (le réseau gagne, sinon Compose le recrée et casse le déploiement)%s",
+        slug, allocation.subnet, real, warning_extra,
     )
     allocation.subnet = real
     await db.commit()
