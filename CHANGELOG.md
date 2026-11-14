@@ -5,18 +5,25 @@
 
 ---
 
-## [3.87.8] - 14 novembre 2026
+## [3.87.9] - 14 novembre 2026
 
-### 🆕 Nouvelle version
+### ⚡ Fix UI : collision globale `renderPagination` — « undefined » affiché dans les paginations
 
-> ⚠️ Cette entrée a été créée automatiquement par `sync_version.py`.
-> Veuillez compléter les détails des modifications.
-
-| Fonctionnalité | Description |
-|----------------|-------------|
-| **À compléter** | Décrivez les changements de cette version |
+- `admin-vpn.js` redéfinissait `renderPagination(totalUsers, totalPages)` (mutateur DOM,
+  ne retourne rien) et, chargé en dernier dans `index.html`, écrasait la version
+  HTML de `audit.js:71` (`renderPagination(currentPage, totalPages, functionName)`).
+- Conséquence : `pagination.innerHTML = renderPagination(...)` écrivait la chaîne
+  `"undefined"` dans le DOM sur 4 pages : onglet Erreurs (audit-errors.js:215),
+  Logs détaillés (audit-page.js:809), détail d'app (audit-page.js:674),
+  profils utilisateurs (admin-users-profiles.js:117).
+- Fix : renommage de la variante VPN en `updateVpnPagination` (définition + appel,
+  2 lignes) — une seule définition globale de `renderPagination` subsiste.
 
 ---
+
+## [3.87.8] - 14 novembre 2026
+
+### ⚡ Allocateur : trace l'épinglage dans les pools daemon Docker (F15)
 
 ## [3.87.8] - 14 novembre 2026
 
