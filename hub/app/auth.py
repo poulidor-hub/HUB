@@ -17,7 +17,18 @@ from sqlalchemy.orm import selectinload
 from app.config import get_settings
 from app import jwt_keyring
 from app.database import get_db
-from app.models import User, ServiceAccount, RefreshToken, RevokedToken, UserAppRole, UserTag, PasswordResetCode, utcnow
+from app.models import (
+    User,
+    ServiceAccount,
+    RefreshToken,
+    RevokedToken,
+    UserAppRole,
+    UserTag,
+    PasswordResetCode,
+    OAuthAuthorizationCode,
+    OAuthRefreshToken,
+    utcnow,
+)
 
 settings = get_settings()
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -364,9 +375,30 @@ async def cleanup_expired_tokens(db: AsyncSession) -> int:
         )
         .values(replaced_by_token=None)
     )
-    
+
+    # Purge OIDC : codes d'autorisation périmés. Marge de 1 h au-delà du
+    # TTL (30 s) : jamais un code encore dans sa fenêtre d'échange.
+    oauth_code_cutoff = now - timedelta(hours=1)
+    result4 = await db.execute(
+        delete(OAuthAuthorizationCode).where(
+            OAuthAuthorizationCode.expires_at < oauth_code_cutoff
+        )
+    )
+
+    # Purge OIDC : refresh tokens OAuth expirés (expires_at NULL = sans
+    # expiration : épargné par la comparaison SQL à trois états).
+    result5 = await db.execute(
+        delete(OAuthRefreshToken).where(OAuthRefreshToken.expires_at < now)
+    )
+
     await db.commit()
-    return result1.rowcount + result2.rowcount + result3.rowcount
+    return (
+        result1.rowcount
+        + result2.rowcount
+        + result3.rowcount
+        + result4.rowcount
+        + result5.rowcount
+    )
 
 
 async def revoke_all_user_tokens(db: AsyncSession, user_id: int) -> None:

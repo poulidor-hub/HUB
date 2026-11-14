@@ -588,7 +588,7 @@ class RefreshToken(Base):
     
     id = Column(Integer, primary_key=True, index=True)
     token_hash = Column(String(255), unique=True, index=True, nullable=False)
-    user_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), nullable=True)
+    user_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), nullable=True, index=True)
     service_account_id = Column(Integer, ForeignKey('service_accounts.id', ondelete='CASCADE'), nullable=True)
     expires_at = Column(DateTime, nullable=False)
     created_at = Column(DateTime, default=utcnow)
@@ -1154,7 +1154,7 @@ class OAuthAuthorizationCode(Base):
     code_challenge = Column(String(200), nullable=True)
     code_challenge_method = Column(String(10), nullable=True)
     nonce = Column(String(100), nullable=True)
-    expires_at = Column(DateTime, nullable=False)
+    expires_at = Column(DateTime, nullable=False, index=True)  # purge périodique (mig 067)
     used_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=utcnow)
 
@@ -1182,7 +1182,7 @@ class OAuthRefreshToken(Base):
     client_id = Column(String(100), ForeignKey('oauth_clients.client_id', ondelete='CASCADE'), nullable=False)
     user_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
     scope = Column(String(200), nullable=False)
-    expires_at = Column(DateTime, nullable=True)  # NULL = pas d'expiration
+    expires_at = Column(DateTime, nullable=True, index=True)  # NULL = pas d'expiration ; index purge (mig 067)
     revoked_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=utcnow)
 
