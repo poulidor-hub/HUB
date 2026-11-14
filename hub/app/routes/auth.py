@@ -154,11 +154,15 @@ def _check_m2m_rate_limit(request: Request, client_id: str) -> None:
     attempts = _m2m_attempts.get(key, [])
     attempts = [t for t in attempts if now - t < _RATE_LIMIT_WINDOW]
     if len(attempts) >= limit:
-        raise HTTPException(
+        # Traçabilité : attacher le client_id tenté à l'exception pour que
+        # http_exception_handler le persiste dans error_logs (incident 09/11/2026).
+        exc = HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail=f"Trop de tentatives de connexion. Réessayez dans {_RATE_LIMIT_WINDOW} secondes.",
             headers={"Retry-After": str(_RATE_LIMIT_WINDOW)}
         )
+        exc.attempted_client_id = client_id
+        raise exc
     attempts.append(now)
     _m2m_attempts[key] = attempts
 
@@ -326,16 +330,23 @@ async def login_for_token(
         service_account = result.scalar_one_or_none()
         
         if not service_account or not verify_password(client_secret, service_account.client_secret_hash):
-            raise HTTPException(
+            # Traçabilité : client_id tenté (SA introuvable OU secret invalide —
+            # l'un comme l'autre, on trace ce qui a été soumis, jamais le secret).
+            exc = HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Identifiants service account invalides"
             )
+            exc.attempted_client_id = client_id
+            raise exc
         
         if not service_account.is_active:
-            raise HTTPException(
+            # Incident 09/11/2026 : SA désactivé martelé en boucle — tracer qui tente.
+            exc = HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Service account désactivé"
             )
+            exc.attempted_client_id = client_id
+            raise exc
         
         # Mettre à jour last_used_at
         service_account.last_used_at = utcnow()

@@ -1603,6 +1603,8 @@ async def get_error_logs(
                 "username": users_map.get(e.user_id) if e.user_id else None,
                 "service_account_id": e.service_account_id,
                 "service_account_client_id": sa_map.get(e.service_account_id) if e.service_account_id else None,
+                # Identifiant public tenté sur échec d'auth M2M (colonne attempted_client_id)
+                "attempted_client_id": e.attempted_client_id,
                 "source_app_slug": e.source_app_slug,
                 "request_method": e.request_method,
                 "request_path": e.request_path,
