@@ -331,7 +331,8 @@ services:
 
   # ===== VPN WireGuard Server =====
   # Le HUB est serveur : les utilisateurs s'y connectent à distance.
-  # Port 51820/udp doit être ouvert dans le firewall hôte.
+  # Port 51821/udp doit être ouvert dans le firewall hôte (vpn_listen_port
+  # en DB app_settings — 51820 est l'exemple de la doc linuxserver).
   wireguard-server:
     image: linuxserver/wireguard:latest
     container_name: hub-wireguard
@@ -352,8 +353,13 @@ services:
       options:
         max-size: "50m"
         max-file: "3"
-    # Cycle de vie géré par hubctl vpn + boot hook (côté POULIDOR).
-    restart: "no"
+    # Cycle de vie : `hubctl vpn` pilote démarrage/arrêt (vpn_enabled en DB).
+    # unless-stopped honore un `docker stop` explicite (hubctl vpn down) tout
+    # en faisant repasser le tunnel après un restart du daemon docker ou un
+    # reboot de l'hôte — incident du 13/11/2026 : policy "no" + daemon
+    # restarté = tunnel mort 30 h (le boot hook systemd ne couvre que les
+    # boots, pas les restarts du daemon).
+    restart: unless-stopped
 
 # ===== VOLUMES =====
 volumes:
