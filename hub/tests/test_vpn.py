@@ -52,10 +52,13 @@ def vpn_temp_dir(monkeypatch):
     with tempfile.TemporaryDirectory() as tmpdir:
         os.makedirs(os.path.join(tmpdir, "wg_confs"), exist_ok=True)
         monkeypatch.setenv("VPN_CONFIG_DIR", tmpdir)
+        # Le champ est patché sur le singleton EXISTANT (jamais get_settings.cache_clear() :
+        # ~10 modules capturent settings à l'import — cf. incident 3.88.1, commit 81985eb3).
+        # _wg_conf_path() lit get_settings().vpn_config_dir à la requête ; monkeypatch
+        # restaure la valeur d'origine au teardown.
         from app.config import get_settings
-        get_settings.cache_clear()
+        monkeypatch.setattr(get_settings(), "vpn_config_dir", tmpdir)
         yield tmpdir
-        get_settings.cache_clear()
 
 
 @pytest.fixture
@@ -308,32 +311,33 @@ class TestVpnPeerConfig:
     ):
         # HUB_HOST fixe → AllowedIPs déterministes (hub_host via get_hub_host()).
         monkeypatch.setenv("HUB_HOST", "203.0.113.42")
+        # Champ patché sur le singleton EXISTANT (jamais get_settings.cache_clear() :
+        # cf. incident 3.88.1) — get_hub_host() lit self.hub_host, et l'autouse
+        # _hub_host_locality_neutralized sert l'IP configurée en tests.
         from app.config import get_settings
-        get_settings.cache_clear()
-        try:
-            await _seed_server_settings(async_session, initialized=True)
+        monkeypatch.setattr(get_settings(), "hub_host", "203.0.113.42")
 
-            peer = VpnPeer(
-                user_id=admin_user.id, name="Laptop Pro",
-                public_key=_VALID_PUBKEY, private_key=_VALID_PRIVKEY,
-                vpn_ip="10.8.0.2/32", enabled=True,
-            )
-            async_session.add(peer)
-            await async_session.commit()
-            await async_session.refresh(peer)
+        await _seed_server_settings(async_session, initialized=True)
 
-            auth = get_auth_header(admin_token)
-            resp = await client.get(f"/api/vpn/peers/{peer.id}/config", headers=auth)
-            assert resp.status_code == 200
-            assert "attachment" in resp.headers.get("content-disposition", "")
-            body = resp.content.decode()
-            assert "[Interface]" in body
-            assert "[Peer]" in body
-            assert "DNS =" not in body            # aucun résolveur imposé au client
-            assert "10.8.0.1/32" in body          # serveur VPN (gateway) via tunnel
-            assert "203.0.113.42/32" in body      # hub_host : toutes les apps du host
-        finally:
-            get_settings.cache_clear()
+        peer = VpnPeer(
+            user_id=admin_user.id, name="Laptop Pro",
+            public_key=_VALID_PUBKEY, private_key=_VALID_PRIVKEY,
+            vpn_ip="10.8.0.2/32", enabled=True,
+        )
+        async_session.add(peer)
+        await async_session.commit()
+        await async_session.refresh(peer)
+
+        auth = get_auth_header(admin_token)
+        resp = await client.get(f"/api/vpn/peers/{peer.id}/config", headers=auth)
+        assert resp.status_code == 200
+        assert "attachment" in resp.headers.get("content-disposition", "")
+        body = resp.content.decode()
+        assert "[Interface]" in body
+        assert "[Peer]" in body
+        assert "DNS =" not in body            # aucun résolveur imposé au client
+        assert "10.8.0.1/32" in body          # serveur VPN (gateway) via tunnel
+        assert "203.0.113.42/32" in body      # hub_host : toutes les apps du host
 
 
 # =============================================================================
