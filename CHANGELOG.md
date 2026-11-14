@@ -5,6 +5,32 @@
 
 ---
 
+## [3.89.0] - 14 novembre 2026
+
+### ⚡ Admin : graphe des dépendances inter-apps lisible + vue matrice
+
+- **Ordre des nœuds par barycentre** (`depsComputeOrderedColumns`) : balayages
+  alternés bas→haut/haut→bas, tiebreak alphabétique — remplace le tri
+  alphabétique qui maximisait les croisements. Sur les 30 dépendances
+  actuelles : 88 → 39 croisements, rendu déterministe (même donnée ⇒ même graphe).
+- **Points d'ancrage des arêtes étalés** (`depsSpreadAnchors`) : les k arêtes
+  d'un nœud sont réparties le long de son bord (triées par position de leur
+  extrémité opposée) au lieu de partir toutes du point médian — les faisceaux
+  se séparent dès la sortie du nœud.
+- **Hiérarchie visuelle de fraîcheur** : épaisseur 2.4/1.7/1.1 et opacité 0.9/0.9/0.72
+  pour frais/périmé/jamais — le synchro récent ressort même quand l'essentiel
+  est rouge. Dimming de sélection inchangé (0.15).
+- **Bascule Graphe / Matrice** (`btn-group` à côté d'« Actualiser ») :
+  matrice d'adjacence sources × cibles, cases colorées par fraîcheur, cible
+  hors registre en contour pointillé, tooltip réutilisé (`depsTooltip` via
+  `data-deps-edge`, zéro nouveau listener). Défaut = Graphe, état non persisté.
+- Sélection nœud (clic graphe ou ligne du tableau) re-render la vue courante
+  (`depsRenderMainView`) — plus d'écrasement de la matrice par le graphe.
+- Front uniquement (`admin-app-dependencies.js` + `index.html`) : pas de lib,
+  pas d'animation (charte perf/stabilité), hover tooltip/clic/tableau inchangés.
+
+---
+
 ## [3.88.3] - 14 novembre 2026
 
 ### ⚡ VPN : `restart: unless-stopped` — le tunnel survit aux restarts du daemon docker
