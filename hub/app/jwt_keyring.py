@@ -25,6 +25,7 @@ from pathlib import Path
 
 import jwt as pyjwt
 from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.rsa import RSAPrivateKey
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +44,10 @@ _entries: list["KeyEntry"] | None = None  # cache process
 # re-charge la clé RSA (load_pem_private_key ≈ 250 ms sur RSA-4096) → lenteur
 # sur tous les endpoints authentifiés.
 _public_pem_cache: dict[str, str] = {}
+# kid -> objet clé privée chargé (load_pem_private_key ≈ 250 ms sur RSA-4096 :
+# chaque mint RS256 doit réutiliser l'objet clé, pas relire + re-parser le PEM).
+# Purge par reload() et _save_entries() (toute mutation du manifest invalide).
+_private_key_cache: dict[str, RSAPrivateKey] = {}
 
 
 class KeyringError(Exception):
@@ -126,6 +131,7 @@ def reload() -> None:
     global _entries
     _entries = None
     _public_pem_cache.clear()
+    _private_key_cache.clear()
 
 
 def _public_pem_for_kid(kid: str) -> str:
@@ -184,6 +190,10 @@ def _save_entries(entries: list[KeyEntry]) -> None:
     tmp.replace(manifest_path)
     global _entries
     _entries = entries
+    # Toute mutation du manifest (rotate, revoke, seed, tests) invalide les
+    # caches dérivés — simple et sûr.
+    _public_pem_cache.clear()
+    _private_key_cache.clear()
 
 
 def ensure_seeded() -> None:
@@ -264,6 +274,31 @@ def _read_private_pem(kid: str) -> str:
     if not path.exists():
         raise KeyringError(f"PEM manquant pour {kid}")
     return path.read_text().strip()
+
+
+def get_private_key(kid: str) -> RSAPrivateKey:
+    """Objet clé privée RSA d'un kid — chargé une seule fois puis caché.
+
+    load_pem_private_key coûte ~250 ms sur RSA-4096 dans le container : les
+    mints RS256 (jwt.encode accepte un objet clé) doivent réutiliser l'objet
+    chargé. kid = thumbprint du PEM public (invariant du module) → pour un kid
+    donné, le PEM privé est immuable en usage normal ; toute mutation du
+    manifest (_save_entries → rotate/revoke/seed) ou reload() purge le cache.
+    """
+    key = _private_key_cache.get(kid)
+    if key is None:
+        with _lock:
+            key = _private_key_cache.get(kid)
+            if key is None:
+                key = serialization.load_pem_private_key(
+                    _read_private_pem(kid).encode(), password=None)
+                _private_key_cache[kid] = key
+    return key
+
+
+def get_active_private_key() -> RSAPrivateKey:
+    """Objet clé privée active — pour jwt.encode (évite re-lecture + re-parse)."""
+    return get_private_key(get_active().kid)
 
 
 def get_active_private_pem() -> str:

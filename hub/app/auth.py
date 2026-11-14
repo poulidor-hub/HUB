@@ -130,7 +130,7 @@ def create_access_token(
 
     token = jwt.encode(
         payload,
-        jwt_keyring.get_active_private_pem(),
+        jwt_keyring.get_active_private_key(),
         algorithm=settings.jwt_algorithm,
         headers=headers
     )
@@ -155,7 +155,7 @@ def create_reset_token(username: str, hashed_password: str) -> str:
     }
     return jwt.encode(
         payload,
-        jwt_keyring.get_active_private_pem(),
+        jwt_keyring.get_active_private_key(),
         algorithm=settings.jwt_algorithm,
         headers={"kid": jwt_keyring.get_active_kid()},
     )
