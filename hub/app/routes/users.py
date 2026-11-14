@@ -93,6 +93,7 @@ async def m2m_bulk_user_app_roles(
         .join(user_profiles, user_profiles.c.user_id == User.id)
         .join(Profile, user_profiles.c.profile_id == Profile.id)
         .where(User.username.in_(identifiers))
+        .order_by(User.username, Profile.name)
     )
     for username, profile_id, profile_name, profile_color in users_result.all():
         response_map[username].profiles.append(ProfileBriefResponse(

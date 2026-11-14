@@ -217,7 +217,8 @@ class User(Base):
     app_roles = relationship("UserAppRole", back_populates="user", cascade="all, delete-orphan", lazy="raise")
     profiles = relationship("Profile", secondary=user_profiles, back_populates="users", lazy="raise",
                              primaryjoin="User.id == user_profiles.c.user_id",
-                             secondaryjoin="Profile.id == user_profiles.c.profile_id")
+                             secondaryjoin="Profile.id == user_profiles.c.profile_id",
+                             order_by="Profile.name")
     favorites = relationship("UserFavorite", back_populates="user", cascade="all, delete-orphan", lazy="raise")
     refresh_tokens = relationship("RefreshToken", back_populates="user", cascade="all, delete-orphan")
     sessions = relationship("UserSession", back_populates="user", cascade="all, delete-orphan")
