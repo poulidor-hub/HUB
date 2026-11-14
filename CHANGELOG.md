@@ -5,6 +5,29 @@
 
 ---
 
+## [3.91.0] - 14 novembre 2026
+
+### 📣 Pour les utilisateurs
+
+- **Ajouté** : dans les Préférences, vous choisissez désormais les secteurs que vous gérez (renfort / binôme inclus), puis désignez votre **secteur principal** parmi eux.
+- **Amélioré** : la fenêtre de bienvenue ne réapparaît plus à chaque connexion une fois vos choix enregistrés ; les secteurs proposés sont actualisés en direct depuis exemple-app (et restent modifiables même si elle est momentanément injoignable).
+- **Corrigé** : la sauvegarde des préférences ne bloque plus si un secteur a été renommé côté exemple-app — les valeurs devenues invalides sont retirées proprement avec un simple avertissement.
+
+### ⚡ Refonte préférences : secteurs gérés + secteur principal
+
+| Fonctionnalité | Description |
+|----------------|-------------|
+| **Migration 068** | `user_tags.is_primary` + `tag_categories.primary_enabled` ; index partiel unique `uq_user_tags_primary` (une seule primaire par utilisateur/catégorie). Idempotente. |
+| **PUT /api/tags/my** | Upsert diff (fini delete-all + réinsertion, `created_at` préservé), payload enrichi `primary` (absent = inchangé, `null` = suppression), valeurs obsolètes **filtrées en 200** (`ignored`), 400 réservé à la primaire invalide. La réponse resynchronise le cache front. |
+| **Valeurs live** | `GET /api/tags/categories/active` fetch les valeurs M2M de l'app source (token service 5 min, timeout 3 s, cache mémoire TTL 60 s, negative-cache 15 s pendant une panne pour éviter la cascade de timeouts, fallback snapshot + `source_flag: live|cache|csv`, snapshot DB rafraîchi au succès). |
+| **Onboarding serveur** | `GET /api/tags/my?with_reason=1` calcule `onboarding_reason` (priorités : `newcat` → `primary_lost` → `primary_missing` → `onboarding` → `None`) ; suppression du `sessionStorage` — choix complet posé = plus jamais de modale. |
+| **JWT** | Nouveau claim `tags_primary` émis à côté de `tags` sur les 7 points d'émission de tokens user (login, refresh ×2, redirect, app-launch, sso, approbation de compte) — émis seulement si non vide, backward compatible. |
+| **Endpoint M2M** | `GET /api/tags/user/{username}` renvoie désormais `primary` (consommation « fraîche » hors JWT). Admin : `PUT /api/tags/user/{username}` en upsert diff + primaire ; catégories actives avec `source_flag` + `primary_enabled` ; PATCH catégorie `primary_enabled`. |
+| **Frontend** | Modale 2 temps (① secteurs chips → ② radios principal parmi les cochés, bouton désactivé sans ①+②), états `primary_missing`/`primary_lost` réduits avec bandeau warning, page Mes préférences (primaire ★ + autosave enrichi + toast `ignored` + bandeau cache), case « autoriser un secteur principal » dans l'admin des catégories. |
+| **Tests** | +34 tests (résolveur live/cache/dédup/negative-cache, upsert diff, raisons d'onboarding, JWT, M2M, gel de contrat primaire filtrée). Suite complète : 1741 passed (hôte). Review indépendante : 1 Important fixé (negative-cache), 5 Minor (2 fixés, 3 différés documentés). |
+
+---
+
 ## [3.90.3] - 14 novembre 2026
 
 ### ⚡ Tri alphabétique des profils utilisateur
