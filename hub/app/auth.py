@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (C) 2026 POULIDOR Audit & Développement (Valérian Poulidor)
 
+import asyncio
 import jwt
 import secrets
 import hashlib
@@ -26,6 +27,16 @@ optional_oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/token", auto_e
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     return pwd_context.verify(plain_password, hashed_password)
+
+
+async def verify_password_async(plain_password: str, hashed_password: str) -> bool:
+    """verify_password offloadé dans un thread (asyncio.to_thread).
+
+    Le bcrypt cost 12 dure ~200 ms : appelé en sync depuis un endpoint async,
+    il bloque l'event loop du worker unique (freeze du Hub en heure de pointe).
+    `verify_password` sync reste disponible pour les tâches de fond (main.py).
+    """
+    return await asyncio.to_thread(verify_password, plain_password, hashed_password)
 
 
 def get_password_hash(password: str) -> str:
