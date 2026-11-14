@@ -647,12 +647,180 @@ class TestPutMy:
 
 
 class TestOnboardingReason:
-    """GET /my?with_reason=1 — raison d'onboarding calculée serveur (spéc §5)."""
+    """GET /my?with_reason=1 — raison d'onboarding calculée serveur (spéc §5).
 
-    @pytest.mark.skip(reason="implémenté en Task 5")
+    Priorités : newcat → primary_lost → primary_missing → onboarding → None.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _clear_values_cache(self):
+        from app.routes import tags as tags_module
+        tags_module._values_cache.clear()
+        type(self)._StubAsyncClient = TestLiveValues._StubAsyncClient
+        type(self)._StubAsyncClient.calls = 0
+        type(self)._StubAsyncClient.response = None
+        type(self)._StubAsyncClient.exc = None
+        yield
+        tags_module._values_cache.clear()
+
+    async def _create_category(self, client, admin_headers, slug="secteurs",
+                               values=("Nord", "Sud"), primary_enabled=False,
+                               is_multiple=True):
+        response = await client.post("/api/tags/categories", json={
+            "slug": slug, "label": slug.title(), "source": "csv",
+            "is_multiple": is_multiple, "values": list(values),
+            "primary_enabled": primary_enabled,
+        }, headers=admin_headers)
+        assert response.status_code == 201
+        return response.json()
+
+    async def _setup_complete_choice(self, client, async_session, admin_user,
+                                     test_user, slug="secteurs",
+                                     primary_enabled=True, primary_value="Nord"):
+        """Catégorie vue (ack) + tags + primaire valide = choix complet."""
+        admin_headers = _make_admin_headers(admin_user)
+        user_headers = _make_user_headers(test_user)
+        await self._create_category(client, admin_headers, slug=slug,
+                                    primary_enabled=primary_enabled)
+        await client.post("/api/tags/my/acknowledge", json={
+            "categories": [slug]
+        }, headers=user_headers)
+        payload = {"tags": {slug: ["Nord", "Sud"]}}
+        if primary_enabled:
+            payload["primary"] = {slug: primary_value}
+        r = await client.put("/api/tags/my", json=payload, headers=user_headers)
+        assert r.status_code == 200
+
     @pytest.mark.asyncio
-    async def test_placeholder(self):
-        pass
+    async def test_reason_none_when_choice_complete(
+        self, client, async_session, admin_user, test_user
+    ):
+        """Choix fait + primaire valide + rien de nouveau → None (plus jamais de modale)."""
+        user_headers = _make_user_headers(test_user)
+        await self._setup_complete_choice(client, async_session, admin_user, test_user)
+
+        response = await client.get("/api/tags/my?with_reason=1", headers=user_headers)
+        assert response.status_code == 200
+        data = response.json()
+        assert data["onboarding_reason"] is None
+
+    @pytest.mark.asyncio
+    async def test_reason_onboarding_no_tags(
+        self, client, async_session, admin_user, test_user
+    ):
+        """Aucune valeur dans une catégorie active (tout vu) → 'onboarding'."""
+        admin_headers = _make_admin_headers(admin_user)
+        user_headers = _make_user_headers(test_user)
+        await self._create_category(client, admin_headers)
+        await client.post("/api/tags/my/acknowledge", json={
+            "categories": ["secteurs"]
+        }, headers=user_headers)
+
+        response = await client.get("/api/tags/my?with_reason=1", headers=user_headers)
+        assert response.json()["onboarding_reason"] == "onboarding"
+
+    @pytest.mark.asyncio
+    async def test_reason_primary_missing(
+        self, client, async_session, admin_user, test_user
+    ):
+        """Catégorie primary_enabled, tags posés, aucune primaire → 'primary_missing'."""
+        admin_headers = _make_admin_headers(admin_user)
+        user_headers = _make_user_headers(test_user)
+        await self._create_category(client, admin_headers, primary_enabled=True)
+        await client.post("/api/tags/my/acknowledge", json={
+            "categories": ["secteurs"]
+        }, headers=user_headers)
+        r = await client.put("/api/tags/my", json={
+            "tags": {"secteurs": ["Nord", "Sud"]}
+        }, headers=user_headers)
+        assert r.status_code == 200
+
+        response = await client.get("/api/tags/my?with_reason=1", headers=user_headers)
+        assert response.json()["onboarding_reason"] == "primary_missing"
+
+    @pytest.mark.asyncio
+    async def test_reason_primary_lost_after_source_rename(
+        self, client, async_session, monkeypatch, test_app, admin_user, test_user
+    ):
+        """Primaire retirée des valeurs actives de la source → 'primary_lost'."""
+        from app.models import TagCategory
+        from sqlalchemy import select
+
+        admin_headers = _make_admin_headers(admin_user)
+        user_headers = _make_user_headers(test_user)
+        cat = TagCategory(slug="secteurs", label="Secteurs", source="m2m",
+                          source_app_id=test_app.id, is_multiple=True,
+                          values=["Nord", "Sud"], primary_enabled=True)
+        async_session.add(cat)
+        await async_session.commit()
+
+        await client.post("/api/tags/my/acknowledge", json={
+            "categories": ["secteurs"]
+        }, headers=user_headers)
+        r = await client.put("/api/tags/my", json={
+            "tags": {"secteurs": ["Nord", "Sud"]}, "primary": {"secteurs": "Nord"}
+        }, headers=user_headers)
+        assert r.status_code == 200
+
+        # La source ne connaît plus « Nord » (renommée côté exemple-app)
+        monkeypatch.setattr(
+            "app.routes.tags.httpx.AsyncClient",
+            TestLiveValues._StubAsyncClient,
+        )
+        TestLiveValues._StubAsyncClient.response = TestLiveValues._StubResponse(
+            200, {"values": ["Sud", "Est"]}
+        )
+
+        response = await client.get("/api/tags/my?with_reason=1", headers=user_headers)
+        assert response.json()["onboarding_reason"] == "primary_lost"
+
+    @pytest.mark.asyncio
+    async def test_reason_newcat_unseen_category(
+        self, client, async_session, admin_user, test_user
+    ):
+        """Catégorie active jamais vue → 'newcat' (priorité 1)."""
+        admin_headers = _make_admin_headers(admin_user)
+        user_headers = _make_user_headers(test_user)
+        await self._create_category(client, admin_headers)
+
+        response = await client.get("/api/tags/my?with_reason=1", headers=user_headers)
+        assert response.json()["onboarding_reason"] == "newcat"
+
+    @pytest.mark.asyncio
+    async def test_get_my_reason_category_inactive(
+        self, client, async_session, admin_user, test_user
+    ):
+        """Review Focus #1 : catégorie passée inactive → primaire filtrée,
+        raison recalculée sans crash."""
+        admin_headers = _make_admin_headers(admin_user)
+        user_headers = _make_user_headers(test_user)
+        await self._setup_complete_choice(client, async_session, admin_user,
+                                          test_user, primary_value="Nord")
+
+        await client.patch("/api/tags/categories/secteurs", json={
+            "is_active": False
+        }, headers=admin_headers)
+
+        response = await client.get("/api/tags/my?with_reason=1", headers=user_headers)
+        assert response.status_code == 200
+        data = response.json()
+        # Primaire filtrée (catégorie inactive) et raison recalculée : plus de
+        # tags actifs → 'onboarding', sans erreur.
+        assert data["primary"] == {}
+        assert data["onboarding_reason"] == "onboarding"
+
+    @pytest.mark.asyncio
+    async def test_get_my_without_reason_flag_skips_computation(
+        self, client, async_session, admin_user, test_user
+    ):
+        """Sans with_reason=1 : onboarding_reason absent (null), pas de fetch live."""
+        admin_headers = _make_admin_headers(admin_user)
+        user_headers = _make_user_headers(test_user)
+        await self._create_category(client, admin_headers)
+
+        response = await client.get("/api/tags/my", headers=user_headers)
+        assert response.status_code == 200
+        assert response.json()["onboarding_reason"] is None
 
 
 class TestUserTagsAcknowledge:

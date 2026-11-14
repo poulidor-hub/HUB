@@ -556,15 +556,68 @@ async def import_m2m(
 # ─── User endpoints ────────────────────────────────────────────────
 
 
+async def _compute_onboarding_reason(db: AsyncSession, user_id: int) -> str | None:
+    """Raison d'affichage de la modale de préférences, évaluée serveur (spéc §5).
+
+    Priorités : newcat → primary_lost → primary_missing → onboarding → None.
+    L'évaluation utilise le résolveur live→cache pour la validité de la
+    primaire (aucune logique de décision côté client).
+    """
+    result = await db.execute(
+        select(TagCategory)
+        .where(TagCategory.is_active == True)  # noqa: E712
+        .order_by(TagCategory.label)
+    )
+    active_cats = result.scalars().all()
+    seen = set(await _get_user_seen(db, user_id))
+    cats_by_slug = {c.slug: c for c in active_cats}
+
+    # 1. newcat : catégories actives jamais présentées (ack).
+    if any(c.slug not in seen for c in active_cats):
+        return "newcat"
+
+    tags = await _get_user_tags(db, user_id)
+    primary = await _get_user_primary(db, user_id)
+
+    # 2. primary_lost : primaire stockée dont la valeur n'existe plus dans
+    #    les valeurs actives de la source (résolveur live → cache).
+    for slug, value in primary.items():
+        cat = cats_by_slug.get(slug)
+        if cat is None:
+            return "primary_lost"
+        values, _ = await _resolve_active_values(db, cat)
+        if value not in values:
+            return "primary_lost"
+
+    # 3. primary_missing : catégorie primary_enabled avec tags posés, sans primaire.
+    for cat in active_cats:
+        if cat.primary_enabled and tags.get(cat.slug) and cat.slug not in primary:
+            return "primary_missing"
+
+    # 4. onboarding : aucune valeur dans une catégorie active.
+    if not tags:
+        return "onboarding"
+
+    return None
+
+
 @router.get("/my", response_model=UserTagsResponse)
 async def get_my_tags(
+    with_reason: bool = Query(False),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     tags = await _get_user_tags(db, current_user.id)
     primary = await _get_user_primary(db, current_user.id)
     seen = await _get_user_seen(db, current_user.id)
-    return UserTagsResponse(tags=tags, primary=primary, seen_categories=seen)
+    reason = (
+        await _compute_onboarding_reason(db, current_user.id)
+        if with_reason
+        else None
+    )
+    return UserTagsResponse(
+        tags=tags, primary=primary, onboarding_reason=reason, seen_categories=seen
+    )
 
 
 @router.put("/my", response_model=UserTagsResponse)
