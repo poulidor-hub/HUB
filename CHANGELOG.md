@@ -5,6 +5,32 @@
 
 ---
 
+## [3.87.8] - 14 novembre 2026
+
+### 🆕 Nouvelle version
+
+> ⚠️ Cette entrée a été créée automatiquement par `sync_version.py`.
+> Veuillez compléter les détails des modifications.
+
+| Fonctionnalité | Description |
+|----------------|-------------|
+| **À compléter** | Décrivez les changements de cette version |
+
+---
+
+## [3.87.8] - 14 novembre 2026
+
+### ⚡ Allocateur : trace l'épinglage dans les pools daemon Docker (F15)
+
+- `is_in_daemon_default_pool()` : détection CIDR ⊆ 172.16/12 ou 192.168/16
+  (pools PAR DÉFAUT du daemon).
+- `reconcile_subnet_with_docker` : warning explicite + consigne de
+  migration quand le réseau vivant d'une app est épinglé dans ces pools
+  (chevauchement avec les pools de la machine hôte — claims
+  172.20-23/16 et 192.168.x/20 constatés en production au test PRA VM).
+
+---
+
 ## [3.87.7] - 14 novembre 2026
 
 ### ⚡ Restore snapshot en streaming — PRA fonctionnel pour les snapshots multi-Go
