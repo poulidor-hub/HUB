@@ -96,8 +96,10 @@ def _project_network_scan_neutralized(monkeypatch):
     )
 
 
-# Champs OIDC mutés par certains tests ; sauvegardés puis restaurés par la fixture `settings`.
-_OIDC_FIELDS_TO_SNAPSHOT = (
+# Champs Settings mutés par certains tests ; sauvegardés puis restaurés par la
+# fixture `settings`.
+_SETTINGS_FIELDS_TO_SNAPSHOT = (
+    "hub_host",
     "oidc_issuer",
     "oidc_email_template",
     "oidc_id_token_ttl_minutes",
@@ -114,10 +116,12 @@ def settings():
 
     Les tests OIDC modifient en place des attributs (oidc_issuer, oidc_email_template,
     etc.) sur le singleton lru_cache. On snapshot ces champs avant le test et on les
-    restaure après pour éviter toute fuite d'état entre tests.
+    restaure après pour éviter toute fuite d'état entre tests. hub_host y figure
+    aussi : muté par les tests VPN/localité, sinon l'IP du .env réel (ou la valeur
+    fuie par un test précédent) traverse les frontières de test.
     """
     s = get_settings()
-    snapshot = {field: getattr(s, field) for field in _OIDC_FIELDS_TO_SNAPSHOT}
+    snapshot = {field: getattr(s, field) for field in _SETTINGS_FIELDS_TO_SNAPSHOT}
     yield s
     for field, original in snapshot.items():
         setattr(s, field, original)
