@@ -1,6 +1,6 @@
 # Guide d'Intégration - Hub d'Authentification
 
-> **Version** : 3.90.2
+> **Version** : 3.90.3
 > **Dernière mise à jour** : 14 novembre 2026
 > **Auteur** : Équipe Hub
 

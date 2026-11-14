@@ -5,6 +5,18 @@
 
 ---
 
+## [3.90.3] - 14 novembre 2026
+
+### ⚡ Tri alphabétique des profils utilisateur
+
+| Fonctionnalité | Description |
+|----------------|-------------|
+| **fix(users)** | La colonne « Profil » de la vue utilisateurs (et la modal « Appliquer un profil ») affiche désormais les profils triés par nom, quel que soit l'ordre d'attribution des droits. |
+| **Implémentation** | `order_by="Profile.name"` sur la relation SQLAlchemy `User.profiles` (models.py) → tous les `selectinload` (liste, détail, PATCH, création) trient en SQL. `.order_by(User.username, Profile.name)` sur la requête du endpoint M2M bulk-roles (cohérence apps consommatrices). |
+| **Tests** | 2 tests de régression (liste admin + endpoint M2M), cycle rouge/vert. Suite complète verte : 1708 passed (hôte), 1641 passed (Docker pouly-test). |
+
+---
+
 ## [3.90.2] - 14 novembre 2026
 
 ### 📣 Pour les utilisateurs
