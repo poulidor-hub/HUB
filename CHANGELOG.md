@@ -5,6 +5,17 @@
 
 ---
 
+## [3.91.3] - 15 novembre 2026
+
+### ⚡ Fix console notifications : le select-all couvre désormais toutes les pages + actions en masse graduées
+
+- **Bug** : dans la console « Mes notifications » (Ma boîte comme Gestion), le checkbox « tout sélectionner » ne sélectionnait que les 20/50/100 lignes de la page affichée (`notifToggleSelectAll` itérait `_notifMessages`, la réponse paginée) et la sélection était en plus vidée à chaque changement de page ou de taille de page — impossible de traiter en masse au-delà d'une page (ex. 547 non lus affichés « 20 sélectionnée(s) »).
+- **Fix select-all étendu** : au cochage, fetch paginé de **toutes les pages** matchant les filtres courants (`_notifFetchAllMatchingIds`, page_size au max backend 100, boucle sur `pages`) → sélection complète, barre affichant le total réel, toast d'information quand la sélection dépasse la page affichée. Au décochage : reset complet. La sélection **survit** désormais au changement de page/taille de page (les cases par ligne reflètent l'appartenance via `selection.has(id)`) ; elle reste vidée par changement de filtre (chips, source, recherche), de mode ou d'entrée dans la page. Header select-all synchronisé `checked`/`indeterminate` (`_syncNotifSelectAllHeader`, appelé depuis `_syncNotifSelectionBar`).
+- **Graduation des actions en masse** : la sélection pouvant dépasser les caps backend (500 IDs max/requête sur `POST /messages/me/delete-batch` et `DELETE /messages/batch`), les actions partent en lots séquentiels de ≤500 (`_chunkArray`) avec totaux agrégés dans les toasts (suppression boîte `hidden`, archivage `affected`, hard delete `deleted`) ; « Marquer lu » (N POST unitaires) gradué par lots de 50 au lieu d'un `Promise.all` global pour ne pas saturer le serveur sur une grande sélection.
+- **Test de régression** : `frontend/tests/test_notifications_select_all.mjs` (pattern autonome `test_resilient_download`, zéro dépendance) — 9 scénarios : fetch paginé inbox/Gestion, persistance page/pageSize, reset par filtre, unselect-all, header indéterminé, bulk read 120 gradué, bulk delete 750 en 2 lots (500+250), archivage et hard delete Gestion. Rouge sur l'ancien code, vert sur le fix. Aucun changement backend.
+
+---
+
 ## [3.91.2] - 15 novembre 2026
 
 ### ⚡ Fix sécurité : headers de sécurité nginx effectivement envoyés (include factorisé)
