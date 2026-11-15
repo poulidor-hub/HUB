@@ -624,7 +624,8 @@ function notifSetPage(p) {
     p = parseInt(p, 10);
     if (!p || p < 1) return;
     _notif.page = p;
-    _notif.selection.clear();
+    // La sélection survit à la navigation : le select-all couvre TOUTES les
+    // pages, on ne la vide plus au changement de page (cf. notifToggleSelectAll).
     loadNotifications();
 }
 
@@ -633,7 +634,6 @@ function notifSetPageSize(el) {
     if (!size) return;
     _notif.pageSize = size;
     _notif.page = 1;
-    _notif.selection.clear();
     loadNotifications();
 }
 
@@ -682,24 +682,118 @@ function notifToggleSelect(id, el) {
     _syncNotifSelectionBar();
 }
 
-function notifToggleSelectAll(el) {
+/**
+ * Récupère les IDs de TOUTES les notifications matchant les filtres courants,
+ * toutes pages confondues (fetch paginé au page_size max backend = 100).
+ * Utilisé par le select-all (cf. notifToggleSelectAll) ; les IDs sont des
+ * représentants de groupes dédupliqués (group_similar), les actions bulk
+ * côté backend propageant de toute façon au groupe complet.
+ */
+async function _notifFetchAllMatchingIds() {
+    const f = _notif.filters;
+    const manage = _notif.mode === 'manage';
+    const base = manage
+        ? {
+            perPage: 100,
+            groupSimilar: true,
+            status: f.status || undefined,
+            priority: f.priority || (f.urgent ? 'urgent' : null),
+            senderApp: f.app,
+            search: f.search,
+        }
+        : {
+            pageSize: 100,
+            unread: f.unread,
+            priority: f.priority || (f.urgent ? 'urgent' : null),
+            senderApp: f.app,
+            search: f.search,
+            groupSimilar: true,
+        };
+    const fetchPage = (page) => manage
+        ? api.getMessages({ ...base, page })
+        : api.getMyMessages({ ...base, page });
+
+    const first = await fetchPage(1);
+    const ids = (first.messages || []).map(m => m.id);
+    const pages = first.pages || 1;
+    for (let p = 2; p <= pages; p++) {
+        const data = await fetchPage(p);
+        for (const m of (data.messages || [])) ids.push(m.id);
+    }
+    return ids;
+}
+
+let _notifSelectAllBusy = false;
+
+/**
+ * Select-all étendu : cochée → sélectionne TOUTES les notifications matchant
+ * les filtres courants, y compris celles des pages non affichées ; décochée →
+ * vide la sélection complète (toutes pages).
+ */
+async function notifToggleSelectAll(el) {
     const checked = !!el?.checked;
-    _notifMessages.forEach(m => {
-        if (checked) _notif.selection.add(m.id);
-        else _notif.selection.delete(m.id);
-    });
-    // Sync visuelle des cases sans re-render (préserve le focus/scroll)
-    document.querySelectorAll('#notifTableBody input[data-action="notifToggleSelect"]').forEach(cb => { cb.checked = checked; });
-    _syncNotifSelectionBar();
+    if (!checked) {
+        _notif.selection.clear();
+        // Sync visuelle des cases sans re-render (préserve le focus/scroll)
+        document.querySelectorAll('#notifTableBody input[data-action="notifToggleSelect"]').forEach(cb => { cb.checked = false; });
+        _syncNotifSelectionBar();
+        return;
+    }
+    if (_notifSelectAllBusy) { if (el) el.checked = false; return; }
+    _notifSelectAllBusy = true;
+    if (el) { el.disabled = true; el.indeterminate = true; }
+    try {
+        const ids = await _notifFetchAllMatchingIds();
+        ids.forEach(id => _notif.selection.add(id));
+        document.querySelectorAll('#notifTableBody input[data-action="notifToggleSelect"]').forEach(cb => { cb.checked = true; });
+        _syncNotifSelectionBar();
+        if (ids.length > _notifMessages.length) {
+            showToast('Sélection', `${ids.length} notification(s) sélectionnée(s), toutes pages confondues.`, 'info');
+        }
+    } catch (e) {
+        if (el) el.checked = false;
+        showToast('Erreur', e.message || 'Sélection impossible', 'danger');
+    } finally {
+        _notifSelectAllBusy = false;
+        if (el) { el.disabled = false; el.indeterminate = false; }
+        _syncNotifSelectAllHeader();
+    }
+}
+
+/**
+ * État visuel du checkbox select-all du header relativement à la page
+ * affichée : coché si toute la page est sélectionnée, indéterminé (tiret)
+ * si sélection partielle — la sélection pouvant désormais déborder de la
+ * page (select-all étendu), le rendu du thead ne suffit plus.
+ */
+function _syncNotifSelectAllHeader() {
+    const th = document.querySelector('#notifTableHead input[data-action="notifToggleSelectAll"]');
+    if (!th) return;
+    const pageIds = _notifMessages.map(m => m.id);
+    const selectedInPage = pageIds.filter(id => _notif.selection.has(id)).length;
+    th.checked = pageIds.length > 0 && selectedInPage === pageIds.length;
+    th.indeterminate = selectedInPage > 0 && selectedInPage < pageIds.length;
+}
+
+/**
+ * Découpe une liste en lots (les endpoints bulk backend acceptent max 500 IDs
+ * par requête ; le mark-read part en N POST unitaires qu'on gradue par 50).
+ */
+function _chunkArray(arr, size) {
+    const out = [];
+    for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+    return out;
 }
 
 function _syncNotifSelectionBar() {
     const bar = document.getElementById('notifSelectionBar');
-    if (!bar) return;
-    const n = _notif.selection.size;
-    bar.classList.toggle('d-none', n === 0);
-    const count = document.getElementById('notifSelCount');
-    if (count) count.textContent = n;
+    if (bar) {
+        const n = _notif.selection.size;
+        bar.classList.toggle('d-none', n === 0);
+        const count = document.getElementById('notifSelCount');
+        if (count) count.textContent = n;
+    }
+    _syncNotifSelectAllHeader();
 }
 
 // =============================================================================
@@ -755,10 +849,15 @@ async function notifBulkRead() {
         // Le backend propage la lecture au groupe dédupliqué complet :
         // marked_read = nombre RÉEL d'occurrences passées en lu (souvent
         // supérieur au nombre de lignes sélectionnées). Fallback : 1 par
-        // ligne si le backend ne renvoie pas le champ.
-        const results = await Promise.all(
-            ids.map(id => api.markMessageRead(id).catch(() => null))
-        );
+        // ligne si le backend ne renvoie pas le champ. La sélection pouvant
+        // désormais couvrir toutes les pages (select-all étendu), les POST
+        // unitaires sont gradués par lots de 50 pour ne pas saturer le serveur.
+        const results = [];
+        for (const chunk of _chunkArray(ids, 50)) {
+            results.push(...await Promise.all(
+                chunk.map(id => api.markMessageRead(id).catch(() => null))
+            ));
+        }
         const marked = results.every(r => r && typeof r.marked_read === 'number')
             ? results.reduce((sum, r) => sum + r.marked_read, 0)
             : ids.length;
@@ -776,8 +875,13 @@ async function notifBulkDelete() {
     if (_notif.mode === 'manage') return _notifManageBulkHardDelete(ids);
     if (!confirm(`Retirer ${ids.length} notification(s) de votre boîte ?`)) return;
     try {
-        const result = await api.deleteMyBatch(ids);
-        showToast('Succès', `${result.hidden ?? ids.length} notification(s) supprimée(s).`, 'success');
+        // Cap backend : 500 IDs max par requête → lots séquentiels.
+        let hidden = 0;
+        for (const chunk of _chunkArray(ids, 500)) {
+            const result = await api.deleteMyBatch(chunk);
+            hidden += (result && typeof result.hidden === 'number') ? result.hidden : chunk.length;
+        }
+        showToast('Succès', `${hidden} notification(s) supprimée(s).`, 'success');
         _notif.selection.clear();
         closeNotifDetail();
         await loadNotifications();
@@ -798,8 +902,13 @@ async function notifBulkArchive() {
     if (ids.length === 0) return;
     if (!confirm(`Archiver ${ids.length} message(s) sélectionné(s) ? Chaque ligne groupée (×N) traite son groupe complet.`)) return;
     try {
-        const result = await api.deleteMessagesByIds(ids, false);
-        showToast('Succès', result.message || `${ids.length} message(s) archivé(s).`, 'success');
+        // Cap backend : 500 IDs max par requête → lots séquentiels agrégés.
+        let affected = 0;
+        for (const chunk of _chunkArray(ids, 500)) {
+            const result = await api.deleteMessagesByIds(chunk, false);
+            affected += (result && typeof result.affected === 'number') ? result.affected : chunk.length;
+        }
+        showToast('Succès', `${affected} message(s) archivé(s).`, 'success');
         _notif.selection.clear();
         updateNavMessagesBadge();
         await loadNotifications();
@@ -815,8 +924,13 @@ async function notifBulkArchive() {
 async function _notifManageBulkHardDelete(ids) {
     if (!confirm(`Suppression DÉFINITIVE de ${ids.length} message(s) ? Chaque ligne groupée (×N) traite son groupe complet. Cette action est irréversible.`)) return;
     try {
-        const result = await api.deleteMessagesByIds(ids, true);
-        showToast('Succès', result.message || `${ids.length} message(s) supprimé(s).`, 'success');
+        // Cap backend : 500 IDs max par requête → lots séquentiels agrégés.
+        let deleted = 0;
+        for (const chunk of _chunkArray(ids, 500)) {
+            const result = await api.deleteMessagesByIds(chunk, true);
+            deleted += (result && typeof result.deleted === 'number') ? result.deleted : chunk.length;
+        }
+        showToast('Succès', `${deleted} message(s) supprimé(s) définitivement.`, 'success');
         _notif.selection.clear();
         updateNavMessagesBadge();
         await loadNotifications();
