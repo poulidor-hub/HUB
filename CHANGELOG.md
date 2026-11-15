@@ -1,7 +1,35 @@
+## [3.91.1] - 15 novembre 2026
+
+### 🐛 Préférences — modale admin et erreurs M2M
+
+- **Sync depuis l'application** : la modale admin pouvait cliquer
+  « Synchroniser depuis l'application » sur une catégorie restée en source
+  CSV → 400 « pas configurée en source M2M ». La sauvegarde bascule
+  désormais la source (csv ⇄ m2m) avec validation de l'application source
+  (PATCH catégorie : nouveaux champs `source` / `source_app_id`).
+- **Messages 502 actionnables** : discovery et import M2M renvoient
+  « Application source injoignable (<url>) — vérifie qu'elle est déployée
+  et démarrée » au lieu de l'erreur httpx brute.
+- Tests : bascule csv→m2m, refus sans source_app, message 502.
+
+---
 # Changelog - Hub d'Authentification
 
 > Ce fichier documente toutes les modifications apportées à la documentation et à l'API.
 > Les agents IA peuvent utiliser `/api/docs/changelog` pour consulter cet historique.
+
+---
+
+## [3.91.4] - 15 novembre 2026
+
+### 🆕 Nouvelle version
+
+> ⚠️ Cette entrée a été créée automatiquement par `sync_version.py`.
+> Veuillez compléter les détails des modifications.
+
+| Fonctionnalité | Description |
+|----------------|-------------|
+| **À compléter** | Décrivez les changements de cette version |
 
 ---
 
