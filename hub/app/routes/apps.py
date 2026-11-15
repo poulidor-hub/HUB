@@ -158,13 +158,10 @@ async def remove_shared_service_from_all_service_accounts(db: AsyncSession, app:
     
     updated_count = 0
     for sa in service_accounts:
-        # Ne pas retirer l'app de son SA propriétaire (celui qui a le même slug dans le nom)
-        sa_name_lower = sa.name.lower()
-        is_owner_sa = (
-            app.slug in sa_name_lower or 
-            app.name.lower() in sa_name_lower or
-            sa.name == f"SA - {app.name}"
-        )
+        # Ne pas retirer l'app de son SA propriétaire (égalité exacte des
+        # formes canoniques — cf. `_sa_matches_owner_name` ; les sous-chaînes
+        # faisaient matcher les SA d'autres apps de la même famille nominale)
+        is_owner_sa = _sa_matches_owner_name(sa.name, app.slug, app.name)
         
         if is_owner_sa:
             # C'est le SA propriétaire de cette app, on ne retire pas
@@ -183,13 +180,9 @@ async def remove_shared_service_from_all_service_accounts(db: AsyncSession, app:
 
 
 def _is_owner_service_account(app: Application, sa: ServiceAccount) -> bool:
-    """Détermine si un service account est le SA propriétaire d'une application."""
-    sa_name_lower = sa.name.lower()
-    return (
-        app.slug in sa_name_lower
-        or app.name.lower() in sa_name_lower
-        or sa.name == f"SA - {app.name}"
-    )
+    """Détermine si un service account est le SA propriétaire d'une application
+    (égalité exacte des formes canoniques — cf. `_sa_matches_owner_name`)."""
+    return _sa_matches_owner_name(sa.name, app.slug, app.name)
 
 
 def _get_owner_service_account_for_app(app: Application) -> Optional[ServiceAccount]:
@@ -303,18 +296,43 @@ def generate_slug(name: str) -> str:
     return slug
 
 
+def _sa_matches_owner_name(sa_name: str, app_slug: str, app_name: str) -> bool:
+    """Le SA est propriétaire ssi son nom correspond EXACTEMENT à l'une des
+    formes canoniques de l'app — JAMAIS par sous-chaîne.
+
+    Formes reconnues (insensibles à la casse et aux variations d'espacements) :
+      1. « SA - <App Name> » — convention posée à l'auto-registration ;
+      2. le slug pur de l'app (SA nommé directement par le slug) ;
+      3. forme slug-normalisée de (1).
+
+    Historique : le matching par sous-chaîne (`app_slug in sa_name_lower`)
+    faisait que le register de `transmission` rotait le secret de
+    « SA - Transmission Paie » (app `exemple-app`) — livré à la mauvaise
+    stack, 401 en boucle sans issue self-service (V4, 15/11/2026 ; même
+    classe que l'incident Philia Proxy → exemple-app-7). Les familles
+    d'apps aux noms préfixés (transmission/exemple-app/exemple-app, dipec-*,
+    contrat-*) ne doivent jamais se voler leurs secrets entre elles.
+    """
+    sa_name_clean = (sa_name or "").strip().lower()
+    canonical = f"sa - {app_name}".strip().lower()
+    return (
+        sa_name_clean == canonical
+        or sa_name_clean == app_slug.strip().lower()
+        or generate_slug(sa_name or "") == generate_slug(canonical)
+    )
+
+
 def is_owner_service_account(sa, app_slug: str, app_name: str) -> bool:
     """Un SA est 'propriétaire' d'une app s'il a été créé pour elle lors de
     l'auto-registration. Convention nominale partagée avec delete_app_cascade.
     Pour une app partagée, la relation N-N contient aussi les SA des autres
     apps (accès shared) — ils ne doivent JAMAIS être sélectionnés pour une
-    rotation/recréation."""
-    sa_name_lower = sa.name.lower()
-    return (
-        app_slug in sa_name_lower
-        or app_name.lower() in sa_name_lower
-        or sa.name == f"SA - {app_name}"
-    )
+    rotation/recréation.
+
+    Matching en égalité exacte (cf. `_sa_matches_owner_name`) — les
+    sous-chaînes faisaient matcher des SA d'autres apps de la même famille
+    nominale (transmission vs exemple-app/exemple-app)."""
+    return _sa_matches_owner_name(sa.name, app_slug, app_name)
 
 
 async def delete_app_cascade(
