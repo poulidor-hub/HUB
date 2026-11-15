@@ -5,6 +5,17 @@
 
 ---
 
+## [3.91.2] - 15 novembre 2026
+
+### ⚡ Fix sécurité : headers de sécurité nginx effectivement envoyés (include factorisé)
+
+- **Bug latent** : la sémantique nginx veut qu'une `location` définissant le moindre `add_header` hérite d'AUCUN `add_header` du bloc `server`. Les 4 locations de cache (`= /index.html`, assets hashés, `/`, regex `\.(css|js)$`) redéfinissant `Cache-Control`, toutes les réponses HTML/JS/CSS partaient **sans aucun header de sécurité** (CSP durcie, X-Frame-Options, nosniff, Referrer-Policy, Permissions-Policy) depuis la création de la conf — vérifié au curl en prod (seules les locations proxy `/api/*`, sans `add_header`, héritaient encore).
+- **Fix** : snippet factorisé `frontend/security-headers.conf` (les 5 `add_header`, valeurs inchangées, copié dans `/etc/nginx/templates/` par le Dockerfile) inclus au niveau `server` ET en tête de chaque location qui redéfinit `add_header`. Zéro modification de `docker-entrypoint.sh` (le snippet vit dans `templates/`, jamais auto-inclus au niveau http).
+- **Vérification** : image reconstruite depuis le worktree et testée sur conteneurs jetables en HTTP (:18099) et HTTPS (:18444, cert auto-signé, `--add-host hub-api`) — les 5 headers + le Cache-Control de location présents sur `/`, `/index.html`, `/vendor/bootstrap.bundle.min.js` dans les deux modes ; pré-contrôle CSP sans risque applicatif (aucun script inline, aucune ressource externe dans le HTML servi).
+- **Propagation** : même fix appliqué à HUBapp_TEMPLATE_base (confs + `Dockerfile.frontend`), HUBsocle (image socle-web + `INITIALISE.py` : `INFRA_FILES` + `DOCKERFILE_FRONTEND`) et HUBCSS (nosniff répété dans les locations). Les apps déjà déployées gardent leur conf nginx cuite dans l'image → migration ultérieure via `migrate-app-template`.
+
+---
+
 ## [3.91.1] - 14 novembre 2026
 
 ### ⚡ Fix contraste des badges `bg-info` (text-dark)
