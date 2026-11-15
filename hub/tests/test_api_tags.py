@@ -1120,3 +1120,76 @@ class TestUserTagsAcknowledge:
         }, headers=headers)
         assert response.status_code == 200
         assert response.json() == {"acknowledged": []}
+
+
+class TestCategorySourceUpdate:
+    """PATCH catégorie : bascule csv → m2m (fix sync depuis la modale admin)."""
+
+    async def test_update_category_csv_to_m2m(self, client, admin_user, test_app):
+        admin_headers = _make_admin_headers(admin_user)
+        await client.post("/api/tags/categories", json={
+            "slug": "basculable", "label": "Basculable", "source": "csv",
+            "values": ["X"], "primary_enabled": False,
+        }, headers=admin_headers)
+
+        resp = await client.patch("/api/tags/categories/basculable", json={
+            "source": "m2m", "source_app_id": test_app.id,
+            "m2m_endpoint": "/api/hub/data/values?table=secteurs&column=domaine_intervention",
+        }, headers=admin_headers)
+
+        assert resp.status_code == 200, resp.text
+        data = resp.json()
+        assert data["source"] == "m2m"
+        assert data["source_app_id"] == test_app.id
+
+    async def test_update_category_m2m_without_source_app_rejected(
+        self, client, admin_user
+    ):
+        admin_headers = _make_admin_headers(admin_user)
+        await client.post("/api/tags/categories", json={
+            "slug": "basculable2", "label": "Basculable 2", "source": "csv",
+            "values": [],
+        }, headers=admin_headers)
+
+        resp = await client.patch("/api/tags/categories/basculable2", json={
+            "source": "m2m",
+        }, headers=admin_headers)
+
+        assert resp.status_code == 400, resp.text
+
+
+class TestDiscoverErrorMessages:
+    """502 discovery : message actionnable mentionnant l'URL source."""
+
+    async def test_discover_tables_error_mentions_source_url(
+        self, monkeypatch, client, admin_user, test_app
+    ):
+        import httpx
+        admin_headers = _make_admin_headers(admin_user)
+        stub_type = type("Stub", (), {})
+        calls = {"n": 0}
+
+        class _StubClient:
+            def __init__(self, **kwargs):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *exc_info):
+                return False
+
+            async def get(self, url, **kwargs):
+                calls["n"] += 1
+                raise httpx.RequestError("All connection attempts failed")
+
+        monkeypatch.setattr("app.routes.tags.httpx.AsyncClient", _StubClient)
+
+        resp = await client.get(
+            "/api/tags/discover/tables", params={"app_id": test_app.id},
+            headers=admin_headers,
+        )
+
+        assert resp.status_code == 502
+        assert test_app.api_url in resp.json()["detail"]
+        assert "démarrée" in resp.json()["detail"] or "arrêtée" in resp.json()["detail"]

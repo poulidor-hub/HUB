@@ -325,7 +325,13 @@ async def discover_tables(
             r.raise_for_status()
             return r.json()
     except httpx.RequestError as e:
-        raise HTTPException(status_code=502, detail=f"Erreur de connexion: {e}")
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                f"Application source injoignable ({app.api_url}) — "
+                f"vérifie qu'elle est déployée et démarrée"
+            ),
+        )
     except httpx.HTTPStatusError as e:
         raise HTTPException(status_code=502, detail=f"L'application a retourné {e.response.status_code}")
 
@@ -353,7 +359,13 @@ async def discover_columns(
             r.raise_for_status()
             return r.json()
     except httpx.RequestError as e:
-        raise HTTPException(status_code=502, detail=f"Erreur de connexion: {e}")
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                f"Application source injoignable ({app.api_url}) — "
+                f"vérifie qu'elle est déployée et démarrée"
+            ),
+        )
     except httpx.HTTPStatusError as e:
         raise HTTPException(status_code=502, detail=f"L'application a retourné {e.response.status_code}")
 
@@ -463,6 +475,30 @@ async def update_category(
     if data.primary_enabled is not None:
         category.primary_enabled = data.primary_enabled
 
+    # Bascule de source (ex. csv → m2m depuis la modale admin, bouton
+    # « Synchroniser depuis l'application ») : valider l'app source.
+    if data.source is not None:
+        if data.source == "m2m":
+            target_app_id = data.source_app_id or category.source_app_id
+            if target_app_id is None:
+                raise HTTPException(
+                    status_code=400,
+                    detail="source_app_id est requis quand source=m2m",
+                )
+            app_result = await db.execute(
+                select(Application).where(Application.id == target_app_id)
+            )
+            if not app_result.scalar_one_or_none():
+                raise HTTPException(
+                    status_code=400, detail="Application source introuvable"
+                )
+            category.source = "m2m"
+            category.source_app_id = target_app_id
+        else:
+            category.source = "csv"
+    elif data.source_app_id is not None:
+        category.source_app_id = data.source_app_id
+
     await db.commit()
     await db.refresh(category)
 
@@ -566,7 +602,13 @@ async def import_m2m(
                 )
             category.values = [str(v) for v in exported_values]
     except httpx.RequestError as e:
-        raise HTTPException(status_code=502, detail=f"Erreur de connexion à l'app source: {e}")
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                f"Application source injoignable ({target_url}) — "
+                f"vérifie qu'elle est déployée et démarrée"
+            ),
+        )
 
     await db.commit()
     await db.refresh(category)
