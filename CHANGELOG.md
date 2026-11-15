@@ -1,4 +1,4 @@
-## [3.91.1] - 15 novembre 2026
+## [3.91.5] - 15 novembre 2026
 
 ### 🐛 Préférences — modale admin et erreurs M2M
 
