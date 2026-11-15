@@ -20,6 +20,31 @@
 
 ---
 
+## [3.91.6] - 15 novembre 2026
+
+### 🐛 Sécurité M2M — heuristique de SA propriétaire en égalité exacte
+
+- **Rotations croisées de secrets éliminées** : `is_owner_service_account`
+  (et ses 2 variantes `_is_owner_service_account` + bloc « retire l'app des
+  SA partagés ») testait l'appartenance par **sous-chaîne**
+  (`app_slug in sa_name_lower`) : le register de `transmission` rotait le
+  secret de « SA - Transmission Paie » (app `exemple-app`) et le livrait à la
+  mauvaise stack → 401 en boucle sans issue self-service (V4, 15/11/2026 ;
+  même classe que l'incident Philia Proxy → exemple-app-7).
+- **Nouveau contrat** (`_sa_matches_owner_name`, partagé par les 3 sites) :
+  égalité exacte insensible casse/espacements sur les formes canoniques —
+  « SA - <App Name> », slug pur, slug-normalisé. Les familles d'apps aux
+  noms préfixés (transmission/exemple-app/exemple-app, dipec-*, contrat-*)
+  ne peuvent plus se voler leurs secrets.
+- **Conséquence assumée** : les SA legacy nommés hors convention (ex.
+  « SA - Outil de transmission » pour une app renommée depuis) ne sont plus
+  reconnus comme propriétaires — le register crée un SA neuf au lieu de
+  roter l'ancien (l'orphelin reste listé côté admin, sans risque de vol).
+- Tests : +12 (cycle rouge/vert `test_sa_owner_matching.py`), non-régression
+  owner-resolution (4) + register/API apps (24).
+
+---
+
 ## [3.91.4] - 15 novembre 2026
 
 ### 🆕 Nouvelle version
