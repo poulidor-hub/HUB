@@ -2273,6 +2273,8 @@ class TagCategoryUpdate(BaseModel):
     values: Optional[list[str]] = None
     is_active: Optional[bool] = None
     m2m_endpoint: Optional[str] = Field(None, max_length=255)
+    source: Optional[str] = Field(None, pattern=r'^(csv|m2m)$')
+    source_app_id: Optional[int] = None
     primary_enabled: Optional[bool] = None
 
 

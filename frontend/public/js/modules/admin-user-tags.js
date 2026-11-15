@@ -275,19 +275,28 @@ async function handleImportTagM2m(slug) {
 }
 
 async function handleSyncM2mFromModal(slug) {
-    // Si on édite une catégorie existante, sauvegarder d'abord puis sync
+    // Si on édite une catégorie existante, sauvegarder d'abord puis sync.
+    // La sauvegarde bascule AUSSI la source en m2m (source, source_app_id,
+    // m2m_endpoint) — sinon l'import échoue en 400 « pas configurée en
+    // source M2M » sur une catégorie restée en CSV.
     if (slug) {
         const label = document.getElementById('tagFormLabel').value.trim();
         const isMultiple = document.getElementById('tagFormIsMultiple').checked;
-        if (label) {
-            try {
-                const sourceAppId = parseInt(document.getElementById('tagFormSourceApp').value) || null;
-                await api.updateTagCategory(slug, { label, is_multiple: isMultiple, is_active: true });
-                if (sourceAppId) {
-                    // Mettre à jour source_app_id si changé (via une deuxième sauvegarde n'est pas possible via le PATCH actuel - on garde l'existant)
-                }
-            } catch (e) { /* sauvegarde échouée, on tente quand même la sync */ }
-        }
+        const primaryEnabled = document.getElementById('tagFormPrimaryEnabled').checked;
+        const sourceAppId = parseInt(document.getElementById('tagFormSourceApp').value) || null;
+        const m2mTable = document.getElementById('tagFormM2mTable').value;
+        const m2mColumn = document.getElementById('tagFormM2mColumn').value;
+        if (!label) { showToast('Saisissez d\'abord un nom de préférence', 'danger'); return; }
+        if (!sourceAppId) { showToast('Sélectionnez d\'abord une application source', 'danger'); return; }
+        if (!m2mTable || !m2mColumn) { showToast('Sélectionnez une table et une colonne (cliquez sur  🔍  pour découvrir)', 'danger'); return; }
+        const m2mEndpoint = `/api/hub/data/values?table=${encodeURIComponent(m2mTable)}&column=${encodeURIComponent(m2mColumn)}`;
+        try {
+            await api.updateTagCategory(slug, {
+                label, is_multiple: isMultiple, is_active: true,
+                source: 'm2m', source_app_id: sourceAppId, m2m_endpoint: m2mEndpoint,
+                primary_enabled: primaryEnabled,
+            });
+        } catch (e) { /* sauvegarde échouée, on tente quand même la sync */ }
         await handleImportTagM2m(slug);
         try {
             const data = await api.getTagCategories();
