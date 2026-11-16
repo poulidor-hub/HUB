@@ -5,6 +5,24 @@
 
 ---
 
+## [3.92.2] - 16 novembre 2026
+
+### ⚡ Front — sonde badge update navbar réservée aux admins
+
+- Le probe `/api/admin/system/update-status` partait au `DOMContentLoaded`,
+  avant que `/auth/me` réponde : chaque chargement de dashboard (admin ou
+  non) générait un 401 (JWT pas encore rafraîchi) puis un 403 « Accès
+  administrateur requis » pour les non-admins — 18 entrées polluantes dans
+  le journal d'erreurs le 13/11 (10x 403 + 8x 401).
+- `initSystemUpdateBadge()` : garde `currentUser.is_admin` avant le fetch —
+  les non-admins ne contactent plus jamais l'endpoint.
+- Appel déplacé du `DOMContentLoaded` vers `showDashboard()`
+  (auth-navigation.js), après le chargement de `currentUser` (comme
+  `refreshAllBadges`) : pour les admins, le token est déjà valide au
+  moment du probe.
+
+---
+
 ## [3.92.1] - 16 novembre 2026
 
 ### ⚡ SA M2M — self-healing enforced + audit des mutations
