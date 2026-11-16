@@ -6,6 +6,8 @@
 POST /api/apps/cert/issue — auth M2M service account uniquement.
 L'app appelante reçoit son couple cert/key + la CA du HUB (chaîne de confiance).
 Idempotent : même SAN → même cert ; SAN changé (ex. IP du hub modifiée) → ré-émission.
+Rotation de CA (pki.py init --force) → ré-émission aussi : un cert signé par
+l'ancienne CA est orphelin (cf. _cert_signed_by_current_ca).
 """
 import asyncio
 from datetime import datetime, timedelta, timezone
@@ -13,6 +15,7 @@ from pathlib import Path
 
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.asymmetric import padding, rsa
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security.utils import get_authorization_scheme_param
 from pydantic import BaseModel
@@ -72,6 +75,47 @@ def _fingerprint(cert_pem: str) -> str:
     return cert.fingerprint(hashes.SHA256()).hex()
 
 
+def _cert_signed_by_current_ca(crt_path: Path, ca_path: Path) -> bool:
+    """Vrai si le certificat en crt_path est directement signé par la CA en ca_path.
+
+    Contexte — rotation CA 3 nov 2026 (`pki.py init --force`) : les certs émis par
+    l'ancienne CA restent « valides » (dates, SANs inchangées) mais orphelins —
+    navigateurs en SEC_ERROR_BAD_SIGNATURE, et cert_sync les resservait indéfiniment
+    (200 OK sans ré-émission). Utilisé par issue_app_cert pour ré-émettre ces certs.
+
+    Règle fail-safe : toute erreur (cert/CA illisibles ou absents, type de clé non
+    géré, erreur inattendue pendant la vérification) → False → ré-émission, car
+    ré-émettre est idempotent et peu coûteux — on préfère ré-émettre que servir un
+    cert potentiellement orphelin.
+    """
+    try:
+        cert = x509.load_pem_x509_certificate(crt_path.read_bytes())
+        ca_cert = x509.load_pem_x509_certificate(ca_path.read_bytes())
+    except (OSError, ValueError):
+        return False
+    try:
+        verify = getattr(cert, "verify_directly_issued_by", None)
+        if verify is not None:  # cryptography >= 40
+            verify(ca_cert)
+            return True
+        # Fallback cryptography < 40 : issuer DN + signature avec la clé publique CA.
+        if cert.issuer != ca_cert.subject:
+            return False
+        public_key = ca_cert.public_key()
+        if isinstance(public_key, rsa.RSAPublicKey):
+            public_key.verify(
+                cert.signature,
+                cert.tbs_certificate_bytes,
+                padding.PKCS1v15(),
+                cert.signature_hash_algorithm,
+            )
+            return True
+        return False  # type de clé CA non géré en fallback → ré-émission
+    except Exception:
+        # InvalidSignature (signé par une autre CA), ValueError (issuer différent), etc.
+        return False
+
+
 async def _get_sa_from_m2m(request: Request, db: AsyncSession) -> ServiceAccount:
     """Résout un Bearer M2M en ServiceAccount (même pattern que apps.py::_service_account_from_m2m_token)."""
     auth = request.headers.get("Authorization", "")
@@ -119,17 +163,31 @@ async def issue_app_cert(request: Request, db: AsyncSession = Depends(get_db)):
         # Idempotence : SAN du cert existant != SAN demandé → ré-émettre.
         # Cert proche de l'expiration (marge 30j) → ré-émettre aussi
         # ("si un cert valide existe déjà" : un cert expiré/dépassé n'est pas valide).
-        existing = x509.load_pem_x509_certificate(crt_path.read_bytes())
+        existing = None
         try:
-            current_san = {str(gn.value) for gn in existing.extensions.get_extension_for_class(
-                x509.SubjectAlternativeName).value}
-        except x509.ExtensionNotFound:
-            current_san = set()
-        not_after = getattr(existing, "not_valid_after_utc", None)
-        if not_after is None:  # cryptography < 42 : naïf UTC
-            not_after = existing.not_valid_after.replace(tzinfo=timezone.utc)
-        expires_soon = not_after - timedelta(days=CERT_REISSUE_MARGIN_DAYS) <= datetime.now(timezone.utc)
-        need_issue = current_san != set(san) or expires_soon
+            existing = x509.load_pem_x509_certificate(crt_path.read_bytes())
+        except (OSError, ValueError):
+            # Cert corrompu/illisible sur disque → ré-émission fail-safe (idempotent)
+            need_issue = True
+        if existing is not None:
+            try:
+                current_san = {str(gn.value) for gn in existing.extensions.get_extension_for_class(
+                    x509.SubjectAlternativeName).value}
+            except x509.ExtensionNotFound:
+                current_san = set()
+            not_after = getattr(existing, "not_valid_after_utc", None)
+            if not_after is None:  # cryptography < 42 : naïf UTC
+                not_after = existing.not_valid_after.replace(tzinfo=timezone.utc)
+            expires_soon = not_after - timedelta(days=CERT_REISSUE_MARGIN_DAYS) <= datetime.now(timezone.utc)
+            need_issue = current_san != set(san) or expires_soon
+            if not need_issue:
+                # Rotation CA 3 nov 2026 (`pki.py init --force`) : un cert encore valide
+                # mais signé par l'ANCIENNE CA est orphelin (SEC_ERROR_BAD_SIGNATURE côté
+                # navigateurs) et était resservi indéfiniment (200 OK sans ré-émission).
+                # Fail-safe : le doute profite à la ré-émission (idempotent, peu coûteux).
+                need_issue = not _cert_signed_by_current_ca(
+                    crt_path, _certs_dir() / "ca" / "ca.crt"
+                )
 
     if need_issue:
         try:
