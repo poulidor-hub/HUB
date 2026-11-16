@@ -20,6 +20,32 @@
 
 ---
 
+## [3.92.0] - 16 novembre 2026
+
+### ⚡ PKI — auto-réémission des certs orphelins après rotation de CA
+
+- **Détection de rotation dans `/api/apps/cert/issue`** : `need_issue` intègre
+  désormais `_cert_signed_by_current_ca()` — un cert encore valide (dates, SANs
+  inchangés) mais signé par une **ancienne** CA est réémis avec la CA courante.
+  Contexte : rotation CA du 3 nov 2026 (`pki.py init --force`) — les apps
+  gardaient un cert orphelin (navigateurs en `SEC_ERROR_BAD_SIGNATURE`) et
+  cert_sync le resservait indéfiniment (200 OK sans réémission, car la boucle
+  ne vérifiait que absence / SANs / expiration).
+- **Règle fail-safe** : toute erreur de vérification (CA illisible, type de clé
+  non géré, signature invalide, erreur inattendue) → réémission — idempotent
+  et peu coûteux, on préfère réémettre que servir un cert potentiellement
+  orphelin. Fallback `cryptography < 40` : issuer DN + vérification de
+  signature RSA avec la clé publique de la CA.
+- **Bonus robustesse** : un cert corrompu/illisible sur disque provoquait un
+  500 (`ValueError` du `load_pem` nu) — désormais capturé → réémission.
+- Déployé dans les apps via `cert_sync` (boucle 6 h) : après une rotation de
+  CA, la flotte se répare automatiquement au cycle suivant, sans intervention.
+- Tests : 7 nouveaux (helper unitaire × 4 avec rotation `init_ca(force=True)`
+  réelle + fallback forcé, intégration endpoint × 3) — suite complète
+  1766 passed, 1 skipped.
+
+---
+
 ## [3.91.6] - 15 novembre 2026
 
 ### 🐛 Sécurité M2M — heuristique de SA propriétaire en égalité exacte
