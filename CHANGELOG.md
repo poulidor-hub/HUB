@@ -1,22 +1,31 @@
-## [3.91.5] - 15 novembre 2026
-
-### 🐛 Préférences — modale admin et erreurs M2M
-
-- **Sync depuis l'application** : la modale admin pouvait cliquer
-  « Synchroniser depuis l'application » sur une catégorie restée en source
-  CSV → 400 « pas configurée en source M2M ». La sauvegarde bascule
-  désormais la source (csv ⇄ m2m) avec validation de l'application source
-  (PATCH catégorie : nouveaux champs `source` / `source_app_id`).
-- **Messages 502 actionnables** : discovery et import M2M renvoient
-  « Application source injoignable (<url>) — vérifie qu'elle est déployée
-  et démarrée » au lieu de l'erreur httpx brute.
-- Tests : bascule csv→m2m, refus sans source_app, message 502.
-
----
 # Changelog - Hub d'Authentification
 
 > Ce fichier documente toutes les modifications apportées à la documentation et à l'API.
 > Les agents IA peuvent utiliser `/api/docs/changelog` pour consulter cet historique.
+
+---
+
+## [3.92.1] - 16 novembre 2026
+
+### ⚡ SA M2M — self-healing enforced + audit des mutations
+
+- **Réinscription sans token quand le SA owner a disparu (enforced)** :
+  le gate « Token M2M requis » (401) ne s'applique plus que si le SA
+  propriétaire de l'app existe encore (`is_owner_service_account`). SA
+  supprimé + IP Docker trusted (déjà vérifiée) → la réinscription passe
+  et la branche T1 recrée le SA, des credentials frais, et audite
+  `m2m_sa_recreated`. Avant : chicken-and-egg — register exigeait un
+  token qu'aucun SA vivant ne pouvait minter (incident transmission,
+  serveur distant, 16/11 : apps sauvées en compat, première mordue en
+  enforced).
+- **Audit des mutations de service accounts** : `log_action` désormais
+  sur la bascule `is_active` (PUT → `sa_deactivated` / `sa_reactivated`),
+  le DELETE (`sa_deleted`, imputable via target/details — la FK met la
+  ref à NULL) et regenerate-secret (`sa_secret_regenerated`). Seul
+  `can_admin_read` était audité : le SA - Impayé désactivé le 16/11 et
+  le SA transmission supprimé étaient non imputables.
+- Tests : `test_sa_selfheal_enforced_audit.py` (5 tests, rouge → vert) ;
+  suite complète 1771 passed, 0 failed.
 
 ---
 
@@ -68,6 +77,22 @@
   roter l'ancien (l'orphelin reste listé côté admin, sans risque de vol).
 - Tests : +12 (cycle rouge/vert `test_sa_owner_matching.py`), non-régression
   owner-resolution (4) + register/API apps (24).
+
+---
+
+## [3.91.5] - 15 novembre 2026
+
+### 🐛 Préférences — modale admin et erreurs M2M
+
+- **Sync depuis l'application** : la modale admin pouvait cliquer
+  « Synchroniser depuis l'application » sur une catégorie restée en source
+  CSV → 400 « pas configurée en source M2M ». La sauvegarde bascule
+  désormais la source (csv ⇄ m2m) avec validation de l'application source
+  (PATCH catégorie : nouveaux champs `source` / `source_app_id`).
+- **Messages 502 actionnables** : discovery et import M2M renvoient
+  « Application source injoignable (<url>) — vérifie qu'elle est déployée
+  et démarrée » au lieu de l'erreur httpx brute.
+- Tests : bascule csv→m2m, refus sans source_app, message 502.
 
 ---
 
