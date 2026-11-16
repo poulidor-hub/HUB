@@ -271,7 +271,11 @@ function cockpitAlertsHtml() {
     // Mises à jour du socle — cache partagé admin-hub.js, aucun fetch propre.
     const count = cockpitUpdatesData ? countHubUpdatesAvailable(cockpitUpdatesData) : null;
     if (count === null) {
-        rows.push(cockpitAlertRow('muted', 'refresh-cw', 'Mises à jour du socle : état inconnu'));
+        // Fetch partagé encore en vol (premier affichage : /update-status fait
+        // ses checks git sans cache) ≠ panne réelle : distinguer les deux.
+        const inFlight = (typeof _hubUpdatesStatusPromise !== 'undefined' && _hubUpdatesStatusPromise !== null);
+        rows.push(cockpitAlertRow('muted', 'refresh-cw',
+            inFlight ? 'Mises à jour du socle : vérification…' : 'Mises à jour du socle : état inconnu'));
     } else if (count > 0) {
         rows.push(cockpitAlertRow('warn', 'triangle-alert',
             count + ' mise' + (count > 1 ? 's' : '') + ' à jour du socle disponible'
