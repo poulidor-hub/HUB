@@ -262,6 +262,123 @@ function showAdminHub() {
     _adminHubCurrent = 'hub';
     try { window.location.hash = 'admin'; } catch (e) { /* hash refusé */ }
     currentPage = 'apps-admin';
+    refreshHubStatuses();
+}
+
+// ===== Statuts des lignes du hub =====
+//
+// Un seul fetch par ligne et uniquement quand le hub est affiché (appel par
+// showAdminHub, pas de polling). Réutilise exclusivement des endpoints déjà
+// consommés par les modules des vues correspondantes — aucun fetch nouveau.
+// Toute erreur ⇒ badge « — » (ton neutre), jamais de popup.
+// Les lignes sans sonde en passe 1 (groupes, dépendances, GitHub, ateliers,
+// OIDC, service accounts, routage) gardent leur badge statique « — ».
+
+let _hubStatusesInFlight = false;
+
+function setHubStatus(key, tone, text) {
+    const badge = document.querySelector('#adminHubPane [data-hub-status="' + key + '"]');
+    if (!badge) return;
+    badge.textContent = text;
+    badge.classList.remove('ok', 'warn');
+    if (tone) badge.classList.add(tone);
+}
+
+function refreshHubStatuses() {
+    if (_hubStatusesInFlight) return;
+    const pane = document.getElementById('adminHubPane');
+    if (!pane || pane.classList.contains('d-none')) return; // hub non affiché
+    _hubStatusesInFlight = true;
+    Promise.allSettled([
+        refreshHubAppsStatus(),
+        refreshHubUpdatesStatus(),
+        refreshHubBackupsStatus(),
+        refreshHubVpnStatus(),
+    ]).finally(() => { _hubStatusesInFlight = false; });
+}
+
+/**
+ * Applications : nb d'apps actives + nb en attente. Endpoints existants :
+ * api.getPendingApps() (badge #pendingAppsBadge, admin-app-approval.js) et
+ * le cache allApps rempli par loadAdminData() (api.getAllApps en repli).
+ */
+async function refreshHubAppsStatus() {
+    try {
+        const pendingData = await api.getPendingApps();
+        const pending = (pendingData && typeof pendingData.total === 'number') ? pendingData.total : 0;
+        let list = (typeof allApps !== 'undefined' && Array.isArray(allApps) && allApps.length > 0) ? allApps : null;
+        if (!list) list = await api.getAllApps('all');
+        const active = (Array.isArray(list) ? list : []).filter(a =>
+            a && a.is_active && a.approval_status !== 'pending' && a.approval_status !== 'rejected'
+        ).length;
+        setHubStatus('apps', 'ok', active + ' actives' + (pending > 0 ? ' · ' + pending + ' en attente' : ''));
+    } catch (error) {
+        setHubStatus('apps', null, '—');
+    }
+}
+
+/**
+ * Mises à jour : composants concernés. Endpoint existant :
+ * api.getSystemUpdateStatus() (system-update.js, badge navbar) — SANS
+ * ?refresh=1 pour éviter un re-check git lourd à chaque affichage du hub.
+ */
+async function refreshHubUpdatesStatus() {
+    try {
+        const data = await api.getSystemUpdateStatus();
+        if (!data || data.service !== 'ok') { setHubStatus('updates', null, '—'); return; }
+        let count = 0;
+        if (data.meta && data.meta.update_available) count += 1;
+        const components = data.components || {};
+        Object.keys(components).forEach(relPath => {
+            if (components[relPath] && components[relPath].update_available) count += 1;
+        });
+        if (count > 0) setHubStatus('updates', 'warn', count + ' dispo');
+        else setHubStatus('updates', null, 'à jour');
+    } catch (error) {
+        setHubStatus('updates', null, '—');
+    }
+}
+
+/**
+ * Sauvegardes : dernier backup toutes apps. Endpoint existant :
+ * /admin/backups (loadAppBackupsOverview, app-backups.js) — champ
+ * apps[].last_backup_at / last_backup_status (déjà consommé par sa colonne
+ * « dernier backup »).
+ */
+async function refreshHubBackupsStatus() {
+    try {
+        const data = await api.request('/admin/backups');
+        const apps = Array.isArray(data && data.apps) ? data.apps : [];
+        let latest = null;
+        apps.forEach(app => {
+            if (app && app.last_backup_at && (!latest || app.last_backup_at > latest.last_backup_at)) latest = app;
+        });
+        if (!latest) { setHubStatus('backups', null, 'aucun'); return; }
+        if (typeof parseUTCDate !== 'function') { setHubStatus('backups', 'ok', 'Dernier : récent'); return; }
+        const date = parseUTCDate(latest.last_backup_at);
+        const label = 'Dernier : ' + date.toLocaleDateString('fr-FR')
+            + ' ' + date.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+        if (latest.last_backup_status === 'success') setHubStatus('backups', 'ok', label);
+        else if (latest.last_backup_status === 'failed') setHubStatus('backups', 'warn', label);
+        else setHubStatus('backups', null, label);
+    } catch (error) {
+        setHubStatus('backups', null, '—');
+    }
+}
+
+/**
+ * VPN : état + peers connectés. Endpoint existant : /vpn/status
+ * (loadVpnStatus, admin-vpn.js) — champs enabled/initialized/connected_count.
+ */
+async function refreshHubVpnStatus() {
+    try {
+        const data = await api.request('/vpn/status');
+        if (!data || !data.enabled) { setHubStatus('vpn', null, 'désactivé'); return; }
+        if (!data.initialized) { setHubStatus('vpn', 'warn', 'en attente'); return; }
+        setHubStatus('vpn', 'ok', (data.connected_count || 0) + ' connectés');
+    } catch (error) {
+        setHubStatus('vpn', null, '—');
+    }
 }
 
 // ===== Routing par hash =====
@@ -276,7 +393,7 @@ function adminHubKeyFromHash() {
 /**
  * Route la vue admin selon le hash courant. Appelé par showPage('admin')
  * (auth-navigation.js) à chaque ouverture de la page : #admin → hub,
- * #admin/<clé> → outil ( compatibilité system-update.js + liens directs).
+ * #admin/<clé> → outil (compatibilité system-update.js + liens directs).
  */
 function routeAdminFromHash() {
     const key = adminHubKeyFromHash();
