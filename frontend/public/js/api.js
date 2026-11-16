@@ -1505,6 +1505,17 @@ class HubAPI {
     }
 
     /**
+     * Métriques serveur de l'hôte (CPU/RAM/disque/charge/uptime) — proxy
+     * TOLÉRANT vers l'agent hôte hubctl update --serve : agent injoignable
+     * ⇒ 200 {"service": "unreachable", "hint"} ; capteur en échec ⇒
+     * service "degraded" + payload partiel + errors ; non-admin ⇒ 403.
+     * @returns {Promise<{service, timestamp?, uptime_seconds?, cpu?, memory?, disk?, errors?, hint?}>}
+     */
+    async getSystemStats() {
+        return this.request('/admin/system/stats');
+    }
+
+    /**
      * Déclenche la mise à jour du Hub et du socle — passthrough STRICT
      * du service hôte (202 job lancé, 409 déjà en cours, 503 service
      * injoignable / token absent).
@@ -1524,6 +1535,19 @@ class HubAPI {
      */
     async getSystemUpdateJob() {
         return this.request('/admin/system/update-job');
+    }
+
+    // ===== Certificat CA (endpoint PUBLIC, cf. cert-download.js) =====
+
+    /**
+     * Métadonnées du certificat CA racine — aucune session requise (CA
+     * publique par nature). Empreinte SHA-256 + fenêtre de validité.
+     * @returns {Promise<{not_before, not_after, fingerprint_sha256}>}
+     */
+    async getCaInfo() {
+        // Timeout court aligné sur loadCaInfo (cert-download.js) : lecture
+        // d'un objet statique, un dépassement = panne réseau manifeste.
+        return this.request('/pki/ca/info', { timeout: 5000 });
     }
     
     // ===== Bulk Operations API =====

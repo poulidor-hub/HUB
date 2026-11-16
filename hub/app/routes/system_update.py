@@ -18,7 +18,10 @@ les proxifie pour les admins :
   … : la shape est décidée par hubctl, on ne la déduit pas, jamais de
   500 masqué) + audit SYSTEM_UPDATE_TRIGGERED à chaque déclenchement ;
 - GET  /update-job — tolérant (même recette que /update-status) : le
-  front sonde cette route toutes les 2 s pendant l'exécution (spec §5.3).
+  front sonde cette route toutes les 2 s pendant l'exécution (spec §5.3) ;
+- GET  /stats — métriques serveur de l'hôte (CPU/RAM/disque/charge/
+  uptime, cockpit admin), tolérant à la panne (même recette) : le
+  cockpit doit dégrader proprement si l'agent est down.
 
 Token partagé X-Atelier-Token RÉUTILISÉ du fichier atelier (monté :ro,
 cf. _read_atelier_token importé de routes.atelier — aucune nouvelle
@@ -212,3 +215,19 @@ async def update_job(_: User = Depends(get_current_admin)):
     la panne (polling front toutes les 2 s, cf. spec §5.3).
     """
     return await _proxy_get_status_or_job("/update/job")
+
+
+@router.get("/stats")
+async def system_stats(_: User = Depends(get_current_admin)):
+    """Métriques serveur de l'hôte (cockpit admin) — proxy GET
+    {base}/stats, tolérant à la panne (même recette que /update-status).
+
+    Payload upstream transmis tel quel (contrat hubctl : {service,
+    timestamp, uptime_seconds, cpu:{percent, cores, load1},
+    memory:{total_mb, used_mb, available_mb, percent, swap_percent},
+    disk:{path, total_gb, used_gb, free_gb, percent}}). Agent
+    injoignable ⇒ 200 {"service": "unreachable", "hint": …} : les
+    métriques sont une information de cockpit, pas une erreur — la tuile
+    correspondante doit dégrader proprement.
+    """
+    return await _proxy_get_status_or_job("/stats")

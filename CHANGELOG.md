@@ -5,6 +5,28 @@
 
 ---
 
+## [3.93.0] - 16 novembre 2026
+
+### 📣 Pour les utilisateurs
+- **Ajouté** : la page **Administration** devient un « cockpit » — l'état du serveur (CPU, mémoire, disque, charge, durée d'allumage) s'affiche en direct à gauche, et tous les outils sont regroupés par thème à droite (Parc d'applications, Accès & sécurité, Données, Système).
+- **Ajouté** : chaque outil affiche son état d'un coup d'œil (« 1 app en attente », « Dernier backup : hier », « VPN : 3 connectés », « 2 mises à jour dispo »).
+- **Amélioré** : chaque outil a désormais son lien direct — un rafraîchissement de page ou un retour après mise à jour vous replace au bon endroit.
+- **Corrigé** : après une mise à jour du socle, on revient sur la page Administration (et non plus le dashboard), sans message d'erreur parasite.
+
+### ⚡ Hub « cockpit » — Administration réorganisée par thèmes
+
+- **feat(admin)** : la page Administration devient un **hub cockpit** — cockpit système à gauche (CPU/RAM/disque/charge/uptime via hubctl, sparklines SVG sans animation, polling 10 s borné à la vue hub) et menu par thèmes à droite (Parc d'applications · Accès & sécurité · Données · Système), format « liste + statuts » avec badges d'état réels (apps en attente, dernier backup, VPN, mises à jour du socle).
+- **feat(admin)** : navigation par **hash d'URL** (`#admin`, `#admin/apps`, `#admin/vpn`…) — deep-link, retour au bon onglet après refresh et après reload post-mise à jour ; le pseudo-onglet « Configuration » (état localStorage `.show-subtabs`) est supprimé.
+- **feat(admin)** : vues outils pleine largeur avec en-tête commun (icône Lucide + titre FR + retour hub) ; contenu interne des 11 outils inchangé (aucune fonctionnalité modifiée).
+- **feat(admin)** : proxy `GET /api/admin/system/stats` vers l'agent hôte hubctl (route `GET /stats` côté hubctl 0.20.0), pattern `system_update` (token `X-Atelier-Token`, unreachable tolérant `{"service":"unreachable"}`), garde admin ; dégradations gracieuses (badge « via hubctl »/« dégradé »/« indisponible »/« erreur réseau », jamais de popup).
+- **feat(front)** : sprite d'icônes officiel HUBCSS vendored (`/vendor/design-system/lucide.svg`, 172 icônes) + styles hub/cockpit sur tokens `:root` existants (`.hub-icon`, `.hub-row`, `.hub-status-badge`, cockpit KPI/alertes) — zéro animation/transition (charte perf).
+- **feat(front)** : `api.getSystemStats()` + `api.getCaInfo()` ; statuts hub réutilisant les endpoints existants (`/apps/pending`, `/admin/system/update-status` sans `?refresh=1`, `/admin/backups`, `/vpn/status`) — cache partagé anti-doublon pour update-status (badge ligne + alerte cockpit).
+- **fix(admin)** : cockpit — « vérification… » pendant le premier fetch `update-status` (≠ état inconnu, premier appel sans cache git côté agent).
+- **chore(admin)** : suppression code mort — `renderUsersTable()` (`admin-apps.js`, ciblait `#usersTable` disparu) et commentaires obsolètes « Page Cloner / Migrer » / « Page Snapshots » (fonctionnalités déjà dans Sauvegardes ▸ Environnement / Snapshots).
+- **tests** : +11 tests `tests/test_system_update_routes.py` (passthrough 200 avec contrat hubctl, unreachable, 401/403/503/timeout) — suite hôte 1772 passed ; vérifié en sandbox Docker (`pouly-verify`) : boot propre, endpoint E2E via agent hubctl réel, rendu navigateur (cockpit live, deep-link, navigation hub ↔ vues).
+
+---
+
 ## [3.92.2] - 16 novembre 2026
 
 ### ⚡ Front — sonde badge update navbar réservée aux admins

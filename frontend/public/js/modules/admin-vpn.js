@@ -662,16 +662,9 @@ function stopVpnPolling() {
 // ── Init ────────────────────────────────────────────────
 
 document.addEventListener('DOMContentLoaded', () => {
-    const vpnTab = document.getElementById('vpn-tab');
-    if (vpnTab) {
-        vpnTab.addEventListener('shown.bs.tab', async () => {
-            initVpnFilters();
-            await loadVpnServerConfig();
-            await loadVpnStatus();
-            await loadVpnPeers();
-            await loadVpnUsers();
-        });
-    }
+    // Ancien déclencheur shown.bs.tab (#vpn-tab) supprimé avec la barre
+    // d'onglets : l'ouverture de la vue VPN charge ces données via
+    // openHubTool('vpn') (admin-hub.js).
 
     // Pré-charger les users quand on ouvre le modal
     const addPeerModal = document.getElementById('vpnAddPeerModal');

@@ -75,19 +75,11 @@ document.addEventListener('DOMContentLoaded', () => {
     // pour tous les utilisateurs, y compris non-admins — chaque chargement
     // de dashboard générait un 401/403 « Accès administrateur requis »
     // polluant le journal d'erreurs (cf. initSystemUpdateBadge).
-
-    const tabBtn = document.getElementById('systemUpdateTabBtn');
-    if (tabBtn) {
-        tabBtn.addEventListener('shown.bs.tab', () => {
-            loadSystemUpdates(true);
-        });
-    }
-
-    // Après le rechargement post-mise à jour (armSystemUpdateReload pose
-    // #admin) : revenir directement sur la vue admin.
-    if (window.location.hash === '#admin' && typeof showPage === 'function') {
-        try { showPage('admin'); } catch (e) { /* vue par défaut sinon */ }
-    }
+    //
+    // Le retour direct sur la page admin après le rechargement post-mise à
+    // jour (armSystemUpdateReload pose #admin) est géré par le routing par
+    // hash de admin-hub.js (routeAdminFromHashDeferred) : #admin aboutit au
+    // hub cockpit, #admin/updates à la vue Mises à jour.
 });
 
 /**
@@ -148,17 +140,12 @@ function showSystemUpdateBadgeDot() {
     slot.appendChild(dot);
 }
 
-/** data-action du point navbar : ouvre la page admin sur l'onglet Mises à jour. */
+/** data-action du point navbar : ouvre la page admin sur la vue Mises à jour. */
 function openSystemUpdatesTab() {
     if (typeof showPage === 'function') showPage('admin');
-    const tabBtn = document.getElementById('systemUpdateTabBtn');
-    if (!tabBtn || typeof bootstrap === 'undefined' || !bootstrap.Tab) return;
-    if (tabBtn.classList.contains('active')) {
-        // Déjà l'onglet actif : shown.bs.tab ne refera pas feu → rechargement direct.
-        loadSystemUpdates(true);
-    } else {
-        bootstrap.Tab.getOrCreateInstance(tabBtn).show(); // shown.bs.tab → loadSystemUpdates
-    }
+    // Vue outil du hub cockpit : openHubTool déclenche loadSystemUpdates(true)
+    // (re-check git), y compris si la vue est déjà ouverte.
+    if (typeof openHubTool === 'function') openHubTool('updates');
 }
 
 // ===== Chargement / rendu de l'onglet =====

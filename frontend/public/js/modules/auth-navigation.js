@@ -298,8 +298,10 @@ function showPage(page) {
             currentPage = 'apps-admin';
             loadAdminData();
             loadPendingAppsCount();
-            refreshAppsStatus();
-            startConnectivityRefresh();
+            // Hub « cockpit » : la vue (hub ou outil #admin/<clé>) est décidée
+            // par le hash courant (admin-hub.js) — refresh Apps/connexion
+            // déclenchés par openHubTool('apps') si c'est la vue ouverte.
+            if (typeof routeAdminFromHash === 'function') routeAdminFromHash();
             break;
         case 'messages':
             // Page publique : Ma boîte pour tous, Gestion si admin (le mode se

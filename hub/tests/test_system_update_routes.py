@@ -15,6 +15,8 @@ Le Hub les proxifie pour les admins :
   shape est décidée par le service hôte, jamais de 500 masqué) + audit
   SYSTEM_UPDATE_TRIGGERED à chaque déclenchement ;
 - GET  /api/admin/system/update-job — tolérant (même recette).
+- GET  /api/admin/system/stats — métriques serveur de l'hôte (cockpit
+  admin), tolérant (même recette) : payload hubctl transmis tel quel.
 
 Token partagé X-Atelier-Token réutilisé du fichier atelier (monté :ro) :
 fichier absent/illisible ⇒ 503 sur les 3 routes (hint journalctl -u
@@ -33,6 +35,7 @@ UPDATE_HOST = "http://test-update:8778"
 STATUS_PATH = "/api/admin/system/update-status"
 RUN_PATH = "/api/admin/system/update"
 JOB_PATH = "/api/admin/system/update-job"
+STATS_PATH = "/api/admin/system/stats"
 
 # Hint verbatim des 503 (contrat, cf. spec §8) — toute divergence ici est
 # une régression.
@@ -124,7 +127,7 @@ async def test_proxy_timeout_follows_setting(client, admin_token, tmp_path,
                                              monkeypatch):
     """Timeout des proxys branché sur settings.update_timeout (régression).
 
-    Les 2 GETs tolérants utilisaient un 10.0 s codé en dur : à froid
+    Les GETs tolérants utilisaient un 10.0 s codé en dur : à froid
     (cache TTL 60 s expiré) la collecte de statut côté hôte (git fetch
     des dépôts) prend ~10.2 s sur le parc réel — le premier appel
     répondait « unreachable » (timeout proxy) puis le suivant « ok » :
@@ -149,27 +152,34 @@ async def test_proxy_timeout_follows_setting(client, admin_token, tmp_path,
             200, json={"service": "ok"})
         job_route = mock.get(f"{UPDATE_HOST}/update/job").respond(
             200, json={"state": "idle"})
+        stats_route = mock.get(f"{UPDATE_HOST}/stats").respond(
+            200, json={"service": "ok"})
         run_route = mock.post(f"{UPDATE_HOST}/update/run").respond(
             202, json={"job": {"state": "running"}})
         r1 = await client.get(STATUS_PATH,
                               headers=get_auth_header(admin_token))
         r2 = await client.get(JOB_PATH, headers=get_auth_header(admin_token))
         r3 = await client.post(RUN_PATH, headers=get_auth_header(admin_token))
+        r4 = await client.get(STATS_PATH,
+                              headers=get_auth_header(admin_token))
     assert r1.status_code == 200
     assert r2.status_code == 200
     assert r3.status_code == 202
+    assert r4.status_code == 200
     assert status_route.called and job_route.called and run_route.called
+    assert stats_route.called
     assert captured, "aucun httpx.AsyncClient construit par les proxys"
     assert all(t == 12.34 for t in captured), captured
 
 
 async def test_update_token_missing_returns_503(client, admin_token,
                                                 tmp_path, monkeypatch):
-    """Token partagé absent/illisible → 503 avec hint (les 3 routes)."""
+    """Token partagé absent/illisible → 503 avec hint (les 4 routes)."""
     _token_file_absent(monkeypatch, tmp_path)
     admin = get_auth_header(admin_token)
     for method, path in ((client.get, STATUS_PATH), (client.get, JOB_PATH),
-                         (client.post, RUN_PATH)):
+                         (client.post, RUN_PATH),
+                         (client.get, STATS_PATH)):
         r = await method(path, headers=admin)
         assert r.status_code == 503, path
         assert UPDATE_HINT in r.json()["detail"], path
@@ -232,20 +242,74 @@ async def test_update_job_passthrough_200(client, admin_token, tmp_path,
     assert sent.headers["X-Atelier-Token"] == "token-secret-123"
 
 
+async def test_stats_passthrough_200(client, admin_token, tmp_path,
+                                     monkeypatch):
+    """GET /stats → payload métriques hôte transmis tel quel (contrat
+    hubctl) + header token transmis.
+
+    Le Hub ne déduit RIEN de la shape : {service, timestamp,
+    uptime_seconds, cpu, memory, disk} est décidé côté hubctl (cockpit
+    admin), le proxy est un miroir strict.
+    """
+    _use_update_service(monkeypatch, tmp_path)
+    payload = {
+        "service": "ok",
+        "timestamp": "2026-11-16T10:00:00",
+        "uptime_seconds": 123456,
+        "cpu": {"percent": 12.5, "cores": 8, "load1": 0.42},
+        "memory": {"total_mb": 16384, "used_mb": 8192,
+                   "available_mb": 8192, "percent": 50.0,
+                   "swap_percent": 1.5},
+        "disk": {"path": "/", "total_gb": 500, "used_gb": 250,
+                 "free_gb": 250, "percent": 50.0},
+    }
+    with respx.mock(assert_all_called=False) as mock:
+        route = mock.get(f"{UPDATE_HOST}/stats").respond(200, json=payload)
+        r = await client.get(STATS_PATH,
+                             headers=get_auth_header(admin_token))
+    assert r.status_code == 200
+    assert r.json() == payload
+    assert route.called
+    sent = route.calls.last.request
+    assert sent.headers["X-Atelier-Token"] == "token-secret-123"
+
+
+async def test_stats_unreachable_returns_200(client, admin_token, tmp_path,
+                                             monkeypatch):
+    """Agent hôte injoignable → 200 {"service": "unreachable", "hint": …}.
+
+    Les métriques du cockpit sont une information, pas une erreur : la
+    tuile doit dégrader proprement (même recette que /update-status).
+    """
+    _use_update_service(monkeypatch, tmp_path)
+    with respx.mock(assert_all_called=False) as mock:
+        mock.get(f"{UPDATE_HOST}/stats").mock(
+            side_effect=httpx.ConnectError("Connection refused"))
+        r = await client.get(STATS_PATH,
+                             headers=get_auth_header(admin_token))
+    assert r.status_code == 200
+    body = r.json()
+    assert body["service"] == "unreachable"
+    assert body["hint"]
+
+
 async def test_update_routes_require_auth(client, tmp_path, monkeypatch):
-    """Sans token Hub → 401 sur les 3 routes."""
+    """Sans token Hub → 401 sur les 4 routes."""
     _use_update_service(monkeypatch, tmp_path)
     assert (await client.get(STATUS_PATH)).status_code == 401
     assert (await client.get(JOB_PATH)).status_code == 401
+    assert (await client.get(STATS_PATH)).status_code == 401
     assert (await client.post(RUN_PATH)).status_code == 401
 
 
 async def test_update_routes_admin_only(client, user_token, tmp_path,
                                         monkeypatch):
-    """User non-admin → 403 sur les 3 routes."""
+    """User non-admin → 403 sur les 4 routes."""
     _use_update_service(monkeypatch, tmp_path)
     headers = get_auth_header(user_token)
     assert (await client.get(STATUS_PATH,
                              headers=headers)).status_code == 403
     assert (await client.get(JOB_PATH, headers=headers)).status_code == 403
+    assert (await client.get(STATS_PATH,
+                             headers=headers)).status_code == 403
     assert (await client.post(RUN_PATH, headers=headers)).status_code == 403

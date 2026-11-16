@@ -653,61 +653,6 @@ async function toggleAppActive(appId) {
     }
 }
 
-function renderUsersTable(users) {
-    const container = document.getElementById('usersTable');
-    
-    container.innerHTML = `
-        <table class="table table-hover align-middle">
-            <thead>
-                <tr>
-                    <th>Utilisateur</th>
-                    <th>Email</th>
-                    <th>Rôle Hub</th>
-                    <th>Applications (Rôle)</th>
-                    <th>Statut</th>
-                    <th class="text-end">Actions</th>
-                </tr>
-            </thead>
-            <tbody>
-                ${users.map(user => `
-                    <tr>
-                        <td><strong>${escapeHtml(user.username)}</strong></td>
-                        <td><small class="text-muted">${escapeHtml(user.email || '-')}</small></td>
-                        <td>
-                            ${user.is_admin 
-                                ? '<span class="badge bg-dark">Admin</span>' 
-                                : '<span class="badge bg-light text-dark">User</span>'}
-                        </td>
-                        <td>
-                            ${user.app_roles?.map(ar => `
-                                <span class="badge me-1" style="background-color: ${getRoleBadgeColor(ar.role)}">
-                                    ${(ar.source || '').startsWith('profile') ? '<i class="bi bi-person-badge"></i> ' : ''}
-                                    ${escapeHtml(ar.app_name)} 
-                                    <small>(${ar.role})</small>
-                                </span>
-                            `).join('') || '<span class="text-muted">-</span>'}
-                        </td>
-                        <td>
-                            ${user.is_active 
-                                ? '<span class="status-active"><i class="bi bi-check-circle-fill"></i></span>' 
-                                : '<span class="status-inactive"><i class="bi bi-x-circle-fill"></i></span>'}
-                        </td>
-                        <td class="text-end">
-                            <button class="btn btn-sm btn-outline-primary me-1" data-action="editUser" data-arg1="${user.id}">
-                                <i class="bi bi-pencil"></i>
-                            </button>
-                            <button class="btn btn-sm btn-outline-danger" data-action="deleteUser" data-arg1="${user.id}" data-arg2="${escapeHtml(user.username)}" 
-                                ${user.id === currentUser.id ? 'disabled' : ''}>
-                                <i class="bi bi-trash"></i>
-                            </button>
-                        </td>
-                    </tr>
-                `).join('')}
-            </tbody>
-        </table>
-    `;
-}
-
 // Couleurs des badges selon le rôle
 function getRoleBadgeColor(role) {
     const colors = {

@@ -24,18 +24,11 @@ let routingPollTimer = null;
 
 const ROUTING_POLL_MS = 5000;
 
-// ===== Chargement à l'activation de l'onglet + polling =====
-
-document.addEventListener('DOMContentLoaded', () => {
-    const tab = document.getElementById('routing-tab');
-    if (tab) {
-        tab.addEventListener('shown.bs.tab', () => {
-            loadRoutingAdmin();
-            startRoutingPolling();
-        });
-        tab.addEventListener('hidden.bs.tab', stopRoutingPolling);
-    }
-});
+// ===== Chargement à l'ouverture de la vue + polling =====
+// Anciens déclencheurs shown/hidden.bs.tab (#routing-tab) supprimés avec la
+// barre d'onglets : openHubTool('routing') (admin-hub.js) appelle
+// loadRoutingAdmin() + startRoutingPolling(), la sortie de vue appelle
+// stopRoutingPolling().
 
 function startRoutingPolling() {
     if (routingPollTimer) return;
@@ -393,8 +386,8 @@ async function routingTestResolve(button) {
 }
 
 function routingOpenApp(button) {
-    const tab = document.getElementById('apps-tab');
-    if (tab) bootstrap.Tab.getOrCreateInstance(tab).show();
+    // Vue Apps du hub cockpit (l'ancien bootstrap.Tab #apps-tab n'existe plus).
+    if (typeof openHubTool === 'function') openHubTool('apps');
 }
 
 function routingSubTab(button) {
