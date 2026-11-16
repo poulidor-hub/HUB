@@ -166,3 +166,120 @@ async def test_cert_issue_rejects_slug_of_another_sa(client, service_account, fo
     assert r.status_code == 403
     assert r.json()["detail"] == "Service account not authorized for this application"
     assert (crt_path.read_bytes(), key_path.read_bytes()) == before
+
+
+# ===== Rotation CA 3 nov 2026 : ré-émission si cert signé par l'ancienne CA =====
+#
+# Incident : `pki.py init --force` régénère la CA au même chemin. Les certs
+# existants restent « valides » (dates, SANs) mais orphelins — navigateurs en
+# SEC_ERROR_BAD_SIGNATURE, et cert_sync resservait l'ancien cert indéfiniment
+# (200 OK sans ré-émission). La détection passe par le helper
+# _cert_signed_by_current_ca (testé unitairement ci-dessous).
+
+
+def test_helper_signed_by_current_ca(certs_env):
+    """Helper unitaire : leaf signé par la CA courante → True."""
+    from app.routes.app_certs import _cert_signed_by_current_ca
+
+    pki.create_server_cert(name="leaf", force=True, cn="leaf", san=["localhost"])
+    assert _cert_signed_by_current_ca(
+        certs_env / "server" / "leaf" / "server.crt", certs_env / "ca" / "ca.crt"
+    )
+
+
+def test_helper_signed_by_old_ca_after_rotation(certs_env):
+    """Helper unitaire : après rotation (`init --force`, sujets DN identiques),
+    leaf signé par l'ANCIENNE CA → False (c'est le cœur de l'incident : une
+    comparaison d'issuer DN seule dirait True)."""
+    from app.routes.app_certs import _cert_signed_by_current_ca
+
+    pki.create_server_cert(name="leaf", force=True, cn="leaf", san=["localhost"])
+    pki.init_ca(force=True)  # rotation : même chemin, même sujet DN, autre clé
+    assert not _cert_signed_by_current_ca(
+        certs_env / "server" / "leaf" / "server.crt", certs_env / "ca" / "ca.crt"
+    )
+
+
+def test_helper_fallback_sans_verify_directly_issued_by(certs_env, monkeypatch):
+    """Chemin fallback cryptography < 40 (issuer DN + signature RSA avec la clé
+    publique CA), en masquant verify_directly_issued_by : même CA → True,
+    CA tournée (sujets identiques, signature invalide) → False."""
+    from cryptography import x509
+
+    from app.routes.app_certs import _cert_signed_by_current_ca
+
+    pki.create_server_cert(name="leaf", force=True, cn="leaf", san=["localhost"])
+    leaf = certs_env / "server" / "leaf" / "server.crt"
+    ca = certs_env / "ca" / "ca.crt"
+    monkeypatch.delattr(x509.Certificate, "verify_directly_issued_by", raising=False)
+    assert _cert_signed_by_current_ca(leaf, ca)
+    pki.init_ca(force=True)
+    assert not _cert_signed_by_current_ca(leaf, ca)
+
+
+def test_helper_fail_safe_lecture_impossible(certs_env):
+    """Règle fail-safe : CA absente, cert corrompu ou CA corrompue → False
+    (→ ré-émission : idempotent et peu coûteux)."""
+    from app.routes.app_certs import _cert_signed_by_current_ca
+
+    pki.create_server_cert(name="leaf", force=True, cn="leaf", san=["localhost"])
+    leaf = certs_env / "server" / "leaf" / "server.crt"
+    ca = certs_env / "ca" / "ca.crt"
+    # Cert présent mais CA absente
+    assert not _cert_signed_by_current_ca(leaf, certs_env / "ca" / "absente.crt")
+    # Cert corrompu (CA lisible)
+    leaf.write_bytes(b"corrupted, not a pem")
+    assert not _cert_signed_by_current_ca(leaf, ca)
+    # CA corrompue (cert sain)
+    pki.create_server_cert(name="leaf2", force=True, cn="leaf2", san=["localhost"])
+    ca.write_bytes(b"garbage ca pem")
+    assert not _cert_signed_by_current_ca(certs_env / "server" / "leaf2" / "server.crt", ca)
+
+
+@pytest.mark.asyncio
+async def test_cert_issue_reissues_when_signed_by_old_ca(client, service_account, certs_env):
+    """Incident rotation CA 3 nov 2026 : cert encore valide (SANs identiques,
+    non expirant) mais signé par l'ANCIENNE CA → ré-émission signée par la CA
+    courante."""
+    r1 = await client.post("/api/apps/cert/issue", headers=_sa_headers(service_account))
+    assert r1.status_code == 200
+    old_fingerprint = r1.json()["fingerprint"]
+    # Rotation : `pki.py init --force` régénère la CA au même chemin (même sujet DN)
+    pki.init_ca(force=True)
+    r2 = await client.post("/api/apps/cert/issue", headers=_sa_headers(service_account))
+    assert r2.status_code == 200
+    assert r2.json()["san"] == r1.json()["san"]  # la cause de la ré-émission est la CA, pas les SANs
+    assert r2.json()["fingerprint"] != old_fingerprint
+    # Le cert ré-émis est signé par la CA courante
+    from cryptography import x509
+
+    cert = x509.load_pem_x509_certificate(r2.json()["cert"].encode())
+    ca = x509.load_pem_x509_certificate((certs_env / "ca" / "ca.crt").read_bytes())
+    cert.verify_directly_issued_by(ca)  # ne lève pas
+
+
+@pytest.mark.asyncio
+async def test_cert_issue_stable_after_rotation_reissue(client, service_account, certs_env):
+    """Après la ré-émission post-rotation, le cert est signé par la CA courante :
+    plus aucune ré-émission (pas de boucle infinie), fingerprint stable."""
+    r1 = await client.post("/api/apps/cert/issue", headers=_sa_headers(service_account))
+    pki.init_ca(force=True)
+    r2 = await client.post("/api/apps/cert/issue", headers=_sa_headers(service_account))
+    assert r2.json()["fingerprint"] != r1.json()["fingerprint"]
+    r3 = await client.post("/api/apps/cert/issue", headers=_sa_headers(service_account))
+    assert r3.status_code == 200
+    assert r3.json()["fingerprint"] == r2.json()["fingerprint"]
+
+
+@pytest.mark.asyncio
+async def test_cert_issue_reissues_on_corrupted_cert(client, service_account, certs_env):
+    """Cert corrompu (PEM invalide) sur disque : pas de crash → 200 avec un cert
+    ré-émis (ré-émission fail-safe)."""
+    r1 = await client.post("/api/apps/cert/issue", headers=_sa_headers(service_account))
+    assert r1.status_code == 200
+    crt_path = certs_env / "server" / service_account.applications[0].slug / "server.crt"
+    crt_path.write_bytes(b"corrupted, not a pem")
+    r2 = await client.post("/api/apps/cert/issue", headers=_sa_headers(service_account))
+    assert r2.status_code == 200
+    assert r2.json()["fingerprint"] != r1.json()["fingerprint"]
+    assert r2.json()["cert"].startswith("-----BEGIN CERTIFICATE-----")
