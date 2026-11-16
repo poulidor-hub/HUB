@@ -412,6 +412,7 @@ async def update_service_account(
     
     update_data = sa_data.model_dump(exclude_unset=True)
     old_admin_read = bool(sa.can_admin_read)
+    old_is_active = bool(sa.is_active)
     for field, value in update_data.items():
         setattr(sa, field, value)
     
@@ -428,6 +429,16 @@ async def update_service_account(
             target=sa.name, service_account_id=sa.id,
         )
         await db.commit()
+
+    # Audit activation/désactivation (incidents 09/11 et 16/11/2026 : SAs
+    # désactivés sans trace — SA - Impayé, transmission — non imputables).
+    if "is_active" in update_data and bool(sa.is_active) != old_is_active:
+        await log_action(
+            db=db, user_id=admin.id,
+            action="sa_reactivated" if sa.is_active else "sa_deactivated",
+            target=sa.name, service_account_id=sa.id,
+        )
+        await db.commit()
     
     # Notifier les clients SSE de la modification
     notify_event("service_accounts_updated", {"action": "updated", "sa_id": sa.id, "sa_name": sa.name})
@@ -439,7 +450,7 @@ async def update_service_account(
 async def delete_service_account(
     service_account_id: int,
     db: AsyncSession = Depends(get_db),
-    _admin = Depends(get_current_admin)
+    admin = Depends(get_current_admin)
 ):
     """Supprime un service account (admin uniquement)"""
     result = await db.execute(
@@ -454,6 +465,16 @@ async def delete_service_account(
         )
     
     sa_name = sa.name  # Sauvegarder avant suppression
+    # Audit AVANT la suppression (incident 16/11/2026 : SA transmission
+    # supprimé sans aucune trace — la FK audit_logs mettra la ref à NULL,
+    # l'action reste imputable via target/details).
+    await log_action(
+        db=db, user_id=admin.id,
+        action="sa_deleted",
+        target=sa_name,
+        service_account_id=None,
+        details=f"Suppression du SA #{service_account_id} — client_id {sa.client_id}",
+    )
     await db.delete(sa)
     await db.commit()
     
@@ -466,7 +487,7 @@ async def delete_service_account(
 async def regenerate_client_secret(
     service_account_id: int,
     db: AsyncSession = Depends(get_db),
-    _admin = Depends(get_current_admin)
+    admin = Depends(get_current_admin)
 ):
     """
     Régénère le client_secret d'un service account (admin uniquement).
@@ -507,6 +528,16 @@ async def regenerate_client_secret(
             app_slugs=app_slugs
         )
         logger.info(f"🔄 Secret régénéré pour SA '{sa.name}', fichier mis à jour: {secrets_file}")
+    
+    # Audit de la rotation (l'ancien secret est invalidé immédiatement :
+    # opération sensible qui doit rester imputable — cf. incidents SA 11/2026).
+    await log_action(
+        db=db, user_id=admin.id,
+        action="sa_secret_regenerated",
+        target=sa.name, service_account_id=sa.id,
+        details="Rotation du client_secret M2M (ancien secret invalidé)",
+    )
+    await db.commit()
     
     return ServiceAccountCreated(
         id=sa.id,
