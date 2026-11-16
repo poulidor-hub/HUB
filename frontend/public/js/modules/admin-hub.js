@@ -122,7 +122,9 @@ function renderAdminHub() {
         + '<div class="card border-0 shadow-sm admin-hub-cockpit">'
         + '<div class="hub-card-head" style="padding:12px 14px">'
         + hubIcon('server') + 'Cockpit système'
-        + '<span class="hub-status-badge ok ms-auto">via hubctl</span>'
+        // Badge d'état piloté par cockpit.js (setCockpitStatusBadge) :
+        // « via hubctl » / « dégradé » / « indisponible » / « erreur réseau ».
+        + '<span id="cockpitStatusBadge" class="hub-status-badge ok ms-auto">via hubctl</span>'
         + '</div>'
         + '<div id="cockpitBody" class="card-body">'
         + '<div class="text-muted small text-center py-4">Chargement des métriques…</div>'
@@ -161,12 +163,14 @@ function showAdminPane(panelId) {
     if (target) target.classList.remove('d-none');
 }
 
-// Sortie propre de la vue courante (stop des pollings hérités des onglets).
-// NB : le polling VPN n'est volontairement pas stoppé ici — parité avec
-// l'ancien comportement (démarré par init/toggle, jamais par l'ouverture).
+// Sortie propre de la vue courante (stop des pollings hérités des onglets,
+// + polling cockpit démarré par showAdminHub). NB : le polling VPN n'est
+// volontairement pas stoppé ici — parité avec l'ancien comportement
+// (démarré par init/toggle, jamais par l'ouverture).
 function leaveAdminHubView() {
     if (typeof stopConnectivityRefresh === 'function') stopConnectivityRefresh();
     if (typeof stopRoutingPolling === 'function') stopRoutingPolling();
+    if (typeof stopCockpitPolling === 'function') stopCockpitPolling();
 }
 
 // ===== Ouverture d'un outil (vue plein-largeur) =====
@@ -263,6 +267,9 @@ function showAdminHub() {
     try { window.location.hash = 'admin'; } catch (e) { /* hash refusé */ }
     currentPage = 'apps-admin';
     refreshHubStatuses();
+    // Polling cockpit 10 s : uniquement quand le hub est affiché (stop à
+    // l'ouverture d'une vue outil via leaveAdminHubView).
+    if (typeof startCockpitPolling === 'function') startCockpitPolling();
 }
 
 // ===== Statuts des lignes du hub =====
@@ -275,6 +282,15 @@ function showAdminHub() {
 // OIDC, service accounts, routage) gardent leur badge statique « — ».
 
 let _hubStatusesInFlight = false;
+
+// Cache partagé du statut « mises à jour du socle » : consommé par le
+// badge de la ligne Mises à jour ET par l'alerte du cockpit (cockpit.js) —
+// un seul fetch par affichage du hub, jamais d'appel dupliqué. Invalidé à
+// chaque refreshHubStatuses (chaque affichage du hub) pour garder la
+// fraîcheur du badge ; le cockpit relit le cache entre-temps.
+
+let _hubUpdatesStatusData = null;
+let _hubUpdatesStatusPromise = null;
 
 function setHubStatus(key, tone, text) {
     const badge = document.querySelector('#adminHubPane [data-hub-status="' + key + '"]');
@@ -289,6 +305,7 @@ function refreshHubStatuses() {
     const pane = document.getElementById('adminHubPane');
     if (!pane || pane.classList.contains('d-none')) return; // hub non affiché
     _hubStatusesInFlight = true;
+    _hubUpdatesStatusData = null; // invalidation : 1 fetch frais par affichage
     Promise.allSettled([
         refreshHubAppsStatus(),
         refreshHubUpdatesStatus(),
@@ -318,25 +335,49 @@ async function refreshHubAppsStatus() {
 }
 
 /**
+ * Statut update-status avec cache + mémo de la promesse en vol (le tick
+ * cockpit et refreshHubStatuses peuvent converger au même moment sans
+ * doubler l'appel). Ne lève jamais : panne ⇒ null, les consommateurs
+ * (badge, alerte cockpit) dégradent en « état inconnu ».
+ */
+function fetchHubUpdatesStatus() {
+    if (_hubUpdatesStatusData) return Promise.resolve(_hubUpdatesStatusData);
+    if (!_hubUpdatesStatusPromise) {
+        _hubUpdatesStatusPromise = api.getSystemUpdateStatus()
+            .then(data => { _hubUpdatesStatusData = data; return data; })
+            .catch(() => null)
+            .finally(() => { _hubUpdatesStatusPromise = null; });
+    }
+    return _hubUpdatesStatusPromise;
+}
+
+/**
+ * Nombre de mises à jour disponibles (socle + composants), null si l'état
+ * est inexploitable (service down/dégradé ou panne réseau).
+ */
+function countHubUpdatesAvailable(data) {
+    if (!data || data.service !== 'ok') return null;
+    let count = 0;
+    if (data.meta && data.meta.update_available) count += 1;
+    const components = data.components || {};
+    Object.keys(components).forEach(relPath => {
+        if (components[relPath] && components[relPath].update_available) count += 1;
+    });
+    return count;
+}
+
+/**
  * Mises à jour : composants concernés. Endpoint existant :
- * api.getSystemUpdateStatus() (system-update.js, badge navbar) — SANS
- * ?refresh=1 pour éviter un re-check git lourd à chaque affichage du hub.
+ * api.getSystemUpdateStatus() (system-update.js, badge navbar) via le
+ * cache partagé fetchHubUpdatesStatus() — SANS ?refresh=1 pour éviter un
+ * re-check git lourd à chaque affichage du hub.
  */
 async function refreshHubUpdatesStatus() {
-    try {
-        const data = await api.getSystemUpdateStatus();
-        if (!data || data.service !== 'ok') { setHubStatus('updates', null, '—'); return; }
-        let count = 0;
-        if (data.meta && data.meta.update_available) count += 1;
-        const components = data.components || {};
-        Object.keys(components).forEach(relPath => {
-            if (components[relPath] && components[relPath].update_available) count += 1;
-        });
-        if (count > 0) setHubStatus('updates', 'warn', count + ' dispo');
-        else setHubStatus('updates', null, 'à jour');
-    } catch (error) {
-        setHubStatus('updates', null, '—');
-    }
+    const data = await fetchHubUpdatesStatus();
+    const count = countHubUpdatesAvailable(data);
+    if (count === null) { setHubStatus('updates', null, '—'); return; }
+    if (count > 0) setHubStatus('updates', 'warn', count + ' dispo');
+    else setHubStatus('updates', null, 'à jour');
 }
 
 /**

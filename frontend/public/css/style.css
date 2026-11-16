@@ -517,6 +517,8 @@ body {
     --hub-muted-fg: #666f77;
     --hub-head-bg: #f8f9fb;
     --hub-row-border: #eef0f3;
+    --hub-alert-bg: #fffdf7;
+    --hub-err-fg: #b02a37;
 }
 
 .hub-icon {
@@ -621,6 +623,226 @@ body {
 .hub-status-badge.warn {
     background: var(--hub-warn-bg);
     color: var(--hub-warn-fg);
+}
+
+/* ─── Cockpit système (colonne gauche, cockpit.js) ───
+ * Métriques hôte via /api/admin/system/stats (proxy hubctl), polling 10 s.
+ * Maquette cockpit-v3 validée. Redessin SVG sec à chaque tick — aucune
+ * animation ni transition (charte perf du parc).
+ */
+
+#cockpitBody {
+    padding: 0;
+}
+
+.cockpit-section {
+    padding: 12px 16px 10px;
+    border-bottom: 1px solid var(--hub-row-border);
+}
+
+.cockpit-metric-head {
+    display: flex;
+    align-items: baseline;
+    gap: 7px;
+    margin-bottom: 6px;
+}
+
+.cockpit-metric-head .hub-icon {
+    align-self: center;
+    color: var(--hub-accent);
+}
+
+.cockpit-metric-label {
+    font-size: 0.72rem;
+    font-weight: 600;
+    color: #55606a;
+}
+
+.cockpit-value-lg {
+    margin-left: auto;
+    font-size: 1.2rem;
+    font-weight: 700;
+}
+
+.cockpit-value {
+    margin-left: auto;
+    font-size: 0.95rem;
+    font-weight: 700;
+}
+
+.cockpit-value-detail {
+    font-size: 0.68rem;
+    color: var(--text-muted);
+}
+
+/* Sparkline CPU : polygone de remplissage rgba + polyline accent, tracé
+ * sec à chaque tick (pas de transition). */
+.cockpit-spark {
+    display: block;
+    width: 100%;
+    height: 44px;
+}
+
+.cockpit-spark path {
+    fill: rgba(59, 130, 196, 0.12);
+}
+
+.cockpit-spark polyline {
+    fill: none;
+    stroke: var(--hub-accent);
+    stroke-width: 1.8;
+}
+
+.cockpit-legend {
+    font-size: 0.65rem;
+    color: #8892a0;
+    margin-top: 2px;
+}
+
+.cockpit-bar {
+    height: 9px;
+    background: var(--hub-muted-bg);
+    border-radius: 999px;
+    overflow: hidden;
+}
+
+.cockpit-bar-fill {
+    height: 100%;
+    background: var(--hub-accent);
+}
+
+.cockpit-kpis {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--hub-row-border);
+}
+
+.cockpit-kpi {
+    border: 1px solid var(--hub-row-border);
+    border-radius: 10px;
+    padding: 9px 11px;
+    min-width: 0;
+}
+
+.cockpit-kpi-label {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    margin-bottom: 3px;
+    font-size: 0.66rem;
+    color: #77808c;
+}
+
+.cockpit-kpi-value {
+    font-size: 0.95rem;
+    font-weight: 700;
+}
+
+/* Mini-barre du KPI disque (5 px, ton plus doux que l'accent). */
+.cockpit-kpi .cockpit-bar {
+    height: 5px;
+    margin-top: 4px;
+}
+
+.cockpit-kpi .cockpit-bar-fill {
+    background: #6b93b8;
+}
+
+/* Panneau alertes : mises à jour du socle + expiration du certificat CA. */
+.cockpit-alerts {
+    padding: 10px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+    background: var(--hub-alert-bg);
+}
+
+.cockpit-alert {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.72rem;
+}
+
+.cockpit-alert .hub-icon {
+    flex: none;
+}
+
+.cockpit-alert.ok {
+    color: var(--hub-ok-fg);
+}
+
+.cockpit-alert.warn {
+    color: var(--hub-warn-fg);
+}
+
+.cockpit-alert.warn .hub-icon {
+    color: #c77e0c;
+}
+
+.cockpit-alert.err {
+    color: var(--hub-err-fg);
+}
+
+.cockpit-alert.err .hub-icon {
+    color: var(--hub-err-fg);
+}
+
+.cockpit-alert.muted {
+    color: var(--hub-muted-fg);
+}
+
+.cockpit-alert.muted .hub-icon {
+    color: var(--hub-muted-fg);
+}
+
+/* Encart « agent injoignable » + notes inline (dégradé / échec réseau). */
+.cockpit-unreachable {
+    margin: 12px 16px;
+    padding: 12px 14px;
+    border: 1px solid var(--hub-warn-fg);
+    border-radius: 10px;
+    background: var(--hub-warn-bg);
+}
+
+.cockpit-unreachable-title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.78rem;
+    font-weight: 700;
+    color: var(--hub-warn-fg);
+}
+
+.cockpit-unreachable-hint {
+    margin-top: 5px;
+    font-size: 0.66rem;
+    color: var(--hub-muted-fg);
+}
+
+.cockpit-note {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 16px;
+    font-size: 0.68rem;
+    border-bottom: 1px solid var(--hub-row-border);
+}
+
+.cockpit-note .hub-icon {
+    flex: none;
+}
+
+.cockpit-note.warn {
+    color: var(--hub-warn-fg);
+    background: var(--hub-warn-bg);
+}
+
+.cockpit-note.muted {
+    color: var(--hub-muted-fg);
+    background: var(--hub-muted-bg);
 }
 
 /* En-tête commun des vues outil plein-largeur (bouton retour + titre) */
