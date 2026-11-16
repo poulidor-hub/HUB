@@ -1016,71 +1016,26 @@
                 </div>
             </div>
 
-            <!-- Sous-navigation avec onglets (2 niveaux) -->
-            <ul class="nav nav-tabs mb-4" id="adminPageTabs">
-                <li class="nav-item">
-                    <button class="nav-link active" id="apps-tab" data-bs-toggle="tab" data-bs-target="#tabApps">
-                        <i class="bi bi-app-indicator me-1"></i>Applications
-                        <span id="pendingAppsBadge" class="badge bg-warning text-dark ms-1 d-none" role="button"
-                              data-action="focusPendingApps" style="cursor:pointer;"
-                              title="Voir les applications en attente d'approbation">0</span>
-                    </button>
-                </li>
-                <li class="nav-item">
-                    <button class="nav-link" id="deps-tab" data-bs-toggle="tab" data-bs-target="#tabDependencies">
-                        <i class="bi bi-diagram-3 me-1"></i>Dépendances
-                    </button>
-                </li>
-                <li class="nav-item">
-                    <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tabAppBackups" data-action="switchBackupWorkspace" data-args="apps">
-                        <i class="bi bi-hdd-stack me-1"></i>Sauvegardes
-                    </button>
-                </li>
-                <li class="nav-item">
-                    <button class="nav-link" id="vpn-tab" data-bs-toggle="tab" data-bs-target="#vpnPanel">
-                        <i class="bi bi-shield-lock me-1"></i>VPN
-                    </button>
-                </li>
-                <li class="nav-item">
-                    <button class="nav-link" id="adminConfigTabBtn" type="button"
-                            title="Groupes, Service Accounts, Clients OIDC, Apps GitHub, Réseau">
-                        <i class="bi bi-gear me-1"></i>Configuration
-                    </button>
-                </li>
-                <li class="nav-item">
-                    <button class="nav-link" id="atelier-tab" data-bs-toggle="tab" data-bs-target="#tabAteliers">
-                        <i class="bi bi-tools me-1"></i>Ateliers
-                    </button>
-                </li>
-                <li class="nav-item">
-                    <button class="nav-link" id="systemUpdateTabBtn" data-bs-toggle="tab" data-bs-target="#tabSystemUpdates">
-                        <i class="bi bi-arrow-repeat me-1"></i>Mises à jour
-                    </button>
-                </li>
-                <li class="nav-item admin-subtabs-item">
-                    <div class="admin-subtabs">
-                        <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tabAppGroups">
-                            <i class="bi bi-folder2 me-1"></i>Groupes
-                        </button>
-                        <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tabServiceAccounts">
-                            <i class="bi bi-robot me-1"></i>Service Accounts
-                        </button>
-                        <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tabOidcClients">
-                            <i class="bi bi-shield-lock me-1"></i>Clients OIDC
-                        </button>
-                        <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tabGithubApps" data-action="loadGithubApps" id="navGithubApps">
-                            <i class="bi bi-github me-1"></i>Apps GitHub
-                        </button>
-                        <button class="nav-link" id="routing-tab" data-bs-toggle="tab" data-bs-target="#tabRouting">
-                            <i class="bi bi-diagram-3 me-1"></i>Accès &amp; routage
-                        </button>
-                    </div>
-                </li>
-            </ul>
+            <!-- Navigation : hub « cockpit » (admin-hub.js) — l'ancienne barre
+                 d'onglets est remplacée par le pane #adminHubPane -->
 
             <div class="tab-content">
+                <!-- Hub « cockpit » : vue par défaut de la page Administration,
+                     rendu par admin-hub.js (menu par thèmes + cockpit système). -->
+                <div class="admin-tool-pane d-none" id="adminHubPane"></div>
+
                 <!-- Apps Tab -->
-                <div class="tab-pane fade show active" id="tabApps">
+                <div class="admin-tool-pane d-none" id="tabApps">
+                    <div class="hub-tool-header mb-3">
+                        <button class="btn btn-outline-secondary btn-sm" data-action="showAdminHub" title="Retour au hub Administration">
+                            <svg class="hub-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="/vendor/design-system/lucide.svg#icon-arrow-left"></use></svg>
+                            Administration
+                        </button>
+                        <h5 class="mb-0 d-flex align-items-center gap-2">
+                            <svg class="hub-icon hub-row-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="/vendor/design-system/lucide.svg#icon-app-window"></use></svg>
+                            Applications
+                        </h5>
+                    </div>
                     <div class="d-flex justify-content-between align-items-center mb-3">
                         <h5 class="mb-0">Gestion des Applications</h5>
                         <div class="btn-group">
@@ -1150,7 +1105,17 @@
                     </div>
                 </div>
                 <!-- Dependencies Graph Tab -->
-                <div class="tab-pane fade" id="tabDependencies">
+                <div class="admin-tool-pane d-none" id="tabDependencies">
+                    <div class="hub-tool-header mb-3">
+                        <button class="btn btn-outline-secondary btn-sm" data-action="showAdminHub" title="Retour au hub Administration">
+                            <svg class="hub-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="/vendor/design-system/lucide.svg#icon-arrow-left"></use></svg>
+                            Administration
+                        </button>
+                        <h5 class="mb-0 d-flex align-items-center gap-2">
+                            <svg class="hub-icon hub-row-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="/vendor/design-system/lucide.svg#icon-share-2"></use></svg>
+                            Dépendances
+                        </h5>
+                    </div>
                     <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
                         <div>
                             <h2 class="h5 mb-0"><i class="bi bi-diagram-3 me-2"></i>Dépendances inter-apps</h2>
@@ -1179,7 +1144,17 @@
                     <div id="depsTable" class="mt-3"></div>
                 </div>
                 <!-- App Groups Tab -->
-                <div class="tab-pane fade" id="tabAppGroups">
+                <div class="admin-tool-pane d-none" id="tabAppGroups">
+                    <div class="hub-tool-header mb-3">
+                        <button class="btn btn-outline-secondary btn-sm" data-action="showAdminHub" title="Retour au hub Administration">
+                            <svg class="hub-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="/vendor/design-system/lucide.svg#icon-arrow-left"></use></svg>
+                            Administration
+                        </button>
+                        <h5 class="mb-0 d-flex align-items-center gap-2">
+                            <svg class="hub-icon hub-row-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="/vendor/design-system/lucide.svg#icon-users"></use></svg>
+                            Groupes
+                        </h5>
+                    </div>
                     <div class="d-flex justify-content-between align-items-center mb-3">
                         <div>
                             <h5 class="mb-0">Groupes d'applications</h5>
@@ -1194,7 +1169,17 @@
                     </div>
                 </div>
                 <!-- Service Accounts Tab -->
-                <div class="tab-pane fade" id="tabServiceAccounts">
+                <div class="admin-tool-pane d-none" id="tabServiceAccounts">
+                    <div class="hub-tool-header mb-3">
+                        <button class="btn btn-outline-secondary btn-sm" data-action="showAdminHub" title="Retour au hub Administration">
+                            <svg class="hub-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="/vendor/design-system/lucide.svg#icon-arrow-left"></use></svg>
+                            Administration
+                        </button>
+                        <h5 class="mb-0 d-flex align-items-center gap-2">
+                            <svg class="hub-icon hub-row-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="/vendor/design-system/lucide.svg#icon-key"></use></svg>
+                            Service Accounts
+                        </h5>
+                    </div>
                     <div class="d-flex justify-content-between align-items-center mb-3">
                         <div>
                             <h5 class="mb-0">Service Accounts (M2M)</h5>
@@ -1210,7 +1195,17 @@
                 </div>
                 <!-- OIDC Clients Tab -->
                 <!-- Accès & routage Tab (chantier B) -->
-                <div class="tab-pane fade" id="tabRouting">
+                <div class="admin-tool-pane d-none" id="tabRouting">
+                    <div class="hub-tool-header mb-3">
+                        <button class="btn btn-outline-secondary btn-sm" data-action="showAdminHub" title="Retour au hub Administration">
+                            <svg class="hub-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="/vendor/design-system/lucide.svg#icon-arrow-left"></use></svg>
+                            Administration
+                        </button>
+                        <h5 class="mb-0 d-flex align-items-center gap-2">
+                            <svg class="hub-icon hub-row-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="/vendor/design-system/lucide.svg#icon-signpost"></use></svg>
+                            Accès &amp; routage
+                        </h5>
+                    </div>
                     <div class="d-flex justify-content-between align-items-center mb-3">
                         <h5 class="mb-0"><i class="bi bi-diagram-3 me-1"></i>Accès &amp; routage</h5>
                         <button class="btn btn-outline-secondary btn-sm" data-action="loadRoutingAdmin">
@@ -1221,7 +1216,17 @@
                         <div class="text-muted p-3">Chargement du routage…</div>
                     </div>
                 </div>
-                <div class="tab-pane fade" id="tabOidcClients">
+                <div class="admin-tool-pane d-none" id="tabOidcClients">
+                    <div class="hub-tool-header mb-3">
+                        <button class="btn btn-outline-secondary btn-sm" data-action="showAdminHub" title="Retour au hub Administration">
+                            <svg class="hub-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="/vendor/design-system/lucide.svg#icon-arrow-left"></use></svg>
+                            Administration
+                        </button>
+                        <h5 class="mb-0 d-flex align-items-center gap-2">
+                            <svg class="hub-icon hub-row-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="/vendor/design-system/lucide.svg#icon-fingerprint"></use></svg>
+                            Clients OIDC
+                        </h5>
+                    </div>
                     <div class="d-flex justify-content-between align-items-center mb-3">
                         <div>
                             <h5 class="mb-0">Clients OIDC</h5>
@@ -1234,7 +1239,17 @@
                     <div id="oidcClientsTable" class="table-responsive"></div>
                 </div>
                 <!-- Ateliers (workshops) Tab -->
-                <div class="tab-pane fade" id="tabAteliers">
+                <div class="admin-tool-pane d-none" id="tabAteliers">
+                    <div class="hub-tool-header mb-3">
+                        <button class="btn btn-outline-secondary btn-sm" data-action="showAdminHub" title="Retour au hub Administration">
+                            <svg class="hub-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="/vendor/design-system/lucide.svg#icon-arrow-left"></use></svg>
+                            Administration
+                        </button>
+                        <h5 class="mb-0 d-flex align-items-center gap-2">
+                            <svg class="hub-icon hub-row-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="/vendor/design-system/lucide.svg#icon-wrench"></use></svg>
+                            Ateliers
+                        </h5>
+                    </div>
                     <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
                         <div>
                             <h5 class="mb-0"><i class="bi bi-tools me-2"></i>Ateliers (workshops)</h5>
@@ -1262,7 +1277,17 @@
                     </div>
                 </div>
                 <!-- Mises à jour Tab -->
-                <div class="tab-pane fade" id="tabSystemUpdates">
+                <div class="admin-tool-pane d-none" id="tabSystemUpdates">
+                    <div class="hub-tool-header mb-3">
+                        <button class="btn btn-outline-secondary btn-sm" data-action="showAdminHub" title="Retour au hub Administration">
+                            <svg class="hub-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="/vendor/design-system/lucide.svg#icon-arrow-left"></use></svg>
+                            Administration
+                        </button>
+                        <h5 class="mb-0 d-flex align-items-center gap-2">
+                            <svg class="hub-icon hub-row-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="/vendor/design-system/lucide.svg#icon-rocket"></use></svg>
+                            Mises à jour
+                        </h5>
+                    </div>
                     <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
                         <div>
                             <h5 class="mb-0"><i class="bi bi-arrow-repeat me-2"></i>Mises à jour du Hub et du socle</h5>
@@ -1292,7 +1317,17 @@
                     </div>
                 </div>
                 <!-- GitHub Apps Tab -->
-                <div class="tab-pane fade" id="tabGithubApps" role="tabpanel">
+                <div class="admin-tool-pane d-none" id="tabGithubApps">
+                    <div class="hub-tool-header mb-3">
+                        <button class="btn btn-outline-secondary btn-sm" data-action="showAdminHub" title="Retour au hub Administration">
+                            <svg class="hub-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="/vendor/design-system/lucide.svg#icon-arrow-left"></use></svg>
+                            Administration
+                        </button>
+                        <h5 class="mb-0 d-flex align-items-center gap-2">
+                            <svg class="hub-icon hub-row-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="/vendor/design-system/lucide.svg#icon-code"></use></svg>
+                            Apps GitHub
+                        </h5>
+                    </div>
                     <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
                         <div>
                             <h5 class="mb-0"><i class="bi bi-github me-2"></i>Apps GitHub</h5>
@@ -1342,7 +1377,17 @@
                     <div id="githubAppsGrid"></div>
                 </div>
                 <!-- App Backups Tab - Sauvegardes des Applications -->
-                <div class="tab-pane fade" id="tabAppBackups">
+                <div class="admin-tool-pane d-none" id="tabAppBackups">
+                    <div class="hub-tool-header mb-3">
+                        <button class="btn btn-outline-secondary btn-sm" data-action="showAdminHub" title="Retour au hub Administration">
+                            <svg class="hub-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="/vendor/design-system/lucide.svg#icon-arrow-left"></use></svg>
+                            Administration
+                        </button>
+                        <h5 class="mb-0 d-flex align-items-center gap-2">
+                            <svg class="hub-icon hub-row-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="/vendor/design-system/lucide.svg#icon-database"></use></svg>
+                            Sauvegardes
+                        </h5>
+                    </div>
                     <div class="d-flex justify-content-between align-items-center mb-3">
                         <div>
                             <h5 class="mb-0"><i class="bi bi-hdd-stack me-2"></i>Sauvegardes des Applications</h5>
@@ -1803,7 +1848,17 @@
                     <!-- ================= /Workspace Environnement ================= -->
 
                 <!-- VPN Panel -->
-                <div class="tab-pane fade" id="vpnPanel">
+                <div class="admin-tool-pane d-none" id="vpnPanel">
+                    <div class="hub-tool-header mb-3">
+                        <button class="btn btn-outline-secondary btn-sm" data-action="showAdminHub" title="Retour au hub Administration">
+                            <svg class="hub-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="/vendor/design-system/lucide.svg#icon-arrow-left"></use></svg>
+                            Administration
+                        </button>
+                        <h5 class="mb-0 d-flex align-items-center gap-2">
+                            <svg class="hub-icon hub-row-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="/vendor/design-system/lucide.svg#icon-wifi"></use></svg>
+                            VPN
+                        </h5>
+                    </div>
                     <div class="card">
                         <div class="card-body">
 
@@ -4663,6 +4718,7 @@
     <script src="js/modules/admin-apps-github.js?v=3.92.2"></script>
     <script src="js/modules/admin-app-deploy.js?v=3.92.2"></script>
     <script src="js/modules/admin-app-dependencies.js?v=3.92.2"></script>
+    <script src="js/modules/admin-hub.js?v=3.92.2"></script>
     <script src="js/app.js?v=3.92.2"></script>
     <script src="js/modules/init.js?v=3.92.2"></script>
     <script src="js/modules/admin-vpn.js?v=3.92.2"></script>

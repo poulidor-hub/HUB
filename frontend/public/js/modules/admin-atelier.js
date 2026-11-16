@@ -34,16 +34,10 @@ const ATELIER_STATE_BADGES = {
     inconnu: 'secondary'
 };
 
-// ===== Chargement à l'activation de l'onglet (parité admin-network.js) =====
-
-document.addEventListener('DOMContentLoaded', () => {
-    const atelierTab = document.getElementById('atelier-tab');
-    if (atelierTab) {
-        atelierTab.addEventListener('shown.bs.tab', () => {
-            refreshAteliers();
-        });
-    }
-});
+// ===== Chargement à l'ouverture de la vue (parité admin-network.js) =====
+// Ancien déclencheur shown.bs.tab (#atelier-tab) supprimé avec la barre
+// d'onglets : refreshAteliers() est appelé par openHubTool('ateliers')
+// (admin-hub.js).
 
 // ===== Chargement / rendu de la liste =====
 
