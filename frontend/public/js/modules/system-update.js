@@ -70,7 +70,11 @@ const SYSTEM_UPDATE_DOT_COLOR = 'var(--vpn-amber, #d97706)';
 // ===== Initialisation (badge navbar + activation onglet) =====
 
 document.addEventListener('DOMContentLoaded', () => {
-    initSystemUpdateBadge();
+    // Le badge est sondé depuis showDashboard() (auth-navigation.js), APRES
+    // le chargement de currentUser : un probe au DOMContentLoaded partait
+    // pour tous les utilisateurs, y compris non-admins — chaque chargement
+    // de dashboard générait un 401/403 « Accès administrateur requis »
+    // polluant le journal d'erreurs (cf. initSystemUpdateBadge).
 
     const tabBtn = document.getElementById('systemUpdateTabBtn');
     if (tabBtn) {
@@ -88,12 +92,19 @@ document.addEventListener('DOMContentLoaded', () => {
 
 /**
  * Badge navbar « mise à jour disponible » (admins only) : interroge le
- * statut une fois à l'initialisation. 403 (non-admin) / fetch échoué /
- * service unreachable ⇒ silencieux, aucun badge. Sinon, si méta OU un
- * composant est concerné, injecte un point orange cliquable à côté de
- * #navbarVersionBadge (clic ⇒ page admin, onglet Mises à jour).
+ * statut une fois, appelé par showDashboard() APRÈS le chargement de
+ * currentUser (un probe au DOMContentLoaded partait avant que /auth/me
+ * réponde, pour tous les utilisateurs — 401/403 récurrents dans le
+ * journal). Garde admin : les non-admins ne sonnent jamais cet endpoint.
+ * Fetch échoué / service unreachable ⇒ silencieux, aucun badge. Sinon,
+ * si méta OU un composant est concerné, injecte un point orange cliquable
+ * à côté de #navbarVersionBadge (clic ⇒ page admin, onglet Mises à jour).
  */
 async function initSystemUpdateBadge() {
+    // Admins uniquement : l'endpoint /api/admin/* renvoie 403 sinon. Le
+    // rôle n'est connu qu'après /auth/me (currentUser chargé par
+    // loadCurrentUser() avant showDashboard()).
+    if (typeof currentUser === 'undefined' || !currentUser?.is_admin) return;
     // Sans token (écran de login) : tout appel renverrait 401 et
     // déclencherait le flux « session expirée » — on ne sonde que connecté.
     if (typeof api === 'undefined' || !api.token) return;
