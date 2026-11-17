@@ -1243,6 +1243,14 @@ class GithubRepoCache(Base):
     updated_at_github = Column(DateTime, nullable=True)
     fetched_at = Column(DateTime, server_default=func.now(), nullable=False)
 
+    # Certificat hub-app.yaml (spec 2026-11-16) : None = inconnu (jamais
+    # vérifié ou GitHub raw injoignable) — inconnu ≠ non certifié.
+    manifest_valid = Column(Boolean, nullable=True)
+    manifest_checked_at = Column(DateTime, nullable=True)
+    manifest_reason = Column(String(64), nullable=True)
+    manifest_name = Column(String(255), nullable=True)
+    manifest_slug = Column(String(255), nullable=True)
+
 
 class UserWorkshopAccess(Base):
     """Accès atelier par utilisateur : (user, app de base) -> voit {slug}-ws.

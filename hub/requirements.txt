@@ -21,6 +21,9 @@ docker>=7.0.0
 # Scheduling (pour les backups automatiques)
 croniter>=2.0.0
 
+# Manifeste hub-app.yaml (certification des apps GitHub)
+PyYAML>=6.0
+
 # Testing
 respx>=0.22
 pytest>=8.0.0
