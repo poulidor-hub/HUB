@@ -1,3 +1,22 @@
+# Changelog - Hub d'Authentification
+
+> Ce fichier documente toutes les modifications apportées à la documentation et à l'API.
+> Les agents IA peuvent utiliser `/api/docs/changelog` pour consulter cet historique.
+
+---
+
+
+## [3.95.2] - 17 novembre 2026
+
+### ⚡ Fiche app — sections à contenu long plafonnées (ascenseur natif)
+
+- **fix(apps)** : l'**historique des déploiements** et le **changelog** de la fiche app sont désormais plafonnés en hauteur (`max-height: 20rem` + ascenseur natif + `overscroll-behavior: contain` — classe `.appdetail-scroll`, même pattern que `.routing-app-list`). Les applications à historique très long ne débordent plus de la page ; pas de pagination (les entrées sont déjà plafonnées à 10 côté API, le changelog reste consultable en continu).
+- Les `<pre>` de logs (déploiements et section Logs) étaient déjà plafonnés — inchangés.
+- **tests** : smoke front étendu (wrapper `.appdetail-scroll` sur l'historique, classe sur le corps du changelog, règle CSS présente).
+- **docs(changelog)** : réparation de la structure du fichier — l'entrée 3.95.1 avait été insérée au-dessus de l'en-tête (header déplacé au milieu du fichier).
+
+---
+
 ## [3.95.1] - 17 novembre 2026
 
 ### 📣 Pour les utilisateurs
@@ -5,10 +24,6 @@
 
 ### ⚡ Documentation
 - **docs** : ajout de `docs/RAPPORT-BENCHMARKS-POULIDOR-2026-11.html` — rapport HTML autonome (images embarquées) consolidant les trois campagnes de benchmarks de novembre : templates Rust vs Python, installation/PRA/backup, montée en charge du Hub. Méthodologie, tableaux, graphiques et protocole de reproduction inclus. Versions du parc à jour au 17/11 (HUBsocle 2.37.1, hub-client 0.1.0, hubctl 0.20.4).
-# Changelog - Hub d'Authentification
-
-> Ce fichier documente toutes les modifications apportées à la documentation et à l'API.
-> Les agents IA peuvent utiliser `/api/docs/changelog` pour consulter cet historique.
 
 ---
 
@@ -5043,3 +5058,4 @@ curl http://hub:8000/api/docs/integration/version
 # Quels changements depuis ma version ?
 curl "http://hub:8000/api/docs/changelog?since=2.0.0"
 ```
+
