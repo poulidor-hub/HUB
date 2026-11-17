@@ -138,3 +138,23 @@ async def test_update_cache_unknown_does_not_advance_checked_at(async_session):
     assert loaded.manifest_checked_at is not None
     assert loaded.manifest_valid is False
     assert loaded.manifest_reason == REASON_MISSING
+
+@pytest.mark.asyncio
+async def test_update_cache_valid_persists_certificate(async_session):
+    """Chemin valid=True : le certificat complet (valid, name, slug, checked_at)
+    persiste en base — rechargé depuis la session après commit."""
+    row = GithubRepoCache(repo_id=9, name="x", full_name="o/x", owner="o",
+                          html_url="https://github.com/o/x",
+                          clone_url="https://github.com/o/x.git")
+    async_session.add(row)
+    await async_session.commit()
+
+    await update_cache_manifest(async_session, 9,
+                                ManifestCheckResult(valid=True, reason_key=None,
+                                                    name="exemple-app", slug="exemple-app"))
+    loaded = (await async_session.execute(
+        select(GithubRepoCache).where(GithubRepoCache.repo_id == 9))).scalar_one()
+    assert loaded.manifest_valid is True
+    assert loaded.manifest_name == "exemple-app"
+    assert loaded.manifest_slug == "exemple-app"
+    assert loaded.manifest_checked_at is not None
