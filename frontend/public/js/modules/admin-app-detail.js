@@ -12,13 +12,17 @@
  * (#admin/apps/<slug>) géré par admin-hub.js : refresh / lien direct /
  * back-forward rouvrent la fiche ; #admin/apps remet la liste.
  *
- * Ce premier jet pose la mécanique (ouverture/fermeture/routage, en-tête
- * tuile+badges, rangée d'état Docker/connectivité/version/utilisateurs,
- * fiche réduite pending/rejected) ; les sections techniques (mises à jour,
- * changelog, logs, Docker) suivent dans le même module.
+ * sections (maquette « apps-fiche-v2 ») : en-tête (tuile, nom, badges,
+ * Ouvrir/Éditer), rangée de badges d'état (Docker, connectivité, version,
+ * utilisateurs), mises à jour (dernier déploiement + historique <details>,
+ * poll 2 s tant qu'un déploiement est « running » ET la fiche est visible),
+ * changelog (markdown minimal + 3 dernières releases), logs (service/tail,
+ * zéro polling), Docker (collapse replié + modale « Détails complets »).
+ * Cas pending/rejected : fiche réduite (workflow d'approbation uniquement).
  *
  * Aucune animation — charte perf du parc. Boutons SOLID Bootstrap.
- * Tout contenu dynamique est échappé (escapeHtml/escapeAttr).
+ * Tout contenu dynamique est échappé (escapeHtml/escapeAttr) ; les logs sont
+ * injectés via textContent (aucune passe HTML).
  */
 
 // ===== État de la fiche =====
@@ -33,6 +37,9 @@ let _appDetailPollTimer = null;
 let _appDetailPollSlug = null;
 // Garde : le test de connectivité de secours ne part qu'une fois par fiche.
 let _appDetailStatusFetchStarted = false;
+// Séquence des fetchs de logs : la dernière demande gagne (les réponses
+// périmées — service/tail changés entre-temps — sont jetées).
+let _appDetailLogFetchSeq = 0;
 
 // ===== Helpers purs (formats, badges) =====
 
@@ -84,6 +91,42 @@ function formatAppDetailUptime(seconds) {
         return Math.floor(sec / 3600) + ' h ' + Math.floor((sec % 3600) / 60) + ' min';
     }
     return Math.floor(sec / 60) + ' min';
+}
+
+/**
+ * Rendu markdown MINIMAL (maquette apps-fiche-v2, sans lib) : le texte est
+ * échappé AVANT parsing ; titres #/##/### en <strong> (div fw-bold),
+ * lignes « - »/« * » en puces (groupe <ul>), reste en paragraphes.
+ * Entrée/sortie : string → string, aucune dépendance DOM.
+ */
+function renderAppDetailMarkdown(markdown) {
+    if (!markdown || typeof markdown !== 'string') return '';
+    const lines = escapeHtml(markdown).split(/\r?\n/);
+    const out = [];
+    let inList = false;
+    const closeList = () => {
+        if (inList) { out.push('</ul>'); inList = false; }
+    };
+    for (const rawLine of lines) {
+        const line = rawLine.trim();
+        if (!line) { closeList(); continue; }
+        const heading = /^#{1,3}\s+(.*)$/.exec(line);
+        if (heading) {
+            closeList();
+            out.push('<div class="fw-bold">' + heading[1] + '</div>');
+            continue;
+        }
+        const bullet = /^[-*]\s+(.*)$/.exec(line);
+        if (bullet) {
+            if (!inList) { out.push('<ul class="mb-2">'); inList = true; }
+            out.push('<li>' + bullet[1] + '</li>');
+            continue;
+        }
+        closeList();
+        out.push('<p class="mb-1">' + line + '</p>');
+    }
+    closeList();
+    return out.join('');
 }
 
 /** Badge Docker de la rangée d'état : en marche (success) / arrêté (warning) / inconnu (light). */
@@ -278,12 +321,15 @@ function renderAppDetailPane() {
         + renderAppDetailHeader(app, needsApproval)
         + (needsApproval
             ? renderAppDetailApprovalBlock(app, isPending, isRejected)
-            : renderAppDetailStatusRow());
+            : ''
+                + renderAppDetailStatusRow()
+                + renderAppDetailUpdatesSection()
+                + renderAppDetailChangelogSection()
+                + renderAppDetailLogsSection()
+                + renderAppDetailDockerSection());
 
     if (!needsApproval) {
-        ensureAppDetailStatusFetched(slug);
-        updateAppDetailStatusBadges();
-        loadAppDetailVersionBadge();
+        loadAppDetailSections();
     }
 }
 
@@ -372,11 +418,26 @@ function ensureAppDetailStatusFetched(slug) {
     }
 }
 
-/** Badge version via update-check (comparaison semver enregistré vs live). */
-function loadAppDetailVersionBadge() {
+// ===== Chargement des sections + badges =====
+
+/**
+ * Lance les chargements de la fiche active (badges d'état, update-check,
+ * déploiements, changelog, logs, docker). Chaque consommateur re-vérifie
+ * _appDetailSlug : changer de fiche/outil en cours de route ne rend rien.
+ */
+function loadAppDetailSections() {
     const slug = _appDetailSlug;
     const app = _appDetailApp;
     if (!slug || !app) return;
+
+    ensureAppDetailStatusFetched(slug);
+    updateAppDetailStatusBadges();
+    refreshAppDetailDeployments();
+    loadAppDetailChangelog(slug);
+    loadAppDetailLogs();
+    loadAppDetailDocker(slug);
+
+    // Badge version via update-check (comparaison semver enregistré vs live).
     api.checkUpdate(slug).then(updateInfo => {
         if (_appDetailSlug !== slug) return;
         const box = document.getElementById('appDetailVersionBadge');
@@ -386,6 +447,333 @@ function loadAppDetailVersionBadge() {
         const box = document.getElementById('appDetailVersionBadge');
         if (box) box.innerHTML = appDetailVersionBadgeHtml(app.version, null);
     });
+}
+
+// ===== Section Mises à jour =====
+
+function renderAppDetailUpdatesSection() {
+    return '<div class="card border-0 shadow-sm mb-3">'
+        + '<div class="card-header py-2 d-flex align-items-center">'
+        + '<strong class="d-flex align-items-center gap-2">' + hubIcon('rocket') + 'Mises à jour</strong>'
+        + '<button class="btn btn-sm btn-outline-secondary ms-auto" data-action="refreshAppDetailDeployments"'
+        + ' title="Rafraîchir le statut et l\'historique de déploiement">'
+        + hubIcon('refresh-cw') + '<span class="ms-1">Actualiser</span></button>'
+        + '</div>'
+        + '<div class="card-body py-3 small">'
+        + '<div id="appDetailDeployments"><span class="text-muted">Chargement…</span></div>'
+        + '</div>'
+        + '</div>';
+}
+
+/** Charge (ou recharge via le bouton Actualiser) le statut de déploiement. */
+async function refreshAppDetailDeployments() {
+    const slug = _appDetailSlug;
+    if (!slug) return;
+    const container = document.getElementById('appDetailDeployments');
+    if (container) container.innerHTML = '<span class="text-muted">Chargement…</span>';
+    try {
+        const data = await api.getAppDeployStatus(slug);
+        renderAppDetailDeployments(slug, data);
+    } catch (error) {
+        if (_appDetailSlug !== slug) return;
+        const box = document.getElementById('appDetailDeployments');
+        if (box) {
+            box.innerHTML = '<span class="text-muted">Historique de déploiement indisponible : '
+                + escapeHtml(error.message || 'erreur réseau') + '</span>';
+        }
+        stopAppDetailPolling();
+    }
+}
+
+/**
+ * Rend le dernier déploiement (badge, durée = finished-started,
+ * triggered_by, date fr) et l'historique (≤ 10 entrées, dates fr), chaque
+ * entrée dans un <details> avec les logs du déploiement dans un <pre>.
+ * current.status === 'running' → poll 2 s tant que la fiche est visible.
+ */
+function renderAppDetailDeployments(slug, data) {
+    if (_appDetailSlug !== slug) return;
+    const container = document.getElementById('appDetailDeployments');
+    if (!container) return;
+
+    const current = data && data.current ? data.current : null;
+    const history = Array.isArray(data && data.history) ? data.history : [];
+
+    if (!current && history.length === 0) {
+        container.innerHTML = '<span class="text-muted">Aucun déploiement enregistré pour cette application.</span>';
+        stopAppDetailPolling();
+        return;
+    }
+
+    const parts = [];
+    if (current) {
+        const duration = formatAppDetailDuration(current.started_at, current.finished_at);
+        parts.push('<div class="mb-2"><strong>Dernier déploiement :</strong> '
+            + appDetailDeployBadgeHtml(current.status)
+            + '<span class="text-muted">'
+            + (duration ? ' · ' + escapeHtml(duration) : '')
+            + (current.triggered_by ? ' · par ' + escapeHtml(current.triggered_by) : '')
+            + ' · ' + formatAppDetailDateTime(current.started_at)
+            + '</span></div>');
+    }
+
+    if (history.length > 0) {
+        const items = history.slice(0, 10).map(dep => {
+            const duration = formatAppDetailDuration(dep.started_at, dep.finished_at);
+            const logs = (typeof dep.logs === 'string' && dep.logs.trim()) ? dep.logs : '(aucun log)';
+            return '<details class="border-bottom pb-1 mb-1">'
+                + '<summary style="cursor:pointer">' + appDetailDeployBadgeHtml(dep.status)
+                + ' <span class="text-muted">' + formatAppDetailDateTime(dep.started_at)
+                + (duration ? ' · ' + escapeHtml(duration) : '')
+                + (dep.triggered_by ? ' · par ' + escapeHtml(dep.triggered_by) : '')
+                + '</span></summary>'
+                + '<pre class="bg-light border rounded p-2 font-monospace" style="max-height:220px;overflow:auto;font-size:.75rem">'
+                + escapeHtml(logs)
+                + '</pre>'
+                + '</details>';
+        }).join('');
+        parts.push('<div class="text-muted mb-1">Historique :</div>' + items);
+    }
+
+    container.innerHTML = parts.join('');
+
+    if (current && current.status === 'running') startAppDetailDeployPoll(slug);
+    else stopAppDetailPolling();
+}
+
+/**
+ * Poll 2 s du statut de déploiement TANT QUE la fiche est visible (garde à
+ * chaque tick : fiche masquée, autre outil, page admin fermée ou slug
+ * changé → stop immédiat). Aucun poll dans les autres cas.
+ */
+function startAppDetailDeployPoll(slug) {
+    if (_appDetailPollTimer && _appDetailPollSlug === slug) return; // déjà en cours
+    stopAppDetailPolling();
+    _appDetailPollSlug = slug;
+    _appDetailPollTimer = setInterval(async () => {
+        const pane = document.getElementById('appDetailPane');
+        const adminSection = document.getElementById('adminSection');
+        if (!pane || pane.classList.contains('d-none')
+            || (adminSection && adminSection.classList.contains('d-none'))
+            || _appDetailSlug !== slug) {
+            stopAppDetailPolling();
+            return;
+        }
+        try {
+            const data = await api.getAppDeployStatus(slug);
+            renderAppDetailDeployments(slug, data); // redémarre/stoppe selon le statut
+        } catch (error) {
+            // Erreur transitoire : l'affichage est conservé, retentée au tick suivant.
+            console.warn('[admin-app-detail] Poll déploiement échoué :', error);
+        }
+    }, 2000);
+}
+
+// ===== Section Changelog =====
+
+function renderAppDetailChangelogSection() {
+    const repoUrl = appDetailGithubUrl(_appDetailApp ? _appDetailApp.git_repo_url : null);
+    const link = repoUrl
+        ? '<a class="small" href="' + escapeAttr(repoUrl + '/blob/HEAD/CHANGELOG.md') + '" target="_blank" rel="noopener"'
+            + ' title="CHANGELOG.md sur GitHub">CHANGELOG complet ↗</a>'
+        : '';
+    return '<div class="card border-0 shadow-sm mb-3">'
+        + '<div class="card-header py-2 d-flex align-items-center">'
+        + '<strong class="d-flex align-items-center gap-2">' + hubIcon('file-text') + 'Changelog</strong>'
+        + (link ? '<span class="ms-auto">' + link + '</span>' : '')
+        + '</div>'
+        + '<div class="card-body py-3 small">'
+        + '<div id="appDetailChangelogBody"><span class="text-muted">Chargement…</span></div>'
+        + '<div id="appDetailReleasesBody"></div>'
+        + '</div>'
+        + '</div>';
+}
+
+/** Changelog (markdown minimal) + 3 dernières releases (tag + date). */
+async function loadAppDetailChangelog(slug) {
+    const results = await Promise.allSettled([
+        api.getChangelog(slug),
+        api.getReleases(slug),
+    ]);
+    if (_appDetailSlug !== slug) return; // fiche changée entre-temps
+
+    const body = document.getElementById('appDetailChangelogBody');
+    if (body) {
+        if (results[0].status === 'fulfilled') {
+            const changelog = results[0].value;
+            if (changelog && changelog.ok && changelog.markdown) {
+                body.innerHTML = renderAppDetailMarkdown(changelog.markdown);
+            } else if (changelog && changelog.repo_configured === false) {
+                body.innerHTML = '<span class="text-muted">Aucun dépôt GitHub configuré pour cette application.</span>';
+            } else {
+                body.innerHTML = '<span class="text-muted">Changelog indisponible pour cette application.</span>';
+            }
+        } else {
+            const reason = results[0].reason && results[0].reason.message ? results[0].reason.message : 'erreur réseau';
+            body.innerHTML = '<span class="text-muted">Changelog indisponible : ' + escapeHtml(reason) + '</span>';
+        }
+    }
+
+    const releasesBox = document.getElementById('appDetailReleasesBody');
+    if (releasesBox) {
+        const releases = (results[1].status === 'fulfilled' && results[1].value && Array.isArray(results[1].value.releases))
+            ? results[1].value.releases.slice(0, 3)
+            : [];
+        if (releases.length > 0) {
+            releasesBox.innerHTML = '<hr class="my-2"><div class="text-muted mb-1">Dernières releases :</div>'
+                + releases.map(r => '<div class="d-flex align-items-center gap-2">'
+                    + '<code>' + escapeHtml(r.tag || '—') + '</code>'
+                    + '<span class="text-muted">' + formatAppDetailDateTime(r.published_at) + '</span>'
+                    + '</div>').join('');
+        } else {
+            releasesBox.innerHTML = '';
+        }
+    }
+}
+
+// ===== Section Logs =====
+
+function renderAppDetailLogsSection() {
+    return '<div class="card border-0 shadow-sm mb-3">'
+        + '<div class="card-header py-2 d-flex align-items-center flex-wrap gap-2">'
+        + '<strong class="d-flex align-items-center gap-2">' + hubIcon('terminal') + 'Logs</strong>'
+        + '<div class="ms-auto d-flex align-items-center gap-2">'
+        + '<select class="form-select form-select-sm w-auto" id="appDetailLogService" data-action="loadAppDetailLogs" aria-label="Service des logs">'
+        + '<option value="api">API</option>'
+        + '<option value="frontend">Frontend</option>'
+        + '<option value="postgres">PostgreSQL</option>'
+        + '</select>'
+        + '<select class="form-select form-select-sm w-auto" id="appDetailLogTail" data-action="loadAppDetailLogs" aria-label="Nombre de lignes">'
+        + '<option value="50">50 lignes</option>'
+        + '<option value="150" selected>150 lignes</option>'
+        + '<option value="500">500 lignes</option>'
+        + '</select>'
+        + '<button class="btn btn-sm btn-secondary" data-action="loadAppDetailLogs" title="Recharger les logs">'
+        + hubIcon('refresh-cw') + '<span class="ms-1">Actualiser</span></button>'
+        + '</div>'
+        + '</div>'
+        + '<div class="card-body py-3">'
+        + '<pre id="appDetailLogsPre" class="bg-light border rounded p-2 font-monospace" style="max-height:320px;overflow:auto;font-size:.8rem;margin-bottom:0">Chargement…</pre>'
+        + '</div>'
+        + '</div>';
+}
+
+/**
+ * Charge les logs (service/tail lus dans les <select>). Réponses ordonnées
+ * par séquence : changer service/tail en rafale n'affiche que la dernière
+ * demande. Erreur → ligne muted inline (textContent, jamais de popup).
+ * AUCUN polling.
+ */
+async function loadAppDetailLogs() {
+    const slug = _appDetailSlug;
+    const pre = document.getElementById('appDetailLogsPre');
+    if (!slug || !pre) return;
+    const service = document.getElementById('appDetailLogService')?.value || 'api';
+    const tail = parseInt(document.getElementById('appDetailLogTail')?.value || '150', 10) || 150;
+    const seq = ++_appDetailLogFetchSeq;
+    pre.textContent = 'Chargement des logs (' + service + ', ' + tail + ' dernières lignes)…';
+    try {
+        const data = await api.getAppLogs(slug, tail, service);
+        if (_appDetailSlug !== slug || seq !== _appDetailLogFetchSeq) return; // réponse périmée
+        const lines = Array.isArray(data && data.lines) ? data.lines : [];
+        pre.textContent = lines.length > 0 ? lines.join('\n') : '(aucune ligne de log)';
+    } catch (error) {
+        if (_appDetailSlug !== slug || seq !== _appDetailLogFetchSeq) return;
+        pre.textContent = 'Erreur : ' + (error.message || 'récupération impossible') + ' — réessayez avec « Actualiser ».';
+    }
+}
+
+// ===== Section Docker =====
+
+/**
+ * Collapse Bootstrap replié par défaut : header = titre + résumé muted
+ * (CPU / RAM / uptime, alimenté après fetch) + chevron ; corps = résumé
+ * conteneur (nom, image, ports) + bouton « Détails complets » (modale
+ * existante showDockerDetails, admin-app-form.js — aucune duplication).
+ */
+function renderAppDetailDockerSection() {
+    return '<div class="card border-0 shadow-sm mb-3">'
+        + '<div class="card-header py-2">'
+        + '<div class="d-flex align-items-center gap-2" role="button" tabindex="0"'
+        + ' data-bs-toggle="collapse" data-bs-target="#appDetailDockerCollapse"'
+        + ' aria-expanded="false" aria-controls="appDetailDockerCollapse" style="cursor:pointer">'
+        + '<strong class="d-flex align-items-center gap-2">' + hubIcon('box') + 'Docker</strong>'
+        + '<span class="text-muted small" id="appDetailDockerSummary">chargement…</span>'
+        + '<i class="bi bi-chevron-down ms-auto" aria-hidden="true"></i>'
+        + '</div>'
+        + '</div>'
+        + '<div class="collapse" id="appDetailDockerCollapse">'
+        + '<div class="card-body py-3 small" id="appDetailDockerBody"><span class="text-muted">Chargement…</span></div>'
+        + '</div>'
+        + '</div>';
+}
+
+async function loadAppDetailDocker(slug) {
+    let info = null;
+    let fetchError = null;
+    try {
+        info = await api.getAppDockerInfo(slug);
+    } catch (error) {
+        fetchError = error;
+    }
+    if (_appDetailSlug !== slug) return; // fiche changée entre-temps
+
+    const summary = document.getElementById('appDetailDockerSummary');
+    const body = document.getElementById('appDetailDockerBody');
+
+    if (fetchError) {
+        if (summary) summary.textContent = '';
+        if (body) {
+            body.innerHTML = '<span class="text-muted">Informations Docker indisponibles : '
+                + escapeHtml(fetchError.message || 'erreur réseau') + '</span>';
+        }
+        return;
+    }
+
+    const stats = info && info.container_stats ? info.container_stats : null;
+    const containerFound = Boolean(info && info.container_found);
+    if (summary) {
+        if (!containerFound) {
+            summary.textContent = (info && info.docker_available === false) ? 'scan désactivé' : 'conteneur non trouvé';
+        } else if (stats) {
+            summary.textContent = 'CPU ' + (Number(stats.cpu_percent) || 0).toFixed(1)
+                + ' % · RAM ' + (Number(stats.memory_usage_mb) || 0).toFixed(1)
+                + ' Mo · uptime ' + formatAppDetailUptime(stats.uptime_seconds);
+        } else {
+            summary.textContent = '';
+        }
+    }
+    if (!body) return;
+
+    if (!containerFound) {
+        body.innerHTML = '<span class="text-muted">'
+            + (info && info.docker_available === false
+                ? 'Scan Docker désactivé (socket non monté dans le Hub).'
+                : 'Conteneur non trouvé pour cette application.')
+            + '</span>';
+        return;
+    }
+
+    const ports = Array.isArray(info.ports) ? info.ports : [];
+    const portsHtml = ports.length > 0
+        ? ports.map(p => '<div>' + escapeHtml(String(p.container_port ?? '—')) + ' → '
+            + (p.host_port ? '<strong>' + escapeHtml(String(p.host_port)) + '</strong>' : '<span class="text-muted">—</span>')
+            + ' <span class="badge text-bg-light border">' + escapeHtml(String(p.protocol || 'tcp')) + '</span>'
+            + '</div>').join('')
+        : '<span class="text-muted">Aucun port exposé</span>';
+
+    body.innerHTML = ''
+        + '<div class="row g-2">'
+        + '<div class="col-md-6">'
+        + '<div class="text-muted">Conteneur</div><div><code>' + escapeHtml(info.container_name || '—') + '</code></div>'
+        + '<div class="text-muted mt-1">Image</div><div class="text-break"><code>' + escapeHtml(info.container_image || '—') + '</code></div>'
+        + '</div>'
+        + '<div class="col-md-6"><div class="text-muted">Ports</div>' + portsHtml + '</div>'
+        + '</div>'
+        + '<div class="mt-2">'
+        + '<button class="btn btn-sm btn-outline-secondary" data-action="showDockerDetails" data-arg1="' + escapeAttr(slug) + '"'
+        + ' title="Variables APP_*, labels, réseaux, ressources (modale)">Détails complets</button>'
+        + '</div>';
 }
 
 // ===== Cas pending / rejected : fiche réduite =====
