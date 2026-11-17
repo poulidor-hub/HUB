@@ -535,6 +535,9 @@ class AppWithUsersAndDocker(AppWithUsers):
     group_id: Optional[int] = None  # Groupe visuel (null = hors groupe)
     git_repo_url: Optional[str] = None  # URL du dépôt Git (déploiement auto, update-check)
     last_deployment: Optional[dict] = None  # Dernier déploiement auto (success/failed) — null si jamais déployée
+    version: Optional[str] = None  # Version de l'app (capturée à l'enregistrement) — tableau admin / fiche app
+    is_workshop: bool = False  # App atelier (badge + filtre Mode)
+    is_unmanaged: bool = False  # App « lien only » non gérée (badge + filtre Gestion)
 
     @classmethod
     def from_orm_model_with_docker(cls, app, last_deployment: Optional[dict] = None) -> "AppWithUsersAndDocker":
@@ -574,6 +577,9 @@ class AppWithUsersAndDocker(AppWithUsers):
             users=users,
             git_repo_url=getattr(app, 'git_repo_url', None),
             last_deployment=last_deployment,
+            version=getattr(app, 'version', None),
+            is_workshop=bool(getattr(app, 'is_workshop', False)),
+            is_unmanaged=bool(getattr(app, 'is_unmanaged', False)),
         )
 
 
