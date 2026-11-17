@@ -2600,3 +2600,7 @@ body {
 .routing-app-list { max-height: 32rem; overflow-y: auto; }
 #routingContent .nav-pills .nav-link { padding: .25rem .75rem; }
 #routingContent table td { vertical-align: middle; }
+
+/* ===== Fiche app : sections à contenu non borné (historique déploiements, changelog) ===== */
+/* Ascenseur natif (pas de pagination) : hauteur plafonnée + overscroll contenu (charte perf). */
+.appdetail-scroll { max-height: 20rem; overflow-y: auto; overscroll-behavior: contain; }

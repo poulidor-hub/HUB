@@ -172,4 +172,14 @@ assert.ok(t.appDetailDeployBadgeHtml('running').includes('text-bg-warning'));
 assert.ok(t.appDetailDeployBadgeHtml('running').includes('En cours'));
 assert.ok(t.appDetailDeployBadgeHtml(undefined).includes('inconnu'));
 
+// Zones scrollables (historique déploiements + changelog) : wrapper et règle CSS
+const detailSource = readFileSync(join(dirname(modulePath), 'admin-app-detail.js'), 'utf8');
+const styleSource = readFileSync(join(dirname(modulePath), '..', '..', 'css', 'style.css'), 'utf8');
+assert.ok(detailSource.includes("'<div class=\"text-muted mb-1\">Historique :</div><div class=\"appdetail-scroll\">' + items + '</div>'"),
+    "l'historique des déploiements doit être enveloppé dans .appdetail-scroll");
+assert.ok(detailSource.includes('id="appDetailChangelogBody" class="appdetail-scroll"'),
+    "le corps du changelog doit porter .appdetail-scroll");
+assert.ok(styleSource.includes('.appdetail-scroll { max-height: 20rem; overflow-y: auto; overscroll-behavior: contain; }'),
+    "la règle .appdetail-scroll doit exister dans style.css");
+
 console.log('OK — test_app_detail_render : toutes les assertions passent.');
