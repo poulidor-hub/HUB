@@ -380,37 +380,19 @@ function updateAppCardStatus(slug, dockerStatus, healthStatus) {
 }
 
 /**
- * Intervalle de rafraîchissement automatique de la connectivité
- */
-let connectivityRefreshInterval = null;
-const CONNECTIVITY_REFRESH_DELAY = 30000; // 30 secondes
-
-/**
- * Démarre le rafraîchissement périodique de la connectivité
+ * Rafraîchissement automatique de la connectivité : SUPPRIMÉ (design 2026-11).
+ * La colonne État est tenue à jour par les SSE (docker_status_changed /
+ * app_health_changed) et par le test manuel « Tester connectivité »
+ * (refreshAppsStatus, aussi appelé à l'ouverture de la vue).
+ * start/stop restent définis en no-op : leurs appelants (admin-hub.js,
+ * auth-navigation.js) n'ont pas à changer.
  */
 function startConnectivityRefresh() {
-    if (connectivityRefreshInterval) return; // Déjà démarré
-    
-    connectivityRefreshInterval = setInterval(() => {
-        // Rafraîchir seulement si on est sur la page apps-admin
-        if (currentPage === 'apps-admin') {
-            console.log('🔄 Rafraîchissement automatique de la connectivité...');
-            refreshAppsStatus();
-        }
-    }, CONNECTIVITY_REFRESH_DELAY);
-    
-    console.log(`⏱️ Rafraîchissement connectivité activé (${CONNECTIVITY_REFRESH_DELAY/1000}s)`);
+    console.log('⏱️ Rafraîchissement automatique de la connectivité désactivé (SSE + test manuel).');
 }
 
-/**
- * Arrête le rafraîchissement périodique
- */
 function stopConnectivityRefresh() {
-    if (connectivityRefreshInterval) {
-        clearInterval(connectivityRefreshInterval);
-        connectivityRefreshInterval = null;
-        console.log('⏱️ Rafraîchissement connectivité désactivé');
-    }
+    // Ancien interval 30 s supprimé : no-op conservé pour les appelants.
 }
 
 /**

@@ -184,8 +184,9 @@ function leaveAdminHubView() {
 function loadAdminHubTool(key) {
     switch (key) {
         case 'apps':
+            // Test de connectivité initial à l'ouverture ; ensuite SSE +
+            // bouton manuel uniquement (plus de polling 30 s).
             if (typeof refreshAppsStatus === 'function') refreshAppsStatus();
-            if (typeof startConnectivityRefresh === 'function') startConnectivityRefresh();
             break;
         case 'dependencies':
             if (typeof loadDependenciesGraph === 'function') loadDependenciesGraph();
