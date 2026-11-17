@@ -571,6 +571,9 @@ async function handleSaveApp(event) {
             
             appFormModal.hide();
             await loadAdminData();
+            // Fiche application ouverte (éditée depuis la fiche) : re-render
+            // avec les données fraîches — no-op si la fiche est fermée.
+            if (typeof refreshAppDetail === 'function') refreshAppDetail();
         } else {
             // Mode création - utiliser les ports (schéma simplifié)
             // Le M2M sera créé automatiquement quand l'app s'auto-enregistre

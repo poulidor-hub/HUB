@@ -277,8 +277,13 @@ function appRuntimeStateHtml(state) {
 function renderAppRuntimeState(slug) {
     if (!slug) return;
     const cell = document.querySelector(`.app-status-cell[data-app-slug="${slug}"]`);
-    if (!cell) return;
-    cell.innerHTML = appRuntimeStateHtml(runtimeStates[slug]);
+    if (cell) {
+        cell.innerHTML = appRuntimeStateHtml(runtimeStates[slug]);
+    }
+    // Fiche application ouverte : même alimentation que la cellule du tableau
+    // (SSE docker_status_changed / app_health_changed, test de connectivité) —
+    // no-op si la fiche est fermée (admin-app-detail.js).
+    if (typeof updateAppDetailStatusBadges === 'function') updateAppDetailStatusBadges();
 }
 
 /**
