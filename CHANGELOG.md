@@ -5,6 +5,26 @@
 
 ---
 
+## [3.95.0] - 17 novembre 2026
+
+### 📣 Pour les utilisateurs
+- **Ajouté** : cliquez sur une application dans Administration ▸ Applications pour ouvrir sa **fiche** : état complet, version (à jour ou non), historique des mises à jour avec leurs logs, changelog, logs conteneur (API/Frontend/PostgreSQL) et détails Docker — tout sur une seule page.
+- **Amélioré** : le tableau passe à 5 colonnes essentielles (Application, Version, État, Actif, Actions) ; le nom, le slug, l'URL et les utilisateurs vivent dans la fiche.
+- **Amélioré** : filtres secondaires (catégorie, gestion) repliés derrière un bouton « Filtres ».
+- **Corrigé** : la version et les badges « Atelier » / « Non gérée » des apps étaient perdus côté admin (filtres et badges peu fiables).
+- **Économie** : la vérification automatique de connectivité toutes les 30 secondes est remplacée par la mise à jour temps réel (SSE) + le bouton « Tester connectivité » à la demande.
+
+### ⚡ Page Applications — tableau 5 colonnes + fiche app
+
+- **feat(apps)** : tableau 5 colonnes (Application, **Version**, État pastille composite, Actif, Actions) ; clic-ligne ou « Fiche » → **fiche app** ; actions secondaires (Déployer conditionnel, Supprimer) dans un menu ⋯ ; flux d'approbation pending/rejected inchangé (✓/✗/🗑 en ligne).
+- **feat(apps)** : fiche app (`admin-app-detail.js`, hash `#admin/apps/<slug>` deep-link) — en-tête (badges partagé/atelier/non gérée, Ouvrir/Éditer), badges d'état (Docker, connectivité+latence, version à jour/à mettre à jour via `update-check`, utilisateurs), sections : Mises à jour (historique ≤ 10 déploiements avec logs, déjà renvoyé par `deploy/status`, poll 2 s uniquement si déploiement en cours), Changelog (rendu markdown minimal + releases GitHub, dégradation propre sans dépôt), Logs (service api/frontend/postgres + tail, sans polling), Docker (collapse, « Détails complets » = modale existante). Fiche réduite pour pending/rejected (actions d'approbation).
+- **perf(apps)** : suppression du polling de connectivité 30 s (36-72 requêtes sortantes par tick) → SSE temps réel + test manuel ; `runtimeStates[slug]` alimentée par SSE re-rend la pastille composite.
+- **feat(apps)** : toolbar — filtres secondaires repliés (Bootstrap collapse `#adminAppsExtraFilters`).
+- **fix(apps)** : `/apps/all` (`AppWithUsersAndDocker`) transmet désormais `version`, `is_workshop`, `is_unmanaged` (abandonnés par `from_orm_model_with_docker` → filtre Mode « Atelier » et badges non fiables).
+- **tests** : `tests/test_apps_all_schema.py` (version + flags transmis/absents) — 2/2 en conteneur ; smoke Node rendu fiche (markdown/XSS, durées, dates fr, badges) ; vérifié en sandbox Docker (`pouly-verify`) : boot propre, contrat `/apps/all`, tableau et fiche rendus dans le navigateur (états dégradés compris), 0 erreur runtime.
+
+---
+
 ## [3.93.0] - 16 novembre 2026
 
 ### 📣 Pour les utilisateurs
