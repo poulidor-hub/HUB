@@ -1050,7 +1050,7 @@
                     <div class="card border-0 shadow-sm mb-3 admin-apps-toolbar">
                         <div class="card-body py-3">
                             <div class="row g-2 align-items-end">
-                                <div class="col-xl-4 col-lg-6">
+                                <div class="col-xl-6 col-lg-5">
                                     <label class="form-label small mb-1">Recherche</label>
                                     <div class="input-group input-group-sm">
                                         <span class="input-group-text"><i class="bi bi-search"></i></span>
@@ -1060,7 +1060,7 @@
                                         </button>
                                     </div>
                                 </div>
-                                <div class="col-xl-2 col-md-6">
+                                <div class="col-xl-3 col-lg-3 col-md-6">
                                     <label class="form-label small mb-1">Statut</label>
                                     <select class="form-select form-select-sm" id="adminAppsStatusFilter" data-action="filterAdminApps">
                                         <option value="all">Tous</option>
@@ -1070,13 +1070,7 @@
                                         <option value="rejected">Rejetées</option>
                                     </select>
                                 </div>
-                                <div class="col-xl-2 col-md-6">
-                                    <label class="form-label small mb-1">Catégorie</label>
-                                    <select class="form-select form-select-sm" id="adminAppsCategoryFilter" data-action="filterAdminApps">
-                                        <option value="all">Toutes</option>
-                                    </select>
-                                </div>
-                                <div class="col-xl-2 col-md-6">
+                                <div class="col-xl-2 col-lg-2 col-md-3">
                                     <label class="form-label small mb-1">Mode</label>
                                     <select class="form-select form-select-sm" id="adminAppsWorkshopFilter" data-action="filterAdminApps">
                                         <option value="false">Production</option>
@@ -1084,18 +1078,35 @@
                                         <option value="all">Tout</option>
                                     </select>
                                 </div>
-                                <div class="col-xl-2 col-md-6">
-                                    <label class="form-label small mb-1">Gestion</label>
-                                    <select class="form-select form-select-sm" id="adminAppsUnmanagedFilter" data-action="filterAdminApps">
-                                        <option value="all" selected>Toutes</option>
-                                        <option value="managed">Gérées</option>
-                                        <option value="unmanaged">Non gérées</option>
-                                    </select>
-                                </div>
-                                <div class="col-xl-1 col-md-6 d-grid">
-                                    <button class="btn btn-outline-secondary btn-sm" type="button" data-action="resetAdminAppsFilters" title="Réinitialiser les filtres">
-                                        <i class="bi bi-arrow-counterclockwise"></i>
+                                <div class="col-xl-1 col-lg-2 col-md-3">
+                                    <button class="btn btn-sm btn-outline-secondary w-100 text-nowrap" type="button" data-bs-toggle="collapse" data-bs-target="#adminAppsExtraFilters" aria-expanded="false" aria-controls="adminAppsExtraFilters" title="Filtres secondaires : catégorie, gestion, réinitialisation">
+                                        <i class="bi bi-funnel me-1"></i>Filtres <i class="bi bi-chevron-down"></i>
                                     </button>
+                                </div>
+                            </div>
+                            <!-- Filtres secondaires : repliés par défaut (design 2026-11),
+                                 IDs inchangés (recherche/filtres pilotés par admin-apps.js). -->
+                            <div class="collapse" id="adminAppsExtraFilters">
+                                <div class="row g-2 align-items-end mt-2">
+                                    <div class="col-xl-3 col-md-4">
+                                        <label class="form-label small mb-1">Catégorie</label>
+                                        <select class="form-select form-select-sm" id="adminAppsCategoryFilter" data-action="filterAdminApps">
+                                            <option value="all">Toutes</option>
+                                        </select>
+                                    </div>
+                                    <div class="col-xl-3 col-md-4">
+                                        <label class="form-label small mb-1">Gestion</label>
+                                        <select class="form-select form-select-sm" id="adminAppsUnmanagedFilter" data-action="filterAdminApps">
+                                            <option value="all" selected>Toutes</option>
+                                            <option value="managed">Gérées</option>
+                                            <option value="unmanaged">Non gérées</option>
+                                        </select>
+                                    </div>
+                                    <div class="col-xl-2 col-md-4">
+                                        <button class="btn btn-sm btn-outline-secondary w-100" type="button" data-action="resetAdminAppsFilters" title="Réinitialiser les filtres">
+                                            <i class="bi bi-arrow-counterclockwise me-1"></i>Réinitialiser
+                                        </button>
+                                    </div>
                                 </div>
                             </div>
                         </div>
