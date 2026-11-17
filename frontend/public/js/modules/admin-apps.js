@@ -220,127 +220,133 @@ function resetAdminAppsFilters() {
 // ===== Status Monitoring =====
 
 /**
- * Rafraîchit le statut de connectivité des applications
+ * État d'exécution par slug : {health, docker, latency_ms, error}.
+ * Alimenté par le test manuel de connectivité (refreshAppsStatus, bouton
+ * « Tester connectivité » + appel initial à l'ouverture) et par les SSE
+ * docker_status_changed / app_health_changed. La pastille composite de la
+ * colonne État est re-rendue depuis cet état combiné (santé prioritaire
+ * visuellement, Docker dans le title).
+ */
+const runtimeStates = {};
+
+/**
+ * Pastille composite de la colonne État : « En ligne » (vert) /
+ * « Hors ligne » (rouge) / « Vérification » (gris, état inconnu).
+ * Le title combine connectivité (+ latence), Docker et erreur de sonde.
+ */
+function appRuntimeStateHtml(state) {
+    const health = state?.health || null;   // 'healthy' | 'unhealthy' | null
+    const docker = state?.docker || null;   // 'running' | autre statut | null
+    const latency = state?.latency_ms || null;
+    const probeError = state?.error || null;
+
+    let tone;
+    let label;
+    if (health === 'healthy') {
+        tone = 'text-success';
+        label = 'En ligne';
+    } else if (health === 'unhealthy') {
+        tone = 'text-danger';
+        label = 'Hors ligne';
+    } else {
+        tone = 'text-muted';
+        label = 'Vérification';
+    }
+
+    const titleParts = [];
+    if (health === 'healthy') {
+        titleParts.push('Connectivité : en ligne' + (latency ? ` (${latency} ms)` : ''));
+    } else if (health === 'unhealthy') {
+        titleParts.push('Connectivité : hors ligne' + (probeError ? ` — ${probeError}` : ''));
+    } else {
+        titleParts.push('Connectivité : non vérifiée');
+    }
+    titleParts.push(docker ? `Docker : ${docker}` : 'Docker : inconnu');
+
+    return '<span class="d-inline-flex align-items-center gap-1 ' + tone + '"'
+        + ' title="' + escapeHtml(titleParts.join(' · ')) + '">'
+        + '<span aria-hidden="true" style="width:.5rem;height:.5rem;border-radius:50%;background-color:currentColor;display:inline-block;flex:0 0 auto;"></span>'
+        + '<span>' + label + '</span>'
+        + '</span>';
+}
+
+/**
+ * Re-rend la pastille composite d'une app (cellule .app-status-cell —
+ * même cible que les hooks SSE).
+ */
+function renderAppRuntimeState(slug) {
+    if (!slug) return;
+    const cell = document.querySelector(`.app-status-cell[data-app-slug="${slug}"]`);
+    if (cell) {
+        cell.innerHTML = appRuntimeStateHtml(runtimeStates[slug]);
+    }
+    // Fiche application ouverte : même alimentation que la cellule du tableau
+    // (SSE docker_status_changed / app_health_changed, test de connectivité) —
+    // no-op si la fiche est fermée (admin-app-detail.js).
+    if (typeof updateAppDetailStatusBadges === 'function') updateAppDetailStatusBadges();
+}
+
+/**
+ * Rafraîchit le statut de connectivité des applications (test manuel ou
+ * appel initial à l'ouverture) et alimente runtimeStates.
  */
 async function refreshAppsStatus() {
-    const connectivityIcons = document.querySelectorAll('.app-connectivity-icon');
-    const isFirstLoad = connectivityIcons.length > 0 && 
-        connectivityIcons[0].querySelector('i') === null;
-
-    if (!isFirstLoad) {
-        // Rafraîchissement : indicateur subtil sans détruire l'affichage
-        connectivityIcons.forEach(el => {
-            el.style.opacity = '0.6';
-        });
-    }
-    
     try {
         const status = await api.getAppsStatus();
         console.log('📡 Statut des applications:', status);
-        
-        // Mettre à jour chaque icône in-place
-        status.apps.forEach(appStatus => {
-            const cell = document.querySelector(`.app-status-cell[data-app-slug="${appStatus.slug}"]`);
-            if (!cell) return;
-            const iconEl = cell.querySelector('.app-connectivity-icon');
-            if (!iconEl) return;
-            
-            iconEl.style.opacity = '1';
-            let icon = '';
-            switch (appStatus.status) {
-                case 'online':
-                    icon = `<i class="bi bi-wifi text-success" title="En ligne (${appStatus.response_time_ms || '?'}ms)"></i>`;
-                    break;
-                case 'offline':
-                    icon = `<i class="bi bi-wifi-off text-danger" title="Hors ligne: ${appStatus.error || 'Non joignable'}"></i>`;
-                    break;
-                case 'error':
-                    icon = `<i class="bi bi-exclamation-triangle text-warning" title="Erreur: ${appStatus.error || ''}"></i>`;
-                    break;
-                default:
-                    icon = `<i class="bi bi-wifi text-muted" title="Inconnu"></i>`;
-            }
-            iconEl.innerHTML = icon;
+
+        (Array.isArray(status?.apps) ? status.apps : []).forEach(appStatus => {
+            if (!appStatus?.slug) return;
+            runtimeStates[appStatus.slug] = {
+                ...(runtimeStates[appStatus.slug] || {}),
+                health: appStatus.status === 'online' ? 'healthy' : 'unhealthy',
+                latency_ms: appStatus.status === 'online' ? (appStatus.response_time_ms || null) : null,
+                error: appStatus.status === 'online' ? null : (appStatus.error || null)
+            };
+            renderAppRuntimeState(appStatus.slug);
         });
 
-        // Restaurer l'opacité pour les éléments non mis à jour
-        connectivityIcons.forEach(el => {
-            el.style.opacity = '1';
-        });
-        
         // Afficher un résumé dans un toast discret
         const summary = status.summary;
         if (summary.offline > 0 || summary.error > 0) {
-            showToast('Connectivité', 
-                `${summary.online}/${summary.total} applications en ligne`, 
+            showToast('Connectivité',
+                `${summary.online}/${summary.total} applications en ligne`,
                 summary.offline > 0 ? 'warning' : 'info');
         }
     } catch (error) {
         console.error('Erreur lors du test de connectivité:', error);
-        // En cas d'erreur réseau, conserver le dernier état connu
-        connectivityIcons.forEach(el => {
-            el.style.opacity = '1';
-        });
+        // En cas d'erreur réseau, conserver le dernier état connu (pastilles inchangées)
     }
 }
 
 /**
- * Met à jour le statut Docker d'une app dans le tableau admin (colonne État fusionnée)
+ * Met à jour le statut Docker d'une app dans le tableau admin (hook SSE
+ * docker_status_changed) : alimente runtimeStates puis re-rend la pastille
+ * composite (Docker visible dans le title).
  */
 function updateAppDockerStatusInTable(slug, dockerStatus) {
     if (!slug) return;
-    
-    const cell = document.querySelector(`.app-status-cell[data-app-slug="${slug}"]`);
-    if (!cell) return;
-    
-    // Trouver la 2ème icône dans .status-icons (Docker)
-    const icons = cell.querySelectorAll('.status-icons > i, .status-icons > span > i');
-    const statusIcons = cell.querySelector('.status-icons');
-    if (!statusIcons) return;
-    
-    // L'icône Docker est le 2ème enfant direct de .status-icons
-    const children = Array.from(statusIcons.children);
-    if (children.length < 2) return;
-    const dockerEl = children[1]; // 2ème élément = Docker
-    
-    let dockerIcon;
-    if (!dockerStatus) {
-        dockerIcon = '<i class="bi bi-question-circle text-muted" title="Docker: Inconnu"></i>';
-    } else if (dockerStatus === 'running') {
-        dockerIcon = '<i class="bi bi-play-circle-fill text-success" title="Docker: Running"></i>';
-    } else {
-        dockerIcon = '<i class="bi bi-pause-circle-fill text-warning" title="Docker: Maintenance"></i>';
-    }
-    dockerEl.outerHTML = dockerIcon;
-    
+
+    runtimeStates[slug] = { ...(runtimeStates[slug] || {}), docker: dockerStatus || null };
+    renderAppRuntimeState(slug);
+
     console.log(`🔄 Docker status mis à jour pour ${slug}: ${dockerStatus}`);
 }
 
 /**
- * Met à jour le statut de santé (health check) d'une app dans le tableau admin
- */
-/**
- * Met à jour le statut de santé (health check) d'une app dans le tableau admin (colonne État fusionnée)
+ * Met à jour le statut de santé (health check) d'une app dans le tableau
+ * admin (hook SSE app_health_changed) : alimente runtimeStates puis re-rend
+ * la pastille composite (la santé est prioritaire visuellement).
  */
 function updateAppHealthStatusInTable(slug, healthStatus) {
     if (!slug) return;
-    
-    const cell = document.querySelector(`.app-status-cell[data-app-slug="${slug}"]`);
-    if (!cell) return;
-    
-    const iconEl = cell.querySelector('.app-connectivity-icon');
-    if (!iconEl) return;
-    
-    let icon;
-    if (healthStatus === 'healthy') {
-        icon = '<i class="bi bi-wifi text-success" title="Connectivité: En ligne"></i>';
-    } else if (healthStatus === 'unhealthy') {
-        icon = '<i class="bi bi-wifi-off text-danger" title="Connectivité: Hors ligne"></i>';
-    } else {
-        icon = '<i class="bi bi-wifi text-muted" title="Connectivité: Inconnu"></i>';
-    }
-    iconEl.innerHTML = icon;
-    
+
+    runtimeStates[slug] = {
+        ...(runtimeStates[slug] || {}),
+        health: healthStatus === 'healthy' || healthStatus === 'unhealthy' ? healthStatus : null
+    };
+    renderAppRuntimeState(slug);
+
     console.log(`🏥 Health status mis à jour pour ${slug}: ${healthStatus}`);
 }
 
@@ -379,37 +385,19 @@ function updateAppCardStatus(slug, dockerStatus, healthStatus) {
 }
 
 /**
- * Intervalle de rafraîchissement automatique de la connectivité
- */
-let connectivityRefreshInterval = null;
-const CONNECTIVITY_REFRESH_DELAY = 30000; // 30 secondes
-
-/**
- * Démarre le rafraîchissement périodique de la connectivité
+ * Rafraîchissement automatique de la connectivité : SUPPRIMÉ (design 2026-11).
+ * La colonne État est tenue à jour par les SSE (docker_status_changed /
+ * app_health_changed) et par le test manuel « Tester connectivité »
+ * (refreshAppsStatus, aussi appelé à l'ouverture de la vue).
+ * start/stop restent définis en no-op : leurs appelants (admin-hub.js,
+ * auth-navigation.js) n'ont pas à changer.
  */
 function startConnectivityRefresh() {
-    if (connectivityRefreshInterval) return; // Déjà démarré
-    
-    connectivityRefreshInterval = setInterval(() => {
-        // Rafraîchir seulement si on est sur la page apps-admin
-        if (currentPage === 'apps-admin') {
-            console.log('🔄 Rafraîchissement automatique de la connectivité...');
-            refreshAppsStatus();
-        }
-    }, CONNECTIVITY_REFRESH_DELAY);
-    
-    console.log(`⏱️ Rafraîchissement connectivité activé (${CONNECTIVITY_REFRESH_DELAY/1000}s)`);
+    console.log('⏱️ Rafraîchissement automatique de la connectivité désactivé (SSE + test manuel).');
 }
 
-/**
- * Arrête le rafraîchissement périodique
- */
 function stopConnectivityRefresh() {
-    if (connectivityRefreshInterval) {
-        clearInterval(connectivityRefreshInterval);
-        connectivityRefreshInterval = null;
-        console.log('⏱️ Rafraîchissement connectivité désactivé');
-    }
+    // Ancien interval 30 s supprimé : no-op conservé pour les appelants.
 }
 
 /**
@@ -470,8 +458,151 @@ async function refreshServiceAccountsStatus() {
     }
 }
 
+/**
+ * Clic sur une ligne active : ouvre la fiche application (openAppDetail,
+ * fournie par le module de fiche — passe 2). Les lignes pending/rejected ne
+ * sont pas cliquables (flux d'approbation uniquement via leurs boutons) et
+ * les clics interactifs (boutons, toggle switch, menu déroulant) sont
+ * exclus pour ne pas déclencher la fiche. Liaison unique au conteneur
+ * #appsTable — elle survit aux re-rendus innerHTML.
+ */
+function bindAppsTableRowClick(container) {
+    if (!container || container.dataset.rowClickBound === '1') return;
+    container.dataset.rowClickBound = '1';
+    container.addEventListener('click', event => {
+        if (event.target.closest('button, a, input, select, textarea, label, .form-check, .dropdown-menu, [data-action]')) return;
+        const row = event.target.closest('tr[data-app-slug]');
+        if (!row) return;
+        const slug = row.getAttribute('data-app-slug');
+        if (!slug) return;
+        // Garde-fou : la fiche application (openAppDetail) est fournie par le
+        // module dédié ; sans elle, le clic-ligne ne fait rien de cassé.
+        if (typeof openAppDetail !== 'function') {
+            console.warn('[admin-apps] Fiche application indisponible (openAppDetail non chargée).');
+            return;
+        }
+        openAppDetail(slug);
+    });
+}
+
+/**
+ * Ligne du tableau (5 colonnes) : Application (pastille + nom + badges de
+ * workflow), Version, État (pastille composite), Actif (toggle), Actions.
+ * Les badges ATELIER et « Non gérée » ont quitté le tableau : l'info vit
+ * désormais dans la fiche application (openAppDetail).
+ */
+function renderAppsTableRow(app) {
+    const approvalStatus = app.approval_status;
+    const isPending = approvalStatus === 'pending';
+    const isRejected = approvalStatus === 'rejected';
+    const needsApproval = isPending || isRejected;
+
+    // Badge de workflow : pending/rejeté restent visibles dans le tableau.
+    let approvalBadge = '';
+    if (isPending) {
+        approvalBadge = '<span class="badge bg-warning text-dark ms-1">En attente</span>';
+    } else if (isRejected) {
+        approvalBadge = '<span class="badge bg-danger ms-1">Rejeté</span>';
+    }
+
+    // Actions : flux d'approbation pour pending/rejected (pas de clic-ligne),
+    // fiche + menu contextuel pour les autres.
+    let actionsHtml;
+    if (isPending) {
+        actionsHtml = `
+            <button class="btn btn-sm btn-success me-1" data-action="approveApp" data-arg1="${escapeHtml(app.slug)}" title="Approuver">
+                <i class="bi bi-check-lg"></i>
+            </button>
+            <button class="btn btn-sm btn-outline-danger me-1" data-app-name="${escapeHtml(app.name)}" data-action="showRejectAppModal" data-arg1="${escapeHtml(app.slug)}" data-arg2="$el" title="Rejeter">
+                <i class="bi bi-x-lg"></i>
+            </button>
+            <button class="btn btn-sm btn-outline-secondary" data-action="deletePendingApp" data-arg1="${escapeHtml(app.slug)}" title="Supprimer">
+                <i class="bi bi-trash"></i>
+            </button>
+        `;
+    } else if (isRejected) {
+        actionsHtml = `
+            <button class="btn btn-sm btn-success me-1" data-action="approveApp" data-arg1="${escapeHtml(app.slug)}" title="Approuver">
+                <i class="bi bi-check-lg"></i>
+            </button>
+            <button class="btn btn-sm btn-outline-secondary" data-action="deletePendingApp" data-arg1="${escapeHtml(app.slug)}" title="Supprimer">
+                <i class="bi bi-trash"></i>
+            </button>
+        `;
+    } else {
+        // Déployer : même condition d'affichage que l'ancien bouton ; les
+        // prechecks/bloqueurs restent gérés par triggerDeploy (admin-app-deploy.js).
+        const canDeploy = Boolean(app.git_repo_url) && (!app.last_deployment || app.last_deployment.status !== 'success');
+        actionsHtml = `
+            <button class="btn btn-sm btn-primary me-1" data-action="openAppDetail" data-arg1="${escapeHtml(app.slug)}" title="Ouvrir la fiche de l'application">
+                ${hubIcon('eye')}<span class="ms-1">Fiche</span>
+            </button>
+            <div class="dropdown d-inline-block">
+                <button class="btn btn-sm btn-secondary" type="button" data-bs-toggle="dropdown" aria-expanded="false" title="Autres actions">
+                    <i class="bi bi-three-dots"></i>
+                </button>
+                <ul class="dropdown-menu dropdown-menu-end">
+                    ${canDeploy ? `
+                    <li>
+                        <button class="dropdown-item" type="button" data-action="triggerDeploy" data-arg1="${escapeHtml(app.slug)}" title="Déployer automatiquement (clone, .env, build, démarrage)">
+                            ${hubIcon('rocket')}<span class="ms-1">Déployer</span>
+                        </button>
+                    </li>
+                    ` : ''}
+                    <li>
+                        <button class="dropdown-item text-danger" type="button" data-app-name="${escapeHtml(app.name)}" data-action="deleteApp" data-arg1="${app.id}" data-arg2="$el" title="Supprimer l'application">
+                            <i class="bi bi-trash me-1"></i>Supprimer
+                        </button>
+                    </li>
+                </ul>
+            </div>
+        `;
+    }
+
+    // Toggle switch : masqué pour pending/rejected (comme avant)
+    const toggleSwitch = needsApproval ? '' : `
+        <div class="form-check form-switch d-flex justify-content-center mb-0">
+            <input class="form-check-input" type="checkbox" role="switch"
+                id="toggleApp-${app.id}"
+                ${app.is_active ? 'checked' : ''}
+                data-action="toggleAppActive" data-arg1="${app.id}"
+                title="${app.is_active ? 'Désactiver' : 'Activer'}">
+        </div>
+    `;
+
+    const rowClass = isPending ? 'table-warning' : (isRejected ? 'table-danger' : '');
+
+    // Clic-ligne → fiche : uniquement les lignes hors workflow d'approbation
+    // (voir bindAppsTableRowClick).
+    const rowAttrs = needsApproval
+        ? ''
+        : ` data-app-slug="${escapeHtml(app.slug)}" title="Ouvrir la fiche" style="cursor:pointer"`;
+
+    return `
+        <tr data-app-id="${app.id}"${rowAttrs} class="${rowClass}">
+            <td>
+                <div class="d-flex align-items-center">
+                    <span class="me-2 rounded p-1" style="background-color: ${app.color}; color: white;">
+                        <i class="${app.icon}"></i>
+                    </span>
+                    <div>
+                        <strong>${escapeHtml(app.name)}</strong>
+                        ${app.is_shared_service ? '<span class="badge bg-info text-dark ms-1" title="API partagée accessible par tous les SA">partagé</span>' : ''}
+                        ${approvalBadge}
+                    </div>
+                </div>
+            </td>
+            <td>${app.version ? `<code>${escapeHtml(app.version)}</code>` : '<span class="text-muted">—</span>'}</td>
+            <td class="app-status-cell" data-app-slug="${escapeHtml(app.slug)}">${appRuntimeStateHtml(runtimeStates[app.slug])}</td>
+            <td class="text-center">${toggleSwitch}</td>
+            <td class="text-end text-nowrap">${actionsHtml}</td>
+        </tr>
+    `;
+}
+
 function renderAppsTable(apps) {
     const container = document.getElementById('appsTable');
+    bindAppsTableRowClick(container);
     const sortedApps = [...apps].sort(compareAdminAppsByName);
     const totalApps = allApps.length;
     const hasActiveFilters = Boolean(adminAppsSearchQuery.trim()) || adminAppsStatusFilter !== 'all' || adminAppsCategoryFilter !== 'all' || adminAppsWorkshopFilter !== 'false' || adminAppsUnmanagedFilter !== 'all';
@@ -518,118 +649,22 @@ function renderAppsTable(apps) {
             <thead>
                 <tr>
                     <th>Application</th>
-                    <th>Slug</th>
-                    <th>URL Frontend</th>
-                    <th>Utilisateurs</th>
-                    <th class="text-center">Actif</th>
+                    <th>Version</th>
                     <th>État</th>
+                    <th class="text-center">Actif</th>
                     <th class="text-end">Actions</th>
                 </tr>
             </thead>
             <tbody id="appsTableBody">
-                ${sortedApps.map(app => {
-                    // Les ic\u00f4nes Docker/Health sont d'abord en \u00e9tat "inconnu"
-                    // puis mises \u00e0 jour via SSE (docker_status_changed / app_health_changed)
-                    let dockerIcon = '<i class="bi bi-question-circle text-muted" title="Docker: Chargement..."></i>';
-                    let healthIcon = '<i class="bi bi-wifi text-muted" title="Connectivit\u00e9: V\u00e9rification..."></i>';
-                    
-                    // Badge approbation
-                    let approvalBadge = '';
-                    let approvalActions = '';
-                    const approvalStatus = app.approval_status;
-                    if (approvalStatus === 'pending') {
-                        approvalBadge = '<span class="badge bg-warning text-dark ms-1">En attente</span>';
-                        approvalActions = `
-                            <button class="btn btn-sm btn-success me-1" data-action="approveApp" data-arg1="${escapeHtml(app.slug)}" title="Approuver">
-                                <i class="bi bi-check-lg"></i>
-                            </button>
-                            <button class="btn btn-sm btn-outline-danger me-1" data-app-name="${escapeHtml(app.name)}" data-action="showRejectAppModal" data-arg1="${escapeHtml(app.slug)}" data-arg2="$el" title="Rejeter">
-                                <i class="bi bi-x-lg"></i>
-                            </button>
-                            <button class="btn btn-sm btn-outline-secondary" data-action="deletePendingApp" data-arg1="${escapeHtml(app.slug)}" title="Supprimer">
-                                <i class="bi bi-trash"></i>
-                            </button>
-                        `;
-                    } else if (approvalStatus === 'rejected') {
-                        approvalBadge = '<span class="badge bg-danger ms-1">Rejeté</span>';
-                        approvalActions = `
-                            <button class="btn btn-sm btn-success me-1" data-action="approveApp" data-arg1="${escapeHtml(app.slug)}" title="Approuver">
-                                <i class="bi bi-check-lg"></i>
-                            </button>
-                            <button class="btn btn-sm btn-outline-secondary me-1" data-action="deletePendingApp" data-arg1="${escapeHtml(app.slug)}" title="Supprimer">
-                                <i class="bi bi-trash"></i>
-                            </button>
-                        `;
-                    }
-                    
-                    // Toggle switch pour activation
-                    const isPending = approvalStatus === 'pending' || approvalStatus === 'rejected';
-                    const toggleSwitch = isPending ? '' : `
-                        <div class="form-check form-switch d-flex justify-content-center mb-0">
-                            <input class="form-check-input" type="checkbox" role="switch" 
-                                id="toggleApp-${app.id}" 
-                                ${app.is_active ? 'checked' : ''} 
-                                data-action="toggleAppActive" data-arg1="${app.id}"
-                                title="${app.is_active ? 'Désactiver' : 'Activer'}">
-                        </div>
-                    `;
-                    
-                    const rowClass = isPending ? 'table-warning' : (approvalStatus === 'rejected' ? 'table-danger' : '');
-                    
-                    return `
-                    <tr data-app-id="${app.id}" class="${rowClass}">
-                        <td>
-                            <div class="d-flex align-items-center">
-                                <span class="me-2 rounded p-1" style="background-color: ${app.color}; color: white;">
-                                    <i class="${app.icon}"></i>
-                                </span>
-                                <div>
-                                    <strong>${escapeHtml(app.name)}</strong>
-                                    ${app.is_shared_service ? '<span class="badge bg-info text-dark ms-1" title="API partagée accessible par tous les SA"><i class="bi bi-share"></i></span>' : ''}
-                                    ${app.is_workshop ? '<span class="badge bg-warning text-dark ms-1" title="Application atelier (APP_Workshop/)"><i class="bi bi-tools"></i> ATELIER</span>' : ''}
-                                    ${app.is_unmanaged ? '<span class="badge bg-secondary ms-1" title="Application non gérée par le HUB (launcher-only)"><i class="bi bi-exclamation-octagon"></i> Non gérée</span>' : ''}
-                                    ${approvalBadge}
-                                </div>
-                            </div>
-                        </td>
-                        <td><code>${app.slug}</code></td>
-                        <td><small class="text-muted">${escapeHtml(app.frontend_url || '-')}</small></td>
-                        <td><span class="badge bg-secondary">${app.users?.length || 0}</span></td>
-                        <td class="text-center">${toggleSwitch}</td>
-                        <td class="app-status-cell" data-app-slug="${app.slug}">
-                            <div class="status-icons">
-                                ${dockerIcon}
-                                <span class="app-connectivity-icon">${healthIcon}</span>
-                            </div>
-                        </td>
-                        <td class="text-end text-nowrap">
-                            ${approvalActions}
-                            ${!isPending ? `
-                                ${app.git_repo_url && (!app.last_deployment || app.last_deployment.status !== 'success') ? `
-                                    <button class="btn btn-sm btn-outline-success me-1" data-action="triggerDeploy" data-arg1="${app.slug}" title="Déployer automatiquement (clone, .env, build, démarrage)">
-                                        <i class="bi bi-rocket-takeoff"></i>
-                                    </button>
-                                ` : ''}
-                                <button class="btn btn-sm btn-outline-info me-1" data-action="showDockerDetails" data-arg1="${app.slug}" title="Détails Docker">
-                                    <i class="bi bi-eye"></i>
-                                </button>
-                                <button class="btn btn-sm btn-outline-primary me-1" data-action="editApp" data-arg1="${app.id}">
-                                    <i class="bi bi-pencil"></i>
-                                </button>
-                                <button class="btn btn-sm btn-outline-danger" data-app-name="${escapeHtml(app.name)}" data-action="deleteApp" data-arg1="${app.id}" data-arg2="$el">
-                                    <i class="bi bi-trash"></i>
-                                </button>
-                            ` : ''}
-                        </td>
-                    </tr>
-                `}).join('')}
+                ${sortedApps.map(app => renderAppsTableRow(app)).join('')}
             </tbody>
         </table>
     `;
-    
-    // Note: Les rafraîchissements de connectivité et stats Docker sont gérés
-    // par startConnectivityRefresh() déclenché par l'événement shown.bs.modal
-    // Ne pas les relancer ici pour éviter des appels API doublonnés
+
+    // État (connectivité/Docker) : les pastilles composites sont alimentées
+    // par le test manuel « Tester connectivité » (refreshAppsStatus, aussi
+    // appelé à l'ouverture) et par les SSE docker_status_changed /
+    // app_health_changed — aucun polling automatique ici.
 }
 
 /**

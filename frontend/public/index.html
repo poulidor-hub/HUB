@@ -7,10 +7,10 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Hub - Portail d'Applications</title>
-    <link rel="icon" type="image/svg+xml" href="favicon.svg?v=3.93.0">
+    <link rel="icon" type="image/svg+xml" href="favicon.svg?v=3.95.0">
     <link href="/vendor/bootstrap.min.css" rel="stylesheet">
     <link href="/vendor/bootstrap-icons.css" rel="stylesheet">
-    <link href="css/style.css?v=3.93.0" rel="stylesheet">
+    <link href="css/style.css?v=3.95.0" rel="stylesheet">
 </head>
 <body>
     <!-- Loading Screen - affiché pendant la vérification de l'authentification -->
@@ -29,7 +29,7 @@
             <a class="navbar-brand d-flex align-items-center" href="#" data-action="showPage" data-args="dashboard">
                 <i class="bi bi-grid-3x3-gap-fill me-2"></i>
                 <span>Hub</span>
-                <small class="navbar-version ms-2" id="navbarVersionBadge">v3.93.0</small>
+                <small class="navbar-version ms-2" id="navbarVersionBadge">v3.95.0</small>
                 <span id="systemUpdateBadgeSlot" class="ms-2 d-inline-flex align-items-center d-none"></span>
             </a>
             
@@ -1036,6 +1036,11 @@
                             Applications
                         </h5>
                     </div>
+                    <!-- Liste + fiche d'une application (passe 2) : la vue
+                         bascule d'affichage entre #appsListWrap (liste) et
+                         #appDetailPane (fiche) — openAppDetail/hideAppDetailPane,
+                         admin-app-detail.js. Pas une nouvelle page admin. -->
+                    <div id="appsListWrap">
                     <div class="d-flex justify-content-between align-items-center mb-3">
                         <h5 class="mb-0">Gestion des Applications</h5>
                         <div class="btn-group">
@@ -1050,7 +1055,7 @@
                     <div class="card border-0 shadow-sm mb-3 admin-apps-toolbar">
                         <div class="card-body py-3">
                             <div class="row g-2 align-items-end">
-                                <div class="col-xl-4 col-lg-6">
+                                <div class="col-xl-6 col-lg-5">
                                     <label class="form-label small mb-1">Recherche</label>
                                     <div class="input-group input-group-sm">
                                         <span class="input-group-text"><i class="bi bi-search"></i></span>
@@ -1060,7 +1065,7 @@
                                         </button>
                                     </div>
                                 </div>
-                                <div class="col-xl-2 col-md-6">
+                                <div class="col-xl-3 col-lg-3 col-md-6">
                                     <label class="form-label small mb-1">Statut</label>
                                     <select class="form-select form-select-sm" id="adminAppsStatusFilter" data-action="filterAdminApps">
                                         <option value="all">Tous</option>
@@ -1070,13 +1075,7 @@
                                         <option value="rejected">Rejetées</option>
                                     </select>
                                 </div>
-                                <div class="col-xl-2 col-md-6">
-                                    <label class="form-label small mb-1">Catégorie</label>
-                                    <select class="form-select form-select-sm" id="adminAppsCategoryFilter" data-action="filterAdminApps">
-                                        <option value="all">Toutes</option>
-                                    </select>
-                                </div>
-                                <div class="col-xl-2 col-md-6">
+                                <div class="col-xl-2 col-lg-2 col-md-3">
                                     <label class="form-label small mb-1">Mode</label>
                                     <select class="form-select form-select-sm" id="adminAppsWorkshopFilter" data-action="filterAdminApps">
                                         <option value="false">Production</option>
@@ -1084,18 +1083,35 @@
                                         <option value="all">Tout</option>
                                     </select>
                                 </div>
-                                <div class="col-xl-2 col-md-6">
-                                    <label class="form-label small mb-1">Gestion</label>
-                                    <select class="form-select form-select-sm" id="adminAppsUnmanagedFilter" data-action="filterAdminApps">
-                                        <option value="all" selected>Toutes</option>
-                                        <option value="managed">Gérées</option>
-                                        <option value="unmanaged">Non gérées</option>
-                                    </select>
-                                </div>
-                                <div class="col-xl-1 col-md-6 d-grid">
-                                    <button class="btn btn-outline-secondary btn-sm" type="button" data-action="resetAdminAppsFilters" title="Réinitialiser les filtres">
-                                        <i class="bi bi-arrow-counterclockwise"></i>
+                                <div class="col-xl-1 col-lg-2 col-md-3">
+                                    <button class="btn btn-sm btn-outline-secondary w-100 text-nowrap" type="button" data-bs-toggle="collapse" data-bs-target="#adminAppsExtraFilters" aria-expanded="false" aria-controls="adminAppsExtraFilters" title="Filtres secondaires : catégorie, gestion, réinitialisation">
+                                        <i class="bi bi-funnel me-1"></i>Filtres <i class="bi bi-chevron-down"></i>
                                     </button>
+                                </div>
+                            </div>
+                            <!-- Filtres secondaires : repliés par défaut (design 2026-11),
+                                 IDs inchangés (recherche/filtres pilotés par admin-apps.js). -->
+                            <div class="collapse" id="adminAppsExtraFilters">
+                                <div class="row g-2 align-items-end mt-2">
+                                    <div class="col-xl-3 col-md-4">
+                                        <label class="form-label small mb-1">Catégorie</label>
+                                        <select class="form-select form-select-sm" id="adminAppsCategoryFilter" data-action="filterAdminApps">
+                                            <option value="all">Toutes</option>
+                                        </select>
+                                    </div>
+                                    <div class="col-xl-3 col-md-4">
+                                        <label class="form-label small mb-1">Gestion</label>
+                                        <select class="form-select form-select-sm" id="adminAppsUnmanagedFilter" data-action="filterAdminApps">
+                                            <option value="all" selected>Toutes</option>
+                                            <option value="managed">Gérées</option>
+                                            <option value="unmanaged">Non gérées</option>
+                                        </select>
+                                    </div>
+                                    <div class="col-xl-2 col-md-4">
+                                        <button class="btn btn-sm btn-outline-secondary w-100" type="button" data-action="resetAdminAppsFilters" title="Réinitialiser les filtres">
+                                            <i class="bi bi-arrow-counterclockwise me-1"></i>Réinitialiser
+                                        </button>
+                                    </div>
                                 </div>
                             </div>
                         </div>
@@ -1103,6 +1119,8 @@
                     <div id="appsTable" class="table-responsive">
                         <!-- Table loaded dynamically -->
                     </div>
+                    </div><!-- /appsListWrap -->
+                    <div id="appDetailPane" class="d-none"><!-- Fiche application (admin-app-detail.js) --></div>
                 </div>
                 <!-- Dependencies Graph Tab -->
                 <div class="admin-tool-pane d-none" id="tabDependencies">
@@ -4672,52 +4690,53 @@
 
     <script src="/vendor/bootstrap.bundle.min.js"></script>
     <script src="/vendor/echarts.min.js"></script>
-    <script src="js/api.js?v=3.93.0"></script>
-    <script src="js/modules/utils.js?v=3.93.0"></script>
-    <script src="js/modules/resilient-download.js?v=3.93.0"></script>
-    <script src="js/modules/hub-events.js?v=3.93.0"></script>
-    <script src="js/modules/app-state.js?v=3.93.0"></script>
-    <script src="js/modules/sse.js?v=3.93.0"></script>
-    <script src="js/modules/slo-purge.js?v=3.93.0"></script>
-    <script src="js/modules/auth-navigation.js?v=3.93.0"></script>
-    <script src="js/modules/cert-download.js?v=3.93.0"></script>
-    <script src="js/modules/dashboard.js?v=3.93.0"></script>
-    <script src="js/modules/admin-apps.js?v=3.93.0"></script>
-    <script src="js/modules/admin-app-groups.js?v=3.93.0"></script>
-    <script src="js/modules/admin-app-form.js?v=3.93.0"></script>
-    <script src="js/modules/admin-users.js?v=3.93.0"></script>
-    <script src="js/modules/toasts-modals.js?v=3.93.0"></script>
-    <script src="js/modules/admin-app-approval.js?v=3.93.0"></script>
-    <script src="js/modules/admin-service-accounts.js?v=3.93.0"></script>
-    <script src="js/modules/admin-oidc-clients.js?v=3.93.0"></script>
-    <script src="js/modules/audit.js?v=3.93.0"></script>
-    <script src="js/modules/audit-charts.js?v=3.93.0"></script>
-    <script src="js/modules/admin-docker-scanner.js?v=3.93.0"></script>
-    <script src="js/modules/admin-atelier.js?v=3.93.0"></script>
-    <script src="js/modules/audit-page.js?v=3.93.0"></script>
-    <script src="js/modules/admin-users-profiles.js?v=3.93.0"></script>
-    <script src="js/modules/admin-user-tags.js?v=3.93.0"></script>
-    <script src="js/modules/user-tags.js?v=3.93.0"></script>
-    <script src="js/modules/audit-errors.js?v=3.93.0"></script>
-    <script src="js/modules/apps-health.js?v=3.93.0"></script>
-    <script src="js/modules/system-update.js?v=3.93.0"></script>
-    <script src="js/modules/workshop-ui.js?v=3.93.0"></script>
-    <script src="js/modules/admin-routing.js?v=3.93.0"></script>
-    <script src="js/modules/backup-import.js?v=3.93.0"></script>
-    <script src="js/modules/app-backups.js?v=3.93.0"></script>
-    <script src="js/modules/admin-snapshots.js?v=3.93.0"></script>
-    <script src="js/modules/admin-vault.js?v=3.93.0"></script>
-    <script src="js/modules/bulk-users-csv.js?v=3.93.0"></script>
-    <script src="js/modules/notifications.js?v=3.93.0"></script>
-    <script src="js/modules/messages-compose.js?v=3.93.0"></script>
-    <script src="js/modules/account-requests.js?v=3.93.0"></script>
-    <script src="js/modules/admin-apps-github.js?v=3.93.0"></script>
-    <script src="js/modules/admin-app-deploy.js?v=3.93.0"></script>
-    <script src="js/modules/admin-app-dependencies.js?v=3.93.0"></script>
-    <script src="js/modules/admin-hub.js?v=3.93.0"></script>
-    <script src="js/modules/cockpit.js?v=3.93.0"></script>
-    <script src="js/app.js?v=3.93.0"></script>
-    <script src="js/modules/init.js?v=3.93.0"></script>
-    <script src="js/modules/admin-vpn.js?v=3.93.0"></script>
+    <script src="js/api.js?v=3.95.0"></script>
+    <script src="js/modules/utils.js?v=3.95.0"></script>
+    <script src="js/modules/resilient-download.js?v=3.95.0"></script>
+    <script src="js/modules/hub-events.js?v=3.95.0"></script>
+    <script src="js/modules/app-state.js?v=3.95.0"></script>
+    <script src="js/modules/sse.js?v=3.95.0"></script>
+    <script src="js/modules/slo-purge.js?v=3.95.0"></script>
+    <script src="js/modules/auth-navigation.js?v=3.95.0"></script>
+    <script src="js/modules/cert-download.js?v=3.95.0"></script>
+    <script src="js/modules/dashboard.js?v=3.95.0"></script>
+    <script src="js/modules/admin-apps.js?v=3.95.0"></script>
+    <script src="js/modules/admin-app-groups.js?v=3.95.0"></script>
+    <script src="js/modules/admin-app-form.js?v=3.95.0"></script>
+    <script src="js/modules/admin-app-detail.js?v=3.95.0"></script>
+    <script src="js/modules/admin-users.js?v=3.95.0"></script>
+    <script src="js/modules/toasts-modals.js?v=3.95.0"></script>
+    <script src="js/modules/admin-app-approval.js?v=3.95.0"></script>
+    <script src="js/modules/admin-service-accounts.js?v=3.95.0"></script>
+    <script src="js/modules/admin-oidc-clients.js?v=3.95.0"></script>
+    <script src="js/modules/audit.js?v=3.95.0"></script>
+    <script src="js/modules/audit-charts.js?v=3.95.0"></script>
+    <script src="js/modules/admin-docker-scanner.js?v=3.95.0"></script>
+    <script src="js/modules/admin-atelier.js?v=3.95.0"></script>
+    <script src="js/modules/audit-page.js?v=3.95.0"></script>
+    <script src="js/modules/admin-users-profiles.js?v=3.95.0"></script>
+    <script src="js/modules/admin-user-tags.js?v=3.95.0"></script>
+    <script src="js/modules/user-tags.js?v=3.95.0"></script>
+    <script src="js/modules/audit-errors.js?v=3.95.0"></script>
+    <script src="js/modules/apps-health.js?v=3.95.0"></script>
+    <script src="js/modules/system-update.js?v=3.95.0"></script>
+    <script src="js/modules/workshop-ui.js?v=3.95.0"></script>
+    <script src="js/modules/admin-routing.js?v=3.95.0"></script>
+    <script src="js/modules/backup-import.js?v=3.95.0"></script>
+    <script src="js/modules/app-backups.js?v=3.95.0"></script>
+    <script src="js/modules/admin-snapshots.js?v=3.95.0"></script>
+    <script src="js/modules/admin-vault.js?v=3.95.0"></script>
+    <script src="js/modules/bulk-users-csv.js?v=3.95.0"></script>
+    <script src="js/modules/notifications.js?v=3.95.0"></script>
+    <script src="js/modules/messages-compose.js?v=3.95.0"></script>
+    <script src="js/modules/account-requests.js?v=3.95.0"></script>
+    <script src="js/modules/admin-apps-github.js?v=3.95.0"></script>
+    <script src="js/modules/admin-app-deploy.js?v=3.95.0"></script>
+    <script src="js/modules/admin-app-dependencies.js?v=3.95.0"></script>
+    <script src="js/modules/admin-hub.js?v=3.95.0"></script>
+    <script src="js/modules/cockpit.js?v=3.95.0"></script>
+    <script src="js/app.js?v=3.95.0"></script>
+    <script src="js/modules/init.js?v=3.95.0"></script>
+    <script src="js/modules/admin-vpn.js?v=3.95.0"></script>
 </body>
 </html>

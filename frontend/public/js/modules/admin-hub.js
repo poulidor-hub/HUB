@@ -171,6 +171,9 @@ function leaveAdminHubView() {
     if (typeof stopConnectivityRefresh === 'function') stopConnectivityRefresh();
     if (typeof stopRoutingPolling === 'function') stopRoutingPolling();
     if (typeof stopCockpitPolling === 'function') stopCockpitPolling();
+    // Fiche application ouverte (vue apps) : fermée à la sortie de l'outil
+    // (poll « déploiement en cours » compris) — admin-app-detail.js.
+    if (typeof leaveAppDetail === 'function') leaveAppDetail();
 }
 
 // ===== Ouverture d'un outil (vue plein-largeur) =====
@@ -184,8 +187,9 @@ function leaveAdminHubView() {
 function loadAdminHubTool(key) {
     switch (key) {
         case 'apps':
+            // Test de connectivité initial à l'ouverture ; ensuite SSE +
+            // bouton manuel uniquement (plus de polling 30 s).
             if (typeof refreshAppsStatus === 'function') refreshAppsStatus();
-            if (typeof startConnectivityRefresh === 'function') startConnectivityRefresh();
             break;
         case 'dependencies':
             if (typeof loadDependenciesGraph === 'function') loadDependenciesGraph();
@@ -231,7 +235,7 @@ function loadAdminHubTool(key) {
     }
 }
 
-function openHubTool(key) {
+function openHubTool(key, options) {
     const panelId = ADMIN_HUB_PANELS[key];
     if (!panelId) {
         showAdminHub();
@@ -241,7 +245,12 @@ function openHubTool(key) {
     renderAdminHub(); // no-op si déjà rendu
     showAdminPane(panelId.replace('#', ''));
     _adminHubCurrent = key;
-    try { window.location.hash = 'admin/' + key; } catch (e) { /* hash refusé */ }
+    // options.keepHash : routage initial depuis #admin/apps/<slug> (routeAdminFromHash)
+    // — le hash final est posé par openAppDetail ; écrire 'admin/apps' ici
+    // puis le 3ᵉ segment empilerait deux entrées d'historique navigateur.
+    if (!(options && options.keepHash)) {
+        try { window.location.hash = 'admin/' + key; } catch (e) { /* hash refusé */ }
+    }
     const page = ADMIN_HUB_PAGES[key];
     if (page) currentPage = page;
     loadAdminHubTool(key);
@@ -432,14 +441,38 @@ function adminHubKeyFromHash() {
 }
 
 /**
+ * Route complète du hash : { key, slug? } ou null. Le 3ᵉ segment est
+ * réservé à la fiche application (#admin/apps/<slug> — admin-app-detail.js) ;
+ * les autres outils restent à 2 segments (adminHubKeyFromHash, regex stricte
+ * → #admin/<outils>/<x> est inerté comme avant).
+ */
+function adminHubRouteFromHash() {
+    const hash = window.location.hash || '';
+    const deep = /^#admin\/(apps)\/([a-z0-9-]+)$/.exec(hash);
+    if (deep && ADMIN_HUB_PANELS[deep[1]]) {
+        return { key: 'apps', slug: deep[2] };
+    }
+    const key = adminHubKeyFromHash();
+    return key ? { key } : null;
+}
+
+/**
  * Route la vue admin selon le hash courant. Appelé par showPage('admin')
  * (auth-navigation.js) à chaque ouverture de la page : #admin → hub,
- * #admin/<clé> → outil (compatibilité system-update.js + liens directs).
+ * #admin/<clé> → outil, #admin/apps/<slug> → outil + fiche (liens directs,
+ * retour post-rechargement).
  */
 function routeAdminFromHash() {
-    const key = adminHubKeyFromHash();
-    if (key) openHubTool(key);
-    else showAdminHub();
+    const route = adminHubRouteFromHash();
+    if (!route) {
+        showAdminHub();
+        return;
+    }
+    openHubTool(route.key, route.slug ? { keepHash: true } : undefined);
+    if (route.slug && typeof openAppDetail === 'function') {
+        // La fiche re-positionne le hash #admin/apps/<slug> (no-op si déjà posé).
+        openAppDetail(route.slug);
+    }
 }
 
 function onAdminHashChange() {
@@ -448,9 +481,19 @@ function onAdminHashChange() {
     // Page admin masquée (navigation ailleurs) : l'ouverture se fera via
     // showPage('admin') → routeAdminFromHash.
     if (document.getElementById('adminSection')?.classList.contains('d-none')) return;
-    const key = adminHubKeyFromHash();
-    if (key) {
-        if (_adminHubCurrent !== key) openHubTool(key);
+    const route = adminHubRouteFromHash();
+    if (route) {
+        if (_adminHubCurrent !== route.key) openHubTool(route.key);
+        if (route.key === 'apps') {
+            if (route.slug && typeof openAppDetail === 'function') {
+                // Ouvre/reprend la fiche (no-op si déjà affichée sur ce slug) ;
+                // couvre back/forward et le retour post-rechargement.
+                openAppDetail(route.slug);
+            } else if (typeof hideAppDetailIfOpen === 'function') {
+                // #admin/apps sans slug : liste (back depuis la fiche).
+                hideAppDetailIfOpen();
+            }
+        }
     } else if (hash === '#admin' && _adminHubCurrent !== 'hub') {
         showAdminHub();
     }

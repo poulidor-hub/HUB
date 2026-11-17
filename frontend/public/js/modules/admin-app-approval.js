@@ -56,6 +56,8 @@ async function approveApp(slug) {
         showToast('Application approuvée', result.message, 'success');
         await loadAdminData();    // Rafraîchir le tableau principal (inclut les pending)
         await loadApps();         // Rafraîchir le dashboard
+        // Fiche ouverte sur cette app : re-render complet (fiche active).
+        if (typeof refreshAppDetail === 'function') refreshAppDetail();
     } catch (error) {
         console.error('Erreur approbation:', error);
         showToast('Erreur', `Impossible d'approuver: ${error.message}`, 'danger');
@@ -94,6 +96,8 @@ async function confirmRejectApp() {
         rejectAppModal.hide();
         showToast('Application rejetée', result.message, 'warning');
         await loadAdminData();  // Rafraîchir le tableau principal
+        // Fiche ouverte sur cette app : re-render (badges workflow à jour).
+        if (typeof refreshAppDetail === 'function') refreshAppDetail();
     } catch (error) {
         console.error('Erreur rejet:', error);
         showToast('Erreur', `Impossible de rejeter: ${error.message}`, 'danger');
@@ -112,6 +116,9 @@ async function deletePendingApp(slug) {
         await api.deletePendingApp(slug);
         showToast('Application supprimée', `L'application "${slug}" a été supprimée`, 'success');
         await loadAdminData();  // Rafraîchir le tableau principal
+        // Fiche ouverte sur cette app : refreshAppDetail la referme (app
+        // introuvable après le re-fetch → retour liste).
+        if (typeof refreshAppDetail === 'function') refreshAppDetail();
     } catch (error) {
         console.error('Erreur suppression:', error);
         showToast('Erreur', `Impossible de supprimer: ${error.message}`, 'danger');
