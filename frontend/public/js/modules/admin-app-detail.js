@@ -363,7 +363,7 @@ function renderAppDetailHeader(app, needsApproval) {
     return '<div class="card border-0 shadow-sm mb-3">'
         + '<div class="card-body py-3">'
         + '<div class="d-flex align-items-center gap-3 flex-wrap">'
-        + '<span class="rounded d-inline-flex align-items-center justify-content-center flex-none" style="width:44px;height:44px;background-color:' + escapeAttr(app.color || '#0d6efd') + ';color:#fff">'
+        + '<span class="rounded d-inline-flex align-items-center justify-content-center flex-shrink-0" style="width:44px;height:44px;background-color:' + escapeAttr(app.color || '#0d6efd') + ';color:#fff">'
         + '<i class="' + escapeAttr(app.icon || 'bi-app') + '" style="font-size:1.25rem"></i>'
         + '</span>'
         + '<div class="flex-grow-1">'
