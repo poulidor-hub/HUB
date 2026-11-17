@@ -62,3 +62,29 @@ def test_frontend_js_syntax(js_file):
     """Chaque .js du frontend doit être syntaxiquement valide."""
     errors = _syntax_errors(js_file)
     assert not errors, f"{js_file.relative_to(REPO_ROOT)}: {errors}"
+
+
+# Les tests de contenu lisent directement frontend/ : absent de l'image docker
+# (cf. allow_module_level ci-dessus), on saute au lieu de planter la collecte.
+_requires_frontend = pytest.mark.skipif(
+    not JS_DIR.is_dir(),
+    reason="dossier frontend/ introuvable (image docker)",
+)
+
+
+@pytest.mark.unit
+@_requires_frontend
+def test_api_js_exposes_manifest_scan_status():
+    """api.js doit exposer le client du statut de scan des manifestes (certification)."""
+    src = (JS_DIR / "api.js").read_text()
+    assert "getManifestScanStatus" in src
+    assert "repos/manifest-scan" in src
+
+
+@pytest.mark.unit
+@_requires_frontend
+def test_github_module_references_certification():
+    """La vue Apps GitHub doit référencer la pilule de scan et le compteur de masqués."""
+    src = (JS_DIR / "modules" / "admin-apps-github.js").read_text()
+    assert "ghManifestScanPill" in src
+    assert "hidden_uncertified_count" in src

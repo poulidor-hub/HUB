@@ -122,6 +122,38 @@ async function recheckGitAccess() {
     }
 }
 
+/**
+ * Porte « certificat Hub » (422 structurée, reason_key manifest_*) : bandeau
+ * d'avertissement dans #appGitAccessBanner avec case de contournement admin.
+ * Si cochée, la re-soumission envoie bypass_manifest_check: true (action
+ * journalisée côté serveur).
+ */
+function renderManifestBypassBanner(err) {
+    const banner = document.getElementById('appGitAccessBanner');
+    if (!banner) return;
+    banner.classList.remove('d-none');
+    banner.innerHTML =
+        '<div class="alert alert-warning py-2 mb-0 small"><i class="bi bi-shield-exclamation me-1"></i><strong>' +
+        escapeHtml(err.message || 'Ajout bloqué : certificat Hub manquant') +
+        '</strong>' +
+        '<div class="form-check mt-2 mb-0">' +
+            '<input class="form-check-input" type="checkbox" value="" id="appBypassManifestCheck">' +
+            '<label class="form-check-label" for="appBypassManifestCheck">Forcer l\'ajout sans certificat Hub ' +
+            '<span class="text-muted">(action admin, journalisée)</span></label>' +
+        '</div></div>';
+}
+
+/** Nettoie la case de contournement du certificat (succès ou fermeture du formulaire). */
+function clearManifestBypass() {
+    const banner = document.getElementById('appGitAccessBanner');
+    if (!banner || !document.getElementById('appBypassManifestCheck')) return;
+    banner.classList.add('d-none');
+    banner.innerHTML = '';
+}
+
+// Nettoyage du bandeau de contournement à chaque fermeture du formulaire
+document.getElementById('appFormModal')?.addEventListener('hidden.bs.modal', clearManifestBypass);
+
 // ===== Docker Details Modal =====
 
 /**
@@ -596,6 +628,11 @@ async function handleSaveApp(event) {
             };
             if (gitRepoUrl) data.git_repo_url = gitRepoUrl;
 
+            // Porte certificat Hub : contournement explicite si l'admin a coché
+            // la case proposée au 1er refus (bandeau manifest_*, cf. catch)
+            const bypassBox = document.getElementById('appBypassManifestCheck');
+            if (bypassBox?.checked) data.bypass_manifest_check = true;
+
             // Garde locale : slug invalide => message clair sans POST (422 obscure)
             if (!data.slug || !/^[a-z0-9-]{2,50}$/.test(data.slug)) {
                 showToast('Erreur', 'Slug invalide ou vide : saisissez un nom (le slug est généré automatiquement).', 'danger');
@@ -626,6 +663,7 @@ async function handleSaveApp(event) {
             }
 
             await api.createApp(data);
+            clearManifestBypass(); // succès : la case de contournement disparaît
             // Modal fermée dès la création : le suivi de déploiement n'est pas
             // captif (toast à la fin — spec 2026-09-17 §3.3)
             appFormModal.hide();
@@ -640,7 +678,14 @@ async function handleSaveApp(event) {
         }
         loadApps(); // Refresh dashboard
     } catch (error) {
-        showToast('Erreur', error.message, 'danger');
+        if (mode !== 'edit' && typeof error.reason_key === 'string' && error.reason_key.startsWith('manifest_')
+            && document.getElementById('appGitAccessBanner')) {
+            // Porte certificat Hub (422 structurée) : bandeau + case de
+            // contournement dans le formulaire, modal laissée ouverte
+            renderManifestBypassBanner(error);
+        } else {
+            showToast('Erreur', error.message, 'danger');
+        }
     }
 }
 

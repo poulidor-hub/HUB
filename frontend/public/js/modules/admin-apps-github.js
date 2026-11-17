@@ -29,6 +29,9 @@ let _ghState = {
     token_valid: null,
     token_last_checked: null,
     total: 0,
+    hidden_uncertified_count: 0,
+    hidden_breakdown: {},
+    hidden_unchecked_count: 0,
     search: '',
     owner: '',
     view: '',  // vide au boot : _ghGetView() lit alors localStorage (défaut cartes)
@@ -63,9 +66,13 @@ function loadGithubApps() {
         _ghState.repos = data.repos || [];
         _ghState.fetched_at = data.fetched_at;
         _ghState.total = typeof data.total === 'number' ? data.total : _ghState.repos.length;
+        _ghState.hidden_uncertified_count = typeof data.hidden_uncertified_count === 'number' ? data.hidden_uncertified_count : 0;
+        _ghState.hidden_breakdown = data.hidden_breakdown || {};
+        _ghState.hidden_unchecked_count = typeof data.hidden_unchecked_count === 'number' ? data.hidden_unchecked_count : 0;
         _ghState.token_configured = data.token_configured;
         _ghState.token_valid = data.token_valid;
         _ghState.token_last_checked = data.token_last_checked;
+        _ghEnsureScanPolling();
         renderGithubApps();
     }).catch(function(e) {
         grid.innerHTML = '<div class="alert alert-danger">Erreur: ' + escapeHtml(e.message) + '</div>';
@@ -75,6 +82,7 @@ function loadGithubApps() {
 function renderGithubApps() {
     renderGithubTokenBadge();
     renderGithubHeaderMeta();
+    _ghRenderHiddenNotice();
 
     const grid = document.getElementById('githubAppsGrid');
     if (!grid) return;
@@ -140,6 +148,40 @@ function renderGithubHeaderMeta() {
     }
 }
 
+/**
+ * Compteur des dépôts sans certificat masqués par le filtrage serveur
+ * (certification hub-app.yaml). Ventilation au survol (title). Nœud dédié
+ * inséré sous la barre d'outils — hors #githubAppsGrid pour survivre aux
+ * re-rendus du catalogue ; masqué quand aucun dépôt n'est masqué.
+ * NB : compteurs post-filtres search/owner, affichés tels quels (ruling R3).
+ */
+function _ghRenderHiddenNotice() {
+    var grid = document.getElementById('githubAppsGrid');
+    if (!grid || !grid.parentNode) return;
+    var el = document.getElementById('githubHiddenCount');
+    var total = (_ghState.hidden_uncertified_count || 0) + (_ghState.hidden_unchecked_count || 0);
+    if (!total) {
+        if (el) el.remove();
+        return;
+    }
+    var bd = _ghState.hidden_breakdown || {};
+    var parts = [];
+    if (bd.manifest_missing) parts.push(bd.manifest_missing + ' sans manifeste');
+    if (bd.manifest_invalid_yaml) parts.push(bd.manifest_invalid_yaml + ' YAML invalide');
+    if (bd.manifest_schema_invalid) parts.push(bd.manifest_schema_invalid + ' schéma invalide');
+    if (bd.manifest_repo_mismatch) parts.push(bd.manifest_repo_mismatch + ' dépôt différent');
+    if (_ghState.hidden_unchecked_count) parts.push(_ghState.hidden_unchecked_count + ' non vérifiés');
+    var detail = parts.length ? 'Masqués : ' + parts.join(' · ') : 'Masqués par le filtrage certification';
+    if (!el) {
+        el = document.createElement('div');
+        el.id = 'githubHiddenCount';
+        grid.parentNode.insertBefore(el, grid);
+    }
+    el.className = 'text-muted small mb-2';
+    el.innerHTML = '<i class="bi bi-eye-slash me-1"></i>' + escapeHtml(String(total)) + ' dépôt(s) sans certificat masqués';
+    el.setAttribute('title', escapeHtml(detail));
+}
+
 function _ghEmptyStateHTML(icon, title, text, actionHTML) {
     return '<div class="card border-0 shadow-sm">' +
         '<div class="card-body">' +
@@ -159,10 +201,16 @@ function _ghRepoState(repo) {
     return 'available';
 }
 
-function _ghRepoBadge(state) {
-    if (state === 'integrated') return '<span class="badge bg-primary" title="Une app du HUB est liée à ce dépôt"><i class="bi bi-link-45deg me-1"></i>Intégré</span>';
-    if (state === 'archived') return '<span class="badge bg-secondary" title="Dépôt archivé sur GitHub"><i class="bi bi-archive me-1"></i>Archivé</span>';
-    return '<span class="badge bg-success" title="Dépôt prêt à être ajouté au HUB"><i class="bi bi-check-circle me-1"></i>Dispo</span>';
+function _ghRepoBadge(state, repo) {
+    var badges = '';
+    if (state === 'integrated') badges = '<span class="badge bg-primary" title="Une app du HUB est liée à ce dépôt"><i class="bi bi-link-45deg me-1"></i>Intégré</span>';
+    else if (state === 'archived') badges = '<span class="badge bg-secondary" title="Dépôt archivé sur GitHub"><i class="bi bi-archive me-1"></i>Archivé</span>';
+    else badges = '<span class="badge bg-success" title="Dépôt prêt à être ajouté au HUB"><i class="bi bi-check-circle me-1"></i>Dispo</span>';
+    // Certification hub-app.yaml (scan de fond) : badge distinct après le badge d'état
+    if (repo && repo.manifest_valid === true) {
+        badges += ' <span class="badge text-bg-success" title="Manifeste hub-app.yaml vérifié par la dernière certification">Certifié</span>';
+    }
+    return badges;
 }
 
 function _ghRepoAction(state, repo) {
@@ -198,7 +246,7 @@ function _ghRenderCards() {
                                 '<div class="gh-repo-full">' + escapeHtml(repo.full_name) + ' · ' + escapeHtml(repo.default_branch || 'main') + '</div>' +
                             '</div>' +
                         '</div>' +
-                        _ghRepoBadge(state) +
+                        _ghRepoBadge(state, repo) +
                     '</div>' +
                     desc +
                     '<div class="d-flex justify-content-between align-items-center mt-auto pt-2">' +
@@ -228,7 +276,7 @@ function _ghRenderTable() {
             '<td class="small text-muted gh-repo-desc" style="max-width:320px;">' + desc + '</td>' +
             '<td class="small">' + escapeHtml(repo.owner) + '</td>' +
             '<td class="gh-meta">' + _ghFormatDay(repo.updated_at) + '</td>' +
-            '<td>' + _ghRepoBadge(state) + '</td>' +
+            '<td>' + _ghRepoBadge(state, repo) + '</td>' +
             '<td class="text-end text-nowrap">' + _ghRepoAction(state, repo) + '</td>' +
         '</tr>';
     }).join('');
@@ -304,10 +352,97 @@ function syncGithubRepos() {
         } else {
             showToast('GitHub', r.synced + ' repo(s) synchronisé(s)', 'success');
         }
+        _ghEnsureScanPolling(); // la sync déclenche un scan de fond : pilule immédiate
         return loadGithubApps();
     }).catch(function(e) {
         showToast('Erreur', e.message, 'danger');
     }).finally(done);
+}
+
+// ─── Pilule de certification des manifestes (#ghManifestScanPill) ─────
+
+var _scanPollTimer = null;   // garde : un seul timer global de polling
+var _scanWasRunning = false; // un scan était « running » au tick précédent
+var _scanLastErrors = 0;     // erreurs du dernier statut « running »
+var _scanNotice = false;     // true pendant les 4 s d'annonce « terminée »
+
+function _ghEnsureScanPill() {
+    var pill = document.getElementById('ghManifestScanPill');
+    if (pill) return pill;
+    pill = document.createElement('div');
+    pill.id = 'ghManifestScanPill';
+    pill.className = 'badge text-bg-secondary';
+    pill.style.position = 'fixed';
+    pill.style.bottom = '1rem';
+    pill.style.right = '1rem';
+    pill.style.zIndex = '1060';
+    document.body.appendChild(pill);
+    return pill;
+}
+
+function _ghStopScanPolling() {
+    if (_scanPollTimer) {
+        clearInterval(_scanPollTimer);
+        _scanPollTimer = null;
+    }
+}
+
+function _ghHideScanPill() {
+    var pill = document.getElementById('ghManifestScanPill');
+    if (pill) pill.remove();
+}
+
+/**
+ * Polling du statut de certification (2 s, GET /repos/manifest-scan).
+ * Aucun scan jamais lancé (running:false, total:0) → la pilule reste masquée ;
+ * en cours → « Certification des apps… done/total » ; à la fin → « terminée »
+ * 4 s puis suppression du nœud et UN SEUL rafraîchissement du catalogue.
+ * Zéro animation CSS (PERFORMANCE.md).
+ */
+function _ghEnsureScanPolling() {
+    if (_scanPollTimer) return;
+    _ghPollManifestScan(); // tick immédiat (évite 2 s d'angle mort après sync)
+    _scanPollTimer = setInterval(_ghPollManifestScan, 2000);
+}
+
+function _ghPollManifestScan() {
+    api.getManifestScanStatus().then(function(st) {
+        st = st || {};
+        var total = typeof st.total === 'number' ? st.total : 0;
+        if (st.running) {
+            _scanWasRunning = true;
+            _scanNotice = false;
+            _scanLastErrors = typeof st.errors === 'number' ? st.errors : 0;
+            _ghEnsureScanPill().textContent = 'Certification des apps… ' + (typeof st.done === 'number' ? st.done : 0) + '/' + total;
+            return;
+        }
+        if (_scanNotice) {
+            // Annonce « terminée » en cours (timer volontairement maintenu pour
+            // détecter un éventuel nouveau scan sans doubler les annonces)
+            return;
+        }
+        if (!_scanWasRunning) {
+            // Aucun scan n'a jamais tourné : rien à afficher
+            _ghHideScanPill();
+            return;
+        }
+        // Un scan venait de finir : annonce 4 s (erreurs = items non vérifiables,
+        // ex. default_branch inconnu), puis nœud + timer supprimés et un seul
+        // rechargement du catalogue pour rafraîchir badges + compteurs masqués.
+        _scanNotice = true;
+        _scanWasRunning = false;
+        _ghEnsureScanPill().textContent = _scanLastErrors > 0
+            ? 'Certification terminée (' + _scanLastErrors + ' inconnues)'
+            : 'Certification terminée';
+        setTimeout(function() {
+            _scanNotice = false;
+            _ghStopScanPolling();
+            _ghHideScanPill();
+            loadGithubApps();
+        }, 4000);
+    }).catch(function() {
+        // Statut momentanément indisponible : le prochain tick réessaiera
+    });
 }
 
 async function addRepoToHub(fullName) {

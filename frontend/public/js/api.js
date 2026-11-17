@@ -340,11 +340,21 @@ class HubAPI {
                             const msg = e.message || e.msg || '';
                             return field ? `${field}: ${msg}` : msg;
                         }).join(', ');
+                    } else if (error.detail && typeof error.detail === 'object') {
+                        // Erreur métier structurée (ex: portes certificat Hub, 422)
+                        // : { message, reason_key }
+                        errorMessage = error.detail.message || 'Erreur';
                     } else {
                         errorMessage = error.detail;
                     }
                 }
-                throw new Error(errorMessage);
+                const err = new Error(errorMessage);
+                // reason_key exposé aux appelants pour les portes métier
+                // (certification des apps) — sans effet sur les chemins string/array
+                if (error.detail && !Array.isArray(error.detail) && typeof error.detail === 'object') {
+                    err.reason_key = error.detail.reason_key;
+                }
+                throw err;
             }
 
             if (response.status === 204) {
@@ -1944,6 +1954,11 @@ class HubAPI {
             body: JSON.stringify({ repo_full_name: repoFullName }),
             headers: { 'Content-Type': 'application/json' },
         });
+    }
+
+    async getManifestScanStatus() {
+        // Statut du scan de certification en arrière-plan (polling pilule admin)
+        return this.request('/apps/github/repos/manifest-scan');
     }
 
     // ===== Préflight d'accès Git (spec 2026-09-17) =====
