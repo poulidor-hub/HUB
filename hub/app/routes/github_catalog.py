@@ -21,7 +21,7 @@ from app.auth import get_current_admin
 from app.config import get_settings
 from app.database import get_db
 from app.github_client import parse_github_url, load_db_token, slugify_repo
-from app.hub_app_manifest import REASON_MISSING
+from app.hub_app_manifest import check_manifest, REASON_MISSING, REASON_UNVERIFIABLE
 from app.manifest_scan import get_manifest_scan_status, start_manifest_scan
 from app.models import AppSetting
 from app.models import Application, GithubRepoCache, User, utcnow
@@ -355,7 +355,8 @@ async def prepare_app_from_repo(
     """Prépare la création d'une app depuis un repo GitHub du cache.
 
     1. trouve le repo dans le cache (404 sinon)
-    2. slug = slugify(repo.name) ; 409 si slug déjà pris par une app
+    2. revalide le certificat hub-app.yaml en LIVE (422 sinon) ; slug =
+       slug du manifeste (fallback slugify(repo.name)) ; 409 si déjà pris
     3. alloue ports via allocate_ports_for_app (idempotent) ; 409 si pool saturé
 
     L'allocation est une RÉSERVATION : sans création d'app dans le délai
@@ -372,9 +373,39 @@ async def prepare_app_from_repo(
             detail=f"Repo '{payload.repo_full_name}' non trouvé dans le cache. Synchronisez d'abord.",
         )
 
-    slug = slugify_repo(cached.name)
+    # Porte de certification (spec 2026-11-16) : revalidation LIVE du
+    # manifeste `hub-app.yaml` sur la branche par défaut, AVANT toute
+    # réservation de ports. Branche inconnue → certificat invérifiable
+    # (refus immédiat, zéro appel réseau) ; certificat absent/invalide →
+    # 422 avec reason_key (le formulaire affiche le motif exact).
+    if not cached.default_branch:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "message": (
+                    "Branche par défaut du dépôt inconnue — certificat "
+                    "hub-app.yaml invérifiable. Resynchronisez le catalogue "
+                    "puis réessayez."
+                ),
+                "reason_key": REASON_UNVERIFIABLE,
+            },
+        )
+    result = await check_manifest(cached.owner, cached.name, cached.default_branch, db)
+    if result.valid is not True:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "message": f"Certificat hub-app.yaml invalide : {result.reason_key}",
+                "reason_key": result.reason_key,
+            },
+        )
+
+    # Identité du manifeste prioritaire (metadata hub-app.yaml), fallback
+    # historique : dérivation depuis le nom du repo.
+    slug = result.slug or slugify_repo(cached.name)
     if not slug:
         raise HTTPException(status_code=400, detail=f"Slug dérivé vide pour le repo '{cached.name}'")
+    prepared_name = result.name or cached.name
 
     existing_app = (await db.execute(
         select(Application).where(Application.slug == slug)
@@ -400,7 +431,7 @@ async def prepare_app_from_repo(
 
     return GithubRepoPrepareResponse(
         slug=slug,
-        name=cached.name,
+        name=prepared_name,
         git_repo_url=cached.clone_url,
         api_port=alloc.api_port,
         frontend_port=alloc.frontend_port,

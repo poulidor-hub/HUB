@@ -803,6 +803,12 @@ async def http_exception_handler(request: Request, exc: StarletteHTTPException):
     request_id = getattr(request.state, "request_id", str(uuid.uuid4()))
     error_code = exc.status_code
     error_message = str(exc.detail) if exc.detail else "Erreur HTTP"
+    # detail structuré (dict/liste — ex. porte de certification hub-app.yaml :
+    # {"message", "reason_key"}) : passé TEL QUEL au client pour que le front
+    # extraie detail.reason_key / detail.message. Les details texte (tout le
+    # reste du codebase) gardent le comportement historique. Le log DB
+    # ci-dessus reste sous forme texte dans les deux cas.
+    structured_detail = exc.detail if isinstance(exc.detail, (dict, list)) else None
     error_type = _get_error_type(error_code)
     
     # Logger toutes les erreurs HTTP (4xx et 5xx) sauf :
@@ -832,7 +838,7 @@ async def http_exception_handler(request: Request, exc: StarletteHTTPException):
     
     return JSONResponse(
         status_code=error_code,
-        content={"detail": error_message, "request_id": request_id},
+        content={"detail": structured_detail or error_message, "request_id": request_id},
         headers=exc.headers
     )
 

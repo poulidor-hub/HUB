@@ -1,12 +1,15 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (C) 2026 POULIDOR Audit & Développement (Valérian Poulidor)
 
-"""Certification des apps GitHub : filtrage du catalogue GET /repos (Task 5).
+"""Certification des apps GitHub.
 
-Règle d'affichage : visible ⟺ manifest_valid IS TRUE OU already_integrated.
-Les masquées sont comptées : hidden_uncertified_count (invalidées + inconnues),
-hidden_breakdown (détail par raison des invalidées), hidden_unchecked_count
-(jamais vérifiées). GET /repos reste 100 % cache : zéro appel GitHub.
+Task 5 : filtrage du catalogue GET /repos — visible ⟺ manifest_valid IS TRUE
+OU already_integrated. Les masquées sont comptées : hidden_uncertified_count
+(invalidées + inconnues), hidden_breakdown (détail par raison des invalidées),
+hidden_unchecked_count (jamais vérifiées). GET /repos reste 100 % cache.
+
+Task 7 : POST /prepare bloque sur un certificat invalide (revalidation LIVE,
+422 reason_key) et pré-remplit l'identité du manifeste (slug + nom).
 """
 from datetime import timedelta
 
@@ -232,3 +235,111 @@ async def test_scan_status_route_admin_only(client, admin_token, user_token, mon
     r_user = await client.get("/api/apps/github/repos/manifest-scan",
                               headers=get_auth_header(user_token))
     assert r_user.status_code == 403
+
+
+# ===== Task 7 : POST /prepare — porte de certification bloquante =====
+
+import app.routes.github_catalog as gc
+
+
+def _seed_prepare_cache(async_session, repo_id: int, name: str, owner: str = "org",
+                        default_branch="main", manifest_valid=True):
+    """Seed une ligne GithubRepoCache pour prepare (branche + certificat cache)."""
+    async_session.add(GithubRepoCache(
+        repo_id=repo_id, name=name, full_name=f"{owner}/{name}",
+        owner=owner,
+        html_url=f"https://github.com/{owner}/{name}",
+        clone_url=f"https://github.com/{owner}/{name}.git",
+        default_branch=default_branch,
+        manifest_valid=manifest_valid,
+    ))
+
+
+def _mock_repo_access_ok(monkeypatch):
+    """Préflight d'accès Git mocké OK (l'accès n'est PAS bloquant en prepare)."""
+    from app.repo_access import RepoAccessResult
+
+    async def _access(clone_url, token):
+        return RepoAccessResult(True, "ok", "Accès au dépôt vérifié.")
+    monkeypatch.setattr(gc, "check_repo_access", _access)
+
+
+@pytest.mark.asyncio
+async def test_prepare_blocks_on_missing_manifest(client, admin_token, async_session, monkeypatch):
+    """Manifeste absent (valid=False, manifest_missing) → 422 + reason_key."""
+    _seed_prepare_cache(async_session, 501, "repo-sans-certif")
+    await async_session.commit()
+
+    mock_check = AsyncMock(return_value=ManifestCheckResult(
+        valid=False, reason_key="manifest_missing"))
+    monkeypatch.setattr(gc, "check_manifest", mock_check)
+    _mock_repo_access_ok(monkeypatch)  # ne doit pas être atteint
+
+    r = await client.post("/api/apps/github/prepare",
+                          headers=get_auth_header(admin_token),
+                          json={"repo_full_name": "org/repo-sans-certif"})
+    assert r.status_code == 422
+    detail = r.json()["detail"]
+    assert detail["reason_key"] == "manifest_missing"
+    assert "hub-app.yaml" in detail["message"]
+    assert mock_check.await_count == 1  # revalidation LIVE effectuée
+
+
+@pytest.mark.asyncio
+async def test_prepare_blocks_on_unknown_default_branch(client, admin_token, async_session, monkeypatch):
+    """default_branch NULL en cache → 422 manifest_unverifiable, AVANT tout appel réseau."""
+    _seed_prepare_cache(async_session, 502, "sans-branche", default_branch=None)
+    await async_session.commit()
+
+    mock_check = AsyncMock(return_value=ManifestCheckResult(valid=True))
+    monkeypatch.setattr(gc, "check_manifest", mock_check)  # ne doit JAMAIS être appelé
+
+    r = await client.post("/api/apps/github/prepare",
+                          headers=get_auth_header(admin_token),
+                          json={"repo_full_name": "org/sans-branche"})
+    assert r.status_code == 422
+    detail = r.json()["detail"]
+    assert detail["reason_key"] == "manifest_unverifiable"
+    assert mock_check.await_count == 0  # refus avant tout appel réseau
+
+
+@pytest.mark.asyncio
+async def test_prepare_success_uses_manifest_identity(client, admin_token, async_session, monkeypatch):
+    """Certificat OK : le slug et le nom pré-remplis viennent du manifeste."""
+    _seed_prepare_cache(async_session, 503, "repo-autre-nom")
+    await async_session.commit()
+
+    mock_check = AsyncMock(return_value=ManifestCheckResult(
+        valid=True, name="Nom Manifeste", slug="slug-du-manifeste"))
+    monkeypatch.setattr(gc, "check_manifest", mock_check)
+    _mock_repo_access_ok(monkeypatch)
+
+    r = await client.post("/api/apps/github/prepare",
+                          headers=get_auth_header(admin_token),
+                          json={"repo_full_name": "org/repo-autre-nom"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["slug"] == "slug-du-manifeste"
+    assert body["name"] == "Nom Manifeste"
+    # Revalidation LIVE sur (owner, repo, branche du cache)
+    assert mock_check.await_args.args[:3] == ("org", "repo-autre-nom", "main")
+
+
+@pytest.mark.asyncio
+async def test_prepare_slug_conflict_409(client, admin_token, async_session, monkeypatch):
+    """Slug du manifeste déjà pris par une app → 409 (inchangé, mais sur le slug du manifeste)."""
+    _seed_prepare_cache(async_session, 504, "repo-conflit")
+    async_session.add(Application(
+        name="Existant", slug="slug-du-manifeste", api_url="http://h:8000"))
+    await async_session.commit()
+
+    mock_check = AsyncMock(return_value=ManifestCheckResult(
+        valid=True, name="Nom Manifeste", slug="slug-du-manifeste"))
+    monkeypatch.setattr(gc, "check_manifest", mock_check)
+    _mock_repo_access_ok(monkeypatch)
+
+    r = await client.post("/api/apps/github/prepare",
+                          headers=get_auth_header(admin_token),
+                          json={"repo_full_name": "org/repo-conflit"})
+    assert r.status_code == 409
+    assert "slug-du-manifeste" in r.json()["detail"]

@@ -259,15 +259,25 @@ class TestPrepare:
         settings.github_token = "ghp_test"
         # Préflight mocké : aucun appel réseau en test (cf. Task 2 plan)
         import app.routes.github_catalog as gc
+        from app.hub_app_manifest import ManifestCheckResult
         from app.repo_access import RepoAccessResult
 
         async def _access_ok(clone_url, token):
             return RepoAccessResult(True, "ok", "Accès au dépôt vérifié.")
         monkeypatch.setattr(gc, "check_repo_access", _access_ok)
+
+        # Revalidation LIVE du certificat mockée OK, SANS identité de
+        # manifeste : le test valide le fallback historique (slug/nom
+        # dérivés du repo) —cf. certification Task 7.
+        async def _manifest_ok(owner, repo, branch, db=None):
+            return ManifestCheckResult(valid=True)
+        monkeypatch.setattr(gc, "check_manifest", _manifest_ok)
+
         async_session.add(GithubRepoCache(
             repo_id=1, name="Mon-Projet_Cool", full_name="MYCOMPANY/Mon-Projet_Cool",
             owner="MYCOMPANY", html_url="https://github.com/MYCOMPANY/Mon-Projet_Cool",
             clone_url="https://github.com/MYCOMPANY/Mon-Projet_Cool.git",
+            default_branch="main", manifest_valid=True,
         ))
         await async_session.commit()
 
@@ -286,12 +296,22 @@ class TestPrepare:
         assert body["ports_reused"] is False
 
     @pytest.mark.asyncio
-    async def test_prepare_slug_collision_409(self, client: AsyncClient, admin_user, async_session, settings):
+    async def test_prepare_slug_collision_409(self, client: AsyncClient, admin_user, async_session, settings, monkeypatch):
         """Slug déjà utilisé par une app → 409."""
         settings.github_token = "ghp_test"
+        import app.routes.github_catalog as gc
+        from app.hub_app_manifest import ManifestCheckResult
+
+        # Certificat LIVE mocké OK sans identité : le slug testé reste le
+        # fallback slugify(repo.name) — intention du test inchangée.
+        async def _manifest_ok(owner, repo, branch, db=None):
+            return ManifestCheckResult(valid=True)
+        monkeypatch.setattr(gc, "check_manifest", _manifest_ok)
+
         async_session.add(GithubRepoCache(
             repo_id=1, name="thetipitap", full_name="MYCOMPANY/thetipitap",
             owner="MYCOMPANY", html_url="x", clone_url="x.git",
+            default_branch="main", manifest_valid=True,
         ))
         async_session.add(Application(name="Existing", slug="thetipitap", api_url="http://h:8000"))
         await async_session.commit()
@@ -327,9 +347,17 @@ class TestPrepare:
         async def _access_ok(clone_url, token):
             return RepoAccessResult(True, "ok", "Accès au dépôt vérifié.")
         monkeypatch.setattr(gc, "check_repo_access", _access_ok)
+
+        from app.hub_app_manifest import ManifestCheckResult
+
+        async def _manifest_ok(owner, repo, branch, db=None):
+            return ManifestCheckResult(valid=True)
+        monkeypatch.setattr(gc, "check_manifest", _manifest_ok)
+
         async_session.add(GithubRepoCache(
             repo_id=1, name="x", full_name="o/x", owner="o",
             html_url="x", clone_url="x.git",
+            default_branch="main", manifest_valid=True,
         ))
         await async_session.commit()
         token, _, _ = create_access_token(username=admin_user.username, apps={})
@@ -351,7 +379,18 @@ class TestRepoAccessPreflight:
             owner=full_name.split("/")[0],
             html_url=f"https://github.com/{full_name}",
             clone_url=f"https://github.com/{full_name}.git",
+            default_branch="main",  # certificat LIVE mocké OK : prepare atteint l'access
         ))
+
+    @staticmethod
+    def _mock_manifest_ok(monkeypatch):
+        """Certificat hub-app.yaml LIVE mocké OK (porte Task 7 non bloquante ici)."""
+        import app.routes.github_catalog as gc_mod
+        from app.hub_app_manifest import ManifestCheckResult
+
+        async def _manifest_ok(owner, repo, branch, db=None):
+            return ManifestCheckResult(valid=True)
+        monkeypatch.setattr(gc_mod, "check_manifest", _manifest_ok)
 
     @pytest.mark.asyncio
     async def test_prepare_includes_repo_access_ok(self, client, admin_user, async_session, settings, monkeypatch):
@@ -359,6 +398,8 @@ class TestRepoAccessPreflight:
         settings.github_token = "ghp_test"
         self._add_cache(async_session, 901, "o/AccessOk")
         await async_session.commit()
+
+        self._mock_manifest_ok(monkeypatch)
 
         import app.routes.github_catalog as gc
         from app.repo_access import RepoAccessResult
@@ -381,6 +422,8 @@ class TestRepoAccessPreflight:
         settings.github_token = "ghp_test"
         self._add_cache(async_session, 902, "o/AccessKo")
         await async_session.commit()
+
+        self._mock_manifest_ok(monkeypatch)
 
         import app.routes.github_catalog as gc
         from app.repo_access import RepoAccessResult
