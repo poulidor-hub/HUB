@@ -116,6 +116,7 @@ class TestListRepos:
             repo_id=1, name="thetipitap", full_name="MYCOMPANY/thetipitap",
             owner="MYCOMPANY", html_url="https://github.com/MYCOMPANY/thetipitap",
             clone_url="https://github.com/MYCOMPANY/thetipitap.git",
+            manifest_valid=True,  # certifiée : doit rester visible (Task 5)
         ))
         async_session.add(GithubRepoCache(
             repo_id=2, name="catalog", full_name="MYCOMPANY/catalog",
@@ -485,6 +486,7 @@ class TestAlreadyIntegratedBySlug:
             repo_id=31, name="NouvelOutil", full_name="Poutchouli/NouvelOutil",
             owner="Poutchouli", html_url="https://github.com/Poutchouli/NouvelOutil",
             clone_url="https://github.com/Poutchouli/NouvelOutil.git",
+            manifest_valid=True,  # certifiée : doit rester visible (Task 5)
         ))
         await async_session.commit()
 
@@ -572,6 +574,7 @@ class TestIntegratedAppSlug:
             repo_id=52, name="NouvelOutil", full_name="Poutchouli/NouvelOutil",
             owner="Poutchouli", html_url="https://github.com/Poutchouli/NouvelOutil",
             clone_url="https://github.com/Poutchouli/NouvelOutil.git",
+            manifest_valid=True,  # certifiée : doit rester visible (Task 5)
         ))
         await async_session.commit()
 

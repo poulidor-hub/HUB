@@ -20,6 +20,7 @@ from app.auth import get_current_admin
 from app.config import get_settings
 from app.database import get_db
 from app.github_client import parse_github_url, load_db_token, slugify_repo
+from app.hub_app_manifest import REASON_MISSING
 from app.models import AppSetting
 from app.models import Application, GithubRepoCache, User, utcnow
 from app.port_allocator import allocate_ports_for_app, PortPoolExhausted, SubnetPoolExhausted
@@ -98,6 +99,14 @@ async def list_github_repos(
     )).scalar()
 
     repos = []
+    # Compteurs des repos masqués par le filtre certificat (spec 2026-11-16) :
+    # inconnu (NULL) ≠ non certifié (False) — les deux sont masqués et comptés
+    # dans hidden_uncertified_count (invalidées + inconnues), avec le détail
+    # par raison pour les invalidées et un compteur séparé pour l'inconnu
+    # (l'inconnu sera levé par le scan, ce n'est pas une régression).
+    hidden_uncertified_count = 0
+    hidden_breakdown: dict[str, int] = {}
+    hidden_unchecked_count = 0
     for c in cached:
         parsed = parse_github_url(c.clone_url)
         already = parsed in integrated_keys if parsed else False
@@ -107,6 +116,16 @@ async def list_github_repos(
             if derived in app_slugs:
                 already = True
                 integrated_app_slug = derived
+        # Règle d'affichage : visible ⟺ certifiée (manifest_valid is True)
+        # OU déjà intégrée. Les masquées sont comptées puis exclues.
+        if not already and c.manifest_valid is not True:
+            if c.manifest_valid is False:
+                reason = c.manifest_reason or REASON_MISSING
+                hidden_breakdown[reason] = hidden_breakdown.get(reason, 0) + 1
+            else:
+                hidden_unchecked_count += 1
+            hidden_uncertified_count += 1
+            continue
         repos.append(GithubRepo(
             name=c.name,
             full_name=c.full_name,
@@ -121,6 +140,10 @@ async def list_github_repos(
             updated_at=_iso(c.updated_at_github),
             already_integrated=already,
             integrated_app_slug=integrated_app_slug,
+            manifest_valid=c.manifest_valid,
+            manifest_slug=c.manifest_slug,
+            manifest_name=c.manifest_name,
+            manifest_reason=c.manifest_reason,
         ))
 
     fetched_at = global_fetched
@@ -142,6 +165,9 @@ async def list_github_repos(
         token_configured=token_configured,
         token_valid=token_valid,
         token_last_checked=await _setting(LAST_CHECK_KEY),
+        hidden_uncertified_count=hidden_uncertified_count,
+        hidden_breakdown=hidden_breakdown,
+        hidden_unchecked_count=hidden_unchecked_count,
     )
 
 
