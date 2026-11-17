@@ -1,3 +1,10 @@
+## [3.95.1] - 17 novembre 2026
+
+### 📣 Pour les utilisateurs
+- **Ajouté** : le rapport de benchmarks POULIDOR (novembre 2026) est disponible dans `docs/RAPPORT-BENCHMARKS-POULIDOR-2026-11.html` — performances des templates Rust/Python, installation (~6 min), PRA (374 ms), charge du Hub (800 SSE, 200 logins en 11 s) et table de dimensionnement serveurs.
+
+### ⚡ Documentation
+- **docs** : ajout de `docs/RAPPORT-BENCHMARKS-POULIDOR-2026-11.html` — rapport HTML autonome (images embarquées) consolidant les trois campagnes de benchmarks de novembre : templates Rust vs Python, installation/PRA/backup, montée en charge du Hub. Méthodologie, tableaux, graphiques et protocole de reproduction inclus. Versions du parc à jour au 17/11 (HUBsocle 2.37.1, hub-client 0.1.0, hubctl 0.20.4).
 # Changelog - Hub d'Authentification
 
 > Ce fichier documente toutes les modifications apportées à la documentation et à l'API.
