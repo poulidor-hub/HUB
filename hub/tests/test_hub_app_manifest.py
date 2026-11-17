@@ -5,9 +5,12 @@
 import pytest
 from sqlalchemy import select
 from app.models import GithubRepoCache
-from app.hub_app_manifest import (validate_manifest_text, REASON_MISSING,
+from app.hub_app_manifest import (validate_manifest_text, check_manifest,
+                                  update_cache_manifest, ManifestCheckResult,
+                                  REASON_MISSING,
                                   REASON_INVALID_YAML, REASON_SCHEMA_INVALID,
                                   REASON_REPO_MISMATCH)
+from unittest.mock import AsyncMock
 
 @pytest.mark.asyncio
 async def test_repo_cache_has_manifest_columns(async_session):
@@ -74,3 +77,64 @@ def test_repository_mismatch():
     assert r.valid is False and r.reason_key == REASON_REPO_MISMATCH
 
 def test_no_repository_field_ok(): assert _reason(VALID_YAML.replace("  repository: https://github.com/org/exemple-app.git\n", "")).valid is True
+
+
+# ---------------------------------------------------------------------------
+# Task 3 : check_manifest (fetch raw GitHub) + update_cache_manifest
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_check_manifest_404_is_missing(async_session, monkeypatch):
+    monkeypatch.setattr("app.hub_app_manifest.fetch_github_raw_with_status",
+                        AsyncMock(return_value=(None, 404)))
+    r = await check_manifest("org", "repo", "main", async_session)
+    assert r.valid is False and r.reason_key == REASON_MISSING
+
+@pytest.mark.asyncio
+async def test_check_manifest_network_error_is_unknown(async_session, monkeypatch):
+    monkeypatch.setattr("app.hub_app_manifest.fetch_github_raw_with_status",
+                        AsyncMock(return_value=(None, 0)))
+    r = await check_manifest("org", "repo", "main", async_session)
+    assert r.valid is None and r.reason_key is None
+
+@pytest.mark.asyncio
+async def test_check_manifest_success_validates(async_session, monkeypatch):
+    monkeypatch.setattr("app.hub_app_manifest.fetch_github_raw_with_status",
+                        AsyncMock(return_value=(VALID_YAML, 200)))
+    r = await check_manifest("org", "exemple-app", "main", async_session)
+    assert r.valid is True and r.slug == "exemple-app"
+
+@pytest.mark.asyncio
+async def test_check_manifest_other_http_error_is_unknown(async_session, monkeypatch):
+    """Code ≥ 400 autre que 404 (5xx, 403 rate-limit…) : résultat inconnu,
+    jamais une décertification."""
+    monkeypatch.setattr("app.hub_app_manifest.fetch_github_raw_with_status",
+                        AsyncMock(return_value=(None, 503)))
+    r = await check_manifest("org", "repo", "main", async_session)
+    assert r.valid is None and r.reason_key is None
+
+@pytest.mark.asyncio
+async def test_update_cache_unknown_does_not_advance_checked_at(async_session):
+    """Seed puis update avec valid=None : checked_at reste NULL ;
+    avec valid=False : checked_at posé + reason enregistrée."""
+    row = GithubRepoCache(repo_id=7, name="x", full_name="o/x", owner="o",
+                          html_url="https://github.com/o/x",
+                          clone_url="https://github.com/o/x.git")
+    async_session.add(row)
+    await async_session.commit()
+
+    await update_cache_manifest(async_session, 7,
+                                ManifestCheckResult(valid=None, reason_key=None))
+    loaded = (await async_session.execute(
+        select(GithubRepoCache).where(GithubRepoCache.repo_id == 7))).scalar_one()
+    assert loaded.manifest_checked_at is None
+    assert loaded.manifest_valid is None
+    assert loaded.manifest_reason is None
+
+    await update_cache_manifest(async_session, 7,
+                                ManifestCheckResult(valid=False, reason_key=REASON_MISSING))
+    loaded = (await async_session.execute(
+        select(GithubRepoCache).where(GithubRepoCache.repo_id == 7))).scalar_one()
+    assert loaded.manifest_checked_at is not None
+    assert loaded.manifest_valid is False
+    assert loaded.manifest_reason == REASON_MISSING

@@ -20,8 +20,11 @@ from typing import Literal, Optional
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.github_client import normalize_github_url
+from app.github_client import fetch_github_raw_with_status, normalize_github_url
+from app.models import GithubRepoCache, utcnow
 
 MANIFEST_FILENAME = "hub-app.yaml"
 HUB_APP_API_VERSION = "hub.poulidor/v1"
@@ -135,3 +138,60 @@ def validate_manifest_text(
                 valid=False, reason_key=REASON_REPO_MISMATCH, name=name, slug=slug
             )
     return ManifestCheckResult(valid=True, reason_key=None, name=name, slug=slug)
+
+
+async def check_manifest(
+    owner: str,
+    repo: str,
+    default_branch: str,
+    db: Optional[AsyncSession] = None,
+) -> ManifestCheckResult:
+    """Vérifie le manifeste `hub-app.yaml` d'un dépôt (branche par défaut).
+
+    Fetch raw GitHub (PAT via `fetch_github_raw_with_status`), puis routage :
+    panne (status 0) ou code ≥ 400 autre que 404 → résultat INCONNU
+    (valid=None, jamais une décertification) ; 404 → `manifest_missing` ;
+    2xx → validation du texte, cross-checkée contre le clone_url canonique
+    reconstruit depuis (owner, repo).
+    """
+    url = (
+        f"https://raw.githubusercontent.com/{owner}/{repo}/"
+        f"{default_branch}/{MANIFEST_FILENAME}"
+    )
+    text, status = await fetch_github_raw_with_status(url, db)
+    if status == 0:
+        # Panne réseau : pas de réponse — inconnu ≠ non certifié.
+        return ManifestCheckResult(valid=None, reason_key=None)
+    if status == 404:
+        return ManifestCheckResult(valid=False, reason_key=REASON_MISSING)
+    if 200 <= status < 300:
+        return validate_manifest_text(
+            text, f"https://github.com/{owner}/{repo}.git"
+        )
+    # 403 rate-limit, 5xx… : statut hors 2xx sans certitude sur le fichier.
+    return ManifestCheckResult(valid=None, reason_key=None)
+
+
+async def update_cache_manifest(
+    db: AsyncSession, repo_id: int, result: ManifestCheckResult
+) -> None:
+    """Écrit le certificat du manifeste sur la ligne de cache du dépôt.
+
+    `manifest_checked_at` n'avance QUE si `result.valid is not None` : un
+    résultat inconnu (GitHub raw injoignable) ne doit pas faire reculer la
+    fraîcheur du dernier certificat connu. Commit la session. Aucune action
+    (sans lever) si le repo_id n'est pas en cache.
+    """
+    res = await db.execute(
+        select(GithubRepoCache).where(GithubRepoCache.repo_id == repo_id)
+    )
+    row = res.scalar_one_or_none()
+    if row is None:
+        return
+    row.manifest_valid = result.valid
+    row.manifest_reason = result.reason_key
+    row.manifest_name = result.name
+    row.manifest_slug = result.slug
+    if result.valid is not None:
+        row.manifest_checked_at = utcnow()
+    await db.commit()
