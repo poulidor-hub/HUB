@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 import httpx
+import logging
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -21,6 +22,7 @@ from app.config import get_settings
 from app.database import get_db
 from app.github_client import parse_github_url, load_db_token, slugify_repo
 from app.hub_app_manifest import REASON_MISSING
+from app.manifest_scan import get_manifest_scan_status, start_manifest_scan
 from app.models import AppSetting
 from app.models import Application, GithubRepoCache, User, utcnow
 from app.port_allocator import allocate_ports_for_app, PortPoolExhausted, SubnetPoolExhausted
@@ -32,8 +34,11 @@ from app.schemas import (
     GithubRepoPrepareRequest,
     GithubRepoPrepareResponse,
     GithubRepoRefreshResponse,
+    GithubManifestScanStatus,
     RepoAccessInfo,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/apps/github", tags=["github"])
 
@@ -314,10 +319,31 @@ async def refresh_github_repos(
         synced += 1
     await db.commit()
 
+    # Scan de fond des manifestes (NON bloquant) : déclenché juste après
+    # l'upsert du cache. Le refresh ne doit JAMAIS échouer à cause du scan.
+    try:
+        start_manifest_scan()
+    except Exception:
+        logger.exception(
+            "Déclenchement du scan des manifestes échoué (non bloquant)"
+        )
+
     return GithubRepoRefreshResponse(
         synced=synced, total=synced, fetched_at=_iso(now),
         token_configured=True, error=None,
     )
+
+
+@router.get("/repos/manifest-scan", response_model=GithubManifestScanStatus)
+async def get_manifest_scan_status_route(
+    _: User = Depends(get_current_admin),
+):
+    """État live du scan de certification en arrière-plan (polling admin).
+
+    Renvoie une copie de l'état module-level (datetimes convertis en ISO,
+    ou None avant le premier scan / tant que le scan n'est pas fini).
+    """
+    return GithubManifestScanStatus(**get_manifest_scan_status())
 
 
 @router.post("/prepare", response_model=GithubRepoPrepareResponse)
