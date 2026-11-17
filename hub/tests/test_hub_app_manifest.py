@@ -158,3 +158,22 @@ async def test_update_cache_valid_persists_certificate(async_session):
     assert loaded.manifest_name == "exemple-app"
     assert loaded.manifest_slug == "exemple-app"
     assert loaded.manifest_checked_at is not None
+
+
+# ---------------------------------------------------------------------------
+# Task 4 : schémas enrichis (certificat exposé + compteurs de masqués)
+# ---------------------------------------------------------------------------
+
+def test_schemas_manifest_fields():
+    from app.schemas import GithubRepo, GithubRepoListResponse, GithubManifestScanStatus, AppCreateSimplified
+    repo = GithubRepo(name="x", full_name="o/x", owner="o", html_url="", git_url="",
+                      fork=False, archived=False, private=False, manifest_valid=True, manifest_slug="x")
+    assert repo.manifest_valid is True
+    resp = GithubRepoListResponse(repos=[], total=0, token_configured=True,
+                                  hidden_uncertified_count=3, hidden_breakdown={"manifest_missing": 2},
+                                  hidden_unchecked_count=1)
+    assert resp.hidden_uncertified_count == 3
+    st = GithubManifestScanStatus(running=False)
+    assert st.total == 0 and st.finished_at is None
+    app = AppCreateSimplified(name="Mon app", slug="mon-app", bypass_manifest_check=True)
+    assert app.bypass_manifest_check is True

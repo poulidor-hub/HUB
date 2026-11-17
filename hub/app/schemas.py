@@ -336,6 +336,7 @@ class AppCreateSimplified(BaseModel):
     is_shared_service: bool = Field(False, description="Si True, cette app est accessible par tous les service accounts (M2M)")
     is_unmanaged: bool = Field(False, description="App non gérée (launcher-only) : présente/lancable mais exclue du health-check, backup et sync Docker")
     git_repo_url: Optional[str] = Field(None, max_length=512, description="URL du dépôt Git (GitHub) pour le changelog et la détection de mises à jour")
+    bypass_manifest_check: bool = Field(False, description="Forcer la création sans certificat hub-app.yaml (admin, loggué)")
 
 
 class AppCreate(AppBase):
@@ -2197,6 +2198,12 @@ class GithubRepo(BaseModel):
     # porter sur le slug de l'APP, pas sur celui dérivé du repo (bug 2026-10-03 :
     # POULIDOR → app `hub`, exemple-app-2 → app `exemple-app`).
     integrated_app_slug: Optional[str] = None
+    # Certificat hub-app.yaml (spec 2026-11-16) : None = jamais vérifié ou
+    # raw GitHub injoignable (inconnu ≠ non certifié).
+    manifest_valid: Optional[bool] = None
+    manifest_slug: Optional[str] = None
+    manifest_name: Optional[str] = None
+    manifest_reason: Optional[str] = None
 
 
 class GithubRepoListResponse(BaseModel):
@@ -2207,6 +2214,22 @@ class GithubRepoListResponse(BaseModel):
     # Moniteur de vivacité (github_token_monitor) — None si jamais vérifié
     token_valid: Optional[bool] = None
     token_last_checked: Optional[str] = None
+    # Repos masqués par le filtre certificat (spec 2026-11-16) : invalidées +
+    # inconnues comptées ensemble, détail par raison pour les invalidées,
+    # jamais vérifiées comptées à part.
+    hidden_uncertified_count: int = 0
+    hidden_breakdown: dict[str, int] = {}
+    hidden_unchecked_count: int = 0
+
+
+class GithubManifestScanStatus(BaseModel):
+    """État du scan de certification en arrière-plan (endpoints /manifest/*)."""
+    running: bool
+    total: int = 0
+    done: int = 0
+    errors: int = 0
+    started_at: Optional[str] = None
+    finished_at: Optional[str] = None
 
 
 class RepoAccessInfo(BaseModel):
