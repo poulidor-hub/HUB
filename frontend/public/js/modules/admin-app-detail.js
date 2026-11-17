@@ -532,7 +532,7 @@ function renderAppDetailDeployments(slug, data) {
                 + '</pre>'
                 + '</details>';
         }).join('');
-        parts.push('<div class="text-muted mb-1">Historique :</div>' + items);
+        parts.push('<div class="text-muted mb-1">Historique :</div><div class="appdetail-scroll">' + items + '</div>');
     }
 
     container.innerHTML = parts.join('');
@@ -583,7 +583,7 @@ function renderAppDetailChangelogSection() {
         + (link ? '<span class="ms-auto">' + link + '</span>' : '')
         + '</div>'
         + '<div class="card-body py-3 small">'
-        + '<div id="appDetailChangelogBody"><span class="text-muted">Chargement…</span></div>'
+        + '<div id="appDetailChangelogBody" class="appdetail-scroll"><span class="text-muted">Chargement…</span></div>'
         + '<div id="appDetailReleasesBody"></div>'
         + '</div>'
         + '</div>';
