@@ -391,12 +391,26 @@ async def prepare_app_from_repo(
             },
         )
     result = await check_manifest(cached.owner, cached.name, cached.default_branch, db)
-    if result.valid is not True:
+    if result.valid is None:
+        # Inconnu ≠ non certifié (invariant fondateur, spec §3) : panne raw
+        # GitHub / rate-limit → blocage avec le motif « invérifiable », pas
+        # une décertification (« invalide : None » / reason_key null).
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "message": (
+                    "GitHub raw injoignable — certificat invérifiable, "
+                    "réessayez ou resynchronisez."
+                ),
+                "reason_key": REASON_UNVERIFIABLE,
+            },
+        )
+    elif result.valid is not True:
         raise HTTPException(
             status_code=422,
             detail={
                 "message": f"Certificat hub-app.yaml invalide : {result.reason_key}",
-                "reason_key": result.reason_key,
+                "reason_key": result.reason_key or REASON_MISSING,
             },
         )
 

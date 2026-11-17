@@ -12,6 +12,7 @@
 - **Ajouté** : pendant la vérification des dépôts, une petite pastille en bas à droite affiche la progression (« Certification des apps… 12/34 ») sans bloquer la navigation.
 - **Amélioré** : les dépôts déjà intégrés au Hub restent visibles et déployables, même sans certificat — aucune app existante n'est impactée.
 - **Ajouté** : en secours, un admin peut toujours forcer l'ajout manuel d'une app sans certificat (case explicite dans le formulaire, action journalisée).
+- **Info** : après mise à jour, lancez une synchronisation depuis Apps GitHub (ou visitez le tableau Santé) pour peupler le catalogue certifié — les dépôts sont vérifiés progressivement en arrière-plan.
 
 ### 🔐 Certification des apps du catalogue GitHub (`hub-app.yaml`)
 

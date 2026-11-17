@@ -1026,7 +1026,7 @@ async def create_app(
     app_data: AppCreateSimplified,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_admin)
+    admin: User = Depends(get_current_admin)
 ):
     """
     Crée une nouvelle application (admin uniquement).
@@ -1074,9 +1074,12 @@ async def create_app(
     if parsed:
         owner, repo_name = parsed
         if app_data.bypass_manifest_check:
+            # Journalisation avec l'identité de l'admin (spec §4.4-3) :
+            # un ajout sans certificat doit rester attribuable.
             logger.warning(
                 "Ajout d'app SANS certificat hub-app.yaml (bypass admin) : "
-                "slug=%s repo=%s/%s", app_data.slug, owner, repo_name)
+                "admin=%s slug=%s repo=%s/%s",
+                admin.username, app_data.slug, owner, repo_name)
         else:
             default_branch = await _resolve_default_branch(db, owner, repo_name)
             if not default_branch:
@@ -1084,7 +1087,14 @@ async def create_app(
                     "message": "Branche par défaut du dépôt introuvable — certificat invérifiable.",
                     "reason_key": REASON_UNVERIFIABLE})
             result = await check_manifest(owner, repo_name, default_branch, db)
-            if result.valid is not True:
+            if result.valid is None:
+                # Inconnu ≠ non certifié (invariant fondateur, spec §3) :
+                # panne raw GitHub → motif « invérifiable », jamais une
+                # décertification avec reason_key null.
+                raise HTTPException(status_code=422, detail={
+                    "message": "GitHub raw injoignable — certificat invérifiable, réessayez ou resynchronisez.",
+                    "reason_key": REASON_UNVERIFIABLE})
+            elif result.valid is not True:
                 raise HTTPException(status_code=422, detail={
                     "message": f"Dépôt non certifié app Hub (hub-app.yaml : {result.reason_key}).",
                     "reason_key": result.reason_key or REASON_MISSING})

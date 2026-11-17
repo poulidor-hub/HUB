@@ -308,6 +308,29 @@ async def test_prepare_blocks_on_unknown_default_branch(client, admin_token, asy
 
 
 @pytest.mark.asyncio
+async def test_prepare_blocks_on_github_unreachable(client, admin_token, async_session, monkeypatch):
+    """valid=None (panne raw GitHub) → 422 manifest_unverifiable, JAMAIS « invalide : None ».
+
+    Invariant fondateur : inconnu ≠ non certifié — reason_key string attendue
+    par le front, pas de décertification avec reason_key null."""
+    _seed_prepare_cache(async_session, 505, "repo-injoignable")
+    await async_session.commit()
+
+    mock_check = AsyncMock(return_value=ManifestCheckResult(valid=None, reason_key=None))
+    monkeypatch.setattr(gc, "check_manifest", mock_check)
+    _mock_repo_access_ok(monkeypatch)
+
+    r = await client.post("/api/apps/github/prepare",
+                          headers=get_auth_header(admin_token),
+                          json={"repo_full_name": "org/repo-injoignable"})
+    assert r.status_code == 422
+    detail = r.json()["detail"]
+    assert detail["reason_key"] == "manifest_unverifiable"
+    assert "None" not in detail["message"]       # pas de « invalide : None »
+    assert mock_check.await_count == 1           # la revalidation LIVE a bien eu lieu
+
+
+@pytest.mark.asyncio
 async def test_prepare_success_uses_manifest_identity(client, admin_token, async_session, monkeypatch):
     """Certificat OK : le slug et le nom pré-remplis viennent du manifeste."""
     _seed_prepare_cache(async_session, 503, "repo-autre-nom")
@@ -415,8 +438,8 @@ async def test_create_app_blocks_without_certificat(client, admin_token, async_s
 
 
 @pytest.mark.asyncio
-async def test_create_app_bypass_creates_and_logs(client, admin_token, async_session, monkeypatch, caplog):
-    """bypass_manifest_check=True : création 201 malgré certificat KO + WARNING loggué."""
+async def test_create_app_bypass_creates_and_logs(client, admin_user, admin_token, async_session, monkeypatch, caplog):
+    """bypass_manifest_check=True : création 201 malgré certificat KO + WARNING loggué (slug + admin)."""
     from sqlalchemy import select
     _seed_branch_cache(async_session, 602, "org", "x-app-bypass")
     await async_session.commit()
@@ -440,7 +463,11 @@ async def test_create_app_bypass_creates_and_logs(client, admin_token, async_ses
     warnings = [rec for rec in caplog.records
                 if rec.levelno == logging.WARNING and "x-app-bypass" in rec.getMessage()]
     assert warnings, "Un WARNING de bypass admin doit être loggué avec le slug"
-    assert "org/x-app-bypass" in warnings[0].getMessage()  # + owner/repo
+    message = warnings[0].getMessage()
+    assert "org/x-app-bypass" in message            # + owner/repo
+    # identité de l'admin (Finding 2) — champ structuré « admin=<username> »
+    # (username="admin" : « admin » seul serait trivialement dans le message)
+    assert f"admin={admin_user.username}" in message
 
 
 @pytest.mark.asyncio
@@ -500,3 +527,26 @@ async def test_create_app_unresolvable_branch_422(client, admin_token, async_ses
     rows = (await async_session.execute(
         select(Application).where(Application.slug == "x-app"))).scalars().all()
     assert rows == []                       # aucune ligne en cas de refus
+
+
+@pytest.mark.asyncio
+async def test_create_app_blocks_on_github_unreachable(client, admin_token, async_session, monkeypatch):
+    """valid=None (create_app non-bypass) → 422 manifest_unverifiable, jamais reason_key null."""
+    from sqlalchemy import select
+    _seed_branch_cache(async_session, 604, "org", "x-app-down")
+    await async_session.commit()
+    _mock_git_access_ok(monkeypatch)
+
+    mock_check = AsyncMock(return_value=ManifestCheckResult(valid=None, reason_key=None))
+    monkeypatch.setattr(apps_mod, "check_manifest", mock_check)
+
+    r = await client.post("/api/apps/", headers=get_auth_header(admin_token),
+                          json=_certif_payload(name="X Down", slug="x-app-down",
+                                               git_repo_url="https://github.com/org/x-app-down.git"))
+    assert r.status_code == 422
+    detail = r.json()["detail"]
+    assert detail["reason_key"] == "manifest_unverifiable"
+    assert "None" not in detail["message"]       # invariant : inconnu ≠ non certifié
+    rows = (await async_session.execute(
+        select(Application).where(Application.slug == "x-app-down"))).scalars().all()
+    assert rows == []                            # aucune ligne en cas de refus
