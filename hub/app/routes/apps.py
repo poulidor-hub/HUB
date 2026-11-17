@@ -22,7 +22,7 @@ from app.routes.events import notify_event, notify_stats_update
 from app.routes.app_backups import reassociate_orphan_backups
 
 from app.database import get_db
-from app.models import Application, User, ServiceAccount, UserAppRole, ApprovalStatus, service_account_app_access, DEFAULT_ROLES, UserFavorite, utcnow, AppDependency, AppGroup, AppDeployment, UserWorkshopAccess, get_apps_with_roles_and_workshops
+from app.models import Application, User, ServiceAccount, UserAppRole, ApprovalStatus, service_account_app_access, DEFAULT_ROLES, UserFavorite, utcnow, AppDependency, AppGroup, AppDeployment, UserWorkshopAccess, get_apps_with_roles_and_workshops, GithubRepoCache
 from app.m2m_scope import grant_shared_apps_to_sa
 from app.routes.app_groups import group_to_brief
 from app.schemas import (
@@ -48,7 +48,8 @@ from app.docker_scanner import docker_scanner
 from app.port_allocator import allocate_ports_for_app, docker_occupied_ports, release_ports_for_app, PortPoolExhausted, SubnetPoolExhausted
 from app.m2m_catalog_export import build_m2m_catalog_export
 from app.repo_access import check_repo_access
-from app.github_client import load_db_token, normalize_github_url
+from app.github_client import load_db_token, normalize_github_url, parse_github_url, fetch_github_json
+from app.hub_app_manifest import check_manifest, REASON_MISSING, REASON_UNVERIFIABLE
 
 router = APIRouter(prefix="/api/apps", tags=["Applications"])
 settings = get_settings()
@@ -999,6 +1000,27 @@ async def list_all_apps_with_users(
     ]
 
 
+async def _resolve_default_branch(db: AsyncSession, owner: str, repo: str) -> Optional[str]:
+    """Résout la branche par défaut d'un dépôt : cache d'abord, API GitHub sinon.
+
+    Cache : ligne GithubRepoCache dont le clone_url pointe vers (owner, repo)
+    (match `parse_github_url`) — zéro appel réseau quand le dépôt est déjà
+    dans le catalogue. Fallback : GET https://api.github.com/repos/{owner}/{repo}
+    (PAT configuré, `fetch_github_json`). None = introuvable → certificat
+    invérifiable (create_app refusera en 422 manifest_unverifiable).
+    """
+    rows = (await db.execute(select(GithubRepoCache))).scalars().all()
+    for row in rows:
+        if row.default_branch and parse_github_url(row.clone_url) == (owner, repo):
+            return row.default_branch
+    data, _status = await fetch_github_json(
+        f"https://api.github.com/repos/{owner}/{repo}", db
+    )
+    if isinstance(data, dict):
+        return data.get("default_branch") or None
+    return None
+
+
 @router.post("/", status_code=status.HTTP_201_CREATED)
 async def create_app(
     app_data: AppCreateSimplified,
@@ -1041,7 +1063,32 @@ async def create_app(
                 status_code=422,
                 detail=f"Dépôt Git inaccessible : {git_access.reason}",
             )
-    
+
+    # Porte de certification (spec 2026-11-16) : un dépôt GitHub doit porter
+    # un manifeste hub-app.yaml valide sur sa branche par défaut. Le bypass
+    # explicite (admin) reste possible mais est TOUJOURS loggué en WARNING.
+    # URL non-GitHub : check sauté (comportement existant préservé).
+    # Refus → aucune ligne en DB : la porte est AVANT toute réservation de
+    # ports / insert (plus de cartes fantômes).
+    parsed = parse_github_url(git_repo_url) if git_repo_url else None
+    if parsed:
+        owner, repo_name = parsed
+        if app_data.bypass_manifest_check:
+            logger.warning(
+                "Ajout d'app SANS certificat hub-app.yaml (bypass admin) : "
+                "slug=%s repo=%s/%s", app_data.slug, owner, repo_name)
+        else:
+            default_branch = await _resolve_default_branch(db, owner, repo_name)
+            if not default_branch:
+                raise HTTPException(status_code=422, detail={
+                    "message": "Branche par défaut du dépôt introuvable — certificat invérifiable.",
+                    "reason_key": REASON_UNVERIFIABLE})
+            result = await check_manifest(owner, repo_name, default_branch, db)
+            if result.valid is not True:
+                raise HTTPException(status_code=422, detail={
+                    "message": f"Dépôt non certifié app Hub (hub-app.yaml : {result.reason_key}).",
+                    "reason_key": result.reason_key or REASON_MISSING})
+
     # Déterminer le host (custom ou celui du Hub via config)
     if app_data.custom_host:
         host = app_data.custom_host

@@ -415,11 +415,21 @@ class TestCreateAppGitRepoUrl:
         """POST /api/apps/ persiste git_repo_url quand fourni (option α)."""
         # Préflight mocké : ce test valide la persistence, pas l'accès réseau
         import app.routes.apps as apps_mod
+        from app.hub_app_manifest import ManifestCheckResult
         from app.repo_access import RepoAccessResult
 
         async def _access_ok(clone_url, token):
             return RepoAccessResult(True, "ok", "Accès au dépôt vérifié.")
         monkeypatch.setattr(apps_mod, "check_repo_access", _access_ok)
+
+        # Porte certificat (Task 8) mockée OK : branche via API + certificat valide,
+        # SANS identité de manifeste (la persistence reste l'objet du test).
+        async def _fetch_repo(url, db=None):
+            return {"default_branch": "main"}, 200
+        monkeypatch.setattr(apps_mod, "fetch_github_json", _fetch_repo)
+        async def _manifest_ok(owner, repo, branch, db=None):
+            return ManifestCheckResult(valid=True)
+        monkeypatch.setattr(apps_mod, "check_manifest", _manifest_ok)
 
         token, _, _ = create_access_token(username=admin_user.username, apps={})
         payload = {
@@ -467,11 +477,21 @@ class TestCreateAppGitPreflight:
     @pytest.mark.asyncio
     async def test_create_app_git_access_ok_creates(self, client, admin_token, async_session, monkeypatch):
         import app.routes.apps as apps_mod
+        from app.hub_app_manifest import ManifestCheckResult
         from app.repo_access import RepoAccessResult
 
         async def fake_access(clone_url, token):
             return RepoAccessResult(True, "ok", "Accès au dépôt vérifié.")
         monkeypatch.setattr(apps_mod, "check_repo_access", fake_access)
+
+        # Porte certificat (Task 8) mockée OK — le test reste focalisé sur le
+        # préflight ACCÈS (le certificat a ses propres tests).
+        async def fake_fetch(url, db=None):
+            return {"default_branch": "main"}, 200
+        monkeypatch.setattr(apps_mod, "fetch_github_json", fake_fetch)
+        async def fake_manifest(owner, repo, branch, db=None):
+            return ManifestCheckResult(valid=True)
+        monkeypatch.setattr(apps_mod, "check_manifest", fake_manifest)
 
         payload = {
             "name": "Accessible", "slug": "accessible", "api_port": 8602,

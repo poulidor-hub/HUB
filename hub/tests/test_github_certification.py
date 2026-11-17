@@ -10,6 +10,10 @@ hidden_unchecked_count (jamais vérifiées). GET /repos reste 100 % cache.
 
 Task 7 : POST /prepare bloque sur un certificat invalide (revalidation LIVE,
 422 reason_key) et pré-remplit l'identité du manifeste (slug + nom).
+
+Task 8 : POST /api/apps/ exige le certificat (branche par défaut résolue par
+le cache puis l'API GitHub) ; bypass admin explicite autorisé et loggué ;
+URL non-GitHub : check sauté.
 """
 from datetime import timedelta
 
@@ -343,3 +347,156 @@ async def test_prepare_slug_conflict_409(client, admin_token, async_session, mon
                           json={"repo_full_name": "org/repo-conflit"})
     assert r.status_code == 409
     assert "slug-du-manifeste" in r.json()["detail"]
+
+
+# ===== Task 8 : POST /api/apps/ — certificat requis, bypass admin loggué =====
+
+import logging
+
+import app.routes.apps as apps_mod
+
+
+def _mock_git_access_ok(monkeypatch):
+    """Préflight d'accès Git mocké OK (l'accès passe, la porte certificat est après)."""
+    from app.repo_access import RepoAccessResult
+
+    async def _access(clone_url, token):
+        return RepoAccessResult(True, "ok", "Accès au dépôt vérifié.")
+    monkeypatch.setattr(apps_mod, "check_repo_access", _access)
+
+
+def _seed_branch_cache(async_session, repo_id: int, owner: str, repo: str,
+                       default_branch="main"):
+    """Seed une ligne de cache dont le clone_url matche (owner, repo)."""
+    async_session.add(GithubRepoCache(
+        repo_id=repo_id, name=repo, full_name=f"{owner}/{repo}",
+        owner=owner,
+        html_url=f"https://github.com/{owner}/{repo}",
+        clone_url=f"https://github.com/{owner}/{repo}.git",
+        default_branch=default_branch,
+    ))
+
+
+def _certif_payload(**overrides):
+    """Payload minimal create_app, ports auto, repo GitHub org/x-app."""
+    payload = {
+        "name": "X App",
+        "slug": "x-app",
+        "git_repo_url": "https://github.com/org/x-app.git",
+    }
+    payload.update(overrides)
+    return payload
+
+
+@pytest.mark.asyncio
+async def test_create_app_blocks_without_certificat(client, admin_token, async_session, monkeypatch):
+    """Certificat missing (cache OK, branche main) → 422 reason_key, aucune ligne créée."""
+    from sqlalchemy import select
+    _seed_branch_cache(async_session, 601, "org", "x-app")
+    await async_session.commit()
+    _mock_git_access_ok(monkeypatch)
+
+    mock_check = AsyncMock(return_value=ManifestCheckResult(
+        valid=False, reason_key="manifest_missing"))
+    monkeypatch.setattr(apps_mod, "check_manifest", mock_check)
+
+    r = await client.post("/api/apps/", headers=get_auth_header(admin_token),
+                          json=_certif_payload())
+    assert r.status_code == 422
+    detail = r.json()["detail"]
+    assert detail["reason_key"] == "manifest_missing"
+    assert detail["message"]  # humain actionnable pour le formulaire (Task 9)
+    # Revalidation LIVE sur (owner, repo, branche du cache)
+    assert mock_check.await_args.args[:3] == ("org", "x-app", "main")
+    # Aucune ligne Application créée (refus AVANT tout insert)
+    rows = (await async_session.execute(
+        select(Application).where(Application.slug == "x-app"))).scalars().all()
+    assert rows == []
+
+
+@pytest.mark.asyncio
+async def test_create_app_bypass_creates_and_logs(client, admin_token, async_session, monkeypatch, caplog):
+    """bypass_manifest_check=True : création 201 malgré certificat KO + WARNING loggué."""
+    from sqlalchemy import select
+    _seed_branch_cache(async_session, 602, "org", "x-app-bypass")
+    await async_session.commit()
+    _mock_git_access_ok(monkeypatch)
+
+    mock_check = AsyncMock(return_value=ManifestCheckResult(
+        valid=False, reason_key="manifest_missing"))
+    monkeypatch.setattr(apps_mod, "check_manifest", mock_check)
+
+    with caplog.at_level(logging.WARNING, logger="app.routes.apps"):
+        r = await client.post("/api/apps/", headers=get_auth_header(admin_token),
+                              json=_certif_payload(name="X Bypass", slug="x-app-bypass",
+                                                   git_repo_url="https://github.com/org/x-app-bypass.git",
+                                                   bypass_manifest_check=True))
+    assert r.status_code == 201
+    row = (await async_session.execute(
+        select(Application).where(Application.slug == "x-app-bypass"))).scalar_one()
+    assert row.git_repo_url == "https://github.com/org/x-app-bypass.git"
+    assert mock_check.await_count == 0  # bypass : pas de vérification
+
+    warnings = [rec for rec in caplog.records
+                if rec.levelno == logging.WARNING and "x-app-bypass" in rec.getMessage()]
+    assert warnings, "Un WARNING de bypass admin doit être loggué avec le slug"
+    assert "org/x-app-bypass" in warnings[0].getMessage()  # + owner/repo
+
+
+@pytest.mark.asyncio
+async def test_create_app_uses_cache_branch_not_api(client, admin_token, async_session, monkeypatch):
+    """Branche par défaut résolue par le cache : zéro appel API GitHub."""
+    _seed_branch_cache(async_session, 603, "org", "x-app-cache")
+    await async_session.commit()
+    _mock_git_access_ok(monkeypatch)
+
+    mock_fetch = AsyncMock(return_value=(None, 500))  # tout appel = échec du test
+    monkeypatch.setattr(apps_mod, "fetch_github_json", mock_fetch)
+    mock_check = AsyncMock(return_value=ManifestCheckResult(valid=True))
+    monkeypatch.setattr(apps_mod, "check_manifest", mock_check)
+
+    r = await client.post("/api/apps/", headers=get_auth_header(admin_token),
+                          json=_certif_payload(name="X Cache", slug="x-app-cache",
+                                               git_repo_url="https://github.com/org/x-app-cache.git"))
+    assert r.status_code == 201
+    assert mock_fetch.await_count == 0  # cache d'abord, JAMAIS l'API ici
+    assert mock_check.await_args.args[:3] == ("org", "x-app-cache", "main")
+
+
+@pytest.mark.asyncio
+async def test_create_app_non_github_url_skips_certificat(client, admin_token, monkeypatch):
+    """URL non-GitHub (gitlab) : porte certificat sautée, comportement existant préservé."""
+    _mock_git_access_ok(monkeypatch)
+    mock_check = MagicMock()  # tout appel (même await) fait échouer le test
+    monkeypatch.setattr(apps_mod, "check_manifest", mock_check)
+    mock_fetch = MagicMock()
+    monkeypatch.setattr(apps_mod, "fetch_github_json", mock_fetch)
+
+    r = await client.post("/api/apps/", headers=get_auth_header(admin_token),
+                          json={"name": "GitLab App", "slug": "gitlab-app",
+                                "git_repo_url": "https://gitlab.com/org/repo.git"})
+    assert r.status_code == 201
+    mock_check.assert_not_called()
+    mock_fetch.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_create_app_unresolvable_branch_422(client, admin_token, async_session, monkeypatch):
+    """Pas de cache + API GitHub en panne (None, 500) → 422 manifest_unverifiable."""
+    from sqlalchemy import select
+    _mock_git_access_ok(monkeypatch)
+    mock_fetch = AsyncMock(return_value=(None, 500))
+    monkeypatch.setattr(apps_mod, "fetch_github_json", mock_fetch)
+    mock_check = AsyncMock(return_value=ManifestCheckResult(valid=True))
+    monkeypatch.setattr(apps_mod, "check_manifest", mock_check)
+
+    r = await client.post("/api/apps/", headers=get_auth_header(admin_token),
+                          json=_certif_payload())
+    assert r.status_code == 422
+    detail = r.json()["detail"]
+    assert detail["reason_key"] == "manifest_unverifiable"
+    assert mock_check.await_count == 0      # branche inconnue : pas de check
+    assert mock_fetch.await_count == 1      # l'API a bien été interrogée en fallback
+    rows = (await async_session.execute(
+        select(Application).where(Application.slug == "x-app"))).scalars().all()
+    assert rows == []                       # aucune ligne en cas de refus
