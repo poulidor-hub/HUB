@@ -5,7 +5,27 @@
 
 ---
 
-## [3.93.0] - 16 novembre 2026
+## [3.94.0] - 17 novembre 2026
+
+### 📣 Pour les utilisateurs
+- **Ajouté** : le menu **Apps GitHub** ne montre plus que les vraies applications Hub — un dépôt doit exposer un certificat `hub-app.yaml` à sa racine pour apparaître et être ajouté. Fini les dépôts personnels qui se glissaient dans la liste.
+- **Ajouté** : pendant la vérification des dépôts, une petite pastille en bas à droite affiche la progression (« Certification des apps… 12/34 ») sans bloquer la navigation.
+- **Amélioré** : les dépôts déjà intégrés au Hub restent visibles et déployables, même sans certificat — aucune app existante n'est impactée.
+- **Ajouté** : en secours, un admin peut toujours forcer l'ajout manuel d'une app sans certificat (case explicite dans le formulaire, action journalisée).
+
+### 🔐 Certification des apps du catalogue GitHub (`hub-app.yaml`)
+
+- **feat(certif)** : certificat d'app = manifeste `hub-app.yaml` (racine, branche par défaut) validé par schéma versionné `hub.poulidor/v1` (`metadata.name/slug`, `spec.type` requis, `metadata.repository` cross-checké après normalisation) — module `hub_app_manifest.py`, validation Pydantic stricte, champs inconnus tolérés.
+- **feat(certif)** : cache du certificat sur `github_repo_cache` (migration `069` : `manifest_valid/checked_at/reason/name/slug`) ; `manifest_valid=NULL` = inconnu (jamais vérifié ou GitHub raw injoignable), jamais égal à « non certifié ».
+- **feat(certif)** : scan de fond asyncio (`manifest_scan.py`, sémaphore 5, jamais deux scans simultanés) déclenché après chaque sync du catalogue — revalidation si jamais vérifié, dépôt modifié depuis le dernier check, ou > 7 jours ; statut live `GET /api/apps/github/repos/manifest-scan` (admin) + pilule front (polling 2 s borné au scan, zéro animation).
+- **feat(certif)** : catalogue filtré — visible ⟺ certificat valide OU déjà intégré ; compteurs de masqués (`hidden_uncertified_count`, ventilation par raison, inconnus comptés à part).
+- **feat(certif)** : deux portes bloquantes fail-closed — `POST /prepare` revalide le manifeste en live (422 `reason_key`, identité du manifeste = slug/nom pré-remplis) et `create_app` exige le certificat pour toute URL GitHub (`manifest_unverifiable` si branche irrésoluble) avec **bypass admin explicite** `bypass_manifest_check: true` journalisé en WARNING. `deploy_precheck` inchangé : les mises à jour des apps existantes ne cassent pas.
+- **feat(front)** : badge « Certifié » sur les cartes, compteur « N dépôts sans certificat masqués » avec ventilation au survol, bandeau de bypass dans le formulaire manuel ; extraction d'erreur `detail` objet (`message` + `reason_key`) dans `api.js` (handler global `main.py` : dicts/listes passés tels quels, rétro-compatible).
+- **chore(deps)** : `PyYAML>=6.0` (première utilisation YAML côté backend Hub).
+- **tests** : +30 tests (schéma manifeste, fetch/cache, filtrage catalogue, scan/guard, portes prepare/create, bypass, front syntax) — suite hôte 1813 passed + vérifié en stack Docker isolée (`pouly-test`) : migration 069 appliquée, boot propre, endpoints exercés (200/401/404) avec logs propres.
+
+---
+
 
 ### 📣 Pour les utilisateurs
 - **Ajouté** : la page **Administration** devient un « cockpit » — l'état du serveur (CPU, mémoire, disque, charge, durée d'allumage) s'affiche en direct à gauche, et tous les outils sont regroupés par thème à droite (Parc d'applications, Accès & sécurité, Données, Système).
