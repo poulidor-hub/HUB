@@ -7,6 +7,13 @@ services:
     image: postgres:16-alpine
     container_name: hub-db
     restart: unless-stopped
+    # Profil mémoire sûr pour le budget de 1 Go (mem_limit ci-dessous) :
+    # shared_buffers ≈ 25 % du budget, effective_cache_size = budget total
+    # (buffers + cache page OS), work_mem modéré car le pool applicatif peut
+    # ouvrir jusqu'à 50 connexions (cf. hub/app/database.py), maintenance_work_mem
+    # pour vacuum/reindex. pg_stat_statements préchargé pour l'observabilité SQL
+    # (créer l'extension une fois : `make db-pgss-enable`).
+    command: postgres -c shared_buffers=256MB -c effective_cache_size=768MB -c work_mem=8MB -c maintenance_work_mem=128MB -c shared_preload_libraries=pg_stat_statements
     environment:
       TZ: UTC
       POSTGRES_USER: ${POSTGRES_USER:-hubadmin}
@@ -20,6 +27,9 @@ services:
       - hub-network
     mem_limit: 1g
     memswap_limit: 1g
+    # Mémoire partagée System V : le défaut Docker (64 Mo) bride les buffers
+    # internes de PostgreSQL (work_mem large, parallélisme) côté kernel.
+    shm_size: 256m
     logging:
       driver: json-file
       options:
