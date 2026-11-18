@@ -47,7 +47,11 @@ service_account_app_access = Table(
     'service_account_app_access',
     Base.metadata,
     Column('service_account_id', Integer, ForeignKey('service_accounts.id', ondelete='CASCADE')),
-    Column('app_id', Integer, ForeignKey('applications.id', ondelete='CASCADE'))
+    Column('app_id', Integer, ForeignKey('applications.id', ondelete='CASCADE')),
+    # Index requête la plus coûteuse du Hub (pg_stat_statements 18/11/2026 :
+    # jointure par IN-list de service_account_id, Seq Scan 1985 lignes × 86 appels/h).
+    Index('ix_service_account_app_access_service_account_id', 'service_account_id'),
+    Index('ix_service_account_app_access_app_id', 'app_id'),
 )
 
 # Table d'association User <-> Profile (multi-profils)
@@ -398,7 +402,7 @@ class VpnPeer(Base):
 class Application(Base):
     __tablename__ = "applications"
     
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(Integer, primary_key=True)
     name = Column(String(100), nullable=False)
     slug = Column(String(50), unique=True, index=True, nullable=False)
     version = Column(String(50), nullable=True)  # Version de l'app, capturée à l'enregistrement
