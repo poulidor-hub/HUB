@@ -5,6 +5,27 @@
 
 ---
 
+## [3.97.3] - 18 novembre 2026
+
+### 🆕 Nouvelle version
+
+> ⚠️ Cette entrée a été créée automatiquement par `sync_version.py`.
+> Veuillez compléter les détails des modifications.
+
+| Fonctionnalité | Description |
+|----------------|-------------|
+| **À compléter** | Décrivez les changements de cette version |
+
+---
+
+## [3.97.3] - 18 novembre 2026
+
+### ⚡ Garde-fou migrations — simulation du découpage runner en test
+
+- **test(migrations)** : `hub/tests/test_migrations_split_guard.py` — rejoue l'algorithme **exact** du runner (`sql.split(';')` puis `_strip_sql_comments`, importé de `app.database`) sur tous les fichiers `hub/migrations/*.sql` et échoue si un fragment post-strip ne commence pas par un mot-clé SQL (allowlist calibrée empiriquement sur les 69 fichiers du parc : CREATE/ALTER/COMMENT/INSERT/UPDATE/DROP + superset). Il aurait **attrapé le bug 3.97.1 avant le push** (hub-api crash-loop sur un `;` dans un commentaire SQL).
+- **épinglage de l'incident** : le contenu fautif historique 3.97.1 est embarqué dans le test — le détecteur DOIT signaler le fragment orphelin « le … » (garde anti-affaiblissement du détecteur) et la version corrigée doit passer proprement.
+- **Note honnête** : une erreur de setup intermittente existe par ailleurs dans la suite xdist — reproduite sur `main` **sans** cette modification (1 run sur 2 en error, tous les fichiers verts en solo) ; préexistante, hors périmètre de ce changement, à investiguer séparément.
+
 ## [3.97.2] - 18 novembre 2026
 
 ### ⚡ Hotfix migration 070 — points-virgules interdits dans les commentaires SQL
