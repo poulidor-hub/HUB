@@ -78,7 +78,16 @@ make up-dev       # démarrer en mode dev (reload, logs verbeux)
 make logs         # suivre les logs
 make test         # suite de tests (parallèle, SQLite en mémoire)
 make test-docker  # tests sur stack compose isolée (-p pouly-test)
+make db-pgss-enable # créer l'extension pg_stat_statements (1 fois, idempotent)
 ```
+
+### Observabilité PostgreSQL (`pg_stat_statements`)
+
+La bibliothèque est préchargée par le service `db` (`shared_preload_libraries`,
+profil mémoire du compose). L'extension doit être créée une fois par base :
+`make db-pgss-enable` — à exécuter une fois sur les déploiements existants après
+mise à jour (aucun dossier initdb n'est monté : il ne tourne que sur volume neuf).
+Analyse : `SELECT query, calls, total_exec_time FROM pg_stat_statements ORDER BY total_exec_time DESC LIMIT 10;`
 
 > Le Hub doit être démarré **avant** les applications. Prérequis : Docker ≥ 24, 2 Go RAM
 > (détail dans `docs/GUIDE_INSTALLATION.md`).
