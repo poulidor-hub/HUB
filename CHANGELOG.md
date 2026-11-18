@@ -5,15 +5,34 @@
 
 ---
 
+## [3.96.0] - 18 novembre 2026
 
-## [3.95.2] - 17 novembre 2026
+### 📣 Pour les utilisateurs
+- **Ajouté** : la fiche d'une application est réorganisée en **grille 2 colonnes** avec un **mini-cockpit dans l'en-tête** : CPU, RAM, débit réseau ↓/↑ et latence du conteneur, avec micro-courbes, rafraîchis toutes les 10 secondes tant que la fiche est ouverte.
+- **Ajouté** : les **réglages sont éditables directement dans la fiche** (nom, description, catégorie, groupe, dépôt Git, URLs, options) — fini la fenêtre modale d'édition. « Ajouter » ouvre la même fiche en mode création (slug auto-généré, ports alloués automatiquement).
+- **Amélioré** : zones à contenu long (historique des déploiements, changelog, logs) plafonnées avec ascenseur — tout tient sur une même vue.
 
-### ⚡ Fiche app — sections à contenu long plafonnées (ascenseur natif)
+### ⚡ Fiche app v6 — mini-cockpit, réglages inline, mode création
 
-- **fix(apps)** : l'**historique des déploiements** et le **changelog** de la fiche app sont désormais plafonnés en hauteur (`max-height: 20rem` + ascenseur natif + `overscroll-behavior: contain` — classe `.appdetail-scroll`, même pattern que `.routing-app-list`). Les applications à historique très long ne débordent plus de la page ; pas de pagination (les entrées sont déjà plafonnées à 10 côté API, le changelog reste consultable en continu).
-- Les `<pre>` de logs (déploiements et section Logs) étaient déjà plafonnés — inchangés.
-- **tests** : smoke front étendu (wrapper `.appdetail-scroll` sur l'historique, classe sur le corps du changelog, règle CSS présente).
-- **docs(changelog)** : réparation de la structure du fichier — l'entrée 3.95.1 avait été insérée au-dessus de l'en-tête (header déplacé au milieu du fichier).
+- **feat(apps)** : en-tête de fiche avec **mini-cockpit conteneur** (CPU %, RAM Mo/limite, débit réseau ↓/↑, latence) — sparklines SVG statiques (30 points), deltas réseau calculés côté front entre deux ticks de `docker-info`, polling 10 s uniquement fiche ouverte, dégradation « — » si conteneur arrêté.
+- **feat(apps)** : **réglages inline** — le formulaire de la modale d'édition migre dans la carte « Réglages » de la fiche (mêmes IDs et flux : génération slug, préflight Git certificat, save PATCH/POST + auto-deploy, picker d'icônes) ; `appFormModal` supprimée.
+- **feat(apps)** : **mode création** via la même fiche (`#admin/apps/new`, bouton « Ajouter ») — champs vides, slug généré à la frappe, sections Mises à jour/Changelog/Logs/Docker masquées jusqu'à enregistrement.
+- **refactor(apps)** : tableau — le bouton ✏️ disparaît (l'édition vit dans la fiche) ; badges d'état allégés (latence/health remontés dans le mini-cockpit) ; fiche réduite pending/rejected inchangée.
+- **fix(apps)** (3.95.2) : historique des déploiements + changelog plafonnés (ascenseur natif) — inclus dans cette release.
+- **tests** : docker-info — `net_rx_bytes`/`net_tx_bytes` (3 tests : somme multi-interfaces, absences, valeurs invalides) ; smoke front étendu (deltas réseau o/s→Ko/s→Mo/s, buffer FIFO 30 points, sparklines, réglages inline, routing création, unicité des IDs) ; vérifié en sandbox Docker : création → réglages (PATCH) → docker-info → suppression, 5/5 tests conteneur, 0 erreur runtime.
+
+---
+
+## [3.96.0] - 18 novembre 2026
+
+### 🆕 Nouvelle version
+
+> ⚠️ Cette entrée a été créée automatiquement par `sync_version.py`.
+> Veuillez compléter les détails des modifications.
+
+| Fonctionnalité | Description |
+|----------------|-------------|
+| **À compléter** | Décrivez les changements de cette version |
 
 ---
 
