@@ -3892,6 +3892,29 @@ async def reconnect_docker(
 
 
 @router.get("/{slug}/docker-info", response_model=DockerInfoResponse)
+def _network_bytes_from_stats(raw_stats: dict) -> tuple:
+    """Somme des compteurs réseau cumulés du conteneur (toutes interfaces).
+
+    Retourne (rx_bytes, tx_bytes). Valeurs manquantes/non numériques ignorées
+    (compte à 0) — les débits ↓/↑ sont calculés côté fiche par delta entre ticks.
+    """
+    networks = raw_stats.get('networks', {}) if isinstance(raw_stats, dict) else {}
+    rx_total = 0
+    tx_total = 0
+    for net_config in networks.values() if isinstance(networks, dict) else []:
+        if not isinstance(net_config, dict):
+            continue
+        try:
+            rx_total += int(net_config.get('rx_bytes', 0))
+        except (TypeError, ValueError):
+            pass
+        try:
+            tx_total += int(net_config.get('tx_bytes', 0))
+        except (TypeError, ValueError):
+            pass
+    return rx_total, tx_total
+
+
 async def get_app_docker_info(
     slug: str,
     db: AsyncSession = Depends(get_db),
@@ -4152,12 +4175,19 @@ async def get_app_docker_info(
                         uptime_seconds = int((now - start_time).total_seconds())
                 except Exception:
                     pass
-                
+
+                # Réseau cumulé (toutes interfaces)
+                net_rx_bytes, net_tx_bytes = _network_bytes_from_stats(raw_stats)
+
                 response.container_stats = {
                     "cpu_percent": cpu_percent,
                     "memory_usage_mb": round(mem_usage / (1024 * 1024), 1),
                     "memory_limit_mb": round(mem_limit / (1024 * 1024), 1),
-                    "uptime_seconds": uptime_seconds
+                    "uptime_seconds": uptime_seconds,
+                    # Compteurs réseau cumulés (mini-cockpit fiche : débit = delta
+                    # entre deux ticks consécutifs côté front)
+                    "net_rx_bytes": net_rx_bytes,
+                    "net_tx_bytes": net_tx_bytes,
                 }
             except asyncio.TimeoutError:
                 logger.debug(f"Timeout stats pour {matching_container.name}")
