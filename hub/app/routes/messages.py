@@ -1206,6 +1206,9 @@ async def mark_all_read(
 ):
     """Marquer tous les messages de l'utilisateur comme lus."""
     now = utcnow()
+    # Valeur locale : après un rollback, les objets ORM sont expirés — tout
+    # accès (ex. logging) déclencherait un lazy load hors greenlet → crash.
+    user_id = current_user.id
 
     # Messages visibles non encore lus
     read_subq = (
@@ -1237,7 +1240,22 @@ async def mark_all_read(
     msgs = list(result.scalars().all())
 
     marked = await _apply_read_receipts(db, msgs, current_user.id, now)
-    await db.commit()
+    try:
+        await db.commit()
+    except IntegrityError:
+        # Course concurrente (incident 18/11 03:04) : cf. mark_message_read —
+        # un receipt (message, user) a été commité par une requête simultanée
+        # (auto-delivery du GET /me d'un autre onglet, refresh, POST /read)
+        # entre le SELECT de _apply_read_receipts et ce commit. Même
+        # remédiation que le GET /me (incident 10/11 02:56) : rollback
+        # best-effort — les lectures concurrentes sont de toute façon
+        # effectives, un read-all suivant refera proprement le reste.
+        await db.rollback()
+        logger.info(
+            "Course absorbée sur POST /read-all (user %s) : receipt(s) déjà "
+            "commité(s) par une requête concurrente.", user_id,
+        )
+        return {"marked_read": 0}
     return {"marked_read": marked}
 
 
@@ -1308,6 +1326,10 @@ async def mark_message_read(
     if msg.target_type == "user" and msg.target_user_id != current_user.id:
         raise HTTPException(status_code=403, detail="Ce message ne vous est pas destiné")
 
+    # Valeur locale : après un rollback, les objets ORM sont expirés — tout
+    # accès (ex. logging) déclencherait un lazy load hors greenlet → crash.
+    user_id = current_user.id
+
     now = utcnow()
     existing = await db.execute(
         select(MessageReadReceipt).where(and_(
@@ -1325,7 +1347,23 @@ async def mark_message_read(
         group_msgs = [msg]
 
     marked = await _apply_read_receipts(db, group_msgs, current_user.id, now)
-    await db.commit()
+    try:
+        await db.commit()
+    except IntegrityError:
+        # Course concurrente (incident 18/11 03:04) : un receipt (message,
+        # user) du groupe a été créé par une requête simultanée (auto-delivery
+        # du GET /me d'un autre onglet, refresh, POST /read sur une autre
+        # occurrence) entre le SELECT de _apply_read_receipts et ce commit →
+        # UniqueViolation sur uq_message_read_receipts_message_user. Même
+        # remédiation que le GET /me (incident 10/11 02:56) : la lecture est
+        # de toute façon effective côté concurrent → rollback best-effort et
+        # réponse « déjà lu » ; le prochain GET refera proprement.
+        await db.rollback()
+        logger.info(
+            "Course absorbée sur POST /%s/read (user %s) : receipt déjà "
+            "commité par une requête concurrente.", message_id, user_id,
+        )
+        return {"status": "already_read", "message_id": message_id, "marked_read": 0}
 
     if was_read and marked == 0:
         return {"status": "already_read", "message_id": message_id, "marked_read": 0}
