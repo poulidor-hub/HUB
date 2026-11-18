@@ -5,6 +5,16 @@
 
 ---
 
+## [3.97.2] - 18 novembre 2026
+
+### ⚡ Hotfix migration 070 — points-virgules interdits dans les commentaires SQL
+
+- **fix(migrations)** : la 3.97.1 n'a **pas démarré** — `apply_migrations()` découpe chaque fichier sur `;` **avant** de retirer les commentaires (`sql.split(';')` puis strip), donc un `;` à l'intérieur d'un commentaire SQL produit un fragment orphelin exécuté comme du SQL (`syntax error at or near "le"`) → `MigrationError` fail-fast au boot de hub-api. La migration 070 est réécrite sans aucun point-virgule dans ses commentaires ; un avertissement explicite figure en tête du fichier.
+- **Leçon outillée à retenir** : tout nouveau fichier dans `hub/migrations/` doit être vérifié avec la simulation du découpage runner (split `;` → strip commentaires → fragments non-SQL = 0).
+- Non concerné par le défaut : les installations vierges (create_all + IF NOT EXISTS) et les bases où la migration était déjà passée.
+
+---
+
 ## [3.97.1] - 18 novembre 2026
 
 ### 🆕 Nouvelle version
