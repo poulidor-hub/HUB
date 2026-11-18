@@ -292,6 +292,9 @@ function appDetailDeployBadgeHtml(status) {
 async function openAppDetail(slugArg) {
     const slug = String(slugArg || '').trim();
     if (!slug) return;
+    // Sentinelle de création (v6) : '__new__' (interne) et 'new' (hash
+    // #admin/apps/new, toolbar « Ajouter ») → fiche en mode création.
+    if (slug === 'new' || slug === '__new__') return openAppDetailCreate();
     const pane = document.getElementById('appDetailPane');
     if (!pane) { console.warn('[admin-app-detail] #appDetailPane introuvable'); return; }
 

@@ -471,7 +471,12 @@ function routeAdminFromHash() {
     openHubTool(route.key, route.slug ? { keepHash: true } : undefined);
     if (route.slug && typeof openAppDetail === 'function') {
         // La fiche re-positionne le hash #admin/apps/<slug> (no-op si déjà posé).
-        openAppDetail(route.slug);
+        // 'new' est réservé au mode création (fiche v6 — openAppDetailCreate).
+        if (route.slug === 'new' && typeof openAppDetailCreate === 'function') {
+            openAppDetailCreate();
+        } else {
+            openAppDetail(route.slug);
+        }
     }
 }
 
@@ -488,7 +493,12 @@ function onAdminHashChange() {
             if (route.slug && typeof openAppDetail === 'function') {
                 // Ouvre/reprend la fiche (no-op si déjà affichée sur ce slug) ;
                 // couvre back/forward et le retour post-rechargement.
-                openAppDetail(route.slug);
+                // 'new' = mode création (fiche v6 — openAppDetailCreate).
+                if (route.slug === 'new' && typeof openAppDetailCreate === 'function') {
+                    openAppDetailCreate();
+                } else {
+                    openAppDetail(route.slug);
+                }
             } else if (typeof hideAppDetailIfOpen === 'function') {
                 // #admin/apps sans slug : liste (back depuis la fiche).
                 hideAppDetailIfOpen();

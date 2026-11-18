@@ -268,4 +268,14 @@ assert.ok(formSource.includes('function resetAppDetailForm('), 'action Réinitia
 assert.ok(detailSource.includes('function openAppDetailCreate('), 'mode création (openAppDetailCreate)');
 assert.ok(indexSource.includes('id="appDetailCreateNote"'), 'encart « Nouvelle application » dans le squelette');
 
+// ===== Mode création via la fiche (#admin/apps/new) =====
+
+// Routage : admin-hub.js route 'new' vers la fiche création, la toolbar
+// « Ajouter » appelle openAppDetailCreate, openAppDetail délègue.
+const hubSource = readFileSync(join(dirname(modulePath), 'admin-hub.js'), 'utf8');
+assert.ok(hubSource.includes("route.slug === 'new'"), "routing hash #admin/apps/new → openAppDetailCreate (routeAdminFromHash/onAdminHashChange)");
+assert.ok(hubSource.includes('typeof openAppDetailCreate'), 'garde openAppDetailCreate dans le routing');
+assert.ok(detailSource.includes("slug === 'new' || slug === '__new__'"), "openAppDetail délègue 'new'/'__new__' vers openAppDetailCreate");
+assert.ok(indexSource.includes('data-action="openAppDetailCreate"'), 'toolbar « Ajouter » → fiche création');
+
 console.log('OK — test_app_detail_render : toutes les assertions passent.');
