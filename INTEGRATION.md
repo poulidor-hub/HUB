@@ -1,10 +1,6 @@
 # Guide d'Intégration - Hub d'Authentification
 
-<<<<<<< HEAD
 > **Version** : 3.96.0
-=======
-> **Version** : 3.96.0
->>>>>>> origin/feat/fiche-v6-cockpit
 > **Dernière mise à jour** : 18 novembre 2026
 > **Auteur** : Équipe Hub
 
