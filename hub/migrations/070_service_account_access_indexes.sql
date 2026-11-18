@@ -5,10 +5,15 @@
 -- service_account_app_access par service_account_id en IN-list — et la table
 -- n'avait AUCUN index : Seq Scan complet à chaque appel (EXPLAIN prouvé).
 --
+-- ATTENTION runner : apply_migrations() découpe ce fichier sur les points-virgules
+-- SANS respecter les lignes de commentaire — interdiction absolue de tout
+-- point-virgule dans les commentaires SQL de ce répertoire (incident 3.97.1,
+-- syntax error at "le").
+--
 -- Idempotent (CREATE INDEX IF NOT EXISTS) et compatible SQLite + PostgreSQL :
--- le runner apply_migrations() s'exécute sur les deux dialectes. Les index sont
--- aussi déclarés dans models.py (Table service_account_app_access) pour que
--- create_all les pose sur toute installation vierge.
+-- le runner s'exécute sur les deux dialectes. Les index sont aussi déclarés dans
+-- models.py (Table service_account_app_access) pour que create_all les pose sur
+-- toute installation vierge.
 
 CREATE INDEX IF NOT EXISTS ix_service_account_app_access_service_account_id
     ON service_account_app_access (service_account_id);
@@ -18,6 +23,6 @@ CREATE INDEX IF NOT EXISTS ix_service_account_app_access_app_id
 
 -- ix_applications_id dupliquait exactement la clé primaire applications_pkey
 -- (héritage d'un Column(index=True) sur une PK). Le planner bascule sur la PK
--- (même btree) ; le index=True correspondant est retiré du modèle en 3.97.1
--- pour que create_all ne le recrée pas sur les installations vierges.
+-- (même btree). Le index=True correspondant est retiré du modèle en 3.97.1
+-- pour que create_all ne recrée pas l'index sur les installations vierges.
 DROP INDEX IF EXISTS ix_applications_id;
