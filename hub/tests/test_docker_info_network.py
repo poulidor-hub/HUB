@@ -36,3 +36,20 @@ def test_partial_or_invalid_values_ignored():
     rx, tx = _network_bytes_from_stats(raw)
     assert rx == 100
     assert tx == 42
+
+
+def test_docker_info_route_is_attached_to_get_app_docker_info():
+    """Non-régression (18/11/2026) : le helper inséré entre le décorateur et la
+    fonction avait détaché la route GET /apps/{slug}/docker-info → 422 sur
+    l'endpoint (mini-cockpit + section Docker morts en prod)."""
+    from app.main import app
+
+    spec = app.openapi()
+    paths = [p for p in spec.get('paths', {}) if p.endswith('/docker-info')]
+    assert paths, "la route GET /apps/{slug}/docker-info doit exister"
+    operation_ids = [spec['paths'][p].get('get', {}).get('operationId', '') for p in paths]
+    assert all('get_app_docker_info' in op_id for op_id in operation_ids), \
+        f"la route docker-info doit pointer sur get_app_docker_info, obtenu : {operation_ids}"
+    assert not any('_network_bytes_from_stats' in (op.get('operationId') or '')
+                   for ops in spec.get('paths', {}).values() for op in ops.values()), \
+        "le helper réseau ne doit jamais être monté comme route"

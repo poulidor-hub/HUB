@@ -3891,7 +3891,6 @@ async def reconnect_docker(
         }
 
 
-@router.get("/{slug}/docker-info", response_model=DockerInfoResponse)
 def _network_bytes_from_stats(raw_stats: dict) -> tuple:
     """Somme des compteurs réseau cumulés du conteneur (toutes interfaces).
 
@@ -3915,6 +3914,7 @@ def _network_bytes_from_stats(raw_stats: dict) -> tuple:
     return rx_total, tx_total
 
 
+@router.get("/{slug}/docker-info", response_model=DockerInfoResponse)
 async def get_app_docker_info(
     slug: str,
     db: AsyncSession = Depends(get_db),
