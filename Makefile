@@ -21,6 +21,14 @@ export APPS_HOST_PATH := $(abspath $(HUB_BASE_DIR)/../APPS)
 endif
 endif
 
+# ── POSTGRES_USER / POSTGRES_DB (fallback automatique) ───────────────────────
+# Même logique que APPS_HOST_PATH : source de vérité .env (écrit par install.sh),
+# sinon les défauts du compose (service db). Utilisé par `make db-pgss-enable`.
+POSTGRES_USER_FROM_ENV := $(shell sed -n 's/^POSTGRES_USER=//p' .env 2>/dev/null | head -n1)
+POSTGRES_DB_FROM_ENV   := $(shell sed -n 's/^POSTGRES_DB=//p' .env 2>/dev/null | head -n1)
+PG_USER := $(or $(POSTGRES_USER_FROM_ENV),hubadmin)
+PG_DB   := $(or $(POSTGRES_DB_FROM_ENV),hub_auth)
+
 .PHONY: up-prod up-dev down logs ps build
 
 build:
@@ -78,3 +86,16 @@ test-docker: ## Tests dans la stack de test isolée (pouly-test, tests copiés v
 	$(COMPOSE_TEST) exec -T hub-api mkdir -p /code/scripts
 	$(COMPOSE_TEST) cp scripts/purge_orphan_backups.py hub-api:/code/scripts/purge_orphan_backups.py
 	$(COMPOSE_TEST) exec -T hub-api sh -c "cd /code && python -m pytest tests -n $(XDIST_WORKERS_DOCKER)"
+
+# ── OBSERVABILITÉ DB ─────────────────────────────────────────────────────────
+# pg_stat_statements : la bibliothèque est préchargée par le command: du service
+# db (shared_preload_libraries, cf. docker-compose.yml). L'extension doit être
+# créée une fois par base — aucun dossier docker-entrypoint-initdb.d n'est
+# monté (l'initdb ne tourne que sur un volume neuf), donc les déploiements
+# existants utilisent cette cible idempotente. NB : nom du SERVICE compose = db
+# (container_name hub-db) — `docker compose exec` prend le nom de service.
+
+.PHONY: db-pgss-enable
+
+db-pgss-enable: ## Créer l'extension pg_stat_statements sur la base du Hub (1 fois, idempotent)
+	$(COMPOSE) exec -T db psql -U $(PG_USER) -d $(PG_DB) -c "CREATE EXTENSION IF NOT EXISTS pg_stat_statements;"
