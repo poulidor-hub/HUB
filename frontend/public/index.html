@@ -1120,7 +1120,173 @@
                         <!-- Table loaded dynamically -->
                     </div>
                     </div><!-- /appsListWrap -->
-                    <div id="appDetailPane" class="d-none"><!-- Fiche application (admin-app-detail.js) --></div>
+                    <!-- Fiche application v6 (maquette « fiche-grid-v6 ») :
+                         SQUELETTE STATIQUE — en-tête (tuile, identité,
+                         mini-cockpit 4 chips, Ouvrir), rangée de badges
+                         d'état, grille flex 2 colonnes indépendantes
+                         (.fgrid/.fcol, 1 colonne < 900 px) dont les zones
+                         identifiées sont remplies par admin-app-detail.js.
+                         Aucun innerHTML global : les listeners posés au
+                         chargement (init.js) survivent aux ouvertures. -->
+                    <div id="appDetailPane" class="d-none">
+                        <!-- Retour liste -->
+                        <div class="mb-3">
+                            <button class="btn btn-sm btn-outline-secondary" data-action="closeAppDetail" title="Retour à la liste des applications">
+                                <svg class="hub-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="/vendor/design-system/lucide.svg#icon-arrow-left"></use></svg>
+                                <span class="ms-1">Applications</span>
+                            </button>
+                        </div>
+
+                        <!-- En-tête : identité + mini-cockpit + actions -->
+                        <div class="card border-0 shadow-sm mb-3" id="appDetailHeadCard">
+                            <div class="card-body py-3">
+                                <div class="d-flex align-items-center gap-3 flex-wrap">
+                                    <span id="appDetailTile" class="rounded d-inline-flex align-items-center justify-content-center flex-shrink-0" style="width:44px;height:44px;background-color:#0d6efd;color:#fff">
+                                        <i id="appDetailTileIcon" class="bi bi-app" style="font-size:1.25rem"></i>
+                                    </span>
+                                    <div class="flex-grow-1" style="min-width:180px">
+                                        <h5 class="mb-0 d-flex align-items-center gap-2 flex-wrap">
+                                            <span id="appDetailName">—</span>
+                                            <span id="appDetailNameBadges" class="d-inline-flex gap-1"></span>
+                                        </h5>
+                                        <div class="text-muted small" id="appDetailSub"></div>
+                                    </div>
+                                    <!-- Mini-cockpit conteneur (chips remplies
+                                         par renderAppDetailMiniCockpit, tick 10 s) -->
+                                    <div id="appDetailMiniMonitor" class="mini-monitor d-none" aria-label="Ressources du conteneur">
+                                        <div class="mini" id="appDetailChipCpu">
+                                            <div class="lbl">CPU</div>
+                                            <div class="val" id="appDetailCpuVal">—</div>
+                                            <svg class="spark" viewBox="0 0 100 22" preserveAspectRatio="none" aria-hidden="true"><polyline id="appDetailCpuSpark" fill="none" stroke="#0d6efd" stroke-width="1.6" points=""/></svg>
+                                        </div>
+                                        <div class="mini" id="appDetailChipRam">
+                                            <div class="lbl">RAM</div>
+                                            <div class="val" id="appDetailRamVal">—</div>
+                                            <div class="sub" id="appDetailRamSub"></div>
+                                            <svg class="spark" viewBox="0 0 100 22" preserveAspectRatio="none" aria-hidden="true"><polyline id="appDetailRamSpark" fill="none" stroke="#198754" stroke-width="1.6" points=""/></svg>
+                                        </div>
+                                        <div class="mini" id="appDetailChipNet">
+                                            <div class="lbl">Réseau ↓ / ↑</div>
+                                            <div class="val" id="appDetailNetVal">—</div>
+                                            <svg class="spark" viewBox="0 0 100 22" preserveAspectRatio="none" aria-hidden="true"><polyline id="appDetailNetSpark" fill="none" stroke="#fd7e14" stroke-width="1.6" points=""/></svg>
+                                        </div>
+                                        <div class="mini" id="appDetailChipLatency">
+                                            <div class="lbl">Latence</div>
+                                            <div class="val" id="appDetailLatencyVal">—</div>
+                                            <div class="sub" id="appDetailLatencySub"></div>
+                                            <svg class="spark" viewBox="0 0 100 22" preserveAspectRatio="none" aria-hidden="true"><polyline id="appDetailLatencySpark" fill="none" stroke="#198754" stroke-width="1.6" points=""/></svg>
+                                        </div>
+                                    </div>
+                                    <!-- Actions (Ouvrir — rempli par la fiche) -->
+                                    <div id="appDetailHeaderActions" class="d-flex gap-2 ms-auto"></div>
+                                </div>
+                                <!-- Rangée badges d'état (allégée v6) / encart création -->
+                                <div class="d-flex flex-wrap gap-1 align-items-center mt-3" id="appDetailStatusRow">
+                                    <div id="appDetailStatusBadges" class="d-flex flex-wrap gap-1 align-items-center"></div>
+                                    <div id="appDetailCreateNote" class="alert alert-info py-1 px-2 mb-0 small d-none">
+                                        <i class="bi bi-info-circle me-1"></i>Nouvelle application — non encore enregistrée
+                                    </div>
+                                    <span id="appDetailUptimeNote" class="ms-auto text-muted" style="font-size:10.5px"></span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Grille 2 colonnes indépendantes (flex, gap 14px,
+                             1 colonne < 900 px via style.css) -->
+                        <div class="fgrid mb-3" id="appDetailGrid">
+                            <!-- Colonne gauche -->
+                            <div class="fcol" id="appDetailColLeft">
+                                <!-- Logs -->
+                                <div class="card border-0 shadow-sm" id="appDetailLogsCard">
+                                    <div class="card-header py-2 d-flex align-items-center flex-wrap gap-2">
+                                        <strong class="d-flex align-items-center gap-2">
+                                            <svg class="hub-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="/vendor/design-system/lucide.svg#icon-terminal"></use></svg>
+                                            Logs
+                                        </strong>
+                                        <div class="ms-auto d-flex align-items-center gap-2">
+                                            <select class="form-select form-select-sm w-auto" id="appDetailLogService" data-action="loadAppDetailLogs" aria-label="Service des logs">
+                                                <option value="api">API</option>
+                                                <option value="frontend">Frontend</option>
+                                                <option value="postgres">PostgreSQL</option>
+                                            </select>
+                                            <select class="form-select form-select-sm w-auto" id="appDetailLogTail" data-action="loadAppDetailLogs" aria-label="Nombre de lignes">
+                                                <option value="50">50 lignes</option>
+                                                <option value="150" selected>150 lignes</option>
+                                                <option value="500">500 lignes</option>
+                                            </select>
+                                            <button class="btn btn-sm btn-secondary" data-action="loadAppDetailLogs" title="Recharger les logs">
+                                                <svg class="hub-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="/vendor/design-system/lucide.svg#icon-refresh-cw"></use></svg>
+                                                <span class="ms-1">Actualiser</span>
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <div class="card-body py-2">
+                                        <pre id="appDetailLogsPre" class="bg-light border rounded p-2 font-monospace" style="max-height:16rem;overflow:auto;font-size:.8rem;margin-bottom:0">Chargement…</pre>
+                                    </div>
+                                </div>
+                            </div><!-- /appDetailColLeft -->
+
+                            <!-- Colonne droite -->
+                            <div class="fcol" id="appDetailColRight">
+                                <!-- Mises à jour -->
+                                <div class="card border-0 shadow-sm">
+                                    <div class="card-header py-2 d-flex align-items-center">
+                                        <strong class="d-flex align-items-center gap-2">
+                                            <svg class="hub-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="/vendor/design-system/lucide.svg#icon-rocket"></use></svg>
+                                            Mises à jour
+                                        </strong>
+                                        <button class="btn btn-sm btn-outline-secondary ms-auto" data-action="refreshAppDetailDeployments" title="Rafraîchir le statut et l'historique de déploiement">
+                                            <svg class="hub-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="/vendor/design-system/lucide.svg#icon-refresh-cw"></use></svg>
+                                            <span class="ms-1">Actualiser</span>
+                                        </button>
+                                    </div>
+                                    <div class="card-body py-3 small">
+                                        <div id="appDetailDeployments"><span class="text-muted">Chargement…</span></div>
+                                    </div>
+                                </div>
+
+                                <!-- Changelog -->
+                                <div class="card border-0 shadow-sm">
+                                    <div class="card-header py-2 d-flex align-items-center">
+                                        <strong class="d-flex align-items-center gap-2">
+                                            <svg class="hub-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="/vendor/design-system/lucide.svg#icon-file-text"></use></svg>
+                                            Changelog
+                                        </strong>
+                                        <span class="ms-auto" id="appDetailChangelogLink"></span>
+                                    </div>
+                                    <div class="card-body py-3 small">
+                                        <div id="appDetailChangelogBody" class="appdetail-scroll"><span class="text-muted">Chargement…</span></div>
+                                        <div id="appDetailReleasesBody"></div>
+                                    </div>
+                                </div>
+
+                                <!-- Docker (collapse replié, résumé CPU/RAM/uptime) -->
+                                <div class="card border-0 shadow-sm">
+                                    <div class="card-header py-2">
+                                        <div class="d-flex align-items-center gap-2" role="button" tabindex="0" data-bs-toggle="collapse" data-bs-target="#appDetailDockerCollapse" aria-expanded="false" aria-controls="appDetailDockerCollapse" style="cursor:pointer">
+                                            <strong class="d-flex align-items-center gap-2">
+                                                <svg class="hub-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="/vendor/design-system/lucide.svg#icon-box"></use></svg>
+                                                Docker
+                                            </strong>
+                                            <span class="text-muted small" id="appDetailDockerSummary">chargement…</span>
+                                            <span class="ms-auto text-muted d-inline-flex align-items-center gap-1" style="font-size:11.5px">
+                                                <svg class="hub-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="/vendor/design-system/lucide.svg#icon-chevron-down"></use></svg>
+                                                déplier
+                                            </span>
+                                        </div>
+                                    </div>
+                                    <div class="collapse" id="appDetailDockerCollapse">
+                                        <div class="card-body py-3 small" id="appDetailDockerBody"><span class="text-muted">Chargement…</span></div>
+                                    </div>
+                                </div>
+                            </div><!-- /appDetailColRight -->
+                        </div><!-- /appDetailGrid -->
+
+                        <!-- Fiche réduite pending/rejected (workflow uniquement) :
+                             remplie par renderAppDetailApprovalBlock, le squelette
+                             ci-dessus n'est jamais détruit. -->
+                        <div id="appDetailReducedPane" class="d-none"></div>
+                    </div>
                 </div>
                 <!-- Dependencies Graph Tab -->
                 <div class="admin-tool-pane d-none" id="tabDependencies">

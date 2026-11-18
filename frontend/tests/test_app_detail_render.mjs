@@ -49,8 +49,10 @@ globalThis.parseUTCDate = isoString => {
 ;globalThis.__appDetailTest = {
     appDetailGithubUrl, formatAppDetailDateTime, formatAppDetailDuration,
     formatAppDetailUptime, renderAppDetailMarkdown,
-    appDetailDockerBadgeHtml, appDetailConnectivityBadgeHtml,
+    appDetailDockerBadgeHtml, appDetailHealthBadgeHtml,
     appDetailVersionBadgeHtml, appDetailUsersBadgeHtml, appDetailDeployBadgeHtml,
+    formatAppDetailFrNumber, formatAppDetailRate,
+    appDetailPushPoint, appDetailSparkPoints,
 };`
 );
 const t = globalThis.__appDetailTest;
@@ -138,12 +140,12 @@ assert.ok(t.appDetailDockerBadgeHtml({ docker: 'exited' }).includes('arrêté'))
 assert.ok(t.appDetailDockerBadgeHtml(null).includes('text-bg-light'));
 assert.ok(t.appDetailDockerBadgeHtml(null).includes('inconnu'));
 
-assert.ok(t.appDetailConnectivityBadgeHtml({ health: 'healthy', latency_ms: 42 }).includes('En ligne · 42 ms'));
-assert.ok(t.appDetailConnectivityBadgeHtml({ health: 'healthy', latency_ms: 42 }).includes('text-bg-success'));
-assert.ok(t.appDetailConnectivityBadgeHtml({ health: 'unhealthy' }).includes('text-bg-danger'));
-assert.ok(t.appDetailConnectivityBadgeHtml({ health: 'unhealthy' }).includes('Hors ligne'));
-assert.ok(t.appDetailConnectivityBadgeHtml(null).includes('Vérification'));
-assert.ok(t.appDetailConnectivityBadgeHtml(null).includes('text-bg-light'));
+assert.ok(t.appDetailHealthBadgeHtml({ health: 'healthy', latency_ms: 42 }).includes('Health : en ligne · 42 ms'));
+assert.ok(t.appDetailHealthBadgeHtml({ health: 'healthy', latency_ms: 42 }).includes('text-bg-success'));
+assert.ok(t.appDetailHealthBadgeHtml({ health: 'unhealthy' }).includes('text-bg-danger'));
+assert.ok(t.appDetailHealthBadgeHtml({ health: 'unhealthy' }).includes('hors ligne'));
+assert.equal(t.appDetailHealthBadgeHtml(null), '', 'sonde indisponible → pas de badge (rangée allégée v6)');
+assert.equal(t.appDetailHealthBadgeHtml({}), '', 'état sans health → pas de badge');
 
 // Version : à jour / update dispo / inconnue / XSS
 const upToDate = t.appDetailVersionBadgeHtml('1.4.2', { update_available: false, current_version: '1.4.2' });
@@ -175,11 +177,69 @@ assert.ok(t.appDetailDeployBadgeHtml(undefined).includes('inconnu'));
 // Zones scrollables (historique déploiements + changelog) : wrapper et règle CSS
 const detailSource = readFileSync(join(dirname(modulePath), 'admin-app-detail.js'), 'utf8');
 const styleSource = readFileSync(join(dirname(modulePath), '..', '..', 'css', 'style.css'), 'utf8');
+const indexSource = readFileSync(join(dirname(modulePath), '..', '..', 'index.html'), 'utf8');
 assert.ok(detailSource.includes("'<div class=\"text-muted mb-1\">Historique :</div><div class=\"appdetail-scroll\">' + items + '</div>'"),
     "l'historique des déploiements doit être enveloppé dans .appdetail-scroll");
-assert.ok(detailSource.includes('id="appDetailChangelogBody" class="appdetail-scroll"'),
-    "le corps du changelog doit porter .appdetail-scroll");
-assert.ok(styleSource.includes('.appdetail-scroll { max-height: 20rem; overflow-y: auto; overscroll-behavior: contain; }'),
-    "la règle .appdetail-scroll doit exister dans style.css");
+assert.ok(indexSource.includes('id="appDetailChangelogBody" class="appdetail-scroll"'),
+    "le corps du changelog (squelette statique v6) doit porter .appdetail-scroll dans index.html");
+assert.ok(styleSource.includes('.appdetail-scroll { max-height: 16rem; overflow-y: auto; overscroll-behavior: contain; }'),
+    "la règle .appdetail-scroll doit exister dans style.css (16rem — maquette v6)");
+
+// ===== Mini-cockpit v6 : formats fr, débit réseau, buffer 30, sparklines =====
+
+// Format fr (virgule décimale)
+assert.equal(t.formatAppDetailFrNumber(2.1, 1), '2,1');
+assert.equal(t.formatAppDetailFrNumber(86, 1), '86');
+assert.equal(t.formatAppDetailFrNumber(NaN, 1), '—', 'non fini → —');
+assert.equal(t.formatAppDetailFrNumber('pas-un-nombre', 1), '—');
+
+// Débit réseau : formatage auto o/s → Ko/s → Mo/s, garde non-fini
+assert.equal(t.formatAppDetailRate(null), '—', '1ᵉʳ tick (pas de delta) → —');
+assert.equal(t.formatAppDetailRate(undefined), '—');
+assert.equal(t.formatAppDetailRate(NaN), '—');
+assert.equal(t.formatAppDetailRate(-5), '—', 'compteurs qui reculent → —');
+assert.equal(t.formatAppDetailRate(340), '340 o/s');
+assert.equal(t.formatAppDetailRate(2048), '2 Ko/s');
+assert.equal(t.formatAppDetailRate(512 * 1024), '512 Ko/s');
+assert.equal(t.formatAppDetailRate(1.2 * 1048576), '1,2 Mo/s');
+assert.equal(t.formatAppDetailRate(15 * 1048576), '15 Mo/s');
+
+// Buffer 30 points max par métrique (FIFO)
+{
+    const buf = [];
+    for (let i = 0; i < 50; i++) t.appDetailPushPoint(buf, i);
+    assert.equal(buf.length, 30, 'buffer plafonné à 30 points');
+    assert.equal(buf[0], 20, 'les plus anciens points sont évacués (FIFO)');
+    assert.equal(buf[buf.length - 1], 49, 'le dernier point est conservé');
+    const before = [];
+    t.appDetailPushPoint(before, NaN);
+    t.appDetailPushPoint(before, 'x');
+    assert.equal(before.length, 0, 'valeurs non finies ignorées');
+}
+
+// Sparklines : points SVG normalisés (haut = valeur haute), gardes
+assert.equal(t.appDetailSparkPoints([]), '', 'aucun point → polyline vide');
+assert.equal(t.appDetailSparkPoints([5]), '', 'un seul point → polyline vide');
+assert.equal(t.appDetailSparkPoints([3, 3, 3]).split(' ').length, 3, 'palier constant → 3 points');
+{
+    const pts = t.appDetailSparkPoints([0, 10], 100, 22, 2);
+    assert.equal(pts, '0,20 100,2', 'montée : min en bas (y=20), max en haut (y=2)');
+    const many = t.appDetailSparkPoints(Array.from({ length: 30 }, (_, i) => i));
+    assert.equal(many.split(' ').length, 30, '30 points → 30 coordonnées');
+    for (const pair of many.split(' ')) {
+        const y = parseFloat(pair.split(',')[1]);
+        assert.ok(y >= 2 && y <= 20, 'y dans [pad, height-pad]');
+    }
+}
+
+// Squelette statique v6 : zones du mini-cockpit + grille présentes dans index.html
+assert.ok(indexSource.includes('id="appDetailMiniMonitor"'), 'mini-cockpit dans le squelette');
+assert.ok(indexSource.includes('id="appDetailCpuSpark"') && indexSource.includes('id="appDetailNetSpark"'),
+    'sparklines CPU/Réseau statiques dans le squelette');
+assert.ok(indexSource.includes('class="fgrid mb-3" id="appDetailGrid"'), 'grille 2 colonnes v6');
+assert.ok(indexSource.includes('id="appDetailColLeft"') && indexSource.includes('id="appDetailColRight"'),
+    'colonnes indépendantes gauche/droite');
+assert.ok(detailSource.includes('APP_DETAIL_COCKPIT_MAX_POINTS = 30'), 'buffer 30 points déclaré');
+assert.ok(detailSource.includes('APP_DETAIL_COCKPIT_POLL_MS = 10000'), 'poll cockpit 10 s déclaré');
 
 console.log('OK — test_app_detail_render : toutes les assertions passent.');

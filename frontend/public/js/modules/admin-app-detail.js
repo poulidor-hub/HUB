@@ -2,7 +2,7 @@
 // Copyright (C) 2026 POULIDOR Audit & Développement (Valérian Poulidor)
 
 /**
- * Hub Application - fiche application (vue outil « Applications », passe 2)
+ * Hub Application - fiche application v6 (maquette « fiche-grid-v6 »)
  *
  * Fiche détaillée d'une application, ouverte par clic sur une ligne du
  * tableau ou bouton « Fiche » (openAppDetail — câblé par admin-apps.js,
@@ -12,22 +12,36 @@
  * (#admin/apps/<slug>) géré par admin-hub.js : refresh / lien direct /
  * back-forward rouvrent la fiche ; #admin/apps remet la liste.
  *
- * sections (maquette « apps-fiche-v2 ») : en-tête (tuile, nom, badges,
- * Ouvrir/Éditer), rangée de badges d'état (Docker, connectivité, version,
- * utilisateurs), mises à jour (dernier déploiement + historique <details>,
- * poll 2 s tant qu'un déploiement est « running » ET la fiche est visible),
- * changelog (markdown minimal + 3 dernières releases), logs (service/tail,
- * zéro polling), Docker (collapse replié + modale « Détails complets »).
- * Cas pending/rejected : fiche réduite (workflow d'approbation uniquement).
+ * v6 (grille 2 colonnes) : le SQUELETTE de la fiche est statique dans
+ * index.html (#appDetailPane) — en-tête (tuile, nom + badges, slug/URL,
+ * mini-cockpit, Ouvrir), rangée de badges d'état, grille flex 2 colonnes
+ * indépendantes (.fgrid/.fcol) dont les zones identifiées sont remplies par
+ * ce module. Aucun innerHTML global : les listeners posés au DOMContentLoaded
+ * (init.js) survivent aux ouvertures/fermetures de la fiche.
  *
- * Aucune animation — charte perf du parc. Boutons SOLID Bootstrap.
- * Tout contenu dynamique est échappé (escapeHtml/escapeAttr) ; les logs sont
- * injectés via textContent (aucune passe HTML).
+ * Mini-cockpit de l'en-tête : 4 chips (CPU %, RAM Mo, Réseau ↓/↑, Latence
+ * ms) avec micro-sparklines SVG — buffer de 30 points max par métrique,
+ * redessinées à chaque tick, STATIQUES (aucune animation — charte perf).
+ * Source unique : GET /apps/{slug}/docker-info (container_stats : cpu_percent,
+ * memory_*, uptime_seconds + compteurs réseau CUMULÉS net_rx_bytes /
+ * net_tx_bytes — le débit ↓/↑ est calculé ici par delta entre deux ticks
+ * rapporté aux secondes écoulées ; garde division par zéro au 1ᵉʳ tick).
+ * Polling 10 s UNIQUEMENT tant que la fiche est visible (start/stop aux
+ * ouvertures/retours, même mécanique que le poll « déploiement en cours »).
+ * Conteneur arrêté/injoignable → chips en état « — » muted (jamais de
+ * popup). Latence : runtimeStates (sonde /apps/status + SSE), dernier état
+ * connu sinon « — ».
+ *
+ * Cas pending/rejected : fiche réduite (workflow d'approbation uniquement),
+ * rendue dans #appDetailReducedPane — le squelette n'est jamais détruit.
+ *
+ * Boutons SOLID Bootstrap. Tout contenu dynamique est échappé
+ * (escapeHtml/escapeAttr) ; les logs sont injectés via textContent.
  */
 
 // ===== État de la fiche =====
 
-// Slug affiché, ou null (fiche fermée / liste affichée).
+// Slug affiché, '__new__' (mode création) ou null (fiche fermée / liste).
 let _appDetailSlug = null;
 // Objet app affiché (cache allApps en priorité, sinon fetch /apps/all).
 let _appDetailApp = null;
@@ -35,13 +49,31 @@ let _appDetailApp = null;
 // par la section Mises à jour ; stop général via stopAppDetailPolling().
 let _appDetailPollTimer = null;
 let _appDetailPollSlug = null;
+// Timer du poll mini-cockpit (10 s), null si aucun — démarré à l'ouverture
+// d'une fiche active, stoppé à chaque fermeture/retour liste.
+let _appDetailCockpitTimer = null;
+let _appDetailCockpitSlug = null;
 // Garde : le test de connectivité de secours ne part qu'une fois par fiche.
 let _appDetailStatusFetchStarted = false;
 // Séquence des fetchs de logs : la dernière demande gagne (les réponses
 // périmées — service/tail changés entre-temps — sont jetées).
 let _appDetailLogFetchSeq = 0;
 
-// ===== Helpers purs (formats, badges) =====
+// ===== État du mini-cockpit =====
+
+// Buffer 30 points max par métrique (même principe que le cockpit système) :
+// l'axe X est réparti uniformément, l'axe Y normalisé min/max du buffer.
+const APP_DETAIL_COCKPIT_MAX_POINTS = 30;
+const APP_DETAIL_COCKPIT_POLL_MS = 10000;
+let _cockpitPoints = { cpu: [], ram: [], net: [], latency: [] };
+// Dernier relevé exploitable (valeurs affichées des chips CPU/RAM) : null si
+// le conteneur est arrêté/injoignable ou avant le 1ᵉʳ tick utile.
+let _cockpitLast = null;
+// Dernier échantillon réseau brut { slug, rx, tx, at } : sert de base au
+// delta du tick suivant. Null au 1ᵉʳ tick → pas de débit affiché (« — »).
+let _cockpitPrevNet = null;
+
+// ===== Helpers purs (formats, badges, sparklines) =====
 
 /**
  * Convertit une URL de dépôt git en URL GitHub canonique (sans .git),
@@ -93,6 +125,66 @@ function formatAppDetailUptime(seconds) {
     return Math.floor(sec / 60) + ' min';
 }
 
+/** Nombre → format fr (« 2,1 », « 86 »), « — » si non fini. Décimales bornées. */
+function formatAppDetailFrNumber(value, maxDigits = 1) {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return '—';
+    return n.toLocaleString('fr-FR', { minimumFractionDigits: 0, maximumFractionDigits: maxDigits });
+}
+
+/**
+ * Débit o/s → chaîne fr auto Ko/s–Mo/s (« 340 o/s », « 2,1 Ko/s », « 1,2 Mo/s »).
+ * « — » si non fini/négatif (inclut le 1ᵉʳ tick sans échantillon précédent).
+ */
+function formatAppDetailRate(bytesPerSec) {
+    if (bytesPerSec === null || bytesPerSec === undefined || bytesPerSec === '') return '—';
+    const n = Number(bytesPerSec);
+    if (!Number.isFinite(n) || n < 0) return '—';
+    if (n >= 1048576) return formatAppDetailFrNumber(n / 1048576, 1) + ' Mo/s';
+    if (n >= 1024) return formatAppDetailFrNumber(n / 1024, n >= 10240 ? 0 : 1) + ' Ko/s';
+    return Math.round(n) + ' o/s';
+}
+
+/**
+ * Poussé dans un buffer sparkline : valeurs non finies ignorées, taille
+ * plafonnée (FIFO) à `max` points (30 par défaut — mini-cockpit fiche).
+ */
+function appDetailPushPoint(buffer, value, max = APP_DETAIL_COCKPIT_MAX_POINTS) {
+    if (!Array.isArray(buffer)) return buffer;
+    const v = Number(value);
+    if (!Number.isFinite(v)) return buffer;
+    buffer.push(v);
+    while (buffer.length > max) buffer.shift();
+    return buffer;
+}
+
+/**
+ * Points SVG d'une sparkline (viewBox 100×22, marge 2) : x réparti sur les
+ * n-1 intervalles, y normalisé min/max du buffer inversé (haut = valeur
+ * haute). < 2 points → '' (polyline vide) ; palier constant → ligne médiane
+ * (min/max écartés artificiellement pour éviter une division par 0).
+ */
+function appDetailSparkPoints(values, width = 100, height = 22, pad = 2) {
+    const pts = (Array.isArray(values) ? values : [])
+        .map(v => Number(v))
+        .filter(v => Number.isFinite(v));
+    const n = pts.length;
+    if (n < 2) return '';
+    let min = Math.min(...pts);
+    let max = Math.max(...pts);
+    if (max - min < 1e-9) { min -= 1; max += 1; }
+    const stepX = width / (n - 1);
+    const fmt = v => {
+        const s = Number(v).toFixed(1);
+        return s.endsWith('.0') ? s.slice(0, -2) : s; // « 20 » plutôt que « 20.0 »
+    };
+    return pts.map((v, i) => {
+        const x = fmt(i * stepX);
+        const y = fmt(height - pad - ((v - min) / (max - min)) * (height - 2 * pad));
+        return x + ',' + y;
+    }).join(' ');
+}
+
 /**
  * Rendu markdown MINIMAL (maquette apps-fiche-v2, sans lib) : le texte est
  * échappé AVANT parsing ; titres #/##/### en <strong> (div fw-bold),
@@ -129,23 +221,28 @@ function renderAppDetailMarkdown(markdown) {
     return out.join('');
 }
 
-/** Badge Docker de la rangée d'état : en marche (success) / arrêté (warning) / inconnu (light). */
+/** Badge Docker de la rangée d'état v6 : « Docker : en marche » / « arrêté » / « inconnu ». */
 function appDetailDockerBadgeHtml(state) {
     const docker = state ? state.docker : null;
-    if (!docker) return '<span class="badge text-bg-light border">Docker · inconnu</span>';
-    if (docker === 'running') return '<span class="badge text-bg-success">Docker · en marche</span>';
-    return '<span class="badge text-bg-warning">Docker · arrêté</span>';
+    if (!docker) return '<span class="badge text-bg-light border">Docker : inconnu</span>';
+    if (docker === 'running') return '<span class="badge text-bg-success">Docker : en marche</span>';
+    return '<span class="badge text-bg-warning">Docker : arrêté</span>';
 }
 
-/** Badge connectivité : « En ligne · X ms » (success) / « Hors ligne » (danger) / « Vérification » (light). */
-function appDetailConnectivityBadgeHtml(state) {
+/**
+ * Badge Health v6 : « Health : en ligne · N ms » (success) / « hors ligne »
+ * (danger). Sonde indisponible → '' (pas de badge — la rangée s'allège,
+ * maquette v6 ; l'ancien badge « Vérification » bruitait la fiche).
+ */
+function appDetailHealthBadgeHtml(state) {
     const health = state ? state.health : null;
     const latency = state ? state.latency_ms : null;
     if (health === 'healthy') {
-        return '<span class="badge text-bg-success">En ligne' + (latency ? ' · ' + latency + ' ms' : '') + '</span>';
+        return '<span class="badge text-bg-success">Health : en ligne'
+            + (latency ? ' · ' + escapeHtml(String(latency)) + ' ms' : '') + '</span>';
     }
-    if (health === 'unhealthy') return '<span class="badge text-bg-danger">Hors ligne</span>';
-    return '<span class="badge text-bg-light border">Vérification</span>';
+    if (health === 'unhealthy') return '<span class="badge text-bg-danger">Health : hors ligne</span>';
+    return '';
 }
 
 /**
@@ -221,14 +318,15 @@ async function openAppDetail(slugArg) {
         return;
     }
 
-    // Rend l'app visible par editApp (recherche par id dans allApps) quand
-    // elle ne vient pas du tableau : ajout local, le tableau se re-rend de
-    // lui-même au prochain loadAdminData (cache remplacé en bloc).
+    // Rend l'app visible par les flux par id (allApps) quand elle ne vient
+    // pas du tableau : ajout local, le tableau se re-rend de lui-même au
+    // prochain loadAdminData (cache remplacé en bloc).
     if (typeof allApps !== 'undefined' && Array.isArray(allApps) && !allApps.some(a => a && a.id === app.id)) {
         allApps.push(app);
     }
 
     stopAppDetailPolling();
+    resetAppDetailCockpit();
     _appDetailSlug = slug;
     _appDetailApp = app;
     _appDetailStatusFetchStarted = false;
@@ -236,7 +334,6 @@ async function openAppDetail(slugArg) {
     const list = document.getElementById('appsListWrap');
     if (list) list.classList.add('d-none');
     pane.classList.remove('d-none');
-    pane.innerHTML = '<div class="text-muted text-center py-4">Chargement de la fiche…</div>';
     try { window.location.hash = 'admin/apps/' + slug; } catch (e) { /* hash refusé */ }
 
     renderAppDetailPane();
@@ -255,13 +352,19 @@ function hideAppDetailIfOpen() {
     hideAppDetailPane();
 }
 
-/** Masque la fiche et restaure la liste (aucune écriture du hash). */
+/**
+ * Masque la fiche et restaure la liste (aucune écriture du hash). Le
+ * SQUELETTE STATIQUE n'est PAS vidé : les listeners DOMContentLoaded
+ * (génération du slug, preview icône/couleur) doivent survivre ; chaque
+ * ouverture re-remplit les zones avant affichage.
+ */
 function hideAppDetailPane() {
     stopAppDetailPolling();
+    resetAppDetailCockpit();
     _appDetailSlug = null;
     _appDetailApp = null;
     const pane = document.getElementById('appDetailPane');
-    if (pane) { pane.classList.add('d-none'); pane.innerHTML = ''; }
+    if (pane) pane.classList.add('d-none');
     const list = document.getElementById('appsListWrap');
     if (list) list.classList.remove('d-none');
 }
@@ -275,23 +378,24 @@ function leaveAppDetail() {
     hideAppDetailPane();
 }
 
-/** Stoppe le poll « déploiement en cours » s'il tourne (idempotent). */
+/** Stoppe les polls de la fiche (déploiement 2 s + mini-cockpit 10 s) — idempotent. */
 function stopAppDetailPolling() {
     if (_appDetailPollTimer) {
         clearInterval(_appDetailPollTimer);
         _appDetailPollTimer = null;
     }
     _appDetailPollSlug = null;
+    stopAppDetailCockpitPoll();
 }
 
 /**
  * Re-rend la fiche courante avec des données fraîches (appelé après une
- * modification : sauvegarde du formulaire d'édition, approbation, rejet,
+ * modification : sauvegarde des réglages inline, approbation, rejet,
  * suppression). Si l'app n'existe plus, retour propre à la liste.
  */
 function refreshAppDetail() {
     const slug = _appDetailSlug;
-    if (!slug) return;
+    if (!slug || slug === '__new__') return;
     const pane = document.getElementById('appDetailPane');
     if (!pane || pane.classList.contains('d-none')) return;
     // Réinitialise la garde no-op d'openAppDetail pour forcer le re-render.
@@ -300,113 +404,342 @@ function refreshAppDetail() {
     openAppDetail(slug);
 }
 
-// ===== Rendu de la fiche =====
+// ===== Rendu de la fiche (squelette statique — zones identifiées) =====
 
 function renderAppDetailPane() {
     const slug = _appDetailSlug;
     const app = _appDetailApp;
     const pane = document.getElementById('appDetailPane');
-    if (!pane || !app || slug !== app.slug) return;
+    if (!pane) return;
 
-    const isPending = app.approval_status === 'pending';
-    const isRejected = app.approval_status === 'rejected';
+    const isPending = app ? app.approval_status === 'pending' : false;
+    const isRejected = app ? app.approval_status === 'rejected' : false;
     const needsApproval = isPending || isRejected;
 
-    pane.innerHTML = ''
-        + '<div class="mb-3">'
-        + '<button class="btn btn-sm btn-outline-secondary" data-action="closeAppDetail" title="Retour à la liste des applications">'
-        + hubIcon('arrow-left') + '<span class="ms-1">Applications</span>'
-        + '</button>'
-        + '</div>'
-        + renderAppDetailHeader(app, needsApproval)
-        + (needsApproval
-            ? renderAppDetailApprovalBlock(app, isPending, isRejected)
-            : ''
-                + renderAppDetailStatusRow()
-                + renderAppDetailUpdatesSection()
-                + renderAppDetailChangelogSection()
-                + renderAppDetailLogsSection()
-                + renderAppDetailDockerSection());
+    fillAppDetailIdentity(app);
 
-    if (!needsApproval) {
-        loadAppDetailSections();
+    if (needsApproval) {
+        // Fiche réduite : pas de mini-cockpit, pas de Réglages, pas de
+        // sections techniques — le workflow d'approbation uniquement.
+        setAppDetailMode('approval');
+        const reduced = document.getElementById('appDetailReducedPane');
+        if (reduced) reduced.innerHTML = renderAppDetailApprovalBlock(app, isPending, isRejected);
+        return;
     }
+
+    setAppDetailMode('view');
+    loadAppDetailSections();
 }
 
 /**
- * En-tête : tuile icône (bg = app.color), nom + badges (partagé / Atelier /
- * Non gérée, workflow éventuel), slug + frontend_url en muted ; à droite
- * « Ouvrir » (primary, frontend_url) et « Éditer » (secondary) — absents
- * pour une app pending/rejected (workflow d'approbation uniquement).
+ * Remplit la zone identité de l'en-tête (tuile icône/couleur, nom + badges
+ * partagé/Atelier/Non gérée/workflow, slug + URL muted) et les actions
+ * (« Ouvrir » — l'édition vit DANS la fiche v6, plus de bouton Éditer).
  */
-function renderAppDetailHeader(app, needsApproval) {
+function fillAppDetailIdentity(app) {
+    const tile = document.getElementById('appDetailTile');
+    const tileIcon = document.getElementById('appDetailTileIcon');
+    const nameEl = document.getElementById('appDetailName');
+    const badgesEl = document.getElementById('appDetailNameBadges');
+    const subEl = document.getElementById('appDetailSub');
+    const actionsEl = document.getElementById('appDetailHeaderActions');
+    if (!tile || !tileIcon || !nameEl || !badgesEl || !subEl || !actionsEl) return;
+
+    if (!app) {
+        tile.style.backgroundColor = '#0d6efd';
+        tileIcon.className = 'bi bi-app';
+        nameEl.textContent = '—';
+        badgesEl.innerHTML = '';
+        subEl.textContent = '';
+        actionsEl.innerHTML = '';
+        return;
+    }
+
+    tile.style.backgroundColor = app.color || '#0d6efd';
+    tileIcon.className = app.icon || 'bi-app';
+    nameEl.textContent = app.name || app.slug;
+
     const badges = [];
     if (app.is_shared_service) badges.push('<span class="badge text-bg-info" title="API partagée accessible par tous les Service Accounts">partagé</span>');
     if (app.is_workshop) badges.push('<span class="badge text-bg-warning">Atelier</span>');
     if (app.is_unmanaged) badges.push('<span class="badge text-bg-secondary">Non gérée</span>');
     if (app.approval_status === 'pending') badges.push('<span class="badge text-bg-warning">En attente d\'approbation</span>');
     if (app.approval_status === 'rejected') badges.push('<span class="badge text-bg-danger">Rejetée</span>');
+    badgesEl.innerHTML = badges.join('');
 
-    let actionsHtml = '';
-    if (!needsApproval) {
-        const openBtn = app.frontend_url
-            ? '<a class="btn btn-sm btn-primary" href="' + escapeAttr(app.frontend_url) + '" target="_blank" rel="noopener"'
-                + ' title="Ouvrir l\'application dans un nouvel onglet">'
-                + hubIcon('external-link') + '<span class="ms-1">Ouvrir</span></a>'
-            : '';
-        const editBtn = '<button class="btn btn-sm btn-secondary" data-action="editApp" data-arg1="' + escapeAttr(app.id) + '"'
-            + ' title="Modifier les informations de l\'application">'
-            + hubIcon('pencil') + '<span class="ms-1">Éditer</span></button>';
-        actionsHtml = '<div class="d-flex gap-2 ms-auto">' + openBtn + editBtn + '</div>';
+    subEl.innerHTML = '<code>' + escapeHtml(app.slug) + '</code>'
+        + (app.frontend_url ? ' · <span class="text-break">' + escapeHtml(app.frontend_url) + '</span>' : '');
+
+    // Actions : « Ouvrir » seul (v6 — plus de bouton Éditer dans l'en-tête).
+    actionsEl.innerHTML = app.frontend_url
+        ? '<a class="btn btn-sm btn-primary" href="' + escapeAttr(app.frontend_url) + '" target="_blank" rel="noopener"'
+            + ' title="Ouvrir l\'application dans un nouvel onglet">'
+            + hubIcon('external-link') + '<span class="ms-1">Ouvrir</span></a>'
+        : '';
+}
+
+/**
+ * Bascule les zones du squelette selon le mode :
+ * - 'view'     : fiche complète (mini-cockpit, badges, grille 2 colonnes) ;
+ * - 'approval' : fiche réduite pending/rejected (en-tête + bloc workflow,
+ *                grille et mini-cockpit masqués).
+ * Le mode création (v6) réutilise 'view' avec les sections techniques
+ * masquées à l'ouverture (voir openAppDetailCreate).
+ */
+function setAppDetailMode(mode) {
+    const show = (id, visible) => {
+        const el = document.getElementById(id);
+        if (el) el.classList.toggle('d-none', !visible);
+    };
+    const isView = mode === 'view';
+    show('appDetailMiniMonitor', isView);
+    show('appDetailHeaderActions', isView);
+    show('appDetailStatusBadges', isView);
+    show('appDetailUptimeNote', isView);
+    show('appDetailGrid', mode !== 'approval');
+    show('appDetailReducedPane', mode === 'approval');
+    if (!isView) {
+        const note = document.getElementById('appDetailUptimeNote');
+        if (note) note.textContent = '';
+    }
+}
+
+// ===== Mini-cockpit (en-tête) =====
+
+/** Réinitialise buffers + dernier relevé + échantillon réseau du cockpit. */
+function resetAppDetailCockpit() {
+    _cockpitPoints = { cpu: [], ram: [], net: [], latency: [] };
+    _cockpitLast = null;
+    _cockpitPrevNet = null;
+}
+
+/**
+ * Poll 10 s du mini-cockpit TANT QUE la fiche est visible (garde à chaque
+ * tick : fiche masquée, autre outil, slug changé, mode création → stop).
+ * Démarré à l'ouverture d'une fiche active (loadAppDetailSections), stoppé
+ * par stopAppDetailPolling à chaque fermeture/retour.
+ */
+function startAppDetailCockpitPoll(slug) {
+    if (_appDetailCockpitTimer && _appDetailCockpitSlug === slug) return;
+    stopAppDetailCockpitPoll();
+    _appDetailCockpitSlug = slug;
+    loadAppDetailCockpit(); // 1ᵉʳ relevé immédiat (les suivants : 1×/10 s)
+    _appDetailCockpitTimer = setInterval(() => {
+        const pane = document.getElementById('appDetailPane');
+        const adminSection = document.getElementById('adminSection');
+        if (!pane || pane.classList.contains('d-none')
+            || (adminSection && adminSection.classList.contains('d-none'))
+            || _appDetailSlug !== slug || _appDetailSlug === '__new__') {
+            stopAppDetailCockpitPoll();
+            return;
+        }
+        loadAppDetailCockpit();
+    }, APP_DETAIL_COCKPIT_POLL_MS);
+}
+
+/** Stoppe le poll mini-cockpit s'il tourne (idempotent). */
+function stopAppDetailCockpitPoll() {
+    if (_appDetailCockpitTimer) {
+        clearInterval(_appDetailCockpitTimer);
+        _appDetailCockpitTimer = null;
+    }
+    _appDetailCockpitSlug = null;
+}
+
+/**
+ * Un tick du mini-cockpit : fetch docker-info, pousse CPU/RAM/débit réseau
+ * dans les buffers 30 points et re-rend les chips. Erreur réseau /
+ * conteneur arrêté → état « — » muted (jamais de popup). Met aussi à jour
+ * le résumé Docker (section repliée) et la note uptime de la rangée badges.
+ */
+async function loadAppDetailCockpit() {
+    const slug = _appDetailSlug;
+    if (!slug || slug === '__new__') return;
+
+    let info = null;
+    try {
+        info = await api.getAppDockerInfo(slug);
+    } catch (error) {
+        info = null; // injoignable : traité comme conteneur non trouvé
+    }
+    if (_appDetailSlug !== slug) return; // fiche changée/fermée entre-temps
+
+    const stats = info && info.container_found && info.container_stats ? info.container_stats : null;
+    const running = Boolean(info
+        && info.container_found
+        && (info.container_status || 'running') === 'running'
+        && stats);
+
+    if (!running) {
+        // Conteneur arrêté / scan désactivé / stats absentes : chips « — »
+        // muted, buffers techniques vidés (redémarrage → repart à zéro).
+        // La latence garde le dernier état connu (runtimeStates).
+        _cockpitLast = null;
+        _cockpitPoints.cpu = [];
+        _cockpitPoints.ram = [];
+        _cockpitPoints.net = [];
+        _cockpitPrevNet = null;
+        renderAppDetailMiniCockpit({ unavailable: true });
+        updateAppDetailDockerSummary(null);
+        updateAppDetailUptimeNote(null);
+        return;
     }
 
-    return '<div class="card border-0 shadow-sm mb-3">'
-        + '<div class="card-body py-3">'
-        + '<div class="d-flex align-items-center gap-3 flex-wrap">'
-        + '<span class="rounded d-inline-flex align-items-center justify-content-center flex-shrink-0" style="width:44px;height:44px;background-color:' + escapeAttr(app.color || '#0d6efd') + ';color:#fff">'
-        + '<i class="' + escapeAttr(app.icon || 'bi-app') + '" style="font-size:1.25rem"></i>'
-        + '</span>'
-        + '<div class="flex-grow-1">'
-        + '<h5 class="mb-0 d-flex align-items-center gap-2 flex-wrap">' + escapeHtml(app.name || app.slug)
-        + (badges.length ? '<span class="d-inline-flex gap-1">' + badges.join('') + '</span>' : '')
-        + '</h5>'
-        + '<div class="text-muted small"><code>' + escapeHtml(app.slug) + '</code>'
-        + (app.frontend_url ? ' · <span class="text-break">' + escapeHtml(app.frontend_url) + '</span>' : '')
-        + '</div>'
-        + '</div>'
-        + actionsHtml
-        + '</div>'
-        + '</div>'
-        + '</div>';
+    const cpu = Number(stats.cpu_percent);
+    const memUse = Number(stats.memory_usage_mb);
+    const memLimit = Number(stats.memory_limit_mb);
+    if (Number.isFinite(cpu)) appDetailPushPoint(_cockpitPoints.cpu, Math.max(0, cpu));
+    if (Number.isFinite(memUse)) appDetailPushPoint(_cockpitPoints.ram, Math.max(0, memUse));
+    _cockpitLast = {
+        cpu: Number.isFinite(cpu) ? Math.max(0, cpu) : null,
+        memUse: Number.isFinite(memUse) ? Math.max(0, memUse) : null,
+        memLimit: Number.isFinite(memLimit) ? Math.max(0, memLimit) : null,
+        uptime: stats.uptime_seconds,
+    };
+
+    // Débit réseau : delta des compteurs CUMULÉS entre deux ticks rapporté
+    // aux secondes écoulées (horloge murale). Garde division par zéro au
+    // 1ᵉʳ tick : sans échantillon précédent (ou après un changement de
+    // fiche), pas de débit — on ne mémorise que les compteurs pour le tick
+    // suivant. Compteurs qui reculent (redémarrage conteneur) → pas de
+    // débit affiché ce tick (les compteurs repartent de zéro).
+    const now = Date.now();
+    const rx = Number(stats.net_rx_bytes);
+    const tx = Number(stats.net_tx_bytes);
+    let rxRate = null;
+    let txRate = null;
+    if (_cockpitPrevNet && _cockpitPrevNet.slug === slug) {
+        const elapsedSec = (now - _cockpitPrevNet.at) / 1000;
+        const countersOk = Number.isFinite(rx) && Number.isFinite(tx)
+            && Number.isFinite(_cockpitPrevNet.rx) && Number.isFinite(_cockpitPrevNet.tx)
+            && rx >= _cockpitPrevNet.rx && tx >= _cockpitPrevNet.tx;
+        if (elapsedSec > 0 && countersOk) {
+            rxRate = Math.max(0, (rx - _cockpitPrevNet.rx) / elapsedSec);
+            txRate = Math.max(0, (tx - _cockpitPrevNet.tx) / elapsedSec);
+        }
+    }
+    _cockpitPrevNet = { slug, rx, tx, at: now };
+    if (rxRate !== null && txRate !== null) {
+        appDetailPushPoint(_cockpitPoints.net, Math.max(0, rxRate + txRate));
+    }
+
+    renderAppDetailMiniCockpit({ rxRate, txRate });
+    updateAppDetailDockerSummary(stats);
+    updateAppDetailUptimeNote(stats.uptime_seconds);
 }
 
 /**
- * Rangée de badges d'état des apps actives : Docker, connectivité (source
- * runtimeStates — sinon 1 appel refreshAppsStatus via
- * ensureAppDetailStatusFetched), version (update-check, rempli après fetch)
- * et nombre d'utilisateurs. Conteneur #appDetailStatusBadges rempli par
- * updateAppDetailStatusBadges() — ré-appelé par les SSE via
- * renderAppRuntimeState (admin-apps.js).
+ * Écrit une chip du mini-cockpit (valeur, sous-titre, polyline sparkline,
+ * état muted/up/down). Toutes les zones sont statiques (index.html) :
+ * seule la polyline voit son attribut points redessiné par tick.
  */
-function renderAppDetailStatusRow() {
-    return '<div id="appDetailStatusBadges" class="d-flex flex-wrap gap-1 align-items-center mb-3"></div>';
+function appDetailSetChip(chipId, valId, subId, sparkId, text, subText, points, muted, tone) {
+    const chip = document.getElementById(chipId);
+    if (!chip) return;
+    chip.classList.toggle('muted', !!muted);
+    chip.classList.toggle('up', tone === 'up');
+    chip.classList.toggle('down', tone === 'down');
+    const val = document.getElementById(valId);
+    if (val) val.textContent = text;
+    const sub = subId ? document.getElementById(subId) : null;
+    if (sub) {
+        sub.textContent = subText || '';
+        sub.classList.toggle('d-none', !subText);
+    }
+    const poly = document.getElementById(sparkId);
+    if (poly) poly.setAttribute('points', points || '');
 }
 
+/**
+ * Re-rend les 4 chips du mini-cockpit depuis les buffers + dernier relevé.
+ * opts.rxRate/txRate : débits calculés au tick courant (null → « — »).
+ * opts.unavailable : conteneur arrêté/injoignable → CPU/RAM/Réseau « — »
+ * muted ; la latence reste au dernier état connu (runtimeStates).
+ */
+function renderAppDetailMiniCockpit(opts = {}) {
+    const unavailable = !!opts.unavailable;
+    const state = (typeof runtimeStates !== 'undefined') ? runtimeStates[_appDetailSlug] : null;
+    const last = unavailable ? null : _cockpitLast;
+
+    // CPU %
+    appDetailSetChip('appDetailChipCpu', 'appDetailCpuVal', null, 'appDetailCpuSpark',
+        last && last.cpu !== null ? formatAppDetailFrNumber(last.cpu, 1) + ' %' : '—', '',
+        unavailable ? '' : appDetailSparkPoints(_cockpitPoints.cpu),
+        unavailable || !last, null);
+
+    // RAM Mo + « sur X Mo · N % »
+    const ramSub = (last && last.memUse !== null && last.memLimit > 0)
+        ? 'sur ' + Math.round(last.memLimit) + ' Mo · '
+            + Math.round((last.memUse / last.memLimit) * 100) + ' %'
+        : '';
+    appDetailSetChip('appDetailChipRam', 'appDetailRamVal', 'appDetailRamSub', 'appDetailRamSpark',
+        last && last.memUse !== null ? Math.round(last.memUse) + ' Mo' : '—', ramSub,
+        unavailable ? '' : appDetailSparkPoints(_cockpitPoints.ram),
+        unavailable || !last, null);
+
+    // Réseau ↓ / ↑ (débits calculés par delta entre 2 ticks)
+    const rxRate = Number.isFinite(Number(opts.rxRate)) ? Number(opts.rxRate) : null;
+    const txRate = Number.isFinite(Number(opts.txRate)) ? Number(opts.txRate) : null;
+    const netText = (rxRate !== null && txRate !== null)
+        ? '↓ ' + formatAppDetailRate(rxRate) + ' · ↑ ' + formatAppDetailRate(txRate)
+        : '—';
+    appDetailSetChip('appDetailChipNet', 'appDetailNetVal', null, 'appDetailNetSpark',
+        netText, '',
+        unavailable ? '' : appDetailSparkPoints(_cockpitPoints.net),
+        unavailable || (rxRate === null && txRate === null), null);
+
+    // Latence : runtimeStates (sonde + SSE) — dernier état connu sinon « — ».
+    const latency = state && state.health === 'healthy' && Number.isFinite(Number(state.latency_ms))
+        ? Number(state.latency_ms) : null;
+    const latencySub = state ? (state.health === 'healthy' ? 'en ligne' : 'hors ligne') : '';
+    appDetailSetChip('appDetailChipLatency', 'appDetailLatencyVal', 'appDetailLatencySub', 'appDetailLatencySpark',
+        latency !== null ? Math.round(latency) + ' ms' : '—', latencySub,
+        appDetailSparkPoints(_cockpitPoints.latency),
+        latency === null && !latencySub,
+        state ? (state.health === 'healthy' ? 'up' : 'down') : null);
+}
+
+/** Note uptime à droite de la rangée de badges (maquette v6). */
+function updateAppDetailUptimeNote(uptimeSeconds) {
+    const note = document.getElementById('appDetailUptimeNote');
+    if (!note) return;
+    note.textContent = uptimeSeconds === null || uptimeSeconds === undefined
+        ? ''
+        : 'Uptime conteneur : ' + formatAppDetailUptime(uptimeSeconds)
+            + ' · rafraîchi 1×/10 s tant que la fiche est ouverte';
+}
+
+// ===== Rangée de badges d'état =====
+
+/**
+ * Rangée allégée v6 : Docker, Health (si sonde dispo), version, utilisateurs
+ * (+ note uptime à droite, remplie par le cockpit). Conteneur
+ * #appDetailStatusBadges — ré-appelé par les SSE via renderAppRuntimeState
+ * (admin-apps.js) et à chaque tick de latence.
+ */
 function updateAppDetailStatusBadges() {
     const container = document.getElementById('appDetailStatusBadges');
-    if (!container || _appDetailSlug === null) return;
+    if (!container || _appDetailSlug === null || _appDetailSlug === '__new__') return;
     const state = (typeof runtimeStates !== 'undefined') ? runtimeStates[_appDetailSlug] : null;
+    const healthHtml = appDetailHealthBadgeHtml(state);
     container.innerHTML = ''
         + appDetailDockerBadgeHtml(state)
-        + appDetailConnectivityBadgeHtml(state)
+        + healthHtml
         + '<span id="appDetailVersionBadge"><span class="badge text-bg-light border">version…</span></span>'
         + appDetailUsersBadgeHtml(_appDetailApp ? _appDetailApp.users : null);
+
+    // Sparkline latence : chaque relevé de sonde alimente le buffer (la
+    // sonde /apps/status et les SSE passent tous deux par ici).
+    if (state && state.health === 'healthy' && Number.isFinite(Number(state.latency_ms))) {
+        appDetailPushPoint(_cockpitPoints.latency, Number(state.latency_ms));
+    }
+    renderAppDetailMiniCockpit();
 }
 
 /**
- * Badge Docker/connectivité absent des runtimeStates (fiche ouverte avant
- * le test initial) : un appel refreshAppsStatus() une seule fois par
- * ouverture de fiche, puis re-render des badges. Jamais de polling ici.
+ * Badge Docker/Health absent des runtimeStates (fiche ouverte avant le test
+ * initial) : un appel refreshAppsStatus() une seule fois par ouverture de
+ * fiche, puis re-render des badges. Jamais de polling ici.
  */
 function ensureAppDetailStatusFetched(slug) {
     if (_appDetailStatusFetchStarted) return;
@@ -422,19 +755,29 @@ function ensureAppDetailStatusFetched(slug) {
 
 /**
  * Lance les chargements de la fiche active (badges d'état, update-check,
- * déploiements, changelog, logs, docker). Chaque consommateur re-vérifie
- * _appDetailSlug : changer de fiche/outil en cours de route ne rend rien.
+ * déploiements, changelog, logs, docker, mini-cockpit). Chaque consommateur
+ * re-vérifie _appDetailSlug : changer de fiche/outil en cours de route ne
+ * rend rien.
  */
 function loadAppDetailSections() {
     const slug = _appDetailSlug;
     const app = _appDetailApp;
-    if (!slug || !app) return;
+    if (!slug || slug === '__new__' || !app) return;
 
     ensureAppDetailStatusFetched(slug);
     updateAppDetailStatusBadges();
     refreshAppDetailDeployments();
     loadAppDetailChangelog(slug);
     loadAppDetailLogs();
+    startAppDetailCockpitPoll(slug);
+
+    // Docker : état de chargement explicite puis fetch (le body n'est rendu
+    // qu'à l'ouverture — les ticks cockpit rafraîchissent ensuite le résumé
+    // replié + les chips sans re-rendre le corps).
+    const dockerBody = document.getElementById('appDetailDockerBody');
+    if (dockerBody) dockerBody.innerHTML = '<span class="text-muted">Chargement…</span>';
+    const dockerSummary = document.getElementById('appDetailDockerSummary');
+    if (dockerSummary) dockerSummary.textContent = 'chargement…';
     loadAppDetailDocker(slug);
 
     // Badge version via update-check (comparaison semver enregistré vs live).
@@ -451,24 +794,10 @@ function loadAppDetailSections() {
 
 // ===== Section Mises à jour =====
 
-function renderAppDetailUpdatesSection() {
-    return '<div class="card border-0 shadow-sm mb-3">'
-        + '<div class="card-header py-2 d-flex align-items-center">'
-        + '<strong class="d-flex align-items-center gap-2">' + hubIcon('rocket') + 'Mises à jour</strong>'
-        + '<button class="btn btn-sm btn-outline-secondary ms-auto" data-action="refreshAppDetailDeployments"'
-        + ' title="Rafraîchir le statut et l\'historique de déploiement">'
-        + hubIcon('refresh-cw') + '<span class="ms-1">Actualiser</span></button>'
-        + '</div>'
-        + '<div class="card-body py-3 small">'
-        + '<div id="appDetailDeployments"><span class="text-muted">Chargement…</span></div>'
-        + '</div>'
-        + '</div>';
-}
-
 /** Charge (ou recharge via le bouton Actualiser) le statut de déploiement. */
 async function refreshAppDetailDeployments() {
     const slug = _appDetailSlug;
-    if (!slug) return;
+    if (!slug || slug === '__new__') return;
     const container = document.getElementById('appDetailDeployments');
     if (container) container.innerHTML = '<span class="text-muted">Chargement…</span>';
     try {
@@ -571,26 +900,18 @@ function startAppDetailDeployPoll(slug) {
 
 // ===== Section Changelog =====
 
-function renderAppDetailChangelogSection() {
-    const repoUrl = appDetailGithubUrl(_appDetailApp ? _appDetailApp.git_repo_url : null);
-    const link = repoUrl
-        ? '<a class="small" href="' + escapeAttr(repoUrl + '/blob/HEAD/CHANGELOG.md') + '" target="_blank" rel="noopener"'
-            + ' title="CHANGELOG.md sur GitHub">CHANGELOG complet ↗</a>'
-        : '';
-    return '<div class="card border-0 shadow-sm mb-3">'
-        + '<div class="card-header py-2 d-flex align-items-center">'
-        + '<strong class="d-flex align-items-center gap-2">' + hubIcon('file-text') + 'Changelog</strong>'
-        + (link ? '<span class="ms-auto">' + link + '</span>' : '')
-        + '</div>'
-        + '<div class="card-body py-3 small">'
-        + '<div id="appDetailChangelogBody" class="appdetail-scroll"><span class="text-muted">Chargement…</span></div>'
-        + '<div id="appDetailReleasesBody"></div>'
-        + '</div>'
-        + '</div>';
-}
-
 /** Changelog (markdown minimal) + 3 dernières releases (tag + date). */
 async function loadAppDetailChangelog(slug) {
+    // Lien « CHANGELOG complet ↗ » dans l'en-tête de carte (squelette statique).
+    const linkBox = document.getElementById('appDetailChangelogLink');
+    if (linkBox) {
+        const repoUrl = appDetailGithubUrl(_appDetailApp ? _appDetailApp.git_repo_url : null);
+        linkBox.innerHTML = repoUrl
+            ? '<a class="small" href="' + escapeAttr(repoUrl + '/blob/HEAD/CHANGELOG.md') + '" target="_blank" rel="noopener"'
+                + ' title="CHANGELOG.md sur GitHub">CHANGELOG complet ↗</a>'
+            : '';
+    }
+
     const results = await Promise.allSettled([
         api.getChangelog(slug),
         api.getReleases(slug),
@@ -633,41 +954,16 @@ async function loadAppDetailChangelog(slug) {
 
 // ===== Section Logs =====
 
-function renderAppDetailLogsSection() {
-    return '<div class="card border-0 shadow-sm mb-3">'
-        + '<div class="card-header py-2 d-flex align-items-center flex-wrap gap-2">'
-        + '<strong class="d-flex align-items-center gap-2">' + hubIcon('terminal') + 'Logs</strong>'
-        + '<div class="ms-auto d-flex align-items-center gap-2">'
-        + '<select class="form-select form-select-sm w-auto" id="appDetailLogService" data-action="loadAppDetailLogs" aria-label="Service des logs">'
-        + '<option value="api">API</option>'
-        + '<option value="frontend">Frontend</option>'
-        + '<option value="postgres">PostgreSQL</option>'
-        + '</select>'
-        + '<select class="form-select form-select-sm w-auto" id="appDetailLogTail" data-action="loadAppDetailLogs" aria-label="Nombre de lignes">'
-        + '<option value="50">50 lignes</option>'
-        + '<option value="150" selected>150 lignes</option>'
-        + '<option value="500">500 lignes</option>'
-        + '</select>'
-        + '<button class="btn btn-sm btn-secondary" data-action="loadAppDetailLogs" title="Recharger les logs">'
-        + hubIcon('refresh-cw') + '<span class="ms-1">Actualiser</span></button>'
-        + '</div>'
-        + '</div>'
-        + '<div class="card-body py-3">'
-        + '<pre id="appDetailLogsPre" class="bg-light border rounded p-2 font-monospace" style="max-height:320px;overflow:auto;font-size:.8rem;margin-bottom:0">Chargement…</pre>'
-        + '</div>'
-        + '</div>';
-}
-
 /**
- * Charge les logs (service/tail lus dans les <select>). Réponses ordonnées
- * par séquence : changer service/tail en rafale n'affiche que la dernière
- * demande. Erreur → ligne muted inline (textContent, jamais de popup).
- * AUCUN polling.
+ * Charge les logs (service/tail lus dans les <select> statiques). Réponses
+ * ordonnées par séquence : changer service/tail en rafale n'affiche que la
+ * dernière demande. Erreur → ligne muted inline (textContent, jamais de
+ * popup). AUCUN polling.
  */
 async function loadAppDetailLogs() {
     const slug = _appDetailSlug;
     const pre = document.getElementById('appDetailLogsPre');
-    if (!slug || !pre) return;
+    if (!slug || slug === '__new__' || !pre) return;
     const service = document.getElementById('appDetailLogService')?.value || 'api';
     const tail = parseInt(document.getElementById('appDetailLogTail')?.value || '150', 10) || 150;
     const seq = ++_appDetailLogFetchSeq;
@@ -686,28 +982,28 @@ async function loadAppDetailLogs() {
 // ===== Section Docker =====
 
 /**
- * Collapse Bootstrap replié par défaut : header = titre + résumé muted
- * (CPU / RAM / uptime, alimenté après fetch) + chevron ; corps = résumé
- * conteneur (nom, image, ports) + bouton « Détails complets » (modale
- * existante showDockerDetails, admin-app-form.js — aucune duplication).
+ * Résumé replié de l'en-tête Docker : « CPU 2,1 % · RAM 86 Mo · uptime 3 j ».
+ * Rempli au fetch d'ouverture ET à chaque tick du mini-cockpit (même source
+ * docker-info). stats null → « conteneur non trouvé ».
  */
-function renderAppDetailDockerSection() {
-    return '<div class="card border-0 shadow-sm mb-3">'
-        + '<div class="card-header py-2">'
-        + '<div class="d-flex align-items-center gap-2" role="button" tabindex="0"'
-        + ' data-bs-toggle="collapse" data-bs-target="#appDetailDockerCollapse"'
-        + ' aria-expanded="false" aria-controls="appDetailDockerCollapse" style="cursor:pointer">'
-        + '<strong class="d-flex align-items-center gap-2">' + hubIcon('box') + 'Docker</strong>'
-        + '<span class="text-muted small" id="appDetailDockerSummary">chargement…</span>'
-        + '<i class="bi bi-chevron-down ms-auto" aria-hidden="true"></i>'
-        + '</div>'
-        + '</div>'
-        + '<div class="collapse" id="appDetailDockerCollapse">'
-        + '<div class="card-body py-3 small" id="appDetailDockerBody"><span class="text-muted">Chargement…</span></div>'
-        + '</div>'
-        + '</div>';
+function updateAppDetailDockerSummary(stats) {
+    const summary = document.getElementById('appDetailDockerSummary');
+    if (!summary) return;
+    if (!stats) {
+        summary.textContent = 'conteneur non trouvé';
+        return;
+    }
+    summary.textContent = 'CPU ' + formatAppDetailFrNumber(stats.cpu_percent, 1)
+        + ' % · RAM ' + formatAppDetailFrNumber(stats.memory_usage_mb, 1)
+        + ' Mo · uptime ' + formatAppDetailUptime(stats.uptime_seconds);
 }
 
+/**
+ * Corps du collapse Docker (déplié via data-bs-toggle) : résumé conteneur
+ * (nom, image, ports) + bouton « Détails complets » (modale existante
+ * showDockerDetails, admin-app-form.js — aucune duplication). Un seul fetch
+ * à l'ouverture ; les ticks cockpit ne re-rendent PAS ce corps.
+ */
 async function loadAppDetailDocker(slug) {
     let info = null;
     let fetchError = null;
@@ -732,17 +1028,9 @@ async function loadAppDetailDocker(slug) {
 
     const stats = info && info.container_stats ? info.container_stats : null;
     const containerFound = Boolean(info && info.container_found);
-    if (summary) {
-        if (!containerFound) {
-            summary.textContent = (info && info.docker_available === false) ? 'scan désactivé' : 'conteneur non trouvé';
-        } else if (stats) {
-            summary.textContent = 'CPU ' + (Number(stats.cpu_percent) || 0).toFixed(1)
-                + ' % · RAM ' + (Number(stats.memory_usage_mb) || 0).toFixed(1)
-                + ' Mo · uptime ' + formatAppDetailUptime(stats.uptime_seconds);
-        } else {
-            summary.textContent = '';
-        }
-    }
+    if (containerFound) updateAppDetailDockerSummary(stats);
+    else if (summary) summary.textContent = (info && info.docker_available === false) ? 'scan désactivé' : 'conteneur non trouvé';
+
     if (!body) return;
 
     if (!containerFound) {
@@ -781,7 +1069,8 @@ async function loadAppDetailDocker(slug) {
 /**
  * En-tête + badges workflow + boutons d'approbation uniquement — mêmes
  * fonctions que le tableau (admin-app-approval.js). PAS de sections
- * techniques, PAS de Éditer/Ouvrir.
+ * techniques, PAS de mini-cockpit, PAS d'Ouvrir. Rendu dans
+ * #appDetailReducedPane (le squelette reste en place, masqué).
  */
 function renderAppDetailApprovalBlock(app, isPending, isRejected) {
     const notes = [];
