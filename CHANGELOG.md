@@ -17,6 +17,17 @@
 
 ---
 
+## [3.95.3] - 18 novembre 2026
+
+### ⚡ Messages — course concurrente sur les accusés de lecture absorbée (500 → réponse saine)
+
+- **fix(messages)** : `POST /api/messages/{id}/read` et `POST /api/messages/read-all` lèvaient un **500 non géré** (`UniqueViolationError` sur `uq_message_read_receipts_message_user`) quand une requête concurrente — typiquement l'auto-delivery du `GET /me` d'un autre onglet/refresh, ou un second `POST /read` sur une autre occurrence du groupe dédupliqué — commite le même receipt `(message_id, user_id)` dans la fenêtre SELECT→commit de `_apply_read_receipts` (incident 18/11/2026 03:04, user vpoulidor, messages 25125+25230+25335+25440+25545 : un clic « lu » propage au groupe entier, d'où l'INSERT multi-lignes).
+- **Remédiation identique au `GET /me` (incident 10/11 02:56)** : l'`IntegrityError` au commit est absorbée par rollback best-effort — la lecture concurrente est de toute façon effective, l'endpoint répond `already_read` / `marked_read: 0` et le prochain GET refera proprement.
+- Les ids passés au logging sont capturés avant le commit : après un rollback les objets ORM sont expirés, tout accès (ex. `current_user.id`) lèverait `MissingGreenlet`.
+- **tests** : `test_messages_read_race.py` — 2 tests reproduisent la course sur les deux endpoints (commit flaky levant l'`IntegrityError`, 200 exigé) + contrôle du flux nominal ; 96 tests du domaine messages verts (hôte) et suite Docker verte (2 échecs préexistants environnementaux qualifiés hors périmètre : TOTP, workshop overrides).
+
+---
+
 ## [3.95.1] - 17 novembre 2026
 
 ### 📣 Pour les utilisateurs
