@@ -5,6 +5,17 @@
 
 ---
 
+## [3.97.0] - 18 novembre 2026
+
+### ⚡ PostgreSQL — profil mémoire hub-db + observabilité pg_stat_statements
+
+- **feat(db)** : service `db` (hub-db) — `command:` explicite calibré sur `mem_limit: 1g` : `shared_buffers=256MB` (≈25 % du budget), `effective_cache_size=768MB`, `work_mem=8MB` (pool applicatif jusqu'à 50 connexions), `maintenance_work_mem=128MB` (vacuum/reindex), `shared_preload_libraries=pg_stat_statements`.
+- **feat(db)** : `shm_size: 256m` — le défaut Docker (64 Mo) bridaient la mémoire partagée interne de PostgreSQL.
+- **feat(db)** : cible `make db-pgss-enable` — création idempotente de l'extension `pg_stat_statements` sur les déploiements existants (l'initdb ne rejoue pas sur un volume existant) ; user/db repris du `.env` (`POSTGRES_USER`/`POSTGRES_DB`).
+- **docs** : README — section « Observabilité PostgreSQL » (activation + requête d'analyse des requêtes lentes).
+
+---
+
 ## [3.96.0] - 18 novembre 2026
 
 ### 📣 Pour les utilisateurs
