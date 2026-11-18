@@ -1196,6 +1196,178 @@
                         <div class="fgrid mb-3" id="appDetailGrid">
                             <!-- Colonne gauche -->
                             <div class="fcol" id="appDetailColLeft">
+                                <!-- Réglages inline (v6) : l'ancienne modale
+                                     appFormModal a migré ICI — mêmes IDs de
+                                     champs (app*), tout le flux existant
+                                     (génération du slug, préfill, préflight
+                                     Git, save PATCH/POST) continue de
+                                     fonctionner ; le picker d'icônes et le
+                                     catalogue restent branchés. -->
+                                <div class="card border-0 shadow-sm" id="appDetailSettingsCard">
+                                    <div class="card-header py-2 d-flex align-items-center gap-2">
+                                        <strong class="d-flex align-items-center gap-2">
+                                            <svg class="hub-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="/vendor/design-system/lucide.svg#icon-wrench"></use></svg>
+                                            Réglages
+                                        </strong>
+                                        <span class="ms-auto text-muted" style="font-size:10.5px;font-weight:400">enregistrer pour appliquer</span>
+                                    </div>
+                                    <div class="card-body" id="appDetailSettingsBody">
+                                        <form id="appForm" data-action="handleSaveApp" data-args="event">
+                                            <div id="appGitAccessBanner" class="d-none mb-3"></div>
+                                            <input type="hidden" id="appId">
+                                            <input type="hidden" id="appMode" value="create">
+
+                                            <!-- ── Identité ── -->
+                                            <div class="row g-3 align-items-end mb-3">
+                                                <div class="col-auto">
+                                                    <div class="app-form-preview" id="appFormPreview" data-action="toggleIconPicker" title="Choisir l'icône" style="cursor:pointer">
+                                                        <i id="iconPreview" class="bi bi-app"></i>
+                                                    </div>
+                                                    <input type="hidden" id="appIcon" value="bi-app">
+                                                    <input type="color" class="form-control form-control-color mt-1" id="appColor" value="#0d6efd" style="width:48px;height:28px" title="Couleur">
+                                                </div>
+                                                <div class="col">
+                                                    <label class="form-label mb-1">Nom *</label>
+                                                    <input type="text" class="form-control" id="appName" required placeholder="Mon Application">
+                                                </div>
+                                                <div class="col-md-4">
+                                                    <label class="form-label mb-1">Slug</label>
+                                                    <input type="text" class="form-control" id="appSlug" pattern="[a-z0-9\-]+" required readonly>
+                                                    <small class="text-muted" id="slugHint">Généré automatiquement</small>
+                                                </div>
+                                            </div>
+
+                                            <!-- Icon Picker -->
+                                            <div id="iconPickerContainer" class="icon-picker-container d-none mb-3">
+                                                <div class="icon-picker-header">
+                                                    <input type="text" class="form-control form-control-sm" id="iconSearchInput" placeholder="Rechercher une icône..." data-action="filterIcons">
+                                                </div>
+                                                <div id="iconPickerGrid" class="icon-picker-grid">
+                                                </div>
+                                            </div>
+
+                                            <div class="mb-3">
+                                                <label class="form-label mb-1">Description</label>
+                                                <input type="text" class="form-control" id="appDescription" placeholder="Courte description de l'application">
+                                            </div>
+
+                                            <div class="row g-3 mb-3">
+                                                <div class="col-md-6">
+                                                    <label class="form-label mb-1"><i class="bi bi-folder2 me-1"></i>Groupe</label>
+                                                    <select class="form-select" id="appGroup">
+                                                        <option value="">— Aucun —</option>
+                                                    </select>
+                                                    <small class="text-muted">Regroupement visuel sur le dashboard</small>
+                                                </div>
+                                                <div class="col-md-6">
+                                                    <label class="form-label mb-1"><i class="bi bi-tag me-1"></i>Catégorie</label>
+                                                    <input type="text" class="form-control" id="appCategory" list="appCategoryList" placeholder="Ex : RH, SI, Outils…" maxlength="100">
+                                                    <datalist id="appCategoryList"></datalist>
+                                                    <small class="text-muted">Badge et filtre sur le dashboard</small>
+                                                </div>
+                                            </div>
+
+                                            <div class="mb-3">
+                                                <label class="form-label">URL du dépôt Git <small class="text-muted">(optionnel, pour update-check + changelog)</small></label>
+                                                <input type="text" class="form-control" id="appGitRepoUrl" placeholder="https://github.com/org/repo.git">
+                                                <small class="text-muted">Enregistre aussi le remote du dépôt local (atelier)</small>
+                                            </div>
+
+                                            <!-- ── Réseau ── -->
+                                            <div class="card border mb-3">
+                                                <div class="card-header py-2 bg-light">
+                                                    <i class="bi bi-hdd-network me-2"></i><strong>Configuration réseau</strong>
+                                                </div>
+                                                <div class="card-body py-3">
+                                                    <!-- Mode ports (création) -->
+                                                    <div class="form-check form-check-inline mb-3">
+                                                        <input class="form-check-input" type="checkbox" id="appCustomHost" data-action="toggleCustomHost">
+                                                        <label class="form-check-label small" for="appCustomHost">Serveur différent du Hub</label>
+                                                    </div>
+                                                    <div class="mb-3 d-none" id="customHostGroup">
+                                                        <div class="input-group input-group-sm">
+                                                            <span class="input-group-text"><i class="bi bi-hdd-network"></i></span>
+                                                            <input type="text" class="form-control" id="appCustomHostValue" placeholder="192.168.1.100 ou mon-serveur.local">
+                                                        </div>
+                                                    </div>
+                                                    <div class="small text-muted mb-2">
+                                                        <i class="bi bi-magic me-1"></i>Ports alloués automatiquement au déploiement —
+                                                        l'app sera publiée sur <code>&lt;slug&gt;.&lt;zone&gt;</code> (vue Accès &amp; routage).
+                                                    </div>
+                                                    <!-- Mode URLs directes (édition) -->
+                                                    <div id="advancedUrlsSection" class="d-none">
+                                                        <div class="row g-2">
+                                                            <div class="col-12">
+                                                                <div class="input-group">
+                                                                    <span class="input-group-text"><i class="bi bi-hdd-rack me-1"></i> API *</span>
+                                                                    <input type="url" class="form-control" id="appApiUrl" placeholder="http://localhost:8080">
+                                                                </div>
+                                                            </div>
+                                                            <div class="col-md-6">
+                                                                <div class="input-group">
+                                                                    <span class="input-group-text"><i class="bi bi-window me-1"></i> Front</span>
+                                                                    <input type="url" class="form-control" id="appFrontendUrl" placeholder="http://localhost:3000">
+                                                                </div>
+                                                            </div>
+                                                            <div class="col-md-6">
+                                                                <div class="input-group">
+                                                                    <span class="input-group-text"><i class="bi bi-arrow-return-right me-1"></i> Callback</span>
+                                                                    <input type="url" class="form-control" id="appCallbackUrl" placeholder="/callback">
+                                                                </div>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </div>
+
+                                            <!-- ── Options ── -->
+                                            <div class="d-flex flex-wrap gap-3 mb-3" id="advancedOptionsSection">
+                                                <div class="form-check form-switch">
+                                                    <input class="form-check-input" type="checkbox" id="appActive" checked>
+                                                    <label class="form-check-label" for="appActive">Active</label>
+                                                </div>
+                                                <div class="form-check form-switch">
+                                                    <input class="form-check-input" type="checkbox" id="appRequiresAuth" checked>
+                                                    <label class="form-check-label" for="appRequiresAuth">Auth requise</label>
+                                                </div>
+                                                <div class="form-check form-switch">
+                                                    <input class="form-check-input" type="checkbox" id="appIsSharedService">
+                                                    <label class="form-check-label" for="appIsSharedService">
+                                                        <i class="bi bi-share text-primary me-1"></i>Service partagé (M2M)
+                                                    </label>
+                                                </div>
+                                                <div class="form-check form-switch">
+                                                    <input class="form-check-input" type="checkbox" id="appIsUnmanaged">
+                                                    <label class="form-check-label" for="appIsUnmanaged">
+                                                        <i class="bi bi-exclamation-octagon text-secondary me-1"></i>Non gérée (lien only)
+                                                    </label>
+                                                </div>
+                                            </div>
+
+                                            <!-- Info M2M (création uniquement) -->
+                                            <div class="alert alert-info py-2 mb-0 small" id="m2mInfoSection">
+                                                <i class="bi bi-robot me-1"></i>
+                                                Le <strong>Service Account M2M</strong> sera créé automatiquement lorsque l'application s'enregistrera au démarrage.
+                                            </div>
+
+                                            <!-- Actions (inline — plus de modale : « Enregistrer »
+                                                 soumet le formulaire, « Réinitialiser » re-préfill
+                                                 depuis les données courantes) -->
+                                            <div class="d-flex gap-2 mt-3">
+                                                <button type="submit" class="btn btn-sm btn-primary" id="appSubmitBtn">
+                                                    <i class="bi bi-check-lg me-1"></i>Enregistrer
+                                                </button>
+                                                <button type="button" class="btn btn-sm btn-secondary" data-action="resetAppDetailForm" title="Re-préfill depuis les données courantes de l'application">
+                                                    Réinitialiser
+                                                </button>
+                                            </div>
+                                            <div class="text-muted mt-2" style="font-size:10px" id="appDetailSlugNote">
+                                                Slug généré automatiquement à la frappe du nom · ports alloués au déploiement
+                                            </div>
+                                        </form>
+                                    </div>
+                                </div>
+
                                 <!-- Logs -->
                                 <div class="card border-0 shadow-sm" id="appDetailLogsCard">
                                     <div class="card-header py-2 d-flex align-items-center flex-wrap gap-2">
@@ -3001,162 +3173,9 @@
         </div>
     </div>
 
-<div class="modal fade" id="appFormModal" tabindex="-1">
-        <div class="modal-dialog modal-lg">
-            <div class="modal-content">
-                <div class="modal-header pb-0">
-                    <h5 class="modal-title" id="appFormTitle">Nouvelle Application</h5>
-                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-                </div>
-                <form id="appForm" data-action="handleSaveApp" data-args="event">
-                    <div class="modal-body pt-3">
-                        <div id="appGitAccessBanner" class="d-none mb-3"></div>
-                        <input type="hidden" id="appId">
-                        <input type="hidden" id="appMode" value="create">
-                        
-                        <!-- ── Identité ── -->
-                        <div class="row g-3 align-items-end mb-3">
-                            <div class="col-auto">
-                                <div class="app-form-preview" id="appFormPreview" data-action="toggleIconPicker" title="Choisir l'icône" style="cursor:pointer">
-                                    <i id="iconPreview" class="bi bi-app"></i>
-                                </div>
-                                <input type="hidden" id="appIcon" value="bi-app">
-                                <input type="color" class="form-control form-control-color mt-1" id="appColor" value="#0d6efd" style="width:48px;height:28px" title="Couleur">
-                            </div>
-                            <div class="col">
-                                <label class="form-label mb-1">Nom *</label>
-                                <input type="text" class="form-control" id="appName" required placeholder="Mon Application">
-                            </div>
-                            <div class="col-md-4">
-                                <label class="form-label mb-1">Slug</label>
-                                <input type="text" class="form-control" id="appSlug" pattern="[a-z0-9\-]+" required readonly>
-                                <small class="text-muted" id="slugHint">Généré automatiquement</small>
-                            </div>
-                        </div>
-
-                        <!-- Icon Picker -->
-                        <div id="iconPickerContainer" class="icon-picker-container d-none mb-3">
-                            <div class="icon-picker-header">
-                                <input type="text" class="form-control form-control-sm" id="iconSearchInput" placeholder="Rechercher une icône..." data-action="filterIcons">
-                            </div>
-                            <div id="iconPickerGrid" class="icon-picker-grid">
-                            </div>
-                        </div>
-
-                        <div class="mb-3">
-                            <label class="form-label mb-1">Description</label>
-                            <input type="text" class="form-control" id="appDescription" placeholder="Courte description de l'application">
-                        </div>
-
-                        <div class="row g-3 mb-3">
-                            <div class="col-md-6">
-                                <label class="form-label mb-1"><i class="bi bi-folder2 me-1"></i>Groupe</label>
-                                <select class="form-select" id="appGroup">
-                                    <option value="">— Aucun —</option>
-                                </select>
-                                <small class="text-muted">Regroupement visuel sur le dashboard</small>
-                            </div>
-                            <div class="col-md-6">
-                                <label class="form-label mb-1"><i class="bi bi-tag me-1"></i>Catégorie</label>
-                                <input type="text" class="form-control" id="appCategory" list="appCategoryList" placeholder="Ex : RH, SI, Outils…" maxlength="100">
-                                <datalist id="appCategoryList"></datalist>
-                                <small class="text-muted">Badge et filtre sur le dashboard</small>
-                            </div>
-                        </div>
-
-                        <div class="mb-3">
-                            <label class="form-label">URL du dépôt Git <small class="text-muted">(optionnel, pour update-check + changelog)</small></label>
-                            <input type="text" class="form-control" id="appGitRepoUrl" placeholder="https://github.com/org/repo.git">
-                            <small class="text-muted">Enregistre aussi le remote du dépôt local (atelier)</small>
-                        </div>
-
-                        <!-- ── Réseau ── -->
-                        <div class="card border mb-3">
-                            <div class="card-header py-2 bg-light">
-                                <i class="bi bi-hdd-network me-2"></i><strong>Configuration réseau</strong>
-                            </div>
-                            <div class="card-body py-3">
-                                <!-- Mode ports (création) -->
-                                    <div class="form-check form-check-inline mb-3">
-                                        <input class="form-check-input" type="checkbox" id="appCustomHost" data-action="toggleCustomHost">
-                                        <label class="form-check-label small" for="appCustomHost">Serveur différent du Hub</label>
-                                    </div>
-                                    <div class="mb-3 d-none" id="customHostGroup">
-                                        <div class="input-group input-group-sm">
-                                            <span class="input-group-text"><i class="bi bi-hdd-network"></i></span>
-                                            <input type="text" class="form-control" id="appCustomHostValue" placeholder="192.168.1.100 ou mon-serveur.local">
-                                        </div>
-                                    </div>
-                                    <div class="small text-muted mb-2">
-                                        <i class="bi bi-magic me-1"></i>Ports alloués automatiquement au déploiement —
-                                        l'app sera publiée sur <code>&lt;slug&gt;.&lt;zone&gt;</code> (vue Accès &amp; routage).
-                                    </div>
-<!-- Mode URLs directes (édition) -->
-                                <div id="advancedUrlsSection" class="d-none">
-                                    <div class="row g-2">
-                                        <div class="col-12">
-                                            <div class="input-group">
-                                                <span class="input-group-text"><i class="bi bi-hdd-rack me-1"></i> API *</span>
-                                                <input type="url" class="form-control" id="appApiUrl" placeholder="http://localhost:8080">
-                                            </div>
-                                        </div>
-                                        <div class="col-md-6">
-                                            <div class="input-group">
-                                                <span class="input-group-text"><i class="bi bi-window me-1"></i> Front</span>
-                                                <input type="url" class="form-control" id="appFrontendUrl" placeholder="http://localhost:3000">
-                                            </div>
-                                        </div>
-                                        <div class="col-md-6">
-                                            <div class="input-group">
-                                                <span class="input-group-text"><i class="bi bi-arrow-return-right me-1"></i> Callback</span>
-                                                <input type="url" class="form-control" id="appCallbackUrl" placeholder="/callback">
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-
-                        <!-- ── Options ── -->
-                        <div class="d-flex flex-wrap gap-3 mb-3" id="advancedOptionsSection">
-                            <div class="form-check form-switch">
-                                <input class="form-check-input" type="checkbox" id="appActive" checked>
-                                <label class="form-check-label" for="appActive">Active</label>
-                            </div>
-                            <div class="form-check form-switch">
-                                <input class="form-check-input" type="checkbox" id="appRequiresAuth" checked>
-                                <label class="form-check-label" for="appRequiresAuth">Auth requise</label>
-                            </div>
-                            <div class="form-check form-switch">
-                                <input class="form-check-input" type="checkbox" id="appIsSharedService">
-                                <label class="form-check-label" for="appIsSharedService">
-                                    <i class="bi bi-share text-primary me-1"></i>Service partagé (M2M)
-                                </label>
-                            </div>
-                            <div class="form-check form-switch">
-                                <input class="form-check-input" type="checkbox" id="appIsUnmanaged">
-                                <label class="form-check-label" for="appIsUnmanaged">
-                                    <i class="bi bi-exclamation-octagon text-secondary me-1"></i>Non gérée (lien only)
-                                </label>
-                            </div>
-                        </div>
-
-                        <!-- Info M2M (création uniquement) -->
-                        <div class="alert alert-info py-2 mb-0 small" id="m2mInfoSection">
-                            <i class="bi bi-robot me-1"></i>
-                            Le <strong>Service Account M2M</strong> sera créé automatiquement lorsque l'application s'enregistrera au démarrage.
-                        </div>
-                    </div>
-                    <div class="modal-footer pt-0">
-                        <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Annuler</button>
-                        <button type="submit" class="btn btn-primary btn-sm" id="appSubmitBtn">
-                            <i class="bi bi-check-lg me-1"></i>Enregistrer
-                        </button>
-                    </div>
-                </form>
-            </div>
-        </div>
-    </div>
+    <!-- La modale d'édition appFormModal a été supprimée (fiche v6) :
+         son formulaire vit désormais dans la carte « Réglages » de la fiche
+         application (#appDetailPane, mêmes IDs app*) — plus de backdrop. -->
 
     <!-- App Group Modal (dashboard) : liste les applications d'un groupe -->
     <div class="modal fade" id="appGroupModal" tabindex="-1" aria-hidden="true">

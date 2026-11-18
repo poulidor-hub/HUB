@@ -10,19 +10,22 @@
 
 // ===== App CRUD =====
 
+/**
+ * v6 : la modale d'ajout n'existe plus — « Ajouter » ouvre la FICHE en mode
+ * création (Réglages vide, sections techniques masquées). Alias conservé
+ * pour openAppFormPrefilled (flux « Ajouter depuis GitHub ») et tout
+ * appelant historique. Voir openAppDetailCreate (admin-app-detail.js).
+ */
 async function showAddAppForm() {
-    // Charger le host du Hub si pas encore fait
-    if (!hubHost) {
-        try {
-            const config = await api.getHubHost();
-            hubHost = config.host;
-        } catch (e) {
-            console.error('Impossible de récupérer le host du Hub:', e);
-            hubHost = window.location.hostname;
-        }
-    }
-    
-    document.getElementById('appFormTitle').textContent = 'Nouvelle Application';
+    return openAppDetailCreate();
+}
+
+/**
+ * Réinitialise le formulaire inline de la fiche pour une CRÉATION (extrait
+ * de l'ancien showAddAppForm — mêmes IDs, mêmes valeurs par défaut). Sync :
+ * appelé par openAppDetailCreate après le rendu des zones de la fiche.
+ */
+function resetAppFormForCreate() {
     document.getElementById('appForm').reset();
     document.getElementById('appId').value = '';
     document.getElementById('appMode').value = 'create';
@@ -36,16 +39,16 @@ async function showAddAppForm() {
     document.getElementById('customHostGroup').classList.add('d-none');
     document.getElementById('appSlug').readOnly = true;
     document.getElementById('slugHint').textContent = 'Généré automatiquement';
-    
+
     // Afficher les éléments de création
     document.getElementById('advancedOptionsSection').classList.remove('d-none');
     document.getElementById('m2mInfoSection').classList.remove('d-none');
-    
+
     // Mode simplifié (chantier B : ports alloués automatiquement, slug seul)
     document.getElementById('advancedUrlsSection')?.classList.add('d-none');
     const apiUrlField = document.getElementById('appApiUrl');
     if (apiUrlField) apiUrlField.required = false;
-    
+
     document.getElementById('appSubmitBtn').innerHTML = '<i class="bi bi-check-lg me-1"></i>Enregistrer';
 
     // Groupe + catégorie : reset et suggestions (catégories déjà utilisées)
@@ -55,12 +58,26 @@ async function showAddAppForm() {
     hideIconPicker();
     document.getElementById('iconSearchInput').value = '';
 
+    // Bandeaux éventuels d'une session précédente (préfill GitHub, préflight
+    // Git, contournement certificat) : nettoyés — la fiche repart à zéro.
+    removePrefilledEnvBanner();
+    clearManifestBypass();
+    window._appFormRepoAccess = null;
+    const gitBanner = document.getElementById('appGitAccessBanner');
+    if (gitBanner) { gitBanner.classList.add('d-none'); gitBanner.innerHTML = ''; }
+
+    const slugNote = document.getElementById('appDetailSlugNote');
+    if (slugNote) slugNote.textContent = 'Slug généré automatiquement à la frappe du nom · ports alloués au déploiement';
+
     updateIconPreview();
     updateAppFormPreview();
     updateUrlPreview();
-    renderGitAccessBanner(null);
     document.getElementById('appSubmitBtn').disabled = false;
-    appFormModal.show();
+}
+
+/** Retire l'encart « déploiement automatique » posé par openAppFormPrefilled. */
+function removePrefilledEnvBanner() {
+    document.getElementById('prefilledEnvBanner')?.remove();
 }
 
 // ===== Préflight d'accès Git (spec 2026-09-17) =====
@@ -151,8 +168,9 @@ function clearManifestBypass() {
     banner.innerHTML = '';
 }
 
-// Nettoyage du bandeau de contournement à chaque fermeture du formulaire
-document.getElementById('appFormModal')?.addEventListener('hidden.bs.modal', clearManifestBypass);
+// Le bandeau de contournement est désormais nettoyé aux re-préfill du
+// formulaire inline (resetAppFormForCreate / prefillAppFormFromApp) — plus
+// de listener « hidden.bs.modal », la modale appFormModal n'existe plus (v6).
 
 // ===== Docker Details Modal =====
 
@@ -470,24 +488,36 @@ function formatDateTime(isoString) {
     }
 }
 
-async function editApp(id) {
-    id = parseInt(id, 10);
-    const app = allApps.find(a => a.id === id);
+/**
+ * v6 : l'édition vit DANS la fiche (carte Réglages inline) — la modale
+ * n'existe plus. Réorienté : ouvre simplement la fiche de l'app, dont le
+ * rendu re-préfill le formulaire (prefillAppFormFromApp). Conservé pour
+ * tout appelant historique (data-action="editApp").
+ */
+function editApp(id) {
+    const app = allApps.find(a => a.id === parseInt(id, 10));
     if (!app) {
         showToast('Erreur', 'Application non trouvée. Veuillez rafraîchir la page.', 'danger');
-        try { await loadAdminData(); } catch (e) { console.error('Impossible de recharger les apps:', e); }
+        try { loadAdminData(); } catch (e) { console.error('Impossible de recharger les apps:', e); }
         return;
     }
+    openAppDetail(app.slug);
+}
 
+/**
+ * Préfill du formulaire inline (carte Réglages) avec les données courantes
+ * de l'app — extrait de l'ancien editApp (mêmes IDs, même logique), sans
+ * modale. Appelé à l'ouverture de la fiche et par « Réinitialiser ».
+ */
+function prefillAppFormFromApp(app) {
     document.getElementById('appForm').reset();
-    
-    document.getElementById('appFormTitle').textContent = 'Modifier l\'Application';
+
     document.getElementById('appId').value = app.id;
     document.getElementById('appMode').value = 'edit';
-    
+
     document.getElementById('advancedOptionsSection').classList.remove('d-none');
     document.getElementById('m2mInfoSection').classList.add('d-none');
-    
+
     document.getElementById('appName').value = app.name;
     document.getElementById('appName').required = true;
     document.getElementById('appSlug').value = app.slug;
@@ -510,20 +540,46 @@ async function editApp(id) {
     document.getElementById('appIsSharedService').checked = app.is_shared_service || false;
     document.getElementById('appIsUnmanaged').checked = app.is_unmanaged || false;
     document.getElementById('appGitRepoUrl').value = app.git_repo_url || '';
-    
+
     // Mode édition : URLs directes
     document.getElementById('advancedUrlsSection')?.classList.remove('d-none');
     document.getElementById('appApiUrl').required = true;
-    
+
     document.getElementById('appSubmitBtn').innerHTML = '<i class="bi bi-check-lg me-1"></i>Enregistrer';
-    
+    document.getElementById('appSubmitBtn').disabled = false;
+
+    const slugNote = document.getElementById('appDetailSlugNote');
+    if (slugNote) slugNote.textContent = 'Slug ' + app.slug + ' (non modifiable) · ports alloués à la création uniquement';
+
+    // Bandeaux éventuels d'une session précédente (préfill GitHub, préflight
+    // Git, contournement certificat) : nettoyés — accès Git non re-vérifié à
+    // l'ouverture (aucun fetch surprise), le préflight repart à la sauvegarde.
+    removePrefilledEnvBanner();
+    clearManifestBypass();
+    window._appFormRepoAccess = null;
+    const gitBanner = document.getElementById('appGitAccessBanner');
+    if (gitBanner) { gitBanner.classList.add('d-none'); gitBanner.innerHTML = ''; }
+
     hideIconPicker();
     document.getElementById('iconSearchInput').value = '';
-    
+
     updateIconPreview();
     updateAppFormPreview();
-    
-    appFormModal.show();
+}
+
+/**
+ * Bouton « Réinitialiser » de la carte Réglages : re-préfill depuis les
+ * données courantes (édition) ou retour aux valeurs par défaut (création).
+ */
+function resetAppDetailForm() {
+    if (_appDetailSlug === '__new__') {
+        resetAppFormForCreate();
+        return;
+    }
+    const app = _appDetailApp;
+    if (!app) return;
+    prefillAppFormFromApp(app);
+    showToast('Info', 'Réglages réinitialisés (valeurs enregistrées).', 'info');
 }
 
 function toggleCustomHost() {
@@ -600,11 +656,11 @@ async function handleSaveApp(event) {
             if (updated && typeof updated.git_sync === 'string' && updated.git_sync.startsWith('warning:')) {
                 showToast('Dépôt git', 'Remote local non synchronisé : ' + updated.git_sync.replace(/^warning:\s*/, ''), 'warning');
             }
-            
-            appFormModal.hide();
+
             await loadAdminData();
-            // Fiche application ouverte (éditée depuis la fiche) : re-render
-            // avec les données fraîches — no-op si la fiche est fermée.
+            // Fiche application ouverte (réglages inline v6) : re-render avec
+            // les données fraîches + re-préfill du formulaire — no-op si la
+            // fiche est fermée.
             if (typeof refreshAppDetail === 'function') refreshAppDetail();
         } else {
             // Mode création - utiliser les ports (schéma simplifié)
@@ -667,9 +723,6 @@ async function handleSaveApp(event) {
 
             await api.createApp(data);
             clearManifestBypass(); // succès : la case de contournement disparaît
-            // Modal fermée dès la création : le suivi de déploiement n'est pas
-            // captif (toast à la fin — spec 2026-09-17 §3.3)
-            appFormModal.hide();
             const sharedMsg = isSharedService ? ' (API partagée M2M)' : '';
             showToast('Succès', `Application créée${sharedMsg}`, 'success');
             if (data.git_repo_url) {
@@ -678,6 +731,9 @@ async function handleSaveApp(event) {
             // Rafraîchissements en arrière-plan, non bloquants
             refreshTokenAfterAppChange('création', true).catch(() => {});
             loadAdminData().catch(() => {});
+            // Retour à la liste (équivalent de l'ancien modal.hide() — le
+            // suivi de déploiement n'est pas captif, toast à la fin).
+            if (typeof closeAppDetail === 'function') closeAppDetail();
         }
         loadApps(); // Refresh dashboard
     } catch (error) {
@@ -902,29 +958,34 @@ function filterIcons() {
     });
 }
 
+/**
+ * Préfill de CRÉATION depuis un dépôt GitHub (flux « Ajouter depuis GitHub »,
+ * admin-apps-github.js) : ouvre la fiche en mode création puis remplit
+ * nom/slug/dépôt + verdict d'accès immédiat. Le formulaire est inline (v6) :
+ * l'encart « déploiement automatique » est inséré en tête de la carte
+ * Réglages (#appDetailSettingsBody) — plus de modale ni de setTimeout.
+ */
 function openAppFormPrefilled(prepared) {
-    showAddAppForm();
+    showAddAppForm(); // → openAppDetailCreate : rend les zones + reset (sync)
 
-    setTimeout(() => {
-        const set = (id, val) => { const el = document.getElementById(id); if (el) el.value = val; };
-        set('appName', prepared.name);
-        set('appSlug', prepared.slug);
-        set('appGitRepoUrl', prepared.git_repo_url || '');
+    const set = (id, val) => { const el = document.getElementById(id); if (el) el.value = val; };
+    set('appName', prepared.name);
+    set('appSlug', prepared.slug);
+    set('appGitRepoUrl', prepared.git_repo_url || '');
 
-        // Préflight renvoyé par le prepare (spec 2026-09-17) : verdict immédiat
-        renderGitAccessBanner(prepared.repo_access ? Object.assign({ checked_url: prepared.git_repo_url }, prepared.repo_access) : null);
+    // Préflight renvoyé par le prepare (spec 2026-09-17) : verdict immédiat
+    renderGitAccessBanner(prepared.repo_access ? Object.assign({ checked_url: prepared.git_repo_url }, prepared.repo_access) : null);
 
-        const modalBody = document.querySelector('#appFormModal .modal-body');
-        if (modalBody && !document.getElementById('prefilledEnvBanner')) {
-            const banner = document.createElement('div');
-            banner.id = 'prefilledEnvBanner';
-            banner.className = 'alert alert-info';
-            banner.innerHTML = '<i class="bi bi-rocket-takeoff me-1"></i>Déploiement automatique : après validation, le HUB clone le dépôt, configure le <code>.env</code> et démarre l\'app — aucune action manuelle requise.';
-            modalBody.insertBefore(banner, modalBody.firstChild);
-        }
+    const settingsBody = document.getElementById('appDetailSettingsBody');
+    if (settingsBody && !document.getElementById('prefilledEnvBanner')) {
+        const banner = document.createElement('div');
+        banner.id = 'prefilledEnvBanner';
+        banner.className = 'alert alert-info';
+        banner.innerHTML = '<i class="bi bi-rocket-takeoff me-1"></i>Déploiement automatique : après validation, le HUB clone le dépôt, configure le <code>.env</code> et démarre l\'app — aucune action manuelle requise.';
+        settingsBody.insertBefore(banner, settingsBody.firstChild);
+    }
 
-        showToast('Pré-rempli', 'Slug "' + prepared.slug + '" + ports alloués', 'info');
-    }, 150);
+    showToast('Pré-rempli', 'Slug "' + prepared.slug + '" + ports alloués', 'info');
 }
 
 // Fermer le picker si on clique en dehors

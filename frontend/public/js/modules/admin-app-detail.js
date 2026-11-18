@@ -339,6 +339,37 @@ async function openAppDetail(slugArg) {
     renderAppDetailPane();
 }
 
+/**
+ * Ouvre la fiche en mode CRÉATION (v6 — « Ajouter », flux GitHub, hash
+ * #admin/apps/new) : la même fiche avec Réglages vide (resetAppFormForCreate
+ * — nom vide, slug auto-généré à la frappe, ports alloués automatiquement),
+ * sections techniques masquées et badges remplacés par l'encart « Nouvelle
+ * application ». L'enregistrement repasse par handleSaveApp (POST /apps/ +
+ * auto-deploy si un dépôt Git est configuré), puis retour liste.
+ */
+function openAppDetailCreate() {
+    const pane = document.getElementById('appDetailPane');
+    if (!pane) { console.warn('[admin-app-detail] #appDetailPane introuvable'); return; }
+    // Garde no-op : déjà en création (double évènement clic + hash).
+    if (_appDetailSlug === '__new__' && !pane.classList.contains('d-none')) return;
+
+    stopAppDetailPolling();
+    resetAppDetailCockpit();
+    _appDetailSlug = '__new__';
+    _appDetailApp = null;
+    _appDetailStatusFetchStarted = false;
+
+    const list = document.getElementById('appsListWrap');
+    if (list) list.classList.add('d-none');
+    pane.classList.remove('d-none');
+    try { window.location.hash = 'admin/apps/new'; } catch (e) { /* hash refusé */ }
+
+    renderAppDetailPane();
+    // Reset du formulaire inline APRÈS le rendu des zones (sync — aucun
+    // fetch intermédiaire, contrairement à l'ancienne modale).
+    if (typeof resetAppFormForCreate === 'function') resetAppFormForCreate();
+}
+
 /** Retour à la liste (bouton « ← Applications ») : masque la fiche + hash liste. */
 function closeAppDetail() {
     hideAppDetailPane();
@@ -412,8 +443,18 @@ function renderAppDetailPane() {
     const pane = document.getElementById('appDetailPane');
     if (!pane) return;
 
-    const isPending = app ? app.approval_status === 'pending' : false;
-    const isRejected = app ? app.approval_status === 'rejected' : false;
+    // Mode création (slug sentinelle '__new__') : identité « Nouvelle
+    // application », Réglages seul (reset effectué par openAppDetailCreate),
+    // aucune section technique ni mini-cockpit.
+    if (slug === '__new__') {
+        fillAppDetailIdentity(null);
+        setAppDetailMode('create');
+        return;
+    }
+    if (!app || slug !== app.slug) return;
+
+    const isPending = app.approval_status === 'pending';
+    const isRejected = app.approval_status === 'rejected';
     const needsApproval = isPending || isRejected;
 
     fillAppDetailIdentity(app);
@@ -428,6 +469,9 @@ function renderAppDetailPane() {
     }
 
     setAppDetailMode('view');
+    // Réglages inline : préfill du formulaire avec les données courantes à
+    // chaque ouverture/re-render (fonction existante — admin-app-form.js).
+    if (typeof prefillAppFormFromApp === 'function') prefillAppFormFromApp(app);
     loadAppDetailSections();
 }
 
@@ -446,11 +490,12 @@ function fillAppDetailIdentity(app) {
     if (!tile || !tileIcon || !nameEl || !badgesEl || !subEl || !actionsEl) return;
 
     if (!app) {
+        // Mode création : identité dédiée (pas encore d'app enregistrée).
         tile.style.backgroundColor = '#0d6efd';
         tileIcon.className = 'bi bi-app';
-        nameEl.textContent = '—';
+        nameEl.textContent = 'Nouvelle application';
         badgesEl.innerHTML = '';
-        subEl.textContent = '';
+        subEl.textContent = 'Renseignez les réglages puis enregistrez — le déploiement suit automatiquement si un dépôt Git est configuré.';
         actionsEl.innerHTML = '';
         return;
     }
@@ -481,10 +526,10 @@ function fillAppDetailIdentity(app) {
 /**
  * Bascule les zones du squelette selon le mode :
  * - 'view'     : fiche complète (mini-cockpit, badges, grille 2 colonnes) ;
+ * - 'create'   : création — Réglages seul (colonne droite + Logs masqués),
+ *                encart « Nouvelle application » à la place des badges ;
  * - 'approval' : fiche réduite pending/rejected (en-tête + bloc workflow,
  *                grille et mini-cockpit masqués).
- * Le mode création (v6) réutilise 'view' avec les sections techniques
- * masquées à l'ouverture (voir openAppDetailCreate).
  */
 function setAppDetailMode(mode) {
     const show = (id, visible) => {
@@ -492,11 +537,16 @@ function setAppDetailMode(mode) {
         if (el) el.classList.toggle('d-none', !visible);
     };
     const isView = mode === 'view';
+    const isCreate = mode === 'create';
     show('appDetailMiniMonitor', isView);
     show('appDetailHeaderActions', isView);
     show('appDetailStatusBadges', isView);
     show('appDetailUptimeNote', isView);
+    show('appDetailCreateNote', isCreate);
     show('appDetailGrid', mode !== 'approval');
+    show('appDetailColRight', isView);
+    show('appDetailLogsCard', isView);
+    show('appDetailSettingsCard', mode !== 'approval');
     show('appDetailReducedPane', mode === 'approval');
     if (!isView) {
         const note = document.getElementById('appDetailUptimeNote');

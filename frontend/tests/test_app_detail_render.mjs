@@ -242,4 +242,30 @@ assert.ok(indexSource.includes('id="appDetailColLeft"') && indexSource.includes(
 assert.ok(detailSource.includes('APP_DETAIL_COCKPIT_MAX_POINTS = 30'), 'buffer 30 points déclaré');
 assert.ok(detailSource.includes('APP_DETAIL_COCKPIT_POLL_MS = 10000'), 'poll cockpit 10 s déclaré');
 
+// ===== Réglages inline v6 : la modale d'édition a migré dans la fiche =====
+
+// La modale (et son backdrop) est supprimée d'index.html
+assert.ok(!indexSource.includes('id="appFormModal"'), "plus de modale appFormModal dans index.html");
+assert.ok(!detailSource.includes('appFormModal'), "admin-app-detail.js ne référence plus appFormModal");
+const formSource = readFileSync(join(dirname(modulePath), 'admin-app-form.js'), 'utf8');
+assert.ok(!formSource.includes('appFormModal.'), 'admin-app-form.js n\'appelle plus appFormModal (show/hide)');
+
+// Le formulaire inline vit dans la carte Réglages du squelette (mêmes IDs app*)
+assert.ok(indexSource.includes('id="appDetailSettingsCard"'), 'carte Réglages dans le squelette');
+assert.ok(indexSource.includes('<form id="appForm" data-action="handleSaveApp"'), 'formulaire inline (flux save inchangé)');
+assert.ok(indexSource.includes('data-action="resetAppDetailForm"'), 'bouton Réinitialiser branché');
+for (const fieldId of ['appId', 'appMode', 'appIcon', 'appColor', 'appName', 'appSlug', 'appDescription',
+    'appGroup', 'appCategory', 'appGitRepoUrl', 'appApiUrl', 'appFrontendUrl', 'appCallbackUrl',
+    'appActive', 'appRequiresAuth', 'appIsSharedService', 'appIsUnmanaged']) {
+    const count = indexSource.split('id="' + fieldId + '"').length - 1;
+    assert.equal(count, 1, 'champ #' + fieldId + ' unique dans index.html (migration sans doublon)');
+}
+
+// Flux conservés : préfill extrait, réorientation editApp, reset création
+assert.ok(formSource.includes('function prefillAppFormFromApp('), 'préfill édition extrait (préfillAppFormFromApp)');
+assert.ok(formSource.includes('function resetAppFormForCreate('), 'reset création extrait (resetAppFormForCreate)');
+assert.ok(formSource.includes('function resetAppDetailForm('), 'action Réinitialiser (resetAppDetailForm)');
+assert.ok(detailSource.includes('function openAppDetailCreate('), 'mode création (openAppDetailCreate)');
+assert.ok(indexSource.includes('id="appDetailCreateNote"'), 'encart « Nouvelle application » dans le squelette');
+
 console.log('OK — test_app_detail_render : toutes les assertions passent.');
