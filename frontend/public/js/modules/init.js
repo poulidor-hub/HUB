@@ -31,7 +31,8 @@ document.addEventListener('DOMContentLoaded', () => {
     updateHubVersionBadge();
 
     // Initialize Bootstrap components
-    appFormModal = new bootstrap.Modal(document.getElementById('appFormModal'));
+    // (La modale appFormModal n'existe plus — fiche v6 : son formulaire est
+    // inline dans #appDetailPane ; pas d'instance Bootstrap à créer.)
     userFormModal = new bootstrap.Modal(document.getElementById('userFormModal'));
     serviceAccountFormModal = new bootstrap.Modal(document.getElementById('serviceAccountFormModal'));
     saCredentialsModal = new bootstrap.Modal(document.getElementById('saCredentialsModal'));

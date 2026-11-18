@@ -2603,4 +2603,33 @@ body {
 
 /* ===== Fiche app : sections à contenu non borné (historique déploiements, changelog) ===== */
 /* Ascenseur natif (pas de pagination) : hauteur plafonnée + overscroll contenu (charte perf). */
-.appdetail-scroll { max-height: 20rem; overflow-y: auto; overscroll-behavior: contain; }
+.appdetail-scroll { max-height: 16rem; overflow-y: auto; overscroll-behavior: contain; }
+
+/* ===== Fiche application v6 (maquette « fiche-grid-v6 ») ===== */
+/* Grille 2 colonnes indépendantes : flex (pas de grid-template pour garder
+   des hauteurs naturelles), gap 14 px, 1 colonne sous 900 px. Aucune animation. */
+.fgrid { display: flex; gap: 14px; align-items: stretch; }
+.fcol { display: flex; flex-direction: column; gap: 14px; min-width: 0; flex: 1 1 0; }
+@media (max-width: 900px) {
+    .fgrid { flex-direction: column; }
+}
+
+/* Mini-cockpit de l'en-tête : 4 chips (label uppercase, valeur, micro-
+   sparkline SVG ~100×22 redessinée par tick — statique, aucune animation). */
+.mini-monitor { display: flex; gap: 8px; flex-wrap: wrap; align-items: stretch; }
+.mini {
+    border: 1px solid #e3e8ee;
+    border-radius: 9px;
+    background: #f8f9fa;
+    padding: 5px 8px 3px;
+    min-width: 104px;
+}
+.mini .lbl { font-size: 9.5px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: #6c757d; }
+.mini .val { font-size: 13px; font-weight: 700; line-height: 1.1; }
+.mini .sub { font-size: 9.5px; color: #6c757d; }
+.mini svg.spark { width: 100%; height: 22px; display: block; margin-top: 2px; }
+.mini.up .val { color: #198754; }
+.mini.down .val { color: #dc3545; }
+.mini.muted .val { color: #6c757d; }
+/* Note uptime à droite de la rangée de badges (maquette v6). */
+#appDetailUptimeNote { font-size: 10.5px; }

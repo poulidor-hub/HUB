@@ -7,10 +7,17 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Hub - Portail d'Applications</title>
-    <link rel="icon" type="image/svg+xml" href="favicon.svg?v=3.95.3">
+<<<<<<< HEAD
+    <link rel="icon" type="image/svg+xml" href="favicon.svg?v=3.96.0">
     <link href="/vendor/bootstrap.min.css" rel="stylesheet">
     <link href="/vendor/bootstrap-icons.css" rel="stylesheet">
-    <link href="css/style.css?v=3.95.3" rel="stylesheet">
+    <link href="css/style.css?v=3.96.0" rel="stylesheet">
+=======
+    <link rel="icon" type="image/svg+xml" href="favicon.svg?v=3.96.0">
+    <link href="/vendor/bootstrap.min.css" rel="stylesheet">
+    <link href="/vendor/bootstrap-icons.css" rel="stylesheet">
+    <link href="css/style.css?v=3.96.0" rel="stylesheet">
+>>>>>>> origin/feat/fiche-v6-cockpit
 </head>
 <body>
     <!-- Loading Screen - affiché pendant la vérification de l'authentification -->
@@ -29,7 +36,11 @@
             <a class="navbar-brand d-flex align-items-center" href="#" data-action="showPage" data-args="dashboard">
                 <i class="bi bi-grid-3x3-gap-fill me-2"></i>
                 <span>Hub</span>
-                <small class="navbar-version ms-2" id="navbarVersionBadge">v3.95.3</small>
+<<<<<<< HEAD
+                <small class="navbar-version ms-2" id="navbarVersionBadge">v3.96.0</small>
+=======
+                <small class="navbar-version ms-2" id="navbarVersionBadge">v3.96.0</small>
+>>>>>>> origin/feat/fiche-v6-cockpit
                 <span id="systemUpdateBadgeSlot" class="ms-2 d-inline-flex align-items-center d-none"></span>
             </a>
             
@@ -1047,7 +1058,7 @@
                             <button class="btn btn-outline-secondary btn-sm" data-action="showDockerScanModal">
                                 <i class="bi bi-box-seam me-1"></i>Scanner Docker
                             </button>
-                            <button class="btn btn-primary btn-sm" data-action="showAddAppForm">
+                            <button class="btn btn-primary btn-sm" data-action="openAppDetailCreate" title="Nouvelle application — création via la fiche">
                                 <i class="bi bi-plus-lg me-1"></i>Ajouter
                             </button>
                         </div>
@@ -1120,7 +1131,345 @@
                         <!-- Table loaded dynamically -->
                     </div>
                     </div><!-- /appsListWrap -->
-                    <div id="appDetailPane" class="d-none"><!-- Fiche application (admin-app-detail.js) --></div>
+                    <!-- Fiche application v6 (maquette « fiche-grid-v6 ») :
+                         SQUELETTE STATIQUE — en-tête (tuile, identité,
+                         mini-cockpit 4 chips, Ouvrir), rangée de badges
+                         d'état, grille flex 2 colonnes indépendantes
+                         (.fgrid/.fcol, 1 colonne < 900 px) dont les zones
+                         identifiées sont remplies par admin-app-detail.js.
+                         Aucun innerHTML global : les listeners posés au
+                         chargement (init.js) survivent aux ouvertures. -->
+                    <div id="appDetailPane" class="d-none">
+                        <!-- Retour liste -->
+                        <div class="mb-3">
+                            <button class="btn btn-sm btn-outline-secondary" data-action="closeAppDetail" title="Retour à la liste des applications">
+                                <svg class="hub-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="/vendor/design-system/lucide.svg#icon-arrow-left"></use></svg>
+                                <span class="ms-1">Applications</span>
+                            </button>
+                        </div>
+
+                        <!-- En-tête : identité + mini-cockpit + actions -->
+                        <div class="card border-0 shadow-sm mb-3" id="appDetailHeadCard">
+                            <div class="card-body py-3">
+                                <div class="d-flex align-items-center gap-3 flex-wrap">
+                                    <span id="appDetailTile" class="rounded d-inline-flex align-items-center justify-content-center flex-shrink-0" style="width:44px;height:44px;background-color:#0d6efd;color:#fff">
+                                        <i id="appDetailTileIcon" class="bi bi-app" style="font-size:1.25rem"></i>
+                                    </span>
+                                    <div class="flex-grow-1" style="min-width:180px">
+                                        <h5 class="mb-0 d-flex align-items-center gap-2 flex-wrap">
+                                            <span id="appDetailName">—</span>
+                                            <span id="appDetailNameBadges" class="d-inline-flex gap-1"></span>
+                                        </h5>
+                                        <div class="text-muted small" id="appDetailSub"></div>
+                                    </div>
+                                    <!-- Mini-cockpit conteneur (chips remplies
+                                         par renderAppDetailMiniCockpit, tick 10 s) -->
+                                    <div id="appDetailMiniMonitor" class="mini-monitor d-none" aria-label="Ressources du conteneur">
+                                        <div class="mini" id="appDetailChipCpu">
+                                            <div class="lbl">CPU</div>
+                                            <div class="val" id="appDetailCpuVal">—</div>
+                                            <svg class="spark" viewBox="0 0 100 22" preserveAspectRatio="none" aria-hidden="true"><polyline id="appDetailCpuSpark" fill="none" stroke="#0d6efd" stroke-width="1.6" points=""/></svg>
+                                        </div>
+                                        <div class="mini" id="appDetailChipRam">
+                                            <div class="lbl">RAM</div>
+                                            <div class="val" id="appDetailRamVal">—</div>
+                                            <div class="sub" id="appDetailRamSub"></div>
+                                            <svg class="spark" viewBox="0 0 100 22" preserveAspectRatio="none" aria-hidden="true"><polyline id="appDetailRamSpark" fill="none" stroke="#198754" stroke-width="1.6" points=""/></svg>
+                                        </div>
+                                        <div class="mini" id="appDetailChipNet">
+                                            <div class="lbl">Réseau ↓ / ↑</div>
+                                            <div class="val" id="appDetailNetVal">—</div>
+                                            <svg class="spark" viewBox="0 0 100 22" preserveAspectRatio="none" aria-hidden="true"><polyline id="appDetailNetSpark" fill="none" stroke="#fd7e14" stroke-width="1.6" points=""/></svg>
+                                        </div>
+                                        <div class="mini" id="appDetailChipLatency">
+                                            <div class="lbl">Latence</div>
+                                            <div class="val" id="appDetailLatencyVal">—</div>
+                                            <div class="sub" id="appDetailLatencySub"></div>
+                                            <svg class="spark" viewBox="0 0 100 22" preserveAspectRatio="none" aria-hidden="true"><polyline id="appDetailLatencySpark" fill="none" stroke="#198754" stroke-width="1.6" points=""/></svg>
+                                        </div>
+                                    </div>
+                                    <!-- Actions (Ouvrir — rempli par la fiche) -->
+                                    <div id="appDetailHeaderActions" class="d-flex gap-2 ms-auto"></div>
+                                </div>
+                                <!-- Rangée badges d'état (allégée v6) / encart création -->
+                                <div class="d-flex flex-wrap gap-1 align-items-center mt-3" id="appDetailStatusRow">
+                                    <div id="appDetailStatusBadges" class="d-flex flex-wrap gap-1 align-items-center"></div>
+                                    <div id="appDetailCreateNote" class="alert alert-info py-1 px-2 mb-0 small d-none">
+                                        <i class="bi bi-info-circle me-1"></i>Nouvelle application — non encore enregistrée
+                                    </div>
+                                    <span id="appDetailUptimeNote" class="ms-auto text-muted" style="font-size:10.5px"></span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Grille 2 colonnes indépendantes (flex, gap 14px,
+                             1 colonne < 900 px via style.css) -->
+                        <div class="fgrid mb-3" id="appDetailGrid">
+                            <!-- Colonne gauche -->
+                            <div class="fcol" id="appDetailColLeft">
+                                <!-- Réglages inline (v6) : l'ancienne modale
+                                     appFormModal a migré ICI — mêmes IDs de
+                                     champs (app*), tout le flux existant
+                                     (génération du slug, préfill, préflight
+                                     Git, save PATCH/POST) continue de
+                                     fonctionner ; le picker d'icônes et le
+                                     catalogue restent branchés. -->
+                                <div class="card border-0 shadow-sm" id="appDetailSettingsCard">
+                                    <div class="card-header py-2 d-flex align-items-center gap-2">
+                                        <strong class="d-flex align-items-center gap-2">
+                                            <svg class="hub-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="/vendor/design-system/lucide.svg#icon-wrench"></use></svg>
+                                            Réglages
+                                        </strong>
+                                        <span class="ms-auto text-muted" style="font-size:10.5px;font-weight:400">enregistrer pour appliquer</span>
+                                    </div>
+                                    <div class="card-body" id="appDetailSettingsBody">
+                                        <form id="appForm" data-action="handleSaveApp" data-args="event">
+                                            <div id="appGitAccessBanner" class="d-none mb-3"></div>
+                                            <input type="hidden" id="appId">
+                                            <input type="hidden" id="appMode" value="create">
+
+                                            <!-- ── Identité ── -->
+                                            <div class="row g-3 align-items-end mb-3">
+                                                <div class="col-auto">
+                                                    <div class="app-form-preview" id="appFormPreview" data-action="toggleIconPicker" title="Choisir l'icône" style="cursor:pointer">
+                                                        <i id="iconPreview" class="bi bi-app"></i>
+                                                    </div>
+                                                    <input type="hidden" id="appIcon" value="bi-app">
+                                                    <input type="color" class="form-control form-control-color mt-1" id="appColor" value="#0d6efd" style="width:48px;height:28px" title="Couleur">
+                                                </div>
+                                                <div class="col">
+                                                    <label class="form-label mb-1">Nom *</label>
+                                                    <input type="text" class="form-control" id="appName" required placeholder="Mon Application">
+                                                </div>
+                                                <div class="col-md-4">
+                                                    <label class="form-label mb-1">Slug</label>
+                                                    <input type="text" class="form-control" id="appSlug" pattern="[a-z0-9\-]+" required readonly>
+                                                    <small class="text-muted" id="slugHint">Généré automatiquement</small>
+                                                </div>
+                                            </div>
+
+                                            <!-- Icon Picker -->
+                                            <div id="iconPickerContainer" class="icon-picker-container d-none mb-3">
+                                                <div class="icon-picker-header">
+                                                    <input type="text" class="form-control form-control-sm" id="iconSearchInput" placeholder="Rechercher une icône..." data-action="filterIcons">
+                                                </div>
+                                                <div id="iconPickerGrid" class="icon-picker-grid">
+                                                </div>
+                                            </div>
+
+                                            <div class="mb-3">
+                                                <label class="form-label mb-1">Description</label>
+                                                <input type="text" class="form-control" id="appDescription" placeholder="Courte description de l'application">
+                                            </div>
+
+                                            <div class="row g-3 mb-3">
+                                                <div class="col-md-6">
+                                                    <label class="form-label mb-1"><i class="bi bi-folder2 me-1"></i>Groupe</label>
+                                                    <select class="form-select" id="appGroup">
+                                                        <option value="">— Aucun —</option>
+                                                    </select>
+                                                    <small class="text-muted">Regroupement visuel sur le dashboard</small>
+                                                </div>
+                                                <div class="col-md-6">
+                                                    <label class="form-label mb-1"><i class="bi bi-tag me-1"></i>Catégorie</label>
+                                                    <input type="text" class="form-control" id="appCategory" list="appCategoryList" placeholder="Ex : RH, SI, Outils…" maxlength="100">
+                                                    <datalist id="appCategoryList"></datalist>
+                                                    <small class="text-muted">Badge et filtre sur le dashboard</small>
+                                                </div>
+                                            </div>
+
+                                            <div class="mb-3">
+                                                <label class="form-label">URL du dépôt Git <small class="text-muted">(optionnel, pour update-check + changelog)</small></label>
+                                                <input type="text" class="form-control" id="appGitRepoUrl" placeholder="https://github.com/org/repo.git">
+                                                <small class="text-muted">Enregistre aussi le remote du dépôt local (atelier)</small>
+                                            </div>
+
+                                            <!-- ── Réseau ── -->
+                                            <div class="card border mb-3">
+                                                <div class="card-header py-2 bg-light">
+                                                    <i class="bi bi-hdd-network me-2"></i><strong>Configuration réseau</strong>
+                                                </div>
+                                                <div class="card-body py-3">
+                                                    <!-- Mode ports (création) -->
+                                                    <div class="form-check form-check-inline mb-3">
+                                                        <input class="form-check-input" type="checkbox" id="appCustomHost" data-action="toggleCustomHost">
+                                                        <label class="form-check-label small" for="appCustomHost">Serveur différent du Hub</label>
+                                                    </div>
+                                                    <div class="mb-3 d-none" id="customHostGroup">
+                                                        <div class="input-group input-group-sm">
+                                                            <span class="input-group-text"><i class="bi bi-hdd-network"></i></span>
+                                                            <input type="text" class="form-control" id="appCustomHostValue" placeholder="192.168.1.100 ou mon-serveur.local">
+                                                        </div>
+                                                    </div>
+                                                    <div class="small text-muted mb-2">
+                                                        <i class="bi bi-magic me-1"></i>Ports alloués automatiquement au déploiement —
+                                                        l'app sera publiée sur <code>&lt;slug&gt;.&lt;zone&gt;</code> (vue Accès &amp; routage).
+                                                    </div>
+                                                    <!-- Mode URLs directes (édition) -->
+                                                    <div id="advancedUrlsSection" class="d-none">
+                                                        <div class="row g-2">
+                                                            <div class="col-12">
+                                                                <div class="input-group">
+                                                                    <span class="input-group-text"><i class="bi bi-hdd-rack me-1"></i> API *</span>
+                                                                    <input type="url" class="form-control" id="appApiUrl" placeholder="http://localhost:8080">
+                                                                </div>
+                                                            </div>
+                                                            <div class="col-md-6">
+                                                                <div class="input-group">
+                                                                    <span class="input-group-text"><i class="bi bi-window me-1"></i> Front</span>
+                                                                    <input type="url" class="form-control" id="appFrontendUrl" placeholder="http://localhost:3000">
+                                                                </div>
+                                                            </div>
+                                                            <div class="col-md-6">
+                                                                <div class="input-group">
+                                                                    <span class="input-group-text"><i class="bi bi-arrow-return-right me-1"></i> Callback</span>
+                                                                    <input type="url" class="form-control" id="appCallbackUrl" placeholder="/callback">
+                                                                </div>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </div>
+
+                                            <!-- ── Options ── -->
+                                            <div class="d-flex flex-wrap gap-3 mb-3" id="advancedOptionsSection">
+                                                <div class="form-check form-switch">
+                                                    <input class="form-check-input" type="checkbox" id="appActive" checked>
+                                                    <label class="form-check-label" for="appActive">Active</label>
+                                                </div>
+                                                <div class="form-check form-switch">
+                                                    <input class="form-check-input" type="checkbox" id="appRequiresAuth" checked>
+                                                    <label class="form-check-label" for="appRequiresAuth">Auth requise</label>
+                                                </div>
+                                                <div class="form-check form-switch">
+                                                    <input class="form-check-input" type="checkbox" id="appIsSharedService">
+                                                    <label class="form-check-label" for="appIsSharedService">
+                                                        <i class="bi bi-share text-primary me-1"></i>Service partagé (M2M)
+                                                    </label>
+                                                </div>
+                                                <div class="form-check form-switch">
+                                                    <input class="form-check-input" type="checkbox" id="appIsUnmanaged">
+                                                    <label class="form-check-label" for="appIsUnmanaged">
+                                                        <i class="bi bi-exclamation-octagon text-secondary me-1"></i>Non gérée (lien only)
+                                                    </label>
+                                                </div>
+                                            </div>
+
+                                            <!-- Info M2M (création uniquement) -->
+                                            <div class="alert alert-info py-2 mb-0 small" id="m2mInfoSection">
+                                                <i class="bi bi-robot me-1"></i>
+                                                Le <strong>Service Account M2M</strong> sera créé automatiquement lorsque l'application s'enregistrera au démarrage.
+                                            </div>
+
+                                            <!-- Actions (inline — plus de modale : « Enregistrer »
+                                                 soumet le formulaire, « Réinitialiser » re-préfill
+                                                 depuis les données courantes) -->
+                                            <div class="d-flex gap-2 mt-3">
+                                                <button type="submit" class="btn btn-sm btn-primary" id="appSubmitBtn">
+                                                    <i class="bi bi-check-lg me-1"></i>Enregistrer
+                                                </button>
+                                                <button type="button" class="btn btn-sm btn-secondary" data-action="resetAppDetailForm" title="Re-préfill depuis les données courantes de l'application">
+                                                    Réinitialiser
+                                                </button>
+                                            </div>
+                                            <div class="text-muted mt-2" style="font-size:10px" id="appDetailSlugNote">
+                                                Slug généré automatiquement à la frappe du nom · ports alloués au déploiement
+                                            </div>
+                                        </form>
+                                    </div>
+                                </div>
+
+                                <!-- Logs -->
+                                <div class="card border-0 shadow-sm" id="appDetailLogsCard">
+                                    <div class="card-header py-2 d-flex align-items-center flex-wrap gap-2">
+                                        <strong class="d-flex align-items-center gap-2">
+                                            <svg class="hub-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="/vendor/design-system/lucide.svg#icon-terminal"></use></svg>
+                                            Logs
+                                        </strong>
+                                        <div class="ms-auto d-flex align-items-center gap-2">
+                                            <select class="form-select form-select-sm w-auto" id="appDetailLogService" data-action="loadAppDetailLogs" aria-label="Service des logs">
+                                                <option value="api">API</option>
+                                                <option value="frontend">Frontend</option>
+                                                <option value="postgres">PostgreSQL</option>
+                                            </select>
+                                            <select class="form-select form-select-sm w-auto" id="appDetailLogTail" data-action="loadAppDetailLogs" aria-label="Nombre de lignes">
+                                                <option value="50">50 lignes</option>
+                                                <option value="150" selected>150 lignes</option>
+                                                <option value="500">500 lignes</option>
+                                            </select>
+                                            <button class="btn btn-sm btn-secondary" data-action="loadAppDetailLogs" title="Recharger les logs">
+                                                <svg class="hub-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="/vendor/design-system/lucide.svg#icon-refresh-cw"></use></svg>
+                                                <span class="ms-1">Actualiser</span>
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <div class="card-body py-2">
+                                        <pre id="appDetailLogsPre" class="bg-light border rounded p-2 font-monospace" style="max-height:16rem;overflow:auto;font-size:.8rem;margin-bottom:0">Chargement…</pre>
+                                    </div>
+                                </div>
+                            </div><!-- /appDetailColLeft -->
+
+                            <!-- Colonne droite -->
+                            <div class="fcol" id="appDetailColRight">
+                                <!-- Mises à jour -->
+                                <div class="card border-0 shadow-sm">
+                                    <div class="card-header py-2 d-flex align-items-center">
+                                        <strong class="d-flex align-items-center gap-2">
+                                            <svg class="hub-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="/vendor/design-system/lucide.svg#icon-rocket"></use></svg>
+                                            Mises à jour
+                                        </strong>
+                                        <button class="btn btn-sm btn-outline-secondary ms-auto" data-action="refreshAppDetailDeployments" title="Rafraîchir le statut et l'historique de déploiement">
+                                            <svg class="hub-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="/vendor/design-system/lucide.svg#icon-refresh-cw"></use></svg>
+                                            <span class="ms-1">Actualiser</span>
+                                        </button>
+                                    </div>
+                                    <div class="card-body py-3 small">
+                                        <div id="appDetailDeployments"><span class="text-muted">Chargement…</span></div>
+                                    </div>
+                                </div>
+
+                                <!-- Changelog -->
+                                <div class="card border-0 shadow-sm">
+                                    <div class="card-header py-2 d-flex align-items-center">
+                                        <strong class="d-flex align-items-center gap-2">
+                                            <svg class="hub-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="/vendor/design-system/lucide.svg#icon-file-text"></use></svg>
+                                            Changelog
+                                        </strong>
+                                        <span class="ms-auto" id="appDetailChangelogLink"></span>
+                                    </div>
+                                    <div class="card-body py-3 small">
+                                        <div id="appDetailChangelogBody" class="appdetail-scroll"><span class="text-muted">Chargement…</span></div>
+                                        <div id="appDetailReleasesBody"></div>
+                                    </div>
+                                </div>
+
+                                <!-- Docker (collapse replié, résumé CPU/RAM/uptime) -->
+                                <div class="card border-0 shadow-sm">
+                                    <div class="card-header py-2">
+                                        <div class="d-flex align-items-center gap-2" role="button" tabindex="0" data-bs-toggle="collapse" data-bs-target="#appDetailDockerCollapse" aria-expanded="false" aria-controls="appDetailDockerCollapse" style="cursor:pointer">
+                                            <strong class="d-flex align-items-center gap-2">
+                                                <svg class="hub-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="/vendor/design-system/lucide.svg#icon-box"></use></svg>
+                                                Docker
+                                            </strong>
+                                            <span class="text-muted small" id="appDetailDockerSummary">chargement…</span>
+                                            <span class="ms-auto text-muted d-inline-flex align-items-center gap-1" style="font-size:11.5px">
+                                                <svg class="hub-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="/vendor/design-system/lucide.svg#icon-chevron-down"></use></svg>
+                                                déplier
+                                            </span>
+                                        </div>
+                                    </div>
+                                    <div class="collapse" id="appDetailDockerCollapse">
+                                        <div class="card-body py-3 small" id="appDetailDockerBody"><span class="text-muted">Chargement…</span></div>
+                                    </div>
+                                </div>
+                            </div><!-- /appDetailColRight -->
+                        </div><!-- /appDetailGrid -->
+
+                        <!-- Fiche réduite pending/rejected (workflow uniquement) :
+                             remplie par renderAppDetailApprovalBlock, le squelette
+                             ci-dessus n'est jamais détruit. -->
+                        <div id="appDetailReducedPane" class="d-none"></div>
+                    </div>
                 </div>
                 <!-- Dependencies Graph Tab -->
                 <div class="admin-tool-pane d-none" id="tabDependencies">
@@ -2835,162 +3184,9 @@
         </div>
     </div>
 
-<div class="modal fade" id="appFormModal" tabindex="-1">
-        <div class="modal-dialog modal-lg">
-            <div class="modal-content">
-                <div class="modal-header pb-0">
-                    <h5 class="modal-title" id="appFormTitle">Nouvelle Application</h5>
-                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-                </div>
-                <form id="appForm" data-action="handleSaveApp" data-args="event">
-                    <div class="modal-body pt-3">
-                        <div id="appGitAccessBanner" class="d-none mb-3"></div>
-                        <input type="hidden" id="appId">
-                        <input type="hidden" id="appMode" value="create">
-                        
-                        <!-- ── Identité ── -->
-                        <div class="row g-3 align-items-end mb-3">
-                            <div class="col-auto">
-                                <div class="app-form-preview" id="appFormPreview" data-action="toggleIconPicker" title="Choisir l'icône" style="cursor:pointer">
-                                    <i id="iconPreview" class="bi bi-app"></i>
-                                </div>
-                                <input type="hidden" id="appIcon" value="bi-app">
-                                <input type="color" class="form-control form-control-color mt-1" id="appColor" value="#0d6efd" style="width:48px;height:28px" title="Couleur">
-                            </div>
-                            <div class="col">
-                                <label class="form-label mb-1">Nom *</label>
-                                <input type="text" class="form-control" id="appName" required placeholder="Mon Application">
-                            </div>
-                            <div class="col-md-4">
-                                <label class="form-label mb-1">Slug</label>
-                                <input type="text" class="form-control" id="appSlug" pattern="[a-z0-9\-]+" required readonly>
-                                <small class="text-muted" id="slugHint">Généré automatiquement</small>
-                            </div>
-                        </div>
-
-                        <!-- Icon Picker -->
-                        <div id="iconPickerContainer" class="icon-picker-container d-none mb-3">
-                            <div class="icon-picker-header">
-                                <input type="text" class="form-control form-control-sm" id="iconSearchInput" placeholder="Rechercher une icône..." data-action="filterIcons">
-                            </div>
-                            <div id="iconPickerGrid" class="icon-picker-grid">
-                            </div>
-                        </div>
-
-                        <div class="mb-3">
-                            <label class="form-label mb-1">Description</label>
-                            <input type="text" class="form-control" id="appDescription" placeholder="Courte description de l'application">
-                        </div>
-
-                        <div class="row g-3 mb-3">
-                            <div class="col-md-6">
-                                <label class="form-label mb-1"><i class="bi bi-folder2 me-1"></i>Groupe</label>
-                                <select class="form-select" id="appGroup">
-                                    <option value="">— Aucun —</option>
-                                </select>
-                                <small class="text-muted">Regroupement visuel sur le dashboard</small>
-                            </div>
-                            <div class="col-md-6">
-                                <label class="form-label mb-1"><i class="bi bi-tag me-1"></i>Catégorie</label>
-                                <input type="text" class="form-control" id="appCategory" list="appCategoryList" placeholder="Ex : RH, SI, Outils…" maxlength="100">
-                                <datalist id="appCategoryList"></datalist>
-                                <small class="text-muted">Badge et filtre sur le dashboard</small>
-                            </div>
-                        </div>
-
-                        <div class="mb-3">
-                            <label class="form-label">URL du dépôt Git <small class="text-muted">(optionnel, pour update-check + changelog)</small></label>
-                            <input type="text" class="form-control" id="appGitRepoUrl" placeholder="https://github.com/org/repo.git">
-                            <small class="text-muted">Enregistre aussi le remote du dépôt local (atelier)</small>
-                        </div>
-
-                        <!-- ── Réseau ── -->
-                        <div class="card border mb-3">
-                            <div class="card-header py-2 bg-light">
-                                <i class="bi bi-hdd-network me-2"></i><strong>Configuration réseau</strong>
-                            </div>
-                            <div class="card-body py-3">
-                                <!-- Mode ports (création) -->
-                                    <div class="form-check form-check-inline mb-3">
-                                        <input class="form-check-input" type="checkbox" id="appCustomHost" data-action="toggleCustomHost">
-                                        <label class="form-check-label small" for="appCustomHost">Serveur différent du Hub</label>
-                                    </div>
-                                    <div class="mb-3 d-none" id="customHostGroup">
-                                        <div class="input-group input-group-sm">
-                                            <span class="input-group-text"><i class="bi bi-hdd-network"></i></span>
-                                            <input type="text" class="form-control" id="appCustomHostValue" placeholder="192.168.1.100 ou mon-serveur.local">
-                                        </div>
-                                    </div>
-                                    <div class="small text-muted mb-2">
-                                        <i class="bi bi-magic me-1"></i>Ports alloués automatiquement au déploiement —
-                                        l'app sera publiée sur <code>&lt;slug&gt;.&lt;zone&gt;</code> (vue Accès &amp; routage).
-                                    </div>
-<!-- Mode URLs directes (édition) -->
-                                <div id="advancedUrlsSection" class="d-none">
-                                    <div class="row g-2">
-                                        <div class="col-12">
-                                            <div class="input-group">
-                                                <span class="input-group-text"><i class="bi bi-hdd-rack me-1"></i> API *</span>
-                                                <input type="url" class="form-control" id="appApiUrl" placeholder="http://localhost:8080">
-                                            </div>
-                                        </div>
-                                        <div class="col-md-6">
-                                            <div class="input-group">
-                                                <span class="input-group-text"><i class="bi bi-window me-1"></i> Front</span>
-                                                <input type="url" class="form-control" id="appFrontendUrl" placeholder="http://localhost:3000">
-                                            </div>
-                                        </div>
-                                        <div class="col-md-6">
-                                            <div class="input-group">
-                                                <span class="input-group-text"><i class="bi bi-arrow-return-right me-1"></i> Callback</span>
-                                                <input type="url" class="form-control" id="appCallbackUrl" placeholder="/callback">
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-
-                        <!-- ── Options ── -->
-                        <div class="d-flex flex-wrap gap-3 mb-3" id="advancedOptionsSection">
-                            <div class="form-check form-switch">
-                                <input class="form-check-input" type="checkbox" id="appActive" checked>
-                                <label class="form-check-label" for="appActive">Active</label>
-                            </div>
-                            <div class="form-check form-switch">
-                                <input class="form-check-input" type="checkbox" id="appRequiresAuth" checked>
-                                <label class="form-check-label" for="appRequiresAuth">Auth requise</label>
-                            </div>
-                            <div class="form-check form-switch">
-                                <input class="form-check-input" type="checkbox" id="appIsSharedService">
-                                <label class="form-check-label" for="appIsSharedService">
-                                    <i class="bi bi-share text-primary me-1"></i>Service partagé (M2M)
-                                </label>
-                            </div>
-                            <div class="form-check form-switch">
-                                <input class="form-check-input" type="checkbox" id="appIsUnmanaged">
-                                <label class="form-check-label" for="appIsUnmanaged">
-                                    <i class="bi bi-exclamation-octagon text-secondary me-1"></i>Non gérée (lien only)
-                                </label>
-                            </div>
-                        </div>
-
-                        <!-- Info M2M (création uniquement) -->
-                        <div class="alert alert-info py-2 mb-0 small" id="m2mInfoSection">
-                            <i class="bi bi-robot me-1"></i>
-                            Le <strong>Service Account M2M</strong> sera créé automatiquement lorsque l'application s'enregistrera au démarrage.
-                        </div>
-                    </div>
-                    <div class="modal-footer pt-0">
-                        <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Annuler</button>
-                        <button type="submit" class="btn btn-primary btn-sm" id="appSubmitBtn">
-                            <i class="bi bi-check-lg me-1"></i>Enregistrer
-                        </button>
-                    </div>
-                </form>
-            </div>
-        </div>
-    </div>
+    <!-- La modale d'édition appFormModal a été supprimée (fiche v6) :
+         son formulaire vit désormais dans la carte « Réglages » de la fiche
+         application (#appDetailPane, mêmes IDs app*) — plus de backdrop. -->
 
     <!-- App Group Modal (dashboard) : liste les applications d'un groupe -->
     <div class="modal fade" id="appGroupModal" tabindex="-1" aria-hidden="true">
@@ -4690,53 +4886,104 @@
 
     <script src="/vendor/bootstrap.bundle.min.js"></script>
     <script src="/vendor/echarts.min.js"></script>
-    <script src="js/api.js?v=3.95.3"></script>
-    <script src="js/modules/utils.js?v=3.95.3"></script>
-    <script src="js/modules/resilient-download.js?v=3.95.3"></script>
-    <script src="js/modules/hub-events.js?v=3.95.3"></script>
-    <script src="js/modules/app-state.js?v=3.95.3"></script>
-    <script src="js/modules/sse.js?v=3.95.3"></script>
-    <script src="js/modules/slo-purge.js?v=3.95.3"></script>
-    <script src="js/modules/auth-navigation.js?v=3.95.3"></script>
-    <script src="js/modules/cert-download.js?v=3.95.3"></script>
-    <script src="js/modules/dashboard.js?v=3.95.3"></script>
-    <script src="js/modules/admin-apps.js?v=3.95.3"></script>
-    <script src="js/modules/admin-app-groups.js?v=3.95.3"></script>
-    <script src="js/modules/admin-app-form.js?v=3.95.3"></script>
-    <script src="js/modules/admin-app-detail.js?v=3.95.3"></script>
-    <script src="js/modules/admin-users.js?v=3.95.3"></script>
-    <script src="js/modules/toasts-modals.js?v=3.95.3"></script>
-    <script src="js/modules/admin-app-approval.js?v=3.95.3"></script>
-    <script src="js/modules/admin-service-accounts.js?v=3.95.3"></script>
-    <script src="js/modules/admin-oidc-clients.js?v=3.95.3"></script>
-    <script src="js/modules/audit.js?v=3.95.3"></script>
-    <script src="js/modules/audit-charts.js?v=3.95.3"></script>
-    <script src="js/modules/admin-docker-scanner.js?v=3.95.3"></script>
-    <script src="js/modules/admin-atelier.js?v=3.95.3"></script>
-    <script src="js/modules/audit-page.js?v=3.95.3"></script>
-    <script src="js/modules/admin-users-profiles.js?v=3.95.3"></script>
-    <script src="js/modules/admin-user-tags.js?v=3.95.3"></script>
-    <script src="js/modules/user-tags.js?v=3.95.3"></script>
-    <script src="js/modules/audit-errors.js?v=3.95.3"></script>
-    <script src="js/modules/apps-health.js?v=3.95.3"></script>
-    <script src="js/modules/system-update.js?v=3.95.3"></script>
-    <script src="js/modules/workshop-ui.js?v=3.95.3"></script>
-    <script src="js/modules/admin-routing.js?v=3.95.3"></script>
-    <script src="js/modules/backup-import.js?v=3.95.3"></script>
-    <script src="js/modules/app-backups.js?v=3.95.3"></script>
-    <script src="js/modules/admin-snapshots.js?v=3.95.3"></script>
-    <script src="js/modules/admin-vault.js?v=3.95.3"></script>
-    <script src="js/modules/bulk-users-csv.js?v=3.95.3"></script>
-    <script src="js/modules/notifications.js?v=3.95.3"></script>
-    <script src="js/modules/messages-compose.js?v=3.95.3"></script>
-    <script src="js/modules/account-requests.js?v=3.95.3"></script>
-    <script src="js/modules/admin-apps-github.js?v=3.95.3"></script>
-    <script src="js/modules/admin-app-deploy.js?v=3.95.3"></script>
-    <script src="js/modules/admin-app-dependencies.js?v=3.95.3"></script>
-    <script src="js/modules/admin-hub.js?v=3.95.3"></script>
-    <script src="js/modules/cockpit.js?v=3.95.3"></script>
-    <script src="js/app.js?v=3.95.3"></script>
-    <script src="js/modules/init.js?v=3.95.3"></script>
-    <script src="js/modules/admin-vpn.js?v=3.95.3"></script>
+<<<<<<< HEAD
+    <script src="js/api.js?v=3.96.0"></script>
+    <script src="js/modules/utils.js?v=3.96.0"></script>
+    <script src="js/modules/resilient-download.js?v=3.96.0"></script>
+    <script src="js/modules/hub-events.js?v=3.96.0"></script>
+    <script src="js/modules/app-state.js?v=3.96.0"></script>
+    <script src="js/modules/sse.js?v=3.96.0"></script>
+    <script src="js/modules/slo-purge.js?v=3.96.0"></script>
+    <script src="js/modules/auth-navigation.js?v=3.96.0"></script>
+    <script src="js/modules/cert-download.js?v=3.96.0"></script>
+    <script src="js/modules/dashboard.js?v=3.96.0"></script>
+    <script src="js/modules/admin-apps.js?v=3.96.0"></script>
+    <script src="js/modules/admin-app-groups.js?v=3.96.0"></script>
+    <script src="js/modules/admin-app-form.js?v=3.96.0"></script>
+    <script src="js/modules/admin-app-detail.js?v=3.96.0"></script>
+    <script src="js/modules/admin-users.js?v=3.96.0"></script>
+    <script src="js/modules/toasts-modals.js?v=3.96.0"></script>
+    <script src="js/modules/admin-app-approval.js?v=3.96.0"></script>
+    <script src="js/modules/admin-service-accounts.js?v=3.96.0"></script>
+    <script src="js/modules/admin-oidc-clients.js?v=3.96.0"></script>
+    <script src="js/modules/audit.js?v=3.96.0"></script>
+    <script src="js/modules/audit-charts.js?v=3.96.0"></script>
+    <script src="js/modules/admin-docker-scanner.js?v=3.96.0"></script>
+    <script src="js/modules/admin-atelier.js?v=3.96.0"></script>
+    <script src="js/modules/audit-page.js?v=3.96.0"></script>
+    <script src="js/modules/admin-users-profiles.js?v=3.96.0"></script>
+    <script src="js/modules/admin-user-tags.js?v=3.96.0"></script>
+    <script src="js/modules/user-tags.js?v=3.96.0"></script>
+    <script src="js/modules/audit-errors.js?v=3.96.0"></script>
+    <script src="js/modules/apps-health.js?v=3.96.0"></script>
+    <script src="js/modules/system-update.js?v=3.96.0"></script>
+    <script src="js/modules/workshop-ui.js?v=3.96.0"></script>
+    <script src="js/modules/admin-routing.js?v=3.96.0"></script>
+    <script src="js/modules/backup-import.js?v=3.96.0"></script>
+    <script src="js/modules/app-backups.js?v=3.96.0"></script>
+    <script src="js/modules/admin-snapshots.js?v=3.96.0"></script>
+    <script src="js/modules/admin-vault.js?v=3.96.0"></script>
+    <script src="js/modules/bulk-users-csv.js?v=3.96.0"></script>
+    <script src="js/modules/notifications.js?v=3.96.0"></script>
+    <script src="js/modules/messages-compose.js?v=3.96.0"></script>
+    <script src="js/modules/account-requests.js?v=3.96.0"></script>
+    <script src="js/modules/admin-apps-github.js?v=3.96.0"></script>
+    <script src="js/modules/admin-app-deploy.js?v=3.96.0"></script>
+    <script src="js/modules/admin-app-dependencies.js?v=3.96.0"></script>
+    <script src="js/modules/admin-hub.js?v=3.96.0"></script>
+    <script src="js/modules/cockpit.js?v=3.96.0"></script>
+    <script src="js/app.js?v=3.96.0"></script>
+    <script src="js/modules/init.js?v=3.96.0"></script>
+    <script src="js/modules/admin-vpn.js?v=3.96.0"></script>
+=======
+    <script src="js/api.js?v=3.96.0"></script>
+    <script src="js/modules/utils.js?v=3.96.0"></script>
+    <script src="js/modules/resilient-download.js?v=3.96.0"></script>
+    <script src="js/modules/hub-events.js?v=3.96.0"></script>
+    <script src="js/modules/app-state.js?v=3.96.0"></script>
+    <script src="js/modules/sse.js?v=3.96.0"></script>
+    <script src="js/modules/slo-purge.js?v=3.96.0"></script>
+    <script src="js/modules/auth-navigation.js?v=3.96.0"></script>
+    <script src="js/modules/cert-download.js?v=3.96.0"></script>
+    <script src="js/modules/dashboard.js?v=3.96.0"></script>
+    <script src="js/modules/admin-apps.js?v=3.96.0"></script>
+    <script src="js/modules/admin-app-groups.js?v=3.96.0"></script>
+    <script src="js/modules/admin-app-form.js?v=3.96.0"></script>
+    <script src="js/modules/admin-app-detail.js?v=3.96.0"></script>
+    <script src="js/modules/admin-users.js?v=3.96.0"></script>
+    <script src="js/modules/toasts-modals.js?v=3.96.0"></script>
+    <script src="js/modules/admin-app-approval.js?v=3.96.0"></script>
+    <script src="js/modules/admin-service-accounts.js?v=3.96.0"></script>
+    <script src="js/modules/admin-oidc-clients.js?v=3.96.0"></script>
+    <script src="js/modules/audit.js?v=3.96.0"></script>
+    <script src="js/modules/audit-charts.js?v=3.96.0"></script>
+    <script src="js/modules/admin-docker-scanner.js?v=3.96.0"></script>
+    <script src="js/modules/admin-atelier.js?v=3.96.0"></script>
+    <script src="js/modules/audit-page.js?v=3.96.0"></script>
+    <script src="js/modules/admin-users-profiles.js?v=3.96.0"></script>
+    <script src="js/modules/admin-user-tags.js?v=3.96.0"></script>
+    <script src="js/modules/user-tags.js?v=3.96.0"></script>
+    <script src="js/modules/audit-errors.js?v=3.96.0"></script>
+    <script src="js/modules/apps-health.js?v=3.96.0"></script>
+    <script src="js/modules/system-update.js?v=3.96.0"></script>
+    <script src="js/modules/workshop-ui.js?v=3.96.0"></script>
+    <script src="js/modules/admin-routing.js?v=3.96.0"></script>
+    <script src="js/modules/backup-import.js?v=3.96.0"></script>
+    <script src="js/modules/app-backups.js?v=3.96.0"></script>
+    <script src="js/modules/admin-snapshots.js?v=3.96.0"></script>
+    <script src="js/modules/admin-vault.js?v=3.96.0"></script>
+    <script src="js/modules/bulk-users-csv.js?v=3.96.0"></script>
+    <script src="js/modules/notifications.js?v=3.96.0"></script>
+    <script src="js/modules/messages-compose.js?v=3.96.0"></script>
+    <script src="js/modules/account-requests.js?v=3.96.0"></script>
+    <script src="js/modules/admin-apps-github.js?v=3.96.0"></script>
+    <script src="js/modules/admin-app-deploy.js?v=3.96.0"></script>
+    <script src="js/modules/admin-app-dependencies.js?v=3.96.0"></script>
+    <script src="js/modules/admin-hub.js?v=3.96.0"></script>
+    <script src="js/modules/cockpit.js?v=3.96.0"></script>
+    <script src="js/app.js?v=3.96.0"></script>
+    <script src="js/modules/init.js?v=3.96.0"></script>
+    <script src="js/modules/admin-vpn.js?v=3.96.0"></script>
+>>>>>>> origin/feat/fiche-v6-cockpit
 </body>
 </html>
