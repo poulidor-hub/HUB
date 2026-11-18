@@ -5,6 +5,28 @@
 
 ---
 
+## [3.97.1] - 18 novembre 2026
+
+### 🆕 Nouvelle version
+
+> ⚠️ Cette entrée a été créée automatiquement par `sync_version.py`.
+> Veuillez compléter les détails des modifications.
+
+| Fonctionnalité | Description |
+|----------------|-------------|
+| **À compléter** | Décrivez les changements de cette version |
+
+---
+
+## [3.97.1] - 18 novembre 2026
+
+### ⚡ PostgreSQL — index table d'association service_accounts × applications
+
+- **perf(db)** : migration `070_service_account_access_indexes.sql` — `CREATE INDEX IF NOT EXISTS` sur `service_account_app_access (service_account_id)` et `(app_id)` : la requête la plus coûteuse du Hub (pg_stat_statements : 2755 ms cumulés, 86 appels/h, ~2000 lignes/appel) filtrait en **Seq Scan** sur 1985 lignes (EXPLAIN prouvé), la table n'ayant aucun index.
+- **perf(db)** : `DROP INDEX IF EXISTS ix_applications_id` — doublon exact de la PK `applications_pkey` (héritage d'un `index=True` sur la PK) ; le planner bascule sur la PK.
+- **refactor(models)** : les deux index déclarés dans la `Table` d'association (create_all les pose sur toute installation vierge) ; `index=True` retiré de `Application.id` pour ne pas recréer l'index redondant.
+- **test** : suite hôte complète verte (1826 passed, 1 skipped), migration 070 validée sur SQLite (runner apply_migrations exécuté au setup des tests).
+
 ## [3.97.0] - 18 novembre 2026
 
 ### ⚡ PostgreSQL — profil mémoire hub-db + observabilité pg_stat_statements
