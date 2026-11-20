@@ -400,8 +400,11 @@ class TestVpnToggle:
 
     async def test_toggle_enable(
         self, client: AsyncClient, async_session: AsyncSession,
-        admin_token: str, vpn_temp_dir: str,
+        admin_token: str, vpn_temp_dir: str, monkeypatch,
     ):
+        import app.routes.vpn as vpn_mod
+        monkeypatch.setattr(vpn_mod, "_ensure_wireguard_container_running", lambda: True)
+
         await _seed_server_settings(async_session, initialized=True, enabled=False)
         auth = get_auth_header(admin_token)
 
@@ -409,13 +412,51 @@ class TestVpnToggle:
         assert resp.status_code == 200
         assert resp.json()["vpn_enabled"] is True
 
+    async def test_toggle_disable_stoppe_conteneur_et_preserve_conf(
+        self, client: AsyncClient, async_session: AsyncSession,
+        admin_token: str, vpn_temp_dir: str, monkeypatch,
+    ):
+        """Incident 20/11 : le toggle OFF se contentait de supprimer wg0.conf —
+        le conteneur (et le tunnel wg0) continuaient de tourner : le « OFF »
+        n'éteignait rien, et la destruction du fichier retirait la seule
+        persistance du serveur (VPN mort au redémarrage suivant si personne
+        ne re-toggait). Le OFF doit : stopper le conteneur ET préserver la conf."""
+        import pathlib
+
+        import app.routes.vpn as vpn_mod
+
+        stop_calls: list[str] = []
+
+        def fake_stop():
+            stop_calls.append("hub-wireguard")
+            return True
+
+        monkeypatch.setattr(vpn_mod, "_docker_exec", lambda c, cmd: (1, ""))
+        monkeypatch.setattr(vpn_mod, "_stop_wireguard_container", fake_stop)
+
+        await _seed_server_settings(async_session, initialized=True, enabled=True)
+        auth = get_auth_header(admin_token)
+        conf_path = pathlib.Path(vpn_temp_dir) / "wg_confs" / "wg0.conf"
+        conf_path.parent.mkdir(parents=True, exist_ok=True)
+        conf_path.write_text("[Interface]\nPrivateKey = x\n")
+
+        resp = await client.put("/api/vpn/toggle", json={"enabled": False}, headers=auth)
+        assert resp.status_code == 200
+        assert resp.json()["vpn_enabled"] is False
+
+        # Le conteneur doit être arrêté…
+        assert stop_calls == ["hub-wireguard"]
+        # …et la conf DOIT survivre (persistance, régénération inutile au ON).
+        assert conf_path.exists()
+
     async def test_toggle_enable_regenere_conf_absente(
         self, client: AsyncClient, async_session: AsyncSession,
         admin_token: str, vpn_temp_dir: str, monkeypatch,
     ):
-        """Bug 02/10/2026 : toggle OFF supprime wg0.conf, toggle ON ne le
-        régénérait pas → conteneur démarré sans config (« conf=ABSENTE »).
-        Le toggle ON doit auto-régénérer la conf si le serveur est initialisé."""
+        """Incident 20/11 : wg0.conf avait disparu du volume (cause externe
+        non identifiée) alors que vpn_enabled=true. Le toggle ON doit
+        auto-régénérer la conf si le serveur est initialisé (rattrapage
+        existant bug 02/10 conservé)."""
         import pathlib
 
         import app.routes.vpn as vpn_mod
@@ -427,16 +468,18 @@ class TestVpnToggle:
             return 0, ""
 
         monkeypatch.setattr(vpn_mod, "_docker_exec", fake_exec)
+        monkeypatch.setattr(vpn_mod, "_stop_wireguard_container", lambda: True)
+        monkeypatch.setattr(vpn_mod, "_ensure_wireguard_container_running", lambda: True)
+        monkeypatch.setattr(vpn_mod, "_restart_wireguard_interface", lambda: True)
 
         await _seed_server_settings(async_session, initialized=True, enabled=False)
         auth = get_auth_header(admin_token)
         conf_path = pathlib.Path(vpn_temp_dir) / "wg_confs" / "wg0.conf"
 
-        # Reproduction du scénario incident : OFF (supprime la conf) puis ON
+        # Scénario incident : la conf disparaît (cause externe), puis l'admin
+        # repasse le VPN en ON.
         resp = await client.put("/api/vpn/toggle", json={"enabled": False}, headers=auth)
         assert resp.status_code == 200
-        assert not conf_path.exists()  # comportement OFF existant : conf supprimée
-
         resp = await client.put("/api/vpn/toggle", json={"enabled": True}, headers=auth)
         assert resp.status_code == 200
         assert resp.json()["vpn_enabled"] is True
@@ -446,6 +489,33 @@ class TestVpnToggle:
         content = conf_path.read_text()
         assert "[Interface]" in content
         assert "ListenPort = 51820" in content
+
+    async def test_toggle_enable_redemarre_conteneur_arrete(
+        self, client: AsyncClient, async_session: AsyncSession,
+        admin_token: str, vpn_temp_dir: str, monkeypatch,
+    ):
+        """Le toggle OFF arrête désormais le conteneur : le ON doit le
+        redémarrer (sinon l'UI « rallume » un VPN qui reste éteint)."""
+        import app.routes.vpn as vpn_mod
+
+        start_calls: list[str] = []
+
+        def fake_ensure():
+            start_calls.append("hub-wireguard")
+            return True
+
+        monkeypatch.setattr(vpn_mod, "_docker_exec", lambda c, cmd: (1, ""))
+        monkeypatch.setattr(vpn_mod, "_stop_wireguard_container", lambda: True)
+        monkeypatch.setattr(vpn_mod, "_ensure_wireguard_container_running", fake_ensure)
+        monkeypatch.setattr(vpn_mod, "_restart_wireguard_interface", lambda: True)
+
+        await _seed_server_settings(async_session, initialized=True, enabled=False)
+        auth = get_auth_header(admin_token)
+
+        resp = await client.put("/api/vpn/toggle", json={"enabled": True}, headers=auth)
+        assert resp.status_code == 200
+        assert resp.json()["vpn_enabled"] is True
+        assert start_calls == ["hub-wireguard"]
 
     async def test_toggle_enable_conf_deja_presente_ne_double_pas(
         self, client: AsyncClient, async_session: AsyncSession,
@@ -463,6 +533,8 @@ class TestVpnToggle:
             return 0, ""
 
         monkeypatch.setattr(vpn_mod, "_docker_exec", fake_exec)
+        monkeypatch.setattr(vpn_mod, "_ensure_wireguard_container_running", lambda: True)
+        monkeypatch.setattr(vpn_mod, "_restart_wireguard_interface", lambda: True)
 
         await _seed_server_settings(async_session, initialized=True, enabled=False)
         auth = get_auth_header(admin_token)
@@ -488,6 +560,7 @@ class TestVpnToggle:
 
         import app.routes.vpn as vpn_mod
         monkeypatch.setattr(vpn_mod, "_docker_exec", lambda c, cmd: (1, ""))
+        monkeypatch.setattr(vpn_mod, "_ensure_wireguard_container_running", lambda: True)
 
         await _seed_server_settings(async_session, initialized=False, enabled=False)
         auth = get_auth_header(admin_token)
@@ -510,6 +583,7 @@ class TestVpnToggle:
 
         import app.routes.vpn as vpn_mod
         monkeypatch.setattr(vpn_mod, "_docker_exec", lambda c, cmd: (1, ""))
+        monkeypatch.setattr(vpn_mod, "_restart_wireguard_interface", lambda: True)
 
         def _boom(self, mode):
             raise OSError("chmod simulé en échec")
@@ -583,6 +657,7 @@ class TestRegenerateAndSync:
 
         import app.routes.vpn as vpn_mod
         monkeypatch.setattr(vpn_mod, "_docker_exec", lambda c, cmd: (1, ""))
+        monkeypatch.setattr(vpn_mod, "_restart_wireguard_interface", lambda: True)
 
         conf_path = pathlib.Path(vpn_temp_dir) / "wg_confs" / "wg0.conf"
         conf_path.write_text("# ancienne conf illisible\n")
@@ -627,6 +702,130 @@ class TestRegenerateAndSync:
         assert restart_calls == [], "Aucun restart attendu si le port ne change pas"
         syncconf_calls = [cmd for _, cmd in exec_calls if "syncconf" in " ".join(cmd)]
         assert len(syncconf_calls) == 1, "syncconf doit être appelé si port inchangé"
+
+    async def test_interface_absente_triggers_restart(
+        self, async_session: AsyncSession, vpn_temp_dir: str, monkeypatch,
+    ):
+        """Incident 20/11 : conteneur démarré SANS wg0.conf → interface wg0
+        jamais créée → `wg show wg0 listen-port` échoue (port inconnu).
+        L'ancienne logique retombait alors sur wg syncconf… qui échoue
+        silencieusement sans interface. Le port inconnu doit déclencher un
+        RESTART du conteneur (il montera wg0 avec la conf fraîche)."""
+        import app.routes.vpn as vpn_mod
+
+        exec_calls: list[tuple[str, list[str]]] = []
+        restart_calls: list[str] = []
+
+        def fake_exec(container, cmd):
+            exec_calls.append((container, list(cmd)))
+            # Interface absente : wg show échoue
+            if cmd == ["wg", "show", "wg0", "listen-port"]:
+                return 1, ""
+            return 0, ""
+
+        def fake_restart(container):
+            restart_calls.append(container)
+            return True
+
+        monkeypatch.setattr(vpn_mod, "_docker_exec", fake_exec)
+        monkeypatch.setattr(vpn_mod, "_docker_restart", fake_restart)
+
+        await vpn_mod._regenerate_and_sync(
+            async_session, "PRIVKEY", 51820, "10.8.0.0/24"
+        )
+
+        assert restart_calls == ["hub-wireguard"], (
+            "interface absente → restart obligatoire (syncconf serait sans effet)"
+        )
+        syncconf_calls = [cmd for _, cmd in exec_calls if "syncconf" in " ".join(cmd)]
+        assert syncconf_calls == [], "syncconf inutile sans interface wg0"
+
+
+# =============================================================================
+# startup_auto_repair — auto-réparation de wg0.conf au boot de hub-api
+# =============================================================================
+
+class TestStartupAutoRepair:
+    """Incident 20/11 : wg0.conf disparue du volume (vpn_enabled=true) → au
+    redémarrage suivant du conteneur wireguard, aucune interface wg0 n'était
+    créée et le VPN restait mort SILENCIEUSEMENT. Le rattrapage existant ne se
+    déclenchait que sur un toggle OFF→ON manuel de l'admin. hub-api doit
+    réparer au boot : enabled=true + clés présentes + conf absente → régénération."""
+
+    async def test_repare_conf_absente(
+        self, async_session: AsyncSession, vpn_temp_dir: str, monkeypatch,
+    ):
+        import pathlib
+
+        import app.routes.vpn as vpn_mod
+
+        monkeypatch.setattr(vpn_mod, "_docker_exec", lambda c, cmd: (1, ""))
+        monkeypatch.setattr(vpn_mod, "_restart_wireguard_interface", lambda: True)
+
+        await _seed_server_settings(async_session, initialized=True, enabled=True)
+        conf_path = pathlib.Path(vpn_temp_dir) / "wg_confs" / "wg0.conf"
+        assert not conf_path.exists()
+
+        await vpn_mod.startup_auto_repair(async_session)
+
+        assert conf_path.exists()
+        content = conf_path.read_text()
+        assert "[Interface]" in content
+        assert "ListenPort = 51820" in content
+
+    async def test_noop_si_vpn_desactive(
+        self, async_session: AsyncSession, vpn_temp_dir: str, monkeypatch,
+    ):
+        import pathlib
+
+        import app.routes.vpn as vpn_mod
+
+        monkeypatch.setattr(vpn_mod, "_docker_exec", lambda c, cmd: (1, ""))
+
+        await _seed_server_settings(async_session, initialized=True, enabled=False)
+        conf_path = pathlib.Path(vpn_temp_dir) / "wg_confs" / "wg0.conf"
+
+        await vpn_mod.startup_auto_repair(async_session)
+
+        assert not conf_path.exists(), "VPN désactivé : aucune conf ne doit être créée"
+
+    async def test_noop_si_conf_deja_presente(
+        self, async_session: AsyncSession, vpn_temp_dir: str, monkeypatch,
+    ):
+        import pathlib
+
+        import app.routes.vpn as vpn_mod
+
+        monkeypatch.setattr(vpn_mod, "_docker_exec", lambda c, cmd: (1, ""))
+
+        await _seed_server_settings(async_session, initialized=True, enabled=True)
+        conf_path = pathlib.Path(vpn_temp_dir) / "wg_confs" / "wg0.conf"
+        conf_path.parent.mkdir(parents=True, exist_ok=True)
+        conf_path.write_text("# conf saine existante\n")
+        before = conf_path.stat().st_mtime_ns
+
+        await vpn_mod.startup_auto_repair(async_session)
+
+        assert conf_path.read_text() == "# conf saine existante\n"
+        assert conf_path.stat().st_mtime_ns == before
+
+    async def test_noop_si_serveur_non_initialise(
+        self, async_session: AsyncSession, vpn_temp_dir: str, monkeypatch,
+    ):
+        import pathlib
+
+        import app.routes.vpn as vpn_mod
+
+        monkeypatch.setattr(vpn_mod, "_docker_exec", lambda c, cmd: (1, ""))
+
+        await _seed_server_settings(async_session, initialized=False, enabled=True)
+        conf_path = pathlib.Path(vpn_temp_dir) / "wg_confs" / "wg0.conf"
+
+        await vpn_mod.startup_auto_repair(async_session)
+
+        assert not conf_path.exists(), (
+            "Pas de clés en DB : impossible de régénérer — ne rien écrire"
+        )
 
 
 # =============================================================================
