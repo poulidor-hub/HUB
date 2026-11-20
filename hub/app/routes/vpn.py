@@ -93,6 +93,49 @@ def _docker_restart(container: str) -> bool:
     return True
 
 
+def _docker_stop_if_running(container: str) -> bool:
+    """Stoppe un conteneur s'il tourne (no-op sinon). Retourne True si OK."""
+    import docker
+    client = docker.from_env()
+    c = client.containers.get(container)
+    if c.status != "running":
+        return True
+    c.stop(timeout=30)
+    return True
+
+
+def _docker_start_if_stopped(container: str) -> bool:
+    """Démarre un conteneur s'il est arrêté (no-op s'il tourne). True si OK."""
+    import docker
+    client = docker.from_env()
+    c = client.containers.get(container)
+    if c.status == "running":
+        return True
+    c.start()
+    return True
+
+
+def _stop_wireguard_container() -> bool:
+    """Arrête le conteneur VPN (toggle OFF — incident 20/11 : le OFF ne
+    supprime plus wg0.conf, il doit donc réellement couper le tunnel en
+    stoppant le conteneur, à l'image de `hubctl vpn off`)."""
+    try:
+        return _docker_stop_if_running(_WG_CONTAINER)
+    except Exception as exc:
+        logger.error(f"Échec arrêt conteneur {_WG_CONTAINER}: {exc}")
+        return False
+
+
+def _ensure_wireguard_container_running() -> bool:
+    """Démarre le conteneur VPN s'il est arrêté (toggle ON après OFF,
+    ou réparation au boot). No-op + True s'il tourne déjà."""
+    try:
+        return _docker_start_if_stopped(_WG_CONTAINER)
+    except Exception as exc:
+        logger.error(f"Échec démarrage conteneur {_WG_CONTAINER}: {exc}")
+        return False
+
+
 def _parse_handshake_age(raw: str | None) -> int | None:
     """Convertit la chaîne 'latest handshake' de `wg show` en secondes.
 
@@ -344,7 +387,23 @@ async def _regenerate_and_sync(
 
     # Détecter un changement de ListenPort (wg syncconf ne l'applique pas à chaud)
     current_port = _get_current_listen_port()
-    if current_port is not None and current_port != listen_port:
+    if current_port is None:
+        # Incident 20/11 : conteneur démarré SANS wg0.conf → interface wg0
+        # jamais créée → port inconnu. wg syncconf serait sans effet sans
+        # interface : seul un redémarrage montera wg0 avec la conf fraîchement
+        # écrite (le conteneur arrêté est démarré au passage — VPN activé
+        # implique conteneur attendu actif).
+        if _restart_wireguard_interface():
+            logger.info(
+                "WireGuard (re)démarré pour appliquer la conf (interface wg0 absente)"
+            )
+        else:
+            logger.error(
+                "Échec restart WireGuard (interface absente) — la conf sera "
+                "appliquée au prochain démarrage du conteneur"
+            )
+        return
+    if current_port != listen_port:
         if _restart_wireguard_interface():
             logger.info(
                 f"WireGuard redémarré (ListenPort {current_port} → {listen_port})"
@@ -364,6 +423,44 @@ async def _regenerate_and_sync(
         )
     except Exception:
         logger.warning("wg syncconf failed (container may be stopped)")
+
+
+async def startup_auto_repair(db: AsyncSession | None = None) -> None:
+    """Auto-réparation de wg0.conf au boot de hub-api (incident 20/11).
+
+    wg0.conf (volume vpn-config) est la seule persistance du serveur VPN.
+    Sa disparition (suppression externe non identifiée en prod le 18-20/11)
+    laissait vpn_enabled=true en DB avec un conteneur qui, au redémarrage
+    suivant, ne montait AUCUNE interface wg0 — VPN mort silencieux. Le
+    rattrapage existant ne se déclenchait que sur un toggle OFF→ON manuel.
+
+    Au boot : enabled=true + clés présentes + conf absente → régénération
+    depuis la DB (clés préservées, clients toujours valides) puis application
+    (restart conteneur si l'interface est absente — cf. _regenerate_and_sync).
+    Jamais bloquant : l'appelant (lifespan) encapsule en try/except.
+    """
+    if db is None:
+        from app.database import async_session_maker
+        async with async_session_maker() as session:
+            return await startup_auto_repair(session)
+
+    enabled = await _get_setting(db, VPN_ENABLED_KEY) == "true"
+    if not enabled:
+        return
+    server_privkey = await _get_setting(db, VPN_SERVER_PRIVKEY)
+    if not server_privkey:
+        return
+    if _wg_conf_path().exists():
+        return
+
+    listen_port_str = await _get_setting(db, VPN_LISTEN_PORT) or "51820"
+    subnet = await _get_setting(db, VPN_SUBNET) or "10.8.0.0/24"
+    logger.warning(
+        "VPN: wg0.conf ABSENTE au boot alors que vpn_enabled=true — "
+        "régénération depuis la DB (auto-réparation incident 20/11)"
+    )
+    await _regenerate_and_sync(db, server_privkey, int(listen_port_str), subnet)
+    logger.info("VPN: wg0.conf régénérée au boot, tunnel réconcilié")
 
 
 def _wg_status() -> dict | None:
@@ -482,14 +579,22 @@ async def toggle_vpn(
                        current_admin.id)
 
     if not payload.enabled:
-        conf_path = _wg_conf_path()
-        if conf_path.exists():
-            conf_path.unlink()
+        # Incident 20/11 : l'ancien OFF se contentait de supprimer wg0.conf —
+        # le tunnel continuait de tourner (OFF sans effet) et le fichier, seule
+        # persistance du serveur, disparaissait (VPN mort au redémarrage
+        # suivant si personne ne re-toggait). Désormais : le conteneur est
+        # arrêté (le tunnel est réellement coupé) et la conf est PRÉSERVÉE.
+        if _stop_wireguard_container():
+            logger.info(f"Conteneur {_WG_CONTAINER} arrêté (toggle OFF)")
+        else:
+            logger.warning(
+                f"Échec arrêt {_WG_CONTAINER} (toggle OFF) — vérifier l'état du conteneur"
+            )
     else:
-        # Auto-réparation (bug 02/10/2026) : le toggle OFF supprime wg0.conf ;
-        # si le serveur est initialisé mais le fichier absent (OFF puis ON,
-        # restauration…), on le régénère depuis la DB — sinon le conteneur
-        # démarre sans config (« conf=ABSENTE » côté hubctl vpn sync).
+        # Auto-réparation (bug 02/10/2026 + incident 20/11) : si le serveur
+        # est initialisé mais le fichier absent (restauration, suppression
+        # externe…), on le régénère depuis la DB — sinon le conteneur démarre
+        # sans config (« conf=ABSENTE » côté hubctl vpn sync).
         server_privkey = await _get_setting(db, VPN_SERVER_PRIVKEY)
         if server_privkey and not _wg_conf_path().exists():
             listen_port_str = await _get_setting(db, VPN_LISTEN_PORT) or "51820"
@@ -498,6 +603,10 @@ async def toggle_vpn(
                 db, server_privkey, int(listen_port_str), subnet
             )
             logger.info("wg0.conf régénérée au toggle ON (fichier absent)")
+        # Le OFF arrêtant désormais le conteneur, le ON doit le redémarrer
+        # (no-op s'il tourne déjà).
+        if _ensure_wireguard_container_running():
+            logger.info(f"Conteneur {_WG_CONTAINER} actif (toggle ON)")
 
     await db.commit()
 

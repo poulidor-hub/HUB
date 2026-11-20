@@ -392,6 +392,16 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         logger.warning(f"Routage: reconcile au boot échoué: {exc}")
 
+    # VPN : auto-réparation de wg0.conf au boot (incident 20/11) — jamais bloquant.
+    # La conf du serveur WireGuard avait disparu du volume en prod avec
+    # vpn_enabled=true : au redémarrage du conteneur, plus aucune interface
+    # wg0, VPN mort silencieux. hub-api répare désormais à chaque boot.
+    try:
+        from app.routes.vpn import startup_auto_repair
+        await startup_auto_repair()
+    except Exception as exc:
+        logger.warning(f"VPN: auto-réparation wg0.conf au boot échouée: {exc}")
+
     # Vérifier la configuration des secrets et de sécurité AVANT l'admin bootstrap
     # (un mdp admin/DB faible ou des secrets manquants bloquent en production)
     from app.config import get_settings, ensure_backup_keys_exist, validate_security_config, ConfigValidationError
