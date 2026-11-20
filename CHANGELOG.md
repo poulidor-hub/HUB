@@ -5,16 +5,18 @@
 
 ---
 
-## [3.97.3] - 18 novembre 2026
+## [3.97.4] - 20 novembre 2026
 
-### 🆕 Nouvelle version
+### ⚡ VPN WireGuard — persistance robuste du serveur (incident 20/11)
 
-> ⚠️ Cette entrée a été créée automatiquement par `sync_version.py`.
-> Veuillez compléter les détails des modifications.
+Incident : `wg0.conf` a disparu du volume `vpn-config` en prod (18-20/11, suppression externe non identifiée) avec `vpn_enabled=true` en DB — au redémarrage suivant du conteneur, aucune interface wg0 n'était créée et le VPN restait mort silencieusement. Le rattrapage existant ne se déclenchait que sur un toggle OFF→ON manuel.
 
-| Fonctionnalité | Description |
-|----------------|-------------|
-| **À compléter** | Décrivez les changements de cette version |
+- **toggle OFF réel et non destructif** (`hub/app/routes/vpn.py`) : l'ancien OFF se contentait de supprimer `wg0.conf` (le tunnel continuait de tourner, et la seule persistance serveur disparaissait). Désormais : arrêt du conteneur hub-wireguard (`_docker_stop_if_running`) et **préservation de la conf** ; le ON redémarre le conteneur (`_docker_start_if_stopped`) et conserve l'auto-régénération depuis la DB si le fichier est absent (bug 02/10, clés préservées → configs clients toujours valides).
+- **`startup_auto_repair()` au boot de hub-api** (lifespan `hub/app/main.py`, non bloquant) : `vpn_enabled=true` + clés présentes + conf absente → régénération depuis la DB puis application. Couvre le boot/réboot hôte : plus besoin d'un toggle manuel.
+- **`_regenerate_and_sync()`** : interface wg0 absente (`wg show wg0 listen-port` sans réponse) → **restart du conteneur** au lieu d'un `wg syncconf` silencieusement sans effet (l'interface n'existe pas) ; le conteneur arrêté est démarré au passage.
+- **Tests** : 44 tests `test_vpn.py` (toggle OFF réel, préservation conf, ON après OFF, startup repair ×4, interface absente → restart) — rouges avant fix, verts sur hôte et dans l'image runtime (`make test-docker`, pouly-test).
+- **Diagnostic incident** : tunnel/DataPath intacts (endpoint `82.65.83.106:51821` correct, port-forward OK, DNS hub répondeur sur `10.8.0.1:53`, gateway OK via IP VPN, cert valide) ; 2 échecs préexistants de la suite conteneur attribués (pyotp 112 bits vs version hôte ; test chmod 000 lu par root) ; flakiness xdist host confirmée préexistante (cf. note 3.97.3).
+- **Hors périmètre (à traiter séparément)** : `hub-vpn-firewall.service` non installé sur l'hôte (cloisonnement defense-in-depth inopérant) ; confs clients « PC boulo »/« th » à re-télécharger (endpoint/port modifiés le 05/10).
 
 ---
 
