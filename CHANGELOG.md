@@ -5,6 +5,21 @@
 
 ---
 
+## [3.99.0] - 21 novembre 2026
+
+### ⚡ Admin Préférences : refonte visuelle « dense pro » + Secteur principal exposé et éditable
+
+La page admin « Préférences » datait visuellement (tables Bootstrap brutes, 4 cartes de stats peu utiles) et comportait deux trous fonctionnels : la vue « tous les utilisateurs » n'affichait pas le Secteur principal (favori ★ choisi par l'utilisateur), et l'édition admin d'un utilisateur ne permettait pas de le définir.
+
+- **API** (`hub/app/routes/tags.py`, `schemas.py`) : `GET /api/tags/users` expose désormais `primary` ({category_slug: value}) par utilisateur — une seule requête groupée (join `TagCategory`, filtres `is_primary` + actif + `primary_enabled`, alignés sur les claims JWT), zéro N+1. `GET /api/tags/categories[/active]` peuplent `source_app_name` (helper `_app_names_by_id`, requête IN unique) pour l'affichage « M2M · <nom app> » ; champ additif rétrocompatible. `PUT /api/tags/user/{username}` inchangé (gérait déjà `primary` avec les règles de `PUT /my`).
+- **Onglet Utilisateurs** (`frontend/public/js/modules/admin-user-tags.js`, `index.html`, `style.css`) : toolbar (recherche debouncée 200 ms nom+username, filtres Secteur ★ / avec-sans préférences, compteur post-filtres), table dense zébrée à en-tête collant, avatars déterministes (hash username → palette 8 couleurs), colonne « Secteur principal ★ » (badge vert / « — aucun »), chips compactes (max 3 + « +N »), tri client (utilisateur / ★, `aria-sort`), pagination client 50/page. Zéro animation (perf/stabilité, cf. PERFORMANCE.md).
+- **Onglet Catégories** : les 4 cartes stats (Total/Actives/Multiples/Uniques) remplacées par des stats fondues dans la toolbar (« X/Y actives · ★ Z · n/total users renseignés », calculé client depuis `GET /users`), recherche, et nouvelles colonnes : ★ Principal (`primary_enabled`), Source (Manuel / M2M · app), slug en sous-texte.
+- **Modal nouvelle/édition préférence** : sections empilées ① Identité (slug auto en direct) ② Comportement (segmenté Unique/Multiples + switch « Secteur principal ★ ») ③ Valeurs (saisie manuelle / import M2M app→table→colonne). Tous les IDs et `data-action` conservés.
+- **Passerelle Secteur principal** : la modal d'édition admin d'un utilisateur charge `primary` (`getUserTags`) et sauvegarde `{tags, primary}` — corrige au passage un bug de collecte à clé `null`. Helper partagé `buildTagsFormHTML` étendu (4ᵉ arg `primaryMap`), rétro-compatible onboarding + « Mes préférences » (intacts).
+- **Tests** (`hub/tests/test_api_tags.py`) : +6 (primary exposé et groupé par user, PUT admin pose/reset vérifié en base, 400 si catégorie sans `primary_enabled`, `source_app_name` m2m/csv). Suite conteneur : 1793 passed (2 échecs préexistants hors périmètre : pyotp 2.12 hôte 2.9 — secret de test < 112 bits ; override workshop réel `exemple-app` visible via le montage APPS/ — à traiter sur une branche dédiée).
+
+---
+
 ## [3.98.0] - 21 novembre 2026
 
 ### ⚡ Notifications — fin du spam « App offline » : état Docker + alerte à la transition
