@@ -21,6 +21,7 @@ from app.github_client import (
     github_headers, load_db_token, invalidate_token_cache,
     fetch_github_json, fetch_github_raw, parse_github_url,
 )
+from app.health_checker import get_container_state
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +45,7 @@ class AppHealthItem(BaseModel):
     icon: Optional[str] = None
     color: Optional[str] = None
     api_url: str
-    status: str  # "online" | "offline" | "degraded"
+    status: str  # "online" | "offline" | "degraded" | "stopped"
     latency_ms: int = 0
     version: Optional[str] = None
     error: Optional[str] = None
@@ -61,6 +62,7 @@ class HealthSummary(BaseModel):
     online: int = 0
     offline: int = 0
     degraded: int = 0
+    stopped: int = 0
     total: int = 0
 
 class AppsHealthResponse(BaseModel):
@@ -261,8 +263,27 @@ async def get_apps_health(
                 except Exception:
                     pass
 
-        if status == "offline" and not error:
-            error = "Aucune reponse sur /health, /api/health, /"
+        # Classification offline : distinguer une app stoppée volontairement
+        # (conteneur Docker off) d'une vraie panne (conteneur actif
+        # injoignable). Appel Docker unique, seulement sur cette branche.
+        if status == "offline":
+            if bool(getattr(app, "is_remote", False)):
+                # App distante : aucun conteneur local, Docker ne peut rien
+                # dire de fiable -> offline, pas de classification stopped.
+                if not error:
+                    error = "Aucune reponse sur /health, /api/health, /"
+            else:
+                container_state = get_container_state(app.slug)
+                if container_state is not None and container_state != "running":
+                    # Docker joignable et conteneur non-actif : arrêt volontaire.
+                    status = "stopped"
+                    error = (
+                        "Conteneur absent"
+                        if container_state == "absent"
+                        else f"Conteneur {container_state}"
+                    )
+                elif not error:
+                    error = "Aucune reponse sur /health, /api/health, /"
 
         # Pour le HUB : enrichir avec la version lue localement
         # et les metriques internes (pas de /api/health/detailed expose)
@@ -313,6 +334,7 @@ async def get_apps_health(
         online=sum(1 for i in items if i.status == "online"),
         offline=sum(1 for i in items if i.status == "offline"),
         degraded=sum(1 for i in items if i.status == "degraded"),
+        stopped=sum(1 for i in items if i.status == "stopped"),
     )
 
     return AppsHealthResponse(apps=list(items), summary=summary)
