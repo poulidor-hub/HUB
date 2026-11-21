@@ -165,6 +165,9 @@ function _injectHealthCardStyles() {
         // Bouton ⋯ + état occupé
         + '.ahc2-more:hover{background:#f8fafc;color:#0f172a;}'
         + '.ahc2-more.loading{pointer-events:none;border-color:transparent;}'
+        // Panneaux dépliants (atelier / branches) sous la carte
+        + '.ahc2-panel{margin:0 9px 9px;border:1px solid #e2e8f0;border-radius:8px;background:#f8fafc;'
+        + 'padding:8px 9px;font-size:11px;color:#475569;}'
         // Spinner fonctionnel (rotation uniquement)
         + '.ahc2-spinner{width:12px;height:12px;border:2px solid #cbd5e1;border-top-color:#4f46e5;border-radius:50%;'
         + 'animation:ahc-spin .9s linear infinite;}'
