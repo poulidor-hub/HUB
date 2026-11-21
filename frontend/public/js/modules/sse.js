@@ -318,7 +318,10 @@ function handleSSEEvent(data) {
             // Mettre à jour la carte sur le dashboard
             updateAppCardStatus(healthAppSlug, null, newHealthStatus);
             
-            // Notification
+            // Notification — UNIQUEMENT les transitions impliquant « unhealthy » :
+            // toute transition vers « stopped » (app volontairement arrêtée) est
+            // silencieuse, et « stopped → healthy » aussi (retour à l'état
+            // attendu — ni erreur à l'arrêt, ni toast de reprise).
             if (newHealthStatus === 'unhealthy') {
                 showToast('⚠️ Application hors ligne', `${healthAppName || healthAppSlug} ne répond plus`, 'warning');
             } else if (previousStatus === 'unhealthy' && newHealthStatus === 'healthy') {

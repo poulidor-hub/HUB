@@ -96,6 +96,7 @@ async function renderAppsHealth(data) {
         '<span style="color:#16a34a;">●</span> ' + summary.online + ' en ligne · ' +
         '<span style="color:#dc2626;">●</span> ' + summary.offline + ' hors ligne' +
         (summary.degraded > 0 ? ' · <span style="color:#f59e0b;">●</span> ' + summary.degraded + ' degrade' : '') +
+        (summary.stopped > 0 ? ' · <span style="color:#94a3b8;">●</span> ' + summary.stopped + ' stoppée(s)' : '') +
         ' · ' + summary.total + ' apps';
 
     const grid = document.getElementById('appsHealthGrid');
@@ -141,6 +142,9 @@ function renderAppCard(app) {
         online:   { grad: 'linear-gradient(90deg,#f0fdf4,#ffffff)', badge: '#16a34a', text: 'Online' },
         offline:  { grad: 'linear-gradient(90deg,#fef2f2,#ffffff)', badge: '#dc2626', text: 'Offline' },
         degraded: { grad: 'linear-gradient(90deg,#fffbeb,#ffffff)', badge: '#f59e0b', text: 'Degraded' },
+        // App volontairement arrêtée : tons neutres (mêmes gris que « checking »),
+        // aucune couleur d'alerte — un arrêt délibéré n'est pas une erreur.
+        stopped:  { grad: 'linear-gradient(90deg,#f8fafc,#ffffff)', badge: '#9ca3af', text: 'Stoppée' },
     }[app.status] || { grad: 'linear-gradient(90deg,#f8fafc,#ffffff)', badge: '#9ca3af', text: (app.status || 'Unknown') };
 
     var icon = escapeHtml(app.icon || 'bi-app');
@@ -150,8 +154,12 @@ function renderAppCard(app) {
     var latency = app.latency_ms ? app.latency_ms + ' ms' : '';
     var version = app.version || '';
     var uptime = formatUptime(app.uptime_seconds);
+    // Boîte d'erreur : rouge pour une vraie anomalie ; pour une app volontairement
+    // arrêtée (status 'stopped'), motif en gris neutre (ton du badge « Stoppée ») —
+    // un arrêt délibéré n'est pas une erreur.
+    var errStyle = app.status === 'stopped' ? 'color:#6b7280;background:#f8fafc' : 'color:#b91c1c;background:#fef2f2';
     var error = app.error
-        ? '<div style="margin:0 14px 10px;font-size:11.5px;color:#b91c1c;background:#fef2f2;border-radius:6px;padding:6px 8px;">' + escapeHtml(app.error.substring(0, 100)) + '</div>'
+        ? '<div style="margin:0 14px 10px;font-size:11.5px;' + errStyle + ';border-radius:6px;padding:6px 8px;">' + escapeHtml(app.error.substring(0, 100)) + '</div>'
         : '';
 
     // Badge « Système » pour les apps système (HUB)

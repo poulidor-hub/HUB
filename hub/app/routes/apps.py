@@ -50,6 +50,7 @@ from app.m2m_catalog_export import build_m2m_catalog_export
 from app.repo_access import check_repo_access
 from app.github_client import load_db_token, normalize_github_url, parse_github_url, fetch_github_json
 from app.hub_app_manifest import check_manifest, REASON_MISSING, REASON_UNVERIFIABLE
+from app.health_checker import get_container_state
 
 router = APIRouter(prefix="/api/apps", tags=["Applications"])
 settings = get_settings()
@@ -527,7 +528,7 @@ async def get_apps_status(
     🔍 Vérifie le statut de connectivité de toutes les applications (admin uniquement).
     
     Retourne pour chaque application :
-    - `status`: 'online', 'offline', 'error'
+    - `status`: 'online', 'stopped', 'offline', 'error'
     - `response_time_ms`: temps de réponse en millisecondes
     - `last_check`: timestamp de la vérification
     """
@@ -590,7 +591,24 @@ async def get_apps_status(
         except Exception as e:
             status_data["status"] = "error"
             status_data["error"] = str(e)[:100]
-        
+
+        # Échec de ping : distinguer une app stoppée volontairement (conteneur
+        # Docker off) d'une vraie panne (conteneur actif injoignable). Même
+        # contrat que routes/apps_health.py : un seul appel Docker, seulement
+        # sur ce chemin d'échec (le chemin sain retourne plus haut) ; Docker
+        # indisponible (None) ou conteneur 'running' -> comportement inchangé,
+        # JAMAIS 'stopped' sur incertitude. App distante : aucun conteneur
+        # local, Docker ne peut rien dire de fiable.
+        if status_data["status"] != "online" and not bool(getattr(app, "is_remote", False)):
+            container_state = get_container_state(app.slug)
+            if container_state is not None and container_state != "running":
+                status_data["status"] = "stopped"
+                status_data["error"] = (
+                    "Conteneur absent"
+                    if container_state == "absent"
+                    else f"Conteneur {container_state}"
+                )
+
         return status_data
     
     # Vérifier toutes les apps en parallèle avec un seul client httpx réutilisé
@@ -607,6 +625,7 @@ async def get_apps_status(
     online_count = sum(1 for s in prod_results if s["status"] == "online")
     offline_count = sum(1 for s in prod_results if s["status"] == "offline")
     error_count = sum(1 for s in prod_results if s["status"] == "error")
+    stopped_count = sum(1 for s in prod_results if s["status"] == "stopped")
 
     return {
         "apps": status_results,
@@ -614,7 +633,8 @@ async def get_apps_status(
             "total": len(prod_results),
             "online": online_count,
             "offline": offline_count,
-            "error": error_count
+            "error": error_count,
+            "stopped": stopped_count
         },
         "timestamp": utcnow().isoformat()
     }

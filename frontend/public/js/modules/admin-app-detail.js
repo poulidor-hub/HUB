@@ -231,7 +231,8 @@ function appDetailDockerBadgeHtml(state) {
 
 /**
  * Badge Health v6 : « Health : en ligne · N ms » (success) / « hors ligne »
- * (danger). Sonde indisponible → '' (pas de badge — la rangée s'allège,
+ * (danger) / « stoppée » (secondary neutre — app volontairement arrêtée).
+ * Sonde indisponible → '' (pas de badge — la rangée s'allège,
  * maquette v6 ; l'ancien badge « Vérification » bruitait la fiche).
  */
 function appDetailHealthBadgeHtml(state) {
@@ -241,6 +242,7 @@ function appDetailHealthBadgeHtml(state) {
         return '<span class="badge text-bg-success">Health : en ligne'
             + (latency ? ' · ' + escapeHtml(String(latency)) + ' ms' : '') + '</span>';
     }
+    if (health === 'stopped') return '<span class="badge text-bg-secondary">Health : stoppée</span>';
     if (health === 'unhealthy') return '<span class="badge text-bg-danger">Health : hors ligne</span>';
     return '';
 }
@@ -742,14 +744,19 @@ function renderAppDetailMiniCockpit(opts = {}) {
         unavailable || (rxRate === null && txRate === null), null);
 
     // Latence : runtimeStates (sonde + SSE) — dernier état connu sinon « — ».
+    // App volontairement arrêtée (stopped) : sous-titre neutre, pas de tone
+    // down (rouge) — un arrêt délibéré n'est pas une alerte.
     const latency = state && state.health === 'healthy' && Number.isFinite(Number(state.latency_ms))
         ? Number(state.latency_ms) : null;
-    const latencySub = state ? (state.health === 'healthy' ? 'en ligne' : 'hors ligne') : '';
+    const latencySub = state
+        ? (state.health === 'healthy' ? 'en ligne'
+            : (state.health === 'stopped' ? 'stoppée' : 'hors ligne'))
+        : '';
     appDetailSetChip('appDetailChipLatency', 'appDetailLatencyVal', 'appDetailLatencySub', 'appDetailLatencySpark',
         latency !== null ? Math.round(latency) + ' ms' : '—', latencySub,
         appDetailSparkPoints(_cockpitPoints.latency),
         latency === null && !latencySub,
-        state ? (state.health === 'healthy' ? 'up' : 'down') : null);
+        state ? (state.health === 'healthy' ? 'up' : (state.health === 'stopped' ? null : 'down')) : null);
 }
 
 /** Note uptime à droite de la rangée de badges (maquette v6). */

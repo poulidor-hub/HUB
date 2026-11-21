@@ -231,11 +231,12 @@ const runtimeStates = {};
 
 /**
  * Pastille composite de la colonne État : « En ligne » (vert) /
- * « Hors ligne » (rouge) / « Vérification » (gris, état inconnu).
+ * « Hors ligne » (rouge) / « Stoppée » (gris neutre — app volontairement
+ * arrêtée, pas une erreur) / « Vérification » (gris, état inconnu).
  * Le title combine connectivité (+ latence), Docker et erreur de sonde.
  */
 function appRuntimeStateHtml(state) {
-    const health = state?.health || null;   // 'healthy' | 'unhealthy' | null
+    const health = state?.health || null;   // 'healthy' | 'unhealthy' | 'stopped' | null
     const docker = state?.docker || null;   // 'running' | autre statut | null
     const latency = state?.latency_ms || null;
     const probeError = state?.error || null;
@@ -245,6 +246,9 @@ function appRuntimeStateHtml(state) {
     if (health === 'healthy') {
         tone = 'text-success';
         label = 'En ligne';
+    } else if (health === 'stopped') {
+        tone = 'text-muted';
+        label = 'Stoppée';
     } else if (health === 'unhealthy') {
         tone = 'text-danger';
         label = 'Hors ligne';
@@ -256,6 +260,8 @@ function appRuntimeStateHtml(state) {
     const titleParts = [];
     if (health === 'healthy') {
         titleParts.push('Connectivité : en ligne' + (latency ? ` (${latency} ms)` : ''));
+    } else if (health === 'stopped') {
+        titleParts.push('Connectivité : app arrêtée volontairement');
     } else if (health === 'unhealthy') {
         titleParts.push('Connectivité : hors ligne' + (probeError ? ` — ${probeError}` : ''));
     } else {
@@ -299,14 +305,20 @@ async function refreshAppsStatus() {
             if (!appStatus?.slug) return;
             runtimeStates[appStatus.slug] = {
                 ...(runtimeStates[appStatus.slug] || {}),
-                health: appStatus.status === 'online' ? 'healthy' : 'unhealthy',
+                // 'stopped' n'est ni healthy ni unhealthy : app volontairement
+                // arrêtée → état neutre, sans erreur affichée.
+                health: appStatus.status === 'online' ? 'healthy'
+                    : (appStatus.status === 'stopped' ? 'stopped' : 'unhealthy'),
                 latency_ms: appStatus.status === 'online' ? (appStatus.response_time_ms || null) : null,
-                error: appStatus.status === 'online' ? null : (appStatus.error || null)
+                error: (appStatus.status === 'online' || appStatus.status === 'stopped')
+                    ? null : (appStatus.error || null)
             };
             renderAppRuntimeState(appStatus.slug);
         });
 
-        // Afficher un résumé dans un toast discret
+        // Afficher un résumé dans un toast discret. Déclencheur : VRAIS
+        // problèmes de connectivité uniquement (offline/error) — les apps
+        // volontairement arrêtées (stopped) ne doivent pas le faire sonner.
         const summary = status.summary;
         if (summary.offline > 0 || summary.error > 0) {
             showToast('Connectivité',
@@ -343,7 +355,10 @@ function updateAppHealthStatusInTable(slug, healthStatus) {
 
     runtimeStates[slug] = {
         ...(runtimeStates[slug] || {}),
-        health: healthStatus === 'healthy' || healthStatus === 'unhealthy' ? healthStatus : null
+        // 'stopped' traverse tel quel (valeur de santé à part entière, contrat
+        // app_health_changed) — il n'est PAS filtré comme une valeur inconnue.
+        health: healthStatus === 'healthy' || healthStatus === 'unhealthy' || healthStatus === 'stopped'
+            ? healthStatus : null
     };
     renderAppRuntimeState(slug);
 

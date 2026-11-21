@@ -72,6 +72,17 @@ def _patch(module, routes):
     return patch.object(module, "_get_httpx_client", lambda: _MockClient(routes))
 
 
+def _container_state_mock(return_value):
+    """Mock de get_container_state : retourne return_value et compte les appels."""
+    calls = {"n": 0}
+
+    def _state(slug):
+        calls["n"] += 1
+        return return_value
+
+    return _state, calls
+
+
 async def _get_health(client, token):
     return await client.get(
         "/api/apps/health",
@@ -175,8 +186,11 @@ async def test_probe_degraded_on_5xx(client, admin_token, test_app):
 
 
 async def test_probe_offline_when_unreachable(client, admin_token, test_app):
-    """Aucune reponse -> status offline + error."""
-    with patch.object(apps_health, "_get_httpx_client", lambda: _ErrorClient()):
+    """Aucune reponse -> status offline + error.
+    Docker indisponible (None) : fallback offline, jamais stopped."""
+    state_mock, _ = _container_state_mock(None)
+    with patch.object(apps_health, "_get_httpx_client", lambda: _ErrorClient()), \
+         patch.object(apps_health, "get_container_state", state_mock):
         resp = await _get_health(client, admin_token)
 
     app = _find(resp.json(), "test-app")
@@ -237,12 +251,91 @@ async def test_summary_counts(client, admin_token, async_session):
                 raise ConnectionError("refused")
             return online_routes.get(urlparse(url).path, _MockResp(404))
 
-    with patch.object(apps_health, "_get_httpx_client", lambda: _HybridClient()):
+    with patch.object(apps_health, "_get_httpx_client", lambda: _HybridClient()), \
+         patch.object(apps_health, "get_container_state", _container_state_mock(None)[0]):
         resp = await _get_health(client, admin_token)
 
     summary = resp.json()["summary"]
     assert summary["online"] >= 1
     assert summary["offline"] >= 1
+
+
+# ─── Tests statut stopped (app stoppée vs vraie panne offline) ────────
+
+async def test_probe_stopped_container_reports_stopped(client, admin_token, test_app):
+    """Ping fail + conteneur 'exited' -> stopped, compté dans summary.stopped."""
+    state_mock, calls = _container_state_mock("exited")
+    with patch.object(apps_health, "_get_httpx_client", lambda: _ErrorClient()), \
+         patch.object(apps_health, "get_container_state", state_mock):
+        resp = await _get_health(client, admin_token)
+
+    app = _find(resp.json(), "test-app")
+    assert app["status"] == "stopped"
+    summary = resp.json()["summary"]
+    assert summary["offline"] == 0
+    assert summary["stopped"] == 1
+    assert calls["n"] == 1  # un seul appel Docker, sur la branche offline
+
+
+async def test_probe_absent_container_reports_stopped(client, admin_token, test_app):
+    """Docker joignable mais aucun conteneur -> stopped, 'Conteneur absent'."""
+    state_mock, _ = _container_state_mock("absent")
+    with patch.object(apps_health, "_get_httpx_client", lambda: _ErrorClient()), \
+         patch.object(apps_health, "get_container_state", state_mock):
+        resp = await _get_health(client, admin_token)
+
+    app = _find(resp.json(), "test-app")
+    assert app["status"] == "stopped"
+    assert app["error"] == "Conteneur absent"
+
+
+async def test_probe_running_but_unreachable_reports_offline(client, admin_token, test_app):
+    """Conteneur 'running' mais ping fail -> vraie panne : offline (pas stopped)."""
+    state_mock, _ = _container_state_mock("running")
+    with patch.object(apps_health, "_get_httpx_client", lambda: _ErrorClient()), \
+         patch.object(apps_health, "get_container_state", state_mock):
+        resp = await _get_health(client, admin_token)
+
+    app = _find(resp.json(), "test-app")
+    assert app["status"] == "offline"
+    summary = resp.json()["summary"]
+    assert summary["offline"] == 1
+    assert summary["stopped"] == 0
+
+
+async def test_probe_docker_unavailable_reports_offline(client, admin_token, test_app):
+    """Docker indisponible (None) -> incertitude : fallback offline, jamais stopped."""
+    state_mock, _ = _container_state_mock(None)
+    with patch.object(apps_health, "_get_httpx_client", lambda: _ErrorClient()), \
+         patch.object(apps_health, "get_container_state", state_mock):
+        resp = await _get_health(client, admin_token)
+
+    app = _find(resp.json(), "test-app")
+    assert app["status"] == "offline"
+    assert resp.json()["summary"]["stopped"] == 0
+
+
+async def test_probe_remote_app_reports_offline(client, admin_token, async_session):
+    """App distante : pas d'appel Docker (get_container_state jamais appelé),
+    status offline même si Docker dirait 'absent' (pas de conteneur local)."""
+    from app.models import Application
+    remote_app = Application(
+        name="Remote App", slug="remote-app",
+        api_url="http://remote.example.com:8000",
+        is_active=True, requires_auth=True,
+        is_remote=True,
+    )
+    async_session.add(remote_app)
+    await async_session.commit()
+
+    state_mock, calls = _container_state_mock("absent")
+    with patch.object(apps_health, "_get_httpx_client", lambda: _ErrorClient()), \
+         patch.object(apps_health, "get_container_state", state_mock):
+        resp = await _get_health(client, admin_token)
+
+    app = _find(resp.json(), "remote-app")
+    assert app["status"] == "offline"
+    assert calls["n"] == 0  # garde app distante : zéro appel Docker
 
 
 # ─── Tests releases / diff (GitHub API) ────────────────────────────────
