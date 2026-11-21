@@ -92,6 +92,29 @@ class TestTagCategoriesAdmin:
         assert data["total"] == 2
 
     @pytest.mark.asyncio
+    async def test_list_categories_includes_source_app_name(
+        self, client: AsyncClient, admin_user: User, test_app
+    ):
+        """GET /categories décore les catégories M2M du nom de l'app source
+        (affichage front « M2M · <nom app> ») ; csv → source_app_name=None."""
+        headers = _make_admin_headers(admin_user)
+        await client.post("/api/tags/categories", json={
+            "slug": "secteurs", "label": "Secteurs", "source": "m2m",
+            "source_app_id": test_app.id, "is_multiple": True,
+        }, headers=headers)
+        await client.post("/api/tags/categories", json={
+            "slug": "lang", "label": "Langues", "source": "csv",
+            "is_multiple": True, "values": ["fr", "en"],
+        }, headers=headers)
+
+        response = await client.get("/api/tags/categories", headers=headers)
+        assert response.status_code == 200
+        by_slug = {c["slug"]: c for c in response.json()["categories"]}
+        assert by_slug["secteurs"]["source_app_id"] == test_app.id
+        assert by_slug["secteurs"]["source_app_name"] == "Test App"
+        assert by_slug["lang"]["source_app_name"] is None
+
+    @pytest.mark.asyncio
     async def test_update_category(self, client: AsyncClient, admin_user: User):
         headers = _make_admin_headers(admin_user)
         await client.post("/api/tags/categories", json={
@@ -716,6 +739,17 @@ class TestPutMy:
 class TestAdminAndM2M:
     """Admin PUT /user/{username} + M2M enrichi + catégories actives live."""
 
+    async def _fetch_rows(self, async_session, user_id, slug):
+        """Lignes UserTag d'un user pour un slug (même convention que TestPutMy)."""
+        from app.models import TagCategory, UserTag
+        result = await async_session.execute(
+            select(UserTag)
+            .options(selectinload(UserTag.category))
+            .join(UserTag.category)
+            .where(UserTag.user_id == user_id, TagCategory.slug == slug)
+        )
+        return result.scalars().all()
+
     @pytest.mark.asyncio
     async def test_admin_put_user_primary(
         self, client, async_session, admin_user, test_user
@@ -741,6 +775,92 @@ class TestAdminAndM2M:
         # Le user voit aussi sa primaire
         my = await client.get("/api/tags/my", headers=_make_user_headers(test_user))
         assert my.json()["primary"] == {"secteurs": "Sud"}
+
+        # Et la ligne est bien marquée is_primary en base (une seule, "Sud")
+        rows = await self._fetch_rows(async_session, test_user.id, "secteurs")
+        primaries = [r for r in rows if r.is_primary]
+        assert len(primaries) == 1
+        assert primaries[0].value == "Sud"
+
+    @pytest.mark.asyncio
+    async def test_admin_users_endpoint_includes_primary(
+        self, client, admin_user, test_user
+    ):
+        """GET /users (admin) : chaque entrée expose primary={slug: value}.
+
+        User sans primaire → primary={} (jamais absent, ni mix-up inter-users)."""
+        admin_headers = _make_admin_headers(admin_user)
+        await client.post("/api/tags/categories", json={
+            "slug": "secteurs", "label": "Secteurs", "source": "csv",
+            "is_multiple": True, "values": ["Nord", "Sud"],
+            "primary_enabled": True,
+        }, headers=admin_headers)
+        await client.put(
+            f"/api/tags/user/{test_user.username}",
+            json={"tags": {"secteurs": ["Nord", "Sud"]},
+                  "primary": {"secteurs": "Nord"}},
+            headers=admin_headers,
+        )
+
+        response = await client.get("/api/tags/users", headers=admin_headers)
+        assert response.status_code == 200
+        by_username = {u["username"]: u for u in response.json()}
+        assert by_username[test_user.username]["primary"] == {"secteurs": "Nord"}
+        assert by_username[test_user.username]["tags"] == {"secteurs": ["Nord", "Sud"]}
+        # Admin sans primaire : champ présent mais vide (groupage par user OK)
+        assert by_username[admin_user.username]["primary"] == {}
+
+    @pytest.mark.asyncio
+    async def test_admin_put_user_primary_not_enabled_400(
+        self, client, admin_user, test_user
+    ):
+        """Admin : primaire sur catégorie sans primary_enabled → 400 (comme PUT /my)."""
+        admin_headers = _make_admin_headers(admin_user)
+        await client.post("/api/tags/categories", json={
+            "slug": "lang", "label": "Langues", "source": "csv",
+            "is_multiple": True, "values": ["fr", "en"],
+        }, headers=admin_headers)
+
+        response = await client.put(
+            f"/api/tags/user/{test_user.username}",
+            json={"tags": {"lang": ["fr"]}, "primary": {"lang": "fr"}},
+            headers=admin_headers,
+        )
+        assert response.status_code == 400
+
+    @pytest.mark.asyncio
+    async def test_admin_put_user_primary_resets_existing(
+        self, client, async_session, admin_user, test_user
+    ):
+        """Admin : primaire A puis primaire B → une seule ligne is_primary (B)."""
+        admin_headers = _make_admin_headers(admin_user)
+        await client.post("/api/tags/categories", json={
+            "slug": "secteurs", "label": "Secteurs", "source": "csv",
+            "is_multiple": True, "values": ["Nord", "Sud"],
+            "primary_enabled": True,
+        }, headers=admin_headers)
+
+        r1 = await client.put(
+            f"/api/tags/user/{test_user.username}",
+            json={"tags": {"secteurs": ["Nord", "Sud"]},
+                  "primary": {"secteurs": "Nord"}},
+            headers=admin_headers,
+        )
+        assert r1.status_code == 200
+
+        r2 = await client.put(
+            f"/api/tags/user/{test_user.username}",
+            json={"tags": {"secteurs": ["Nord", "Sud"]},
+                  "primary": {"secteurs": "Sud"}},
+            headers=admin_headers,
+        )
+        assert r2.status_code == 200
+        assert r2.json()["primary"] == {"secteurs": "Sud"}
+
+        rows = await self._fetch_rows(async_session, test_user.id, "secteurs")
+        primaries = [r for r in rows if r.is_primary]
+        assert len(primaries) == 1
+        assert primaries[0].value == "Sud"
 
     @pytest.mark.asyncio
     async def test_admin_put_user_ignored_values(

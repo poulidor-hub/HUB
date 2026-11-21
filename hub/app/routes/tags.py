@@ -370,6 +370,16 @@ async def discover_columns(
         raise HTTPException(status_code=502, detail=f"L'application a retourné {e.response.status_code}")
 
 
+async def _app_names_by_id(db: AsyncSession, app_ids: set[int]) -> dict[int, str]:
+    """{application.id: name} pour décorer les catégories M2M ("M2M · <nom app>")."""
+    if not app_ids:
+        return {}
+    result = await db.execute(
+        select(Application.id, Application.name).where(Application.id.in_(app_ids))
+    )
+    return {row[0]: row[1] for row in result.all()}
+
+
 # ─── Admin endpoints ───────────────────────────────────────────────
 
 
@@ -380,10 +390,14 @@ async def list_categories(
 ):
     result = await db.execute(select(TagCategory).order_by(TagCategory.label))
     categories = result.scalars().all()
-    return TagCategoryListResponse(
-        categories=[TagCategoryResponse.model_validate(c) for c in categories],
-        total=len(categories),
+
+    app_names = await _app_names_by_id(
+        db, {c.source_app_id for c in categories if c.source_app_id}
     )
+    out = [TagCategoryResponse.model_validate(c) for c in categories]
+    for resp in out:
+        resp.source_app_name = app_names.get(resp.source_app_id)
+    return TagCategoryListResponse(categories=out, total=len(out))
 
 
 @router.get("/categories/active", response_model=TagCategoryListResponse)
@@ -409,6 +423,12 @@ async def list_active_categories(
         resp.values = values
         resp.source_flag = flag
         out.append(resp)
+
+    app_names = await _app_names_by_id(
+        db, {c.source_app_id for c in categories if c.source_app_id}
+    )
+    for resp in out:
+        resp.source_app_name = app_names.get(resp.source_app_id)
 
     return TagCategoryListResponse(categories=out, total=len(out))
 
@@ -832,13 +852,33 @@ async def list_users_with_tags(
     )
     users = result.scalars().all()
 
+    # Primaires de TOUS les users en une seule requête (pas de N+1), avec les
+    # mêmes filtres que _get_user_primary / claims JWT (actif + primary_enabled).
+    primary_rows = await db.execute(
+        select(UserTag.user_id, TagCategory.slug, UserTag.value)
+        .join(TagCategory, UserTag.category_id == TagCategory.id)
+        .where(
+            UserTag.is_primary == True,  # noqa: E712
+            TagCategory.is_active == True,  # noqa: E712
+            TagCategory.primary_enabled == True,  # noqa: E712
+        )
+    )
+    primary_by_user: dict[int, dict[str, str]] = {}
+    for user_id, slug, value in primary_rows.all():
+        primary_by_user.setdefault(user_id, {})[slug] = value
+
     out = []
     for u in users:
         tags: dict[str, list[str]] = {}
         for ut in u.tags:
             if ut.category.is_active:
                 tags.setdefault(ut.category.slug, []).append(ut.value)
-        out.append({"id": u.id, "username": u.username, "tags": tags})
+        out.append({
+            "id": u.id,
+            "username": u.username,
+            "tags": tags,
+            "primary": primary_by_user.get(u.id, {}),
+        })
     return out
 
 
