@@ -5,6 +5,20 @@
 
 ---
 
+## [3.98.0] - 21 novembre 2026
+
+### ⚡ Notifications — fin du spam « App offline » : état Docker + alerte à la transition
+
+Incident : les admins recevaient des centaines d'alertes « 🚨 App offline » urgentes par semaine pour des apps volontairement arrêtées (ateliers workshop, apps non démarrées), répétées toutes les 30 min — le health checker pingait les apps sans jamais consulter l'état Docker, rendant indiscernables arrêt volontaire et crash réel. 550 alertes/semaine pour le seul `exemple-app-ws`.
+
+- **Classification Docker** (`hub/app/health_checker.py`) : nouveau `get_container_state(slug)` (conteneur par env `APP_SLUG` ou label `hub.slug`, via `docker_scanner`) ; sur échec de ping, statut `"stopped"` si le conteneur est absent ou non-`running` (état volontaire), `"unhealthy"` sinon (vraie erreur). Fallback : Docker indisponible → `"unhealthy"` (jamais de `stopped` sur incertitude) ; apps distantes (`is_remote`) → pas de classification Docker. Le chemin sain ne consulte jamais Docker.
+- **Alerte à la transition** (`hub/app/alert_checker.py`) : seuls les statuts `"unhealthy"` alimentent le tracking offline ; `app_offline:{slug}` passe en priorité `warning`, titre « 🔧 App injoignable », déclenchement **unique par épisode** (ré-armement à la récupération, plus de répétition post-cooldown) ; les 5 autres types d'alertes gardent leur cooldown.
+- **Dashboard santé** (`hub/app/routes/apps_health.py`, `routes/apps.py`) : `AppHealthItem.status` accepte `"stopped"` + `HealthSummary.stopped` (hors compteur offline) ; la sonde manuelle `/apps/status` est docker-aware (même contrat) ; garde `is_remote` aux deux étages.
+- **Front** (`apps-health.js`, `admin-apps.js`, `admin-app-detail.js`, `sse.js`) : état « Stoppée » gris neutre (badge, gradient, ligne résumé, boîte d'information) ; aucun toast d'erreur sur transition vers/depuis `stopped` ; les vraies erreurs conservent leurs toasts.
+- **Tests** : +22 tests (classification Docker paramétrée sur tous les états non-running, fallback Docker-down, apps distantes, épisode unique + ré-armement, sonde `/apps/status`) ; invariant du summary étendu aux 4 statuts. Suite hôte : 1862 passed. Preuve runtime sur `pouly-test` (Docker réel) : conteneur `exited` → 0 notification ; conteneur vivant injoignable → 1 alerte `warning` unique au seuil 5 min.
+
+---
+
 ## [3.97.4] - 20 novembre 2026
 
 ### ⚡ VPN WireGuard — persistance robuste du serveur (incident 20/11)
