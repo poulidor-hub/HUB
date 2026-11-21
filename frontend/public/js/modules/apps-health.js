@@ -80,14 +80,19 @@ function renderAppsHealthPending(apps) {
 
     const grid = document.getElementById('appsHealthGrid');
     grid.innerHTML = apps.map(function (a) {
-        return renderAppCard({
+        var item = {
             name: a.name, slug: a.slug, icon: a.icon, color: a.color,
             is_system_app: a.is_system_app, status: 'checking',
-        });
+        };
+        _healthBySlug[a.slug] = item;
+        return renderAppCard(item);
     }).join('');
-    updateAppsHealthTimestamps();
     _applyHealthFilters();
 }
+
+// Cache des dernières données santé par slug — alimente les mises à jour
+// ciblées SSE (updateAppsHealthCard) sans re-sonder l'API.
+var _healthBySlug = {};
 
 async function renderAppsHealth(data) {
     const summary = data.summary;
@@ -97,12 +102,16 @@ async function renderAppsHealth(data) {
         '<span style="color:#dc2626;">●</span> ' + summary.offline + ' hors ligne' +
         (summary.degraded > 0 ? ' · <span style="color:#f59e0b;">●</span> ' + summary.degraded + ' degrade' : '') +
         (summary.stopped > 0 ? ' · <span style="color:#94a3b8;">●</span> ' + summary.stopped + ' stoppée(s)' : '') +
-        ' · ' + summary.total + ' apps';
+        ' · ' + summary.total + ' apps' +
+        '<span style="float:right;display:inline-block;font-size:9.5px;background:#eef2ff;color:#4338ca;'
+        + 'border-radius:5px;padding:2px 6px;font-weight:600;">Live SSE · maj au changement</span>';
+
+    // Alimente le cache par slug AVANT le rendu (les cartes ciblées SSE s'y réfèrent)
+    _healthBySlug = {};
+    (data.apps || []).forEach(function (a) { _healthBySlug[a.slug] = a; });
 
     const grid = document.getElementById('appsHealthGrid');
     grid.innerHTML = data.apps.map(app => renderAppCard(app)).join('');
-
-    updateAppsHealthTimestamps();
 
     // Lance la verification des mises a jour en arriere-plan
     if (data.apps && data.apps.length) {
@@ -131,129 +140,173 @@ function formatUptime(seconds) {
     return Math.floor(s / 86400) + 'j';
 }
 
+// ─── Styles de la carte compacte (injectés une seule fois) ─────────────
+// Le fichier reste en style inline ; seules les règles impossibles en
+// inline (états hover/disabled, menu display, spinner keyframes) vivent ici.
+// Zéro transition/animation hormis la rotation du spinner fonctionnel
+// (indicateur d'action en cours, pas une déco — cf. PERFORMANCE).
+function _injectHealthCardStyles() {
+    if (document.getElementById('ahc2-styles')) return;
+    var st = document.createElement('style');
+    st.id = 'ahc2-styles';
+    st.textContent =
+        // Menu ⋯ : instantané (display none/block, aucune transition)
+        '.ahc2-menu{position:absolute;top:30px;right:7px;z-index:60;min-width:158px;background:#fff;'
+        + 'border:1px solid #e2e8f0;border-radius:9px;box-shadow:0 8px 24px rgba(15,23,42,.14);padding:4px;display:none;}'
+        + '.ahc2-menu.open{display:block;}'
+        + '.ahc2-menu button{display:flex;align-items:center;gap:8px;width:100%;text-align:left;background:none;border:0;'
+        + 'border-radius:6px;padding:6px 8px;font-size:12px;color:#1e293b;cursor:pointer;}'
+        + '.ahc2-menu button:hover{background:#f1f5f9;}'
+        + '.ahc2-menu button.danger{color:#dc2626;}'
+        + '.ahc2-menu button:disabled{color:#cbd5e1;cursor:not-allowed;}'
+        + '.ahc2-menu button:disabled:hover{background:none;}'
+        + '.ahc2-menu .sep{height:1px;background:#eef2f6;margin:4px 2px;}'
+        + '.ahc2-menu .mi{width:14px;text-align:center;font-size:11px;flex:none;}'
+        // Bouton ⋯ + état occupé
+        + '.ahc2-more:hover{background:#f8fafc;color:#0f172a;}'
+        + '.ahc2-more.loading{pointer-events:none;border-color:transparent;}'
+        // Spinner fonctionnel (rotation uniquement)
+        + '.ahc2-spinner{width:12px;height:12px;border:2px solid #cbd5e1;border-top-color:#4f46e5;border-radius:50%;'
+        + 'animation:ahc-spin .9s linear infinite;}'
+        + '@keyframes ahc-spin{to{transform:rotate(360deg);}}';
+    document.head.appendChild(st);
+}
+
+// Ligne métrique compacte du corps de carte
+function _cardLine(k, v, tone) {
+    var color = tone === 'err' ? '#dc2626' : (tone === 'warn' ? '#d97706' : '#0f172a');
+    return '<div style="display:flex;justify-content:space-between;gap:6px;font-size:10.5px;color:#475569;padding:1.5px 0;">'
+        + '<span style="color:#94a3b8;flex:none;">' + escapeHtml(k) + '</span>'
+        + '<span title="' + escapeHtml(v) + '" style="font-weight:600;color:' + color
+        + ';font-variant-numeric:tabular-nums;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'
+        + escapeHtml(v) + '</span></div>';
+}
+
+// Carte : état du corps selon les données DISPONIBLES — plus aucun slot « — » fixe.
+function _cardBodyLines(app, isSystemApp) {
+    var latency = app.latency_ms ? app.latency_ms + ' ms' : '';
+    var uptime = formatUptime(app.uptime_seconds);
+    var lines = [];
+    if (app.status === 'checking') {
+        lines.push(_cardLine('Sondage', 'en cours…'));
+        return lines.join('');
+    }
+    // Un arrêt délibéré n'est pas une erreur : motif neutre gris (pas de rouge).
+    if (app.status === 'stopped') {
+        lines.push(_cardLine('État', 'Conteneurs arrêtés'));
+        return lines.join('');
+    }
+    if (latency) lines.push(_cardLine('Latence', latency));
+    if (uptime) lines.push(_cardLine('Uptime', uptime));
+    if (app.error) {
+        var short = String(app.error).split('\n')[0].substring(0, 60);
+        lines.push(_cardLine('Erreur', short, 'err'));
+    }
+    // App joignable mais sans aucune donnée santé exploitable (pas d'endpoint
+    // /health standard) — ne s'applique pas aux apps système (HUB auto-sondé).
+    if (!lines.length) {
+        lines.push(_cardLine(isSystemApp ? 'Santé' : 'Santé', 'aucune donnée'));
+    }
+    return lines.join('');
+}
+
+// Carte : pastille dot colorée par statut avec halo (maquette .ahc2-dot)
+function _cardDot(app) {
+    var dot = {
+        checking: { bg: '#cbd5e1', halo: '#f1f5f9', text: 'Vérification…' },
+        online:   { bg: '#16a34a', halo: '#dcfce7', text: 'ONLINE' },
+        offline:  { bg: '#dc2626', halo: '#fee2e2', text: 'OFFLINE' },
+        degraded: { bg: '#d97706', halo: '#fef3c7', text: 'DEGRADED' },
+        // Arrêt volontaire : gris neutre, jamais une couleur d'alerte.
+        stopped:  { bg: '#94a3b8', halo: '#e2e8f0', text: 'STOPPÉE' },
+    }[app.status] || { bg: '#cbd5e1', halo: '#f1f5f9', text: app.status || 'unknown' };
+    var title = dot.text + (app.error ? ' — ' + String(app.error).split('\n')[0] : '');
+    return '<span title="' + escapeHtml(title) + '" style="margin-left:auto;flex:none;width:10px;height:10px;border-radius:50%;'
+        + 'background:' + dot.bg + ';box-shadow:0 0 0 3px ' + dot.halo + ';"></span>';
+}
+
 function renderAppCard(app) {
+    _injectHealthCardStyles();
     var isSystemApp = app.is_system_app === true || app.slug === 'hub';
 
-    // Direction « Ops console » : bandeau teinté selon le statut + badge plein.
-    // Slots FIXES : les emplacements (statut, 3 métriques, hub) existent toujours
-    // avec des placeholders (« … », « — ») — le layout ne bouge jamais.
-    var statusStyle = {
-        checking: { grad: 'linear-gradient(90deg,#f8fafc,#ffffff)', badge: '#9ca3af', text: '…' },
-        online:   { grad: 'linear-gradient(90deg,#f0fdf4,#ffffff)', badge: '#16a34a', text: 'Online' },
-        offline:  { grad: 'linear-gradient(90deg,#fef2f2,#ffffff)', badge: '#dc2626', text: 'Offline' },
-        degraded: { grad: 'linear-gradient(90deg,#fffbeb,#ffffff)', badge: '#f59e0b', text: 'Degraded' },
-        // App volontairement arrêtée : tons neutres (mêmes gris que « checking »),
-        // aucune couleur d'alerte — un arrêt délibéré n'est pas une erreur.
-        stopped:  { grad: 'linear-gradient(90deg,#f8fafc,#ffffff)', badge: '#9ca3af', text: 'Stoppée' },
-    }[app.status] || { grad: 'linear-gradient(90deg,#f8fafc,#ffffff)', badge: '#9ca3af', text: (app.status || 'Unknown') };
+    // Carte compacte (maquette validée « après ») : 6 par ligne ≥1200px,
+    // en-tête resserré + pastille dot, corps à données présentes seulement.
+    // App volontairement arrêtée : tête en tons neutres gris — pas une erreur.
+    var headGrad = {
+        checking: 'linear-gradient(135deg,#f8fafc,#ffffff)',
+        online:   'linear-gradient(135deg,#e9f9f0,#d8f3e5)',
+        offline:  'linear-gradient(135deg,#fee9e7,#fde3e3)',
+        degraded: 'linear-gradient(135deg,#fef4d6,#fdeebc)',
+        stopped:  'linear-gradient(135deg,#f1f5f9,#e9eef3)',
+    }[app.status] || 'linear-gradient(135deg,#f8fafc,#ffffff)';
 
     var icon = escapeHtml(app.icon || 'bi-app');
     var color = escapeHtml(app.color || '#6c757d');
     var name = escapeHtml(app.name);
     var slug = escapeHtml(app.slug);
-    var latency = app.latency_ms ? app.latency_ms + ' ms' : '';
     var version = app.version || '';
-    var uptime = formatUptime(app.uptime_seconds);
-    // Boîte d'erreur : rouge pour une vraie anomalie ; pour une app volontairement
-    // arrêtée (status 'stopped'), motif en gris neutre (ton du badge « Stoppée ») —
-    // un arrêt délibéré n'est pas une erreur.
-    var errStyle = app.status === 'stopped' ? 'color:#6b7280;background:#f8fafc' : 'color:#b91c1c;background:#fef2f2';
-    var error = app.error
-        ? '<div style="margin:0 14px 10px;font-size:11.5px;' + errStyle + ';border-radius:6px;padding:6px 8px;">' + escapeHtml(app.error.substring(0, 100)) + '</div>'
-        : '';
-
-    // Badge « Système » pour les apps système (HUB)
-    var systemBadge = isSystemApp
-        ? ' <span style="background:#e0e7ff;color:#4338ca;font-size:10px;padding:1px 6px;border-radius:8px;font-weight:600;vertical-align:1px;">SYSTÈME</span>'
-        : '';
-
-    // Métriques en valeurs fortes — grille FIXE 3 cellules, placeholder « — »
-    var stats = [
-        [latency || '—', 'Latence'],
-        [uptime || '—', 'Uptime'],
-        [app.services_count != null ? String(app.services_count) : '—', 'Services'],
-    ];
-    var statsRow =
-        '<div style="display:grid;grid-template-columns:repeat(3,1fr);border-bottom:1px solid #e5e7eb;">'
-        + stats.map(function (s) {
-            return '<div style="padding:9px 6px;text-align:center;">'
-                + '<div style="font-size:17px;font-weight:700;color:#0f172a;">' + escapeHtml(s[0]) + '</div>'
-                + '<div style="font-size:9.5px;color:#94a3b8;text-transform:uppercase;letter-spacing:.6px;">' + s[1] + '</div>'
-                + '</div>';
-        }).join('<div style="border-left:1px solid #f1f5f9;"></div>')
-        + '</div>';
 
     var hubLabel = app.hub_connected === true ? 'Hub ✓'
         : (app.hub_connected === false ? 'Hub ✗' : 'Hub —');
 
-    // L'app est joignable mais sans aucune donnée santé (ni version, ni uptime,
-    // ni intégration Hub, ni erreur) → vraiment aucun endpoint /health exploitable.
-    // Ne s'applique PAS aux apps système (le HUB se sonde lui-même).
-    var noHealth = (!isSystemApp && app.status === 'online' && !version && !uptime && !latency
-        && app.hub_connected !== true && app.hub_connected !== false && !error);
-    var healthNote = noHealth
-        ? '<div style="padding:0 14px 8px;font-size:11px;color:#94a3b8;"><i class="bi bi-info-circle me-1"></i>Serveur joignable — pas d\'endpoint /health standard</div>'
+    // Badge « Système » (chip indigo) — dans le footer, comme la maquette.
+    var systemChip = isSystemApp
+        ? '<span title="Application système (noyau HUB)" style="display:inline-block;font-size:8.5px;font-weight:700;'
+          + 'background:#eef2ff;color:#4338ca;border-radius:5px;padding:2px 6px;">SYSTÈME</span><span style="color:#cbd5e1;">·</span>'
         : '';
 
-    var degradedInfo = '';
-    if (app.status === 'degraded' && app.error) {
-        degradedInfo = ' <i class="bi bi-info-circle" title="' + escapeHtml(app.error) + '" style="cursor:help;font-size:11px;color:#92400e;"></i>';
-    }
+    // Version courante (span masqué si un chip MàJ compact le remplace)
+    var versionSpan = version
+        ? '<span id="appver-' + slug + '" title="Version déployée">v' + escapeHtml(version) + '</span><span style="color:#cbd5e1;">·</span>'
+        : '<span id="appver-' + slug + '"></span>';
 
-    // Barre d'actions unifiée (boutons collés) — masquée pour les apps système
-    var actionButtons = '';
-    if (!isSystemApp) {
-        var btnCss = 'border:none;border-right:1px solid #e2e8f0;border-radius:0;color:#334155;background:#fff;padding:3px 9px;font-size:12px;cursor:pointer;';
-        actionButtons =
-            '<div style="display:flex;border:1px solid #cbd5e1;border-radius:6px;overflow:hidden;">' +
-                '<button data-action="startApp" data-arg1="' + slug + '" style="' + btnCss + 'color:#16a34a;" title="Demarrer">▶</button>' +
-                '<button data-action="stopApp" data-arg1="' + slug + '" style="' + btnCss + 'color:#dc2626;" title="Arreter">■</button>' +
-                '<button data-action="restartApp" data-arg1="' + slug + '" id="restartBtn_' + slug + '" style="' + btnCss + '" title="Redemarrer">⟳</button>' +
-                '<button data-action="showLogs" data-arg1="' + slug + '" style="' + btnCss + '" title="Logs">📋</button>' +
-                '<button data-action="socleCheck" data-arg1="' + slug + '" id="socleCheckBtn_' + slug + '" style="' + btnCss + '" title="Contrôler le socle">🩺</button>' +
-                '<button data-action="updateApp" data-arg1="' + slug + '" id="updateBtn_' + slug + '" style="' + btnCss + '" title="Mettre à jour (pull + build + up)">⬆</button>' +
-                '<button data-action="toggleBranches" data-arg1="' + slug + '" id="branchBtn_' + slug + '" style="' + btnCss.replace('border-right:1px solid #e2e8f0;', '') + 'color:#7c3aed;background:#f5f3ff;" title="Déployer une branche (via l\'atelier)">🌿</button>' +
-            '</div>';
-    }
+    // Chip « MàJ » compact — conteneur rempli par renderUpdateBadge (check async)
+    var updateBadge = '<span id="update-badge-' + slug + '" style="display:none;"></span>';
+
+    // Compteur de conteneurs — affiché SEULEMENT si le backend le fournit
+    var contSpan = (app.containers_count != null)
+        ? '<span style="color:#cbd5e1;">·</span><span title="Conteneurs de l\'application">' + escapeHtml(String(app.containers_count)) + ' cont.</span>'
+        : '';
+
+    // Chip atelier — conteneur vide au rendu ; loadWorkshopStates (workshop-ui.js)
+    // y insère le chip « Atelier » si un atelier est actif. Le panneau est FERMÉ.
+    var wsChip = isSystemApp ? ''
+        : '<span id="ws-chip-' + slug + '" style="display:none;"></span>';
+    var wsPanel = isSystemApp ? ''
+        : '<div id="workshop-panel-' + slug + '" class="ahc2-panel" style="display:none;"></div>';
 
     // Panneau branches — chargé à la demande par toggleBranches (jamais au rendu)
     var branchPanel = isSystemApp ? ''
-        : '<div id="branch-panel-' + slug + '" style="display:none;"></div>';
-
-    // Bloc atelier (workshop) — placeholder rempli par loadWorkshopStates (workshop-ui.js)
-    var workshopBlock = (!isSystemApp && typeof renderWorkshopBlock === 'function')
-        ? renderWorkshopBlock(slug) : '';
+        : '<div id="branch-panel-' + slug + '" class="ahc2-panel" style="display:none;"></div>';
 
     return (
-        '<div class="col-12 col-md-6 col-lg-4" data-slug="' + slug + '"' +
+        '<div class="col-6 col-md-4 col-lg-3 col-xl-2" data-slug="' + slug + '"' +
         ' data-status="' + escapeHtml(app.status || 'checking') + '"' +
         ' data-ws="0"' +
         ' data-search="' + escapeHtml((app.name + ' ' + app.slug).toLowerCase()) + '">' +
-        '<div style="background:#fff;border:1px solid #cbd5e1;border-radius:8px;box-shadow:0 1px 3px rgba(0,0,0,.07);display:flex;flex-direction:column;height:100%;min-height:150px;overflow:hidden;">' +
-            '<div style="background:' + statusStyle.grad + ';border-bottom:1px solid #e5e7eb;padding:11px 14px;display:flex;align-items:center;gap:10px;">' +
-                '<div style="width:36px;height:36px;border-radius:8px;background:' + color + ';display:flex;align-items:center;justify-content:center;color:white;font-size:16px;flex-shrink:0;">' +
+        '<div style="position:relative;background:#fff;border:1px solid #e2e8f0;border-radius:10px;box-shadow:0 1px 2px rgba(15,23,42,.05);display:flex;flex-direction:column;height:100%;overflow:visible;">' +
+            '<div style="background:' + headGrad + ';border-radius:10px 10px 0 0;padding:8px 9px 7px;display:flex;gap:7px;align-items:center;">' +
+                '<div style="width:26px;height:26px;border-radius:7px;background:' + color + ';display:flex;align-items:center;justify-content:center;color:#fff;font-size:12px;flex:none;">' +
                     '<i class="bi ' + icon + '"></i>' +
                 '</div>' +
-                '<div style="flex:1;min-width:0;">' +
-                    '<div style="font-weight:700;font-size:14px;color:#0f172a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + name +
-                    (systemBadge ? systemBadge : '') +
-                    '</div>' +
-                    '<div style="font-size:11px;color:#64748b;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + slug + ' · v' + (version ? escapeHtml(version) : '—') + '</div>' +
+                '<div style="min-width:0;">' +
+                    '<div style="font-size:12px;font-weight:700;color:#0f172a;line-height:1.2;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + name + '</div>' +
+                    '<div style="display:block;font-size:9.5px;font-weight:500;color:#64748b;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + slug + '</div>' +
                 '</div>' +
-                '<span style="background:' + statusStyle.badge + ';color:#fff;font-size:10px;padding:3px 8px;border-radius:5px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;flex-shrink:0;">' + statusStyle.text + degradedInfo + '</span>' +
+                _cardDot(app) +
             '</div>' +
-            statsRow +
-            '<div id="update-badge-' + slug + '" style="display:none;"></div>' +
-            healthNote +
-            error +
-            workshopBlock +
+            '<div class="ahc2-body" id="appbody-' + slug + '" style="padding:6px 9px 7px;">' +
+                _cardBodyLines(app, isSystemApp) +
+            '</div>' +
+            wsPanel +
             branchPanel +
-            '<div style="margin-top:auto;padding:8px 14px;display:flex;justify-content:space-between;align-items:center;border-top:1px solid #f1f5f9;">' +
-                '<span style="font-size:10.5px;color:#94a3b8;">' +
-                    'Vérifié il y a <span class="apps-health-timestamp" data-ts="' + (app.checked_at || '') + '">…</span>' +
-                    ' · ' + hubLabel +
-                '</span>' +
-                actionButtons +
+            '<div style="margin-top:auto;padding:5px 9px 7px;display:flex;align-items:center;flex-wrap:wrap;font-size:9.5px;color:#94a3b8;gap:4px;">' +
+                systemChip +
+                versionSpan +
+                updateBadge +
+                '<span title="Intégration Hub">' + hubLabel + '</span>' +
+                contSpan +
+                wsChip +
             '</div>' +
         '</div>' +
         '</div>'
@@ -281,7 +334,7 @@ async function toggleBranches(slug) {
 async function refreshBranches(slug) {
     var panel = document.getElementById('branch-panel-' + slug);
     if (!panel) return;
-    panel.innerHTML = '<div style="margin:10px 14px 0;padding:8px 10px;background:#f8fafc;border:1px dashed #cbd5e1;border-radius:6px;font-size:11.5px;color:#64748b;display:flex;align-items:center;gap:8px;">'
+    panel.innerHTML = '<div style="padding:8px;background:#f8fafc;border:1px dashed #cbd5e1;border-radius:6px;font-size:11.5px;color:#64748b;display:flex;align-items:center;gap:8px;">'
         + '<span class="spinner-border spinner-border-sm" style="width:12px;height:12px;color:#7c3aed;"></span>'
         + 'Chargement des branches…</div>';
     try {
@@ -289,7 +342,7 @@ async function refreshBranches(slug) {
         _branchesCache[slug] = { ts: Date.now(), data: data };
         _renderBranchPanel(slug, data, false);
     } catch (e) {
-        panel.innerHTML = '<div style="margin:10px 14px 0;font-size:11.5px;color:#b91c1c;background:#fef2f2;border-radius:6px;padding:6px 8px;">'
+        panel.innerHTML = '<div style="font-size:11.5px;color:#b91c1c;background:#fef2f2;border-radius:6px;padding:6px 8px;">'
             + escapeHtml(e.message || 'Erreur inconnue') + '</div>';
     }
 }
@@ -301,7 +354,7 @@ function _renderBranchPanel(slug, data, fromCache) {
         var hint = data.repo_configured ? ''
             : ' <button data-action="showGitConfigModal" data-arg1="' + escapeHtml(slug) + '"'
               + ' class="btn btn-sm btn-outline-secondary py-0 px-2" style="font-size:10px;">Configurer le dépôt git</button>';
-        panel.innerHTML = '<div style="margin:10px 14px 0;font-size:11.5px;color:#92400e;background:#fffbeb;border:1px solid #fcd34d;border-radius:6px;padding:6px 8px;">'
+        panel.innerHTML = '<div style="font-size:11.5px;color:#92400e;background:#fffbeb;border:1px solid #fcd34d;border-radius:6px;padding:6px 8px;">'
             + escapeHtml(data.error || 'Branches indisponibles.') + hint + '</div>';
         return;
     }
@@ -311,7 +364,7 @@ function _renderBranchPanel(slug, data, fromCache) {
     }).join('');
     var cachedNote = fromCache ? ' · cache' : '';
     panel.innerHTML =
-        '<div style="margin:10px 14px 0;padding:9px 10px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;">'
+        '<div style="padding:9px 10px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;">'
         + '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">'
             + '<span style="font-size:10px;font-weight:700;color:#7c3aed;text-transform:uppercase;letter-spacing:.6px;">🌿 Branche → atelier</span>'
             + '<span data-action="refreshBranches" data-arg1="' + escapeHtml(slug) + '" role="button" title="Rafraîchir les branches" style="font-size:11px;color:#94a3b8;cursor:pointer;">↻' + cachedNote + '</span>'
@@ -572,14 +625,18 @@ async function checkAllUpdates(apps) {
 function renderUpdateBadge(slug, update) {
     var badge = document.getElementById('update-badge-' + slug);
     if (!badge) return;
-    badge.style.display = 'block';
-    badge.style.marginTop = '6px';
+    // Chip compact cliquable (changelog) — remplace la version courante dans le
+    // footer (l'info « d'où l'on part » est dans le title et le modal changelog).
+    var ver = document.getElementById('appver-' + slug);
+    if (ver) ver.style.display = 'none';
+    badge.style.display = '';
     badge.innerHTML =
-        '<button data-action="showChangelog" data-arg1="' + slug + '" data-arg2="' + escapeHtml(update.current_version || '') + '" ' +
-        'style="background:#fef3c7;color:#92400e;border:1px solid #fcd34d;font-size:11px;padding:3px 10px;border-radius:6px;cursor:pointer;display:inline-block;width:100%;text-align:left;">' +
-        '🔄 Mise à jour disponible : <strong>' + escapeHtml(update.current_version) + '</strong> → <strong>' + escapeHtml(update.latest_version) + '</strong>' +
-        ' <span style="float:right;color:#b45309;">📋 Voir le changelog</span>' +
-        '</button>';
+        '<button data-action="showChangelog" data-arg1="' + slug + '" data-arg2="' + escapeHtml(update.current_version || '') + '" '
+        + 'title="Mise à jour disponible : ' + escapeHtml(update.current_version || '?') + ' → ' + escapeHtml(update.latest_version || '?') + ' — voir le changelog" '
+        + 'style="display:inline-block;font-size:8.5px;font-weight:700;color:#92400e;background:#fef3c7;border:0;'
+        + 'border-radius:4px;padding:1px 5px;cursor:pointer;">'
+        + 'MàJ ' + escapeHtml(update.current_version || '?') + '→' + escapeHtml(update.latest_version || '?')
+        + '</button>';
 }
 
 async function showChangelog(slug, currentVersion) {
@@ -861,24 +918,6 @@ function _showModal(title, bodyHtml) {
     document.body.appendChild(div.firstElementChild);
     return document.getElementById('appsHealthModal');
 }
-
-// ─── Timestamps relatifs ──────────────────────────────────────────────
-
-function updateAppsHealthTimestamps() {
-    var els = document.querySelectorAll('.apps-health-timestamp');
-    var now = Date.now();
-    for (var i = 0; i < els.length; i++) {
-        var ts = els[i].dataset.ts;
-        if (!ts) continue;
-        var then = new Date(ts).getTime();
-        var diff = Math.max(0, Math.floor((now - then) / 1000));
-        if (diff < 60) els[i].textContent = diff + 's';
-        else if (diff < 3600) els[i].textContent = Math.floor(diff / 60) + 'min';
-        else els[i].textContent = Math.floor(diff / 3600) + 'h';
-    }
-}
-
-setInterval(updateAppsHealthTimestamps, 30000);
 
 // ─── Filtres (client-side, instantanés) ───────────────────────────────
 
