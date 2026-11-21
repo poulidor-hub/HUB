@@ -2324,6 +2324,9 @@ class TagCategoryResponse(BaseModel):
     # calculé par la route (résolveur live) ; nom distinct de la colonne
     # `source` (csv|m2m) pour éviter toute collision.
     source_flag: str = "csv"
+    # Nom de l'application source jointe (peuplé par les routes de lecture) —
+    # pour l'affichage "M2M · <nom app>" côté front ; None si catégorie csv.
+    source_app_name: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True)
 

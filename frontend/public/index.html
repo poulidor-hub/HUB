@@ -2458,45 +2458,15 @@
             <div class="tab-content">
                 <!-- Onglet 1 : Catégories -->
                 <div class="tab-pane fade show active" id="tabTagCategories">
-                    <div class="d-flex justify-content-end mb-3">
-                        <button class="btn btn-primary btn-sm" data-action="showTagCategoryModal">
+                    <!-- Toolbar unique : recherche + stats discrètes + action (maquette « dense pro » validée) -->
+                    <div class="pref-toolbar mb-3">
+                        <input type="search" id="tagCatSearch" class="form-control form-control-sm pref-toolbar-search"
+                               placeholder="Rechercher une préférence…" aria-label="Rechercher une préférence par nom ou identifiant"
+                               data-action="filterAdminTagCategories" data-arg1="$el" autocomplete="off">
+                        <span id="tagCatStats" class="pref-toolbar-stats" aria-live="polite"></span>
+                        <button class="btn btn-primary btn-sm ms-auto" data-action="showTagCategoryModal" title="Créer une nouvelle préférence">
                             <i class="bi bi-plus-lg me-1"></i>Nouvelle préférence
                         </button>
-                    </div>
-
-                    <div class="row g-3 mb-3">
-                        <div class="col-md-3">
-                            <div class="card border">
-                                <div class="card-body text-center py-2">
-                                    <h4 id="tagStatsTotal" class="text-primary mb-0">-</h4>
-                                    <small class="text-muted">Total</small>
-                                </div>
-                            </div>
-                        </div>
-                        <div class="col-md-3">
-                            <div class="card border">
-                                <div class="card-body text-center py-2">
-                                    <h4 id="tagStatsActive" class="mb-0">-</h4>
-                                    <small class="text-muted">Actives</small>
-                                </div>
-                            </div>
-                        </div>
-                        <div class="col-md-3">
-                            <div class="card border">
-                                <div class="card-body text-center py-2">
-                                    <h4 id="tagStatsMultiple" class="mb-0">-</h4>
-                                    <small class="text-muted">Multiples</small>
-                                </div>
-                            </div>
-                        </div>
-                        <div class="col-md-3">
-                            <div class="card border">
-                                <div class="card-body text-center py-2">
-                                    <h4 id="tagStatsUnique" class="mb-0">-</h4>
-                                    <small class="text-muted">Uniques</small>
-                                </div>
-                            </div>
-                        </div>
                     </div>
 
                     <div class="card">
@@ -2510,6 +2480,27 @@
 
                 <!-- Onglet 2 : Utilisateurs -->
                 <div class="tab-pane fade" id="tabTagUsers">
+                    <!-- Toolbar : recherche client + filtres + compteur (compté après filtres) -->
+                    <div class="pref-toolbar mb-3">
+                        <input type="search" id="tagUsersSearch" class="form-control form-control-sm pref-toolbar-search"
+                               placeholder="Rechercher un utilisateur…" aria-label="Rechercher un utilisateur par nom ou identifiant"
+                               data-action="filterAdminTagUsers" data-arg1="$el" autocomplete="off">
+                        <select id="tagUsersFilterPrimary" class="form-select form-select-sm w-auto"
+                                aria-label="Filtrer par secteur principal"
+                                data-action="filterAdminTagUsersPrimary" data-arg1="$el">
+                            <option value="all">Secteur principal : Tous</option>
+                            <option value="with">Secteur principal : Avec ★</option>
+                            <option value="without">Secteur principal : Sans ★</option>
+                        </select>
+                        <select id="tagUsersFilterPrefs" class="form-select form-select-sm w-auto"
+                                aria-label="Filtrer par préférences"
+                                data-action="filterAdminTagUsersPrefs" data-arg1="$el">
+                            <option value="all">Préférences : Toutes</option>
+                            <option value="with">Préférences : Avec</option>
+                            <option value="without">Préférences : Sans</option>
+                        </select>
+                        <span id="tagUsersCount" class="pref-toolbar-count" aria-live="polite">0 utilisateur</span>
+                    </div>
                     <div class="card">
                         <div class="card-body p-0">
                             <div id="adminTagUsersTable" class="table-responsive">
@@ -2582,86 +2573,99 @@
     <div class="modal-dialog modal-lg">
         <div class="modal-content">
             <div class="modal-header">
-                <h5 class="modal-title" id="tagModalTitle">Nouvelle préférence</h5>
+                <h5 class="modal-title" id="tagModalTitle">＋ Nouvelle préférence</h5>
                 <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Fermer"></button>
             </div>
             <div class="modal-body">
+                <!-- ① Identité -->
+                <div class="pref-section-title">① Identité</div>
                 <div class="mb-3">
-                    <label class="form-label">Nom de la préférence *</label>
-                    <input type="text" class="form-control" id="tagFormLabel"
-                           placeholder="ex: Secteur géographique">
+                    <label class="form-label" for="tagFormLabel">Nom de la préférence *</label>
+                    <input type="text" class="form-control form-control-sm" id="tagFormLabel"
+                           placeholder="ex : Secteur géographique" autocomplete="off"
+                           data-action="updateTagFormSlug" data-arg1="$el">
+                    <span id="tagFormSlugPreview" class="pref-slug-preview mt-1">slug : —</span>
                 </div>
+
+                <!-- ② Comportement -->
+                <div class="pref-section-title">② Comportement</div>
                 <div class="mb-3">
-                    <label class="form-label">Type de choix</label>
-                    <div class="form-check">
-                        <input class="form-check-input" type="checkbox" id="tagFormIsMultiple">
-                        <label class="form-check-label" for="tagFormIsMultiple">Choix multiples (l'utilisateur peut en sélectionner plusieurs)</label>
+                    <label class="form-label d-block">Type de choix</label>
+                    <!-- État porté par la checkbox cachée #tagFormIsMultiple (logique de sauvegarde inchangée) -->
+                    <input type="checkbox" id="tagFormIsMultiple" class="d-none">
+                    <div class="pref-seg" role="group" aria-label="Type de choix">
+                        <button type="button" class="pref-seg-btn" id="tagSegUnique"
+                                data-action="setTagFormMultiple" data-arg1="0" aria-pressed="true">Unique</button>
+                        <button type="button" class="pref-seg-btn" id="tagSegMultiple"
+                                data-action="setTagFormMultiple" data-arg1="1" aria-pressed="false">Multiples</button>
                     </div>
-                    <small class="text-muted">Décoché = un seul choix possible</small>
+                    <div class="form-text">Unique = un seul choix possible · Multiples = plusieurs sélectionnables.</div>
                 </div>
                 <div class="mb-3">
-                    <label class="form-label">Secteur principal</label>
-                    <div class="form-check">
-                        <input class="form-check-input" type="checkbox" id="tagFormPrimaryEnabled">
-                        <label class="form-check-label" for="tagFormPrimaryEnabled">Autoriser un secteur principal (favori unique parmi les choix)</label>
+                    <div class="form-check form-switch">
+                        <input class="form-check-input" type="checkbox" role="switch" id="tagFormPrimaryEnabled">
+                        <label class="form-check-label" for="tagFormPrimaryEnabled">Autoriser un secteur principal ★</label>
                     </div>
-                    <small class="text-muted">Affiche une section ★ « Secteur principal » aux utilisateurs</small>
+                    <div class="form-text">Favori unique parmi les choix — exposé aux apps.</div>
                 </div>
-                <div class="mb-3">
-                    <label class="form-label">Alimentation des choix</label>
+
+                <!-- ③ Valeurs -->
+                <div class="pref-section-title">③ Valeurs</div>
+                <div class="mb-2">
                     <div class="form-check">
                         <input class="form-check-input" type="radio" name="tagSource"
                                id="tagFormSourceCsv" checked data-action="toggleTagSource">
-                        <label class="form-check-label" for="tagFormSourceCsv">Saisie manuelle ou fichier CSV</label>
+                        <label class="form-check-label" for="tagFormSourceCsv">Saisie manuelle</label>
                     </div>
                     <div class="form-check">
                         <input class="form-check-input" type="radio" name="tagSource"
                                id="tagFormSourceM2m" data-action="toggleTagSource">
-                        <label class="form-check-label" for="tagFormSourceM2m">Importer depuis une application</label>
-                    </div>
-                    <div id="tagFormSourceAppGroup" class="mt-2 d-none">
-                        <label class="form-label">Application source</label>
-                        <div class="d-flex gap-2">
-                            <select class="form-select" id="tagFormSourceApp">
-                                <option value="">-- Sélectionner --</option>
-                            </select>
-                            <button type="button" class="btn btn-sm btn-outline-secondary" data-action="discoverSourceTables" title="Découvrir les tables de l'application">
-                                <i class="bi bi-search"></i>
-                            </button>
-                        </div>
-                        <div id="tagFormTableColGroup" class="mt-2 d-none">
-                            <div class="row g-2">
-                                <div class="col-6">
-                                    <label class="form-label">Table</label>
-                                    <select class="form-select" id="tagFormM2mTable" data-action="discoverSourceColumns">
-                                        <option value="">-- Choisir --</option>
-                                    </select>
-                                </div>
-                                <div class="col-6">
-                                    <label class="form-label">Colonne</label>
-                                    <select class="form-select" id="tagFormM2mColumn">
-                                        <option value="">-- Choisir --</option>
-                                    </select>
-                                </div>
-                            </div>
-                        </div>
-                        <button type="button" class="btn btn-sm btn-outline-primary mt-2" id="btnSyncM2m">
-                            <i class="bi bi-arrow-repeat me-1"></i>Synchroniser depuis l'application
-                        </button>
+                        <label class="form-check-label" for="tagFormSourceM2m">Import M2M depuis une app</label>
                     </div>
                 </div>
                 <div class="mb-3" id="tagFormValuesGroup">
-                    <label class="form-label">Choix disponibles (un par ligne)</label>
-                    <textarea class="form-control" id="tagFormValues" rows="6"
+                    <label class="form-label" for="tagFormValues">Choix disponibles (une valeur par ligne)</label>
+                    <textarea class="form-control form-control-sm font-monospace" id="tagFormValues" rows="6"
                               placeholder="Nord&#10;Sud&#10;Est&#10;Ouest"></textarea>
-                    <button type="button" class="btn btn-sm btn-outline-secondary mt-1" id="btnImportCsvTag">
+                    <div class="form-text">Une valeur par ligne · import CSV possible après création.</div>
+                    <button type="button" class="btn btn-sm btn-outline-secondary mt-1" id="btnImportCsvTag" title="Importer un fichier CSV">
                         <i class="bi bi-upload me-1"></i>Importer un fichier CSV
+                    </button>
+                </div>
+                <div id="tagFormSourceAppGroup" class="d-none">
+                    <label class="form-label" for="tagFormSourceApp">Application source</label>
+                    <div class="d-flex gap-2">
+                        <select class="form-select form-select-sm" id="tagFormSourceApp">
+                            <option value="">-- Sélectionner --</option>
+                        </select>
+                        <button type="button" class="btn btn-sm btn-outline-secondary" data-action="discoverSourceTables" title="Découvrir les tables de l'application">
+                            <i class="bi bi-search"></i>
+                        </button>
+                    </div>
+                    <div id="tagFormTableColGroup" class="mt-2 d-none">
+                        <div class="row g-2">
+                            <div class="col-6">
+                                <label class="form-label" for="tagFormM2mTable">Table</label>
+                                <select class="form-select form-select-sm" id="tagFormM2mTable" data-action="discoverSourceColumns">
+                                    <option value="">-- Choisir --</option>
+                                </select>
+                            </div>
+                            <div class="col-6">
+                                <label class="form-label" for="tagFormM2mColumn">Colonne</label>
+                                <select class="form-select form-select-sm" id="tagFormM2mColumn">
+                                    <option value="">-- Choisir --</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+                    <button type="button" class="btn btn-sm btn-outline-primary mt-2" id="btnSyncM2m" title="Synchroniser les valeurs depuis l'application">
+                        <i class="bi bi-arrow-repeat me-1"></i>Synchroniser depuis l'application
                     </button>
                 </div>
             </div>
             <div class="modal-footer">
                 <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuler</button>
-                <button type="button" class="btn btn-primary" data-action="handleSaveTagCategory">Enregistrer</button>
+                <button type="button" class="btn btn-primary" id="tagModalSaveBtn" data-action="handleSaveTagCategory">Créer la préférence</button>
             </div>
         </div>
     </div>

@@ -2633,3 +2633,205 @@ body {
 .mini.muted .val { color: #6c757d; }
 /* Note uptime à droite de la rangée de badges (maquette v6). */
 #appDetailUptimeNote { font-size: 10.5px; }
+
+/* ===================================================================
+   Admin Préférences — tables denses « pro » (maquettes validées).
+   Set commun aux onglets Catégories & Utilisateurs : .pref-toolbar,
+   .pref-table, .pref-chip-mini, .pref-badge-*, .pref-pager.
+   NB : les chips de table utilisent .pref-chip-mini — .pref-chip est
+   déjà pris par le composant de saisie de « Mes préférences ».
+   Aucune animation (transition/transform interdits — charte perf).
+   =================================================================== */
+
+/* Toolbar au-dessus des tables */
+.pref-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+.pref-toolbar-search {
+    flex: 1 1 180px;
+    max-width: 340px;
+}
+.pref-toolbar-count {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--bs-secondary-color);
+    background: var(--bs-tertiary-bg);
+    border-radius: 999px;
+    padding: 3px 10px;
+    white-space: nowrap;
+}
+.pref-toolbar-stats {
+    font-size: 10.5px;
+    color: var(--bs-secondary-color);
+    white-space: nowrap;
+}
+
+/* Table dense : lignes compactes, en-tête sticky, th uppercase */
+.pref-table { font-size: 11.5px; }
+.pref-table thead th {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    padding: 5px 8px;
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    color: var(--bs-secondary-color);
+    background: var(--bs-body-bg);
+    white-space: nowrap;
+}
+.pref-table td { padding: 5px 8px; vertical-align: middle; }
+.pref-table .pref-th-sort { cursor: pointer; user-select: none; }
+.pref-table .pref-num { font-variant-numeric: tabular-nums; }
+
+/* Cellule utilisateur : avatar + username gras + nom en sous-texte */
+.pref-user-cell {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+}
+.pref-avatar {
+    flex: none;
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 9px;
+    font-weight: 700;
+    color: #fff;
+}
+.pref-user-meta {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    line-height: 1.2;
+}
+.pref-user-name { font-weight: 600; font-size: 12px; }
+.pref-user-sub { font-size: 10px; color: var(--bs-secondary-color); }
+
+/* Cellule préférence (onglet Catégories) : label + slug monospace */
+.pref-cat-name { font-weight: 600; font-size: 12px; }
+.pref-cat-slug {
+    font-family: var(--bs-font-monospace);
+    font-size: 9.5px;
+    color: var(--bs-secondary-color);
+}
+.pref-cat-none { color: var(--bs-secondary-color); }
+
+/* Chips compacts de table (« label : valeurs ») — bg maquette validée */
+.pref-chip-mini {
+    display: inline-block;
+    background: #f1f5f9;
+    color: #475569;
+    border-radius: 999px;
+    padding: 1px 7px;
+    font-size: 10.5px;
+    font-weight: 500;
+    margin: 1px 3px 1px 0;
+    white-space: nowrap;
+}
+
+/* Badges doux (pas de text-bg-* plein : lisibilité « dense pro ») */
+.pref-badge {
+    display: inline-block;
+    border-radius: 5px;
+    padding: 1px 7px;
+    font-size: 10px;
+    font-weight: 600;
+    white-space: nowrap;
+}
+.pref-badge-multi { background: var(--bs-info-bg-subtle); color: var(--bs-info-text-emphasis); }
+.pref-badge-unique, .pref-badge-manual { background: var(--bs-secondary-bg); color: var(--bs-secondary-color); }
+.pref-badge-star { background: var(--bs-warning-bg-subtle); color: var(--bs-warning-text-emphasis); }
+/* Indigo M2M : pas de token Bootstrap — couleurs exactes de la maquette validée */
+.pref-badge-m2m { background: #e0e7ff; color: #3730a3; }
+.pref-badge-on { background: var(--bs-success-bg-subtle); color: var(--bs-success-text-emphasis); }
+.pref-badge-off { background: var(--bs-danger-bg-subtle); color: var(--bs-danger-text-emphasis); }
+.pref-badge-primary, .pref-badge-none {
+    border-radius: 999px;
+    padding: 1px 8px;
+    font-size: 10.5px;
+}
+.pref-badge-primary { background: var(--bs-success-bg-subtle); color: var(--bs-success-text-emphasis); }
+.pref-badge-none { background: var(--bs-tertiary-bg); color: var(--bs-secondary-color); font-weight: 500; }
+
+/* Pagination client compacte (pied de table Utilisateurs) */
+.pref-pager {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    flex-wrap: wrap;
+    padding: 6px 10px;
+    font-size: 11px;
+    color: var(--bs-secondary-color);
+    border-top: 1px solid var(--bs-border-color);
+}
+.pref-pager-pages { display: inline-flex; align-items: center; gap: 3px; }
+.pref-pager-btn {
+    border: 1px solid var(--bs-border-color);
+    background: var(--bs-body-bg);
+    color: var(--bs-body-color);
+    border-radius: 6px;
+    padding: 2px 8px;
+    font-size: 11px;
+    min-width: 24px;
+}
+.pref-pager-btn.active {
+    background: var(--bs-primary);
+    border-color: var(--bs-primary);
+    color: var(--bs-white);
+}
+.pref-pager-btn:disabled { opacity: 0.45; cursor: default; }
+.pref-pager-ellipsis { padding: 0 2px; }
+
+/* Modale préférence : sections empilées ①②③ */
+.pref-section-title {
+    font-size: 9.5px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--bs-secondary-color);
+    border-bottom: 1px solid var(--bs-border-color);
+    padding-bottom: 3px;
+    margin-bottom: 10px;
+}
+.pref-section-title:not(:first-child) { margin-top: 6px; }
+.pref-slug-preview {
+    display: inline-block;
+    font-family: var(--bs-font-monospace);
+    font-size: 10.5px;
+    color: var(--bs-info-text-emphasis);
+    background: var(--bs-info-bg-subtle);
+    border: 1px dashed var(--bs-info-border-subtle);
+    border-radius: 6px;
+    padding: 3px 8px;
+}
+
+/* Contrôle segmenté Unique | Multiples (état porté par #tagFormIsMultiple) */
+.pref-seg {
+    display: inline-flex;
+    border: 1px solid var(--bs-border-color);
+    border-radius: 8px;
+    overflow: hidden;
+}
+.pref-seg-btn {
+    border: 0;
+    background: var(--bs-body-bg);
+    color: var(--bs-secondary-color);
+    padding: 5px 14px;
+    font-size: 11.5px;
+    font-weight: 600;
+}
+.pref-seg-btn + .pref-seg-btn { border-left: 1px solid var(--bs-border-color); }
+.pref-seg-btn[aria-pressed="true"] {
+    background: var(--bs-primary);
+    color: var(--bs-white);
+}

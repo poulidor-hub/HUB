@@ -15,12 +15,28 @@
  * @param {Array} categories - catégories actives ({slug,label,is_multiple,values})
  * @param {Object} selectedMap - { slug: [values] } sélectionnées
  * @param {string} idPrefix - préfixe d'id pour éviter les collisions DOM
+ * @param {Object} [primaryMap] - optionnel : { slug: value } primaires
+ *        courantes. Présent → ajoute la section « Secteur principal ★ »
+ *        (radios) après chaque catégorie primary_enabled, limitée aux
+ *        valeurs actives affichées. Rétro-compatible : les appels à 3
+ *        arguments (onboarding) ne rendent aucune section primaire.
  * @returns {string} HTML
  */
-function buildTagsFormHTML(categories, selectedMap, idPrefix) {
+function buildTagsFormHTML(categories, selectedMap, idPrefix, primaryMap) {
     if (!Array.isArray(categories) || categories.length === 0) return '';
+    const primary = primaryMap || null;
     return categories
-        .map(cat => buildPrefFieldHTML(cat, selectedMap[cat.slug] || [], idPrefix))
+        .map(cat => {
+            const selected = selectedMap[cat.slug] || [];
+            let html = buildPrefFieldHTML(cat, selected, idPrefix);
+            if (primary && cat.primary_enabled) {
+                // Primaires filtrées sur les valeurs actives : une primaire
+                // obsolète n'est jamais re-proposée (le PUT la filtrerait).
+                const liveSelected = selected.filter(v => (cat.values || []).includes(v));
+                html += buildPrimaryFieldHTML(cat, liveSelected, primary[cat.slug] || null, idPrefix + 'Primary');
+            }
+            return html;
+        })
         .join('');
 }
 
