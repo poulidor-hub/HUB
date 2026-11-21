@@ -86,7 +86,8 @@ def test_app_offline_alert_with_slug_key():
         _metrics(apps_offline_min={"exemple-app": 7}), THRESHOLDS, state, NOW
     )
     assert _keys(alerts) == ["app_offline:exemple-app"]
-    assert alerts[0]["priority"] == "urgent"
+    assert alerts[0]["priority"] == "warning"
+    assert alerts[0]["title"] == "🔧 App injoignable : exemple-app"
 
 
 def test_app_offline_below_threshold_no_alert():
@@ -95,6 +96,96 @@ def test_app_offline_below_threshold_no_alert():
         _metrics(apps_offline_min={"exemple-app": 2}), THRESHOLDS, state, NOW
     )
     assert alerts == []
+
+
+def test_app_offline_fires_once_per_episode():
+    """Une SEULE alerte par épisode offline — plus de répétition post-cooldown.
+
+    Les clés app_offline:* sont transition-only : le cooldown_min ne leur
+    s'applique pas, mais elles ne re-déclenchent pas tant que l'épisode dure.
+    """
+    state = {}
+    first = evaluate_alerts(
+        _metrics(apps_offline_min={"exemple-app": 7}), THRESHOLDS, state, NOW
+    )
+    assert _keys(first) == ["app_offline:exemple-app"]
+    # même épisode 1 min plus tard : silence
+    second = evaluate_alerts(
+        _metrics(apps_offline_min={"exemple-app": 7}), THRESHOLDS, state, NOW + 60
+    )
+    assert second == []
+    # même épisode bien après le cooldown : toujours silence
+    third = evaluate_alerts(
+        _metrics(apps_offline_min={"exemple-app": 7}), THRESHOLDS, state,
+        NOW + THRESHOLDS["cooldown_min"] * 60 + 1,
+    )
+    assert third == []
+
+
+def test_app_offline_rearms_after_recovery():
+    """Ré-armement à la récupération : slug sorti du tracking → clé purgée,
+    un nouvel épisode offline re-déclenche une alerte."""
+    state = {}
+    first = evaluate_alerts(
+        _metrics(apps_offline_min={"exemple-app": 7}), THRESHOLDS, state, NOW
+    )
+    assert _keys(first) == ["app_offline:exemple-app"]
+    # récupération : plus rien d'offline → 0 alerte
+    recovered = evaluate_alerts(_metrics(), THRESHOLDS, state, NOW + 60)
+    assert recovered == []
+    # 2e épisode : le slug re-passe offline 7 min → nouvelle alerte
+    # (malgré un clock bien antérieur à l'expiration du cooldown)
+    second = evaluate_alerts(
+        _metrics(apps_offline_min={"exemple-app": 7}), THRESHOLDS, state, NOW + 600
+    )
+    assert _keys(second) == ["app_offline:exemple-app"]
+
+
+def test_app_offline_below_threshold_does_not_arm():
+    """Sous le seuil : aucune alerte ET aucun armement (la clé n'entre pas
+    dans state) — l'armement ne se fait qu'au-delà du seuil."""
+    state = {}
+    alerts = evaluate_alerts(
+        _metrics(apps_offline_min={"exemple-app": 2}), THRESHOLDS, state, NOW
+    )
+    assert alerts == []
+    assert "app_offline:exemple-app" not in state
+
+
+# =============================================================================
+# TRACKING OFFLINE — collect_metrics n'alimente _offline_since que pour les
+# statuts 'unhealthy' (les apps 'stopped' / 'healthy' en sortent — statut
+# Docker classé par le health_checker)
+# =============================================================================
+
+@pytest.mark.asyncio
+async def test_collect_metrics_ignores_stopped_status(monkeypatch):
+    """Une app volontairement arrêtée ('stopped') ne doit PAS armer le
+    tracking offline — seul 'unhealthy' (conteneur actif mais injoignable)
+    alimente _offline_since ; 'healthy' purge le slug."""
+    import app.alert_checker as alert_checker
+    import app.health_checker as health_checker
+
+    monkeypatch.setattr(
+        health_checker,
+        "get_all_health_statuses",
+        lambda: {"a": {"status": "stopped"}, "b": {"status": "unhealthy"}},
+    )
+    alert_checker._offline_since = {}
+    try:
+        await alert_checker.collect_metrics()
+        assert "a" not in alert_checker._offline_since  # stopped → ignorée
+        assert "b" in alert_checker._offline_since      # unhealthy → trackée
+
+        monkeypatch.setattr(
+            health_checker,
+            "get_all_health_statuses",
+            lambda: {"a": {"status": "healthy"}, "b": {"status": "healthy"}},
+        )
+        await alert_checker.collect_metrics()
+        assert alert_checker._offline_since == {}  # healthy → purge
+    finally:
+        alert_checker._offline_since = {}
 
 
 def test_cooldown_suppresses_repeat_within_window():

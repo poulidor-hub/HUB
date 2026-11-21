@@ -68,6 +68,9 @@ def evaluate_alerts(
 
     - `state` est muté : chaque alerte envoyée y enregistre son horodatage.
     - Une même clé ne re-déclenche pas avant `cooldown_min` minutes.
+      Exception : les clés `app_offline:*` sont transition-only — une seule
+      alerte par épisode offline, sans cooldown ; la clé est purgée quand le
+      slug sort du tracking (récupération), ce qui ré-arme l'alerte.
     """
     alerts: List[dict] = []
     cooldown_s = thresholds["cooldown_min"] * 60
@@ -130,14 +133,40 @@ def evaluate_alerts(
             "urgent",
         )
 
+    # Alerte app offline — transition-only : UNE alerte warning par épisode
+    # offline (plus de répétition toutes les cooldown_min). Le cooldown ne
+    # s'applique PAS aux clés app_offline:* : leur ré-armement est conditionné
+    # à la récupération. Seules les apps 'unhealthy' (conteneur actif mais
+    # injoignable) figurent dans apps_offline_min — une app volontairement
+    # arrêtée ('stopped') n'est plus une erreur (cf. collect_metrics).
+    # 1) Ré-armement AVANT le fire : tout slug sorti du tracking offline
+    #    (récupération) purge sa clé → un épisode ultérieur re-déclenche.
+    for key in [k for k in state if k.startswith("app_offline:")]:
+        if key.split(":", 1)[1] not in metrics["apps_offline_min"]:
+            del state[key]
+    # 2) Fire conditionné : clé déjà posée (épisode déjà signalé) → silence ;
+    #    l'armement ne se fait qu'au-delà du seuil.
     for slug, minutes in metrics["apps_offline_min"].items():
-        if minutes > thresholds["app_offline_min"]:
-            fire(
-                f"app_offline:{slug}",
-                f"🚨 App offline : {slug}",
-                f"L'app {slug} est injoignable depuis ~{int(minutes)} min.",
-                "urgent",
-            )
+        if minutes <= thresholds["app_offline_min"]:
+            continue
+        key = f"app_offline:{slug}"
+        if key in state:
+            continue
+        state[key] = now
+        alert = {
+            "key": key,
+            "title": f"🔧 App injoignable : {slug}",
+            "body": (
+                f"L'app {slug} ne répond pas alors que son conteneur est actif "
+                f"(~{int(minutes)} min)."
+            ),
+            "priority": "warning",
+        }
+        action = ALERT_ACTIONS.get(key)
+        if action:
+            alert["action_url"] = action["action_url"]
+            alert["action_label"] = action["action_label"]
+        alerts.append(alert)
 
     return alerts
 
@@ -191,9 +220,13 @@ async def collect_metrics() -> dict:
         ).scalar() or 0
 
     now = time.time()
+    # Seuls les 'unhealthy' (conteneur actif mais injoignable) arment le
+    # tracking offline : 'stopped' (app volontairement arrêtée, statut Docker)
+    # et 'healthy' sortent le slug du tracking — pas d'alerte pour un arrêt
+    # volontaire.
     for slug, info in get_all_health_statuses().items():
         status = (info or {}).get("status", "healthy")
-        if status != "healthy":
+        if status == "unhealthy":
             _offline_since.setdefault(slug, now)
         else:
             _offline_since.pop(slug, None)
