@@ -154,8 +154,12 @@ function renderAppCard(app) {
     var latency = app.latency_ms ? app.latency_ms + ' ms' : '';
     var version = app.version || '';
     var uptime = formatUptime(app.uptime_seconds);
+    // Boîte d'erreur : rouge pour une vraie anomalie ; pour une app volontairement
+    // arrêtée (status 'stopped'), motif en gris neutre (ton du badge « Stoppée ») —
+    // un arrêt délibéré n'est pas une erreur.
+    var errStyle = app.status === 'stopped' ? 'color:#6b7280;background:#f8fafc' : 'color:#b91c1c;background:#fef2f2';
     var error = app.error
-        ? '<div style="margin:0 14px 10px;font-size:11.5px;color:#b91c1c;background:#fef2f2;border-radius:6px;padding:6px 8px;">' + escapeHtml(app.error.substring(0, 100)) + '</div>'
+        ? '<div style="margin:0 14px 10px;font-size:11.5px;' + errStyle + ';border-radius:6px;padding:6px 8px;">' + escapeHtml(app.error.substring(0, 100)) + '</div>'
         : '';
 
     // Badge « Système » pour les apps système (HUB)
