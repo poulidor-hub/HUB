@@ -279,6 +279,32 @@ function renderAppCard(app) {
     var branchPanel = isSystemApp ? ''
         : '<div id="branch-panel-' + slug + '" class="ahc2-panel" style="display:none;"></div>';
 
+    // Menu ⋯ unique (dropdown vanilla, instantané) — absent pour les apps système.
+    // Items activés selon le statut : Démarrer si stopped|offline ; Arrêter +
+    // Redémarrer + Socle si online|degraded ; Logs / MàJ / Branches toujours.
+    var moreMenu = '';
+    if (!isSystemApp) {
+        var st = app.status || 'checking';
+        var canStart = (st === 'stopped' || st === 'offline');
+        var canStopRestart = (st === 'online' || st === 'degraded');
+        var dis = function (ok) { return ok ? '' : ' disabled'; };
+        moreMenu =
+            '<button type="button" class="ahc2-more" id="moreBtn_' + slug + '" data-action="toggleHealthMenu" data-args="$el"'
+            + ' title="Actions" aria-label="Actions" aria-haspopup="true" aria-expanded="false"'
+            + ' style="margin-left:auto;width:22px;height:20px;border:1px solid #e2e8f0;background:#fff;border-radius:6px;'
+            + 'font-size:12px;line-height:1;color:#64748b;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0;flex:none;">⋯</button>'
+            + '<div class="ahc2-menu" id="health-menu-' + slug + '" role="menu">'
+            + '<button role="menuitem"' + dis(canStart) + ' data-action="runAppAction" data-arg1="' + slug + '" data-arg2="start"><span class="mi">▶</span> Démarrer</button>'
+            + '<button role="menuitem" class="danger"' + dis(canStopRestart) + ' data-action="runAppAction" data-arg1="' + slug + '" data-arg2="stop"><span class="mi">■</span> Arrêter</button>'
+            + '<button role="menuitem"' + dis(canStopRestart) + ' data-action="runAppAction" data-arg1="' + slug + '" data-arg2="restart"><span class="mi">⟳</span> Redémarrer</button>'
+            + '<div class="sep"></div>'
+            + '<button role="menuitem" data-action="showLogs" data-arg1="' + slug + '"><span class="mi">📋</span> Logs</button>'
+            + '<button role="menuitem"' + dis(canStopRestart) + ' data-action="socleCheck" data-arg1="' + slug + '"><span class="mi">🩺</span> Socle</button>'
+            + '<button role="menuitem" data-action="updateApp" data-arg1="' + slug + '"><span class="mi">⬆</span> Mettre à jour</button>'
+            + '<button role="menuitem" data-action="toggleBranches" data-arg1="' + slug + '"><span class="mi">🌿</span> Branches</button>'
+            + '</div>';
+    }
+
     return (
         '<div class="col-6 col-md-4 col-lg-3 col-xl-2" data-slug="' + slug + '"' +
         ' data-status="' + escapeHtml(app.status || 'checking') + '"' +
@@ -307,6 +333,7 @@ function renderAppCard(app) {
                 '<span title="Intégration Hub">' + hubLabel + '</span>' +
                 contSpan +
                 wsChip +
+                moreMenu +
             '</div>' +
         '</div>' +
         '</div>'
@@ -398,25 +425,6 @@ async function deployBranch(slug) {
         openWorkshopModal(slug, operation, result.operation_id);
     } catch (e) {
         showToast('Atelier', e.message, 'danger');
-    }
-}
-
-// ─── Restart ──────────────────────────────────────────────────────────
-
-async function restartApp(slug) {
-    var btn = document.getElementById('restartBtn_' + slug);
-    if (!btn) return;
-    btn.disabled = true;
-    btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
-
-    try {
-        var result = await api.restartApp(slug);
-        showToast('Redemarrage', result.container_name + ': ' + result.status, 'success');
-        setTimeout(function() { loadAppsHealth(); }, 2000);
-    } catch (error) {
-        showToast('Erreur', error.message, 'danger');
-        btn.disabled = false;
-        btn.innerHTML = '⟳';
     }
 }
 
@@ -568,29 +576,104 @@ async function socleCheck(slug) {
     }
 }
 
-// ─── Start / Stop / Logs ──────────────────────────────────────────────
+// ─── Actions runtime unifiées (start / stop / restart) ─────────────────
+// Un seul point d'entrée runAppAction(slug, action) : confirmations, état
+// « occupé » (spinner sur ⋯ + carte atténuée + ligne « Action… »), toast
+// résultat PAR CONTENEUR (contrat containers: [{name, ok, state}]), puis
+// re-sonde immédiate + confirmation à +5 s. L'anti-course _healthRenderSeq
+// de loadAppsHealth fait foi sur les re-rendus concurrents.
 
-async function startApp(slug) {
-    if (!confirm('Demarrer ' + slug + ' ?')) return;
-    showToast('Demarrage', 'Demarrage de ' + slug + ' en cours…', 'info');
-    try {
-        var result = await api.startApp(slug);
-        showToast('Demarrage', result.message, result.ok ? 'success' : 'danger');
-        if (result.ok) setTimeout(function() { loadAppsHealth(); }, 3000);
-    } catch (error) {
-        showToast('Erreur', error.message, 'danger');
-    }
+var _RUN_ACTIONS = {
+    start: {
+        api: 'startApp', label: 'Démarrage', past: 'démarrés',
+        confirm: function (slug) { return confirm('Démarrer ' + slug + ' ?'); },
+    },
+    stop: {
+        api: 'stopApp', label: 'Arrêt', past: 'arrêtés',
+        confirm: function (slug) { return confirm('Arrêter ' + slug + ' ? Cette action rendra l\'application indisponible.'); },
+    },
+    restart: {
+        api: 'restartApp', label: 'Redémarrage', past: 'redémarrés',
+        confirm: null,
+    },
+};
+
+function _cssEscape(s) {
+    if (window.CSS && CSS.escape) return CSS.escape(s);
+    return String(s).replace(/[^a-zA-Z0-9_-]/g, '\\$&');
 }
 
-async function stopApp(slug) {
-    if (!confirm('Arreter ' + slug + ' ? Cette action rendra l\'application indisponible.')) return;
-    showToast('Arret', 'Arret de ' + slug + ' en cours…', 'info');
+// Ligne « Action… » temporaire dans le corps de la carte (tant que le statut
+// n'a pas basculé — le re-rendu du sondage la fait disparaître).
+function _setCardActionLine(slug, text) {
+    var body = document.getElementById('appbody-' + slug);
+    if (!body) return null;
+    var line = document.createElement('div');
+    line.id = 'action-line-' + slug;
+    line.style.cssText = 'display:flex;justify-content:space-between;gap:6px;font-size:10.5px;color:#475569;padding:1.5px 0;';
+    line.innerHTML = '<span style="color:#94a3b8;flex:none;">Action</span>'
+        + '<span style="font-weight:600;color:#d97706;font-variant-numeric:tabular-nums;">' + escapeHtml(text) + '</span>';
+    body.appendChild(line);
+    return line;
+}
+
+// Toast de résultat : PAR CONTENEUR si la réponse porte `containers`,
+// sinon repli sur les contrats legacy ({message, ok} / {container_name, status}).
+function _toastActionByContainer(action, slug, result) {
+    var spec = _RUN_ACTIONS[action] || {};
+    var title = spec.label || 'Action';
+    var containers = result && Array.isArray(result.containers) ? result.containers : null;
+    if (containers && containers.length) {
+        var ok = containers.filter(function (c) { return c && c.ok; });
+        if (ok.length === containers.length) {
+            showToast(title, ok.length + '/' + containers.length + ' conteneurs ' + (spec.past || 'traités') + ' — ' + slug, 'success');
+        } else {
+            var fails = containers.filter(function (c) { return !c || !c.ok; })
+                .map(function (c) { return (c && c.name ? c.name : '?') + (c && c.state ? ' (' + c.state + ')' : ''); })
+                .join(', ');
+            showToast(title, ok.length + '/' + containers.length + ' conteneurs ' + (spec.past || 'traités') + ' — échec : ' + fails, 'danger');
+        }
+        return;
+    }
+    if (!result) { showToast(title, slug, 'info'); return; }
+    if (result.message) showToast(title, result.message, result.ok === false ? 'danger' : 'success');
+    else if (result.container_name) showToast(title, result.container_name + ': ' + result.status, 'success');
+    else showToast(title, slug, 'info');
+}
+
+async function runAppAction(slug, action) {
+    var spec = _RUN_ACTIONS[action];
+    if (!spec) return;
+    var btn = document.getElementById('moreBtn_' + slug);
+    if (btn && btn.classList.contains('loading')) return; // anti double-clic
+    if (spec.confirm && !spec.confirm(slug)) return;
+    _closeAllHealthMenus();
+
+    // État « occupé » : spinner sur le bouton ⋯ (rotation seule — indicateur
+    // fonctionnel), carte légèrement atténuée, ligne « Action… » dans le corps.
+    var col = document.querySelector('#appsHealthGrid > [data-slug="' + _cssEscape(slug) + '"]');
+    if (btn) { btn.classList.add('loading'); btn.innerHTML = '<span class="ahc2-spinner"></span>'; btn.title = 'Action en cours'; }
+    if (col) col.style.opacity = '.75';
+    var line = _setCardActionLine(slug, spec.label + '…');
+
     try {
-        var result = await api.stopApp(slug);
-        showToast('Arret', result.message, result.ok ? 'success' : 'danger');
-        if (result.ok) setTimeout(function() { loadAppsHealth(); }, 3000);
+        var result = await api[spec.api](slug);
+        _toastActionByContainer(action, slug, result);
+        if (!result || result.ok !== false) {
+            // Re-sonde IMMÉDIATE + confirmation à +5 s (l'état docker peut
+            // encore basculer) — remplace l'ancien setTimeout 3 s à l'aveugle.
+            loadAppsHealth();
+            setTimeout(function () { loadAppsHealth(); }, 5000);
+        }
     } catch (error) {
-        showToast('Erreur', error.message, 'danger');
+        // Erreur réseau / refus API : toast danger avec le message renvoyé.
+        showToast('Erreur', (error && error.message) || 'Erreur inconnue', 'danger');
+    } finally {
+        // En succès le re-sonde re-rend la grille (carte neuve) ; en échec on
+        // restaure le bouton pour ne pas laisser la carte bloquée « occupée ».
+        if (btn) { btn.classList.remove('loading'); btn.innerHTML = '⋯'; btn.title = 'Actions'; }
+        if (col) col.style.opacity = '';
+        if (line) line.remove();
     }
 }
 
@@ -955,3 +1038,55 @@ function _applyHealthFilters() {
         col.style.display = (okStatus && okWs && okText) ? '' : 'none';
     });
 }
+
+// ─── Menu ⋯ (dropdown vanilla, SANS dépendance Bootstrap JS) ──────────
+// Instantané : display none/block via la classe .open — zéro transition.
+// Refermé par le clic extérieur (listener document ci-dessous) ou au
+// déclenchement d'une action.
+
+function _closeAllHealthMenus() {
+    var open = document.querySelectorAll('.ahc2-menu.open');
+    Array.prototype.forEach.call(open, function (m) {
+        m.classList.remove('open');
+        var foot = m.parentElement;
+        var btn = foot ? foot.querySelector('.ahc2-more') : null;
+        if (btn) btn.setAttribute('aria-expanded', 'false');
+    });
+}
+
+// Le menu 22px doit rester dans le viewport : mesure à l'ouverture, flip
+// simple vertical (menu ancré en bas de carte si déborderait en bas) et
+// horizontal (ancré au bord gauche de la carte si déborderait à gauche).
+function _flipMenuInViewport(menu) {
+    menu.style.left = ''; menu.style.right = ''; menu.style.top = ''; menu.style.bottom = '';
+    var r = menu.getBoundingClientRect();
+    var vw = window.innerWidth || document.documentElement.clientWidth;
+    var vh = window.innerHeight || document.documentElement.clientHeight;
+    if (r.bottom > vh - 8) { menu.style.top = 'auto'; menu.style.bottom = '30px'; }
+    if (r.left < 8 && r.right <= vw - 8) { menu.style.left = '7px'; menu.style.right = 'auto'; }
+}
+
+function toggleHealthMenu(btn) {
+    if (!btn || btn.classList.contains('loading')) return;
+    var foot = btn.parentElement;
+    var menu = foot ? foot.querySelector('.ahc2-menu') : null;
+    if (!menu) return;
+    var wasOpen = menu.classList.contains('open');
+    _closeAllHealthMenus();
+    if (wasOpen) return;
+    menu.classList.add('open');
+    btn.setAttribute('aria-expanded', 'true');
+    _flipMenuInViewport(menu);
+}
+
+// Fermeture : clic sur un item (l'action est dispatchée par le délégué
+// data-action d'app.js — ordre des listeners indifférent ici, la fermeture
+// ne retire aucun élément du DOM) ou clic n'importe où ailleurs. Les clics
+// sur le bouton ⋯ lui-même sont ignorés : toggleHealthMenu bascule.
+(function () {
+    document.addEventListener('click', function (e) {
+        if (e.target.closest('.ahc2-more')) return;
+        if (!document.querySelector('.ahc2-menu.open')) return;
+        _closeAllHealthMenus();
+    });
+})();
