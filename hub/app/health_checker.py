@@ -76,13 +76,63 @@ async def _close_http_client():
 _health_check_task: Optional[asyncio.Task] = None
 
 
+def get_container_state(slug: str) -> Optional[str]:
+    """
+    Retourne le statut docker-py du conteneur de l'application.
+
+    Recherche du conteneur : variable d'env APP_SLUG == slug ou label
+    hub.slug == slug (même logique que _find_container_for_app de
+    routes/apps_health.py). Import paresseux de docker_scanner pour
+    éviter tout cycle d'imports.
+
+    Returns:
+        'running', 'created', 'paused', 'restarting', 'exited', 'dead':
+            statut docker-py du conteneur trouvé
+        'absent': Docker joignable mais aucun conteneur pour ce slug
+        None: Docker indisponible ou erreur (incertitude — l'appelant
+            doit rester sur 'unhealthy', jamais classer 'stopped')
+    """
+    try:
+        # Import paresseux pour éviter tout cycle d'imports
+        from app.docker_scanner import docker_scanner
+
+        if not docker_scanner.is_available:
+            return None
+
+        containers = docker_scanner.client.containers.list(all=True)
+
+        for container in containers:
+            try:
+                env_list = container.attrs.get('Config', {}).get('Env', [])
+                for env in env_list:
+                    if '=' in env:
+                        key, value = env.split('=', 1)
+                        if key == 'APP_SLUG' and value == slug:
+                            return container.status
+            except Exception:
+                pass
+
+            labels = container.labels or {}
+            if labels.get('hub.slug') == slug:
+                return container.status
+
+        # Docker joignable mais aucun conteneur pour ce slug
+        return 'absent'
+
+    except Exception as e:
+        logger.warning(f"Docker: état du conteneur de '{slug}' indéterminable: {e}")
+        return None
+
+
 def get_app_health_status(slug: str) -> Optional[str]:
     """
     Retourne le statut de santé d'une application depuis le cache.
-    
+
     Returns:
         'healthy': Application accessible et répondante
         'unhealthy': Application ne répond pas (en maintenance)
+        'stopped': Application volontairement arrêtée (conteneur Docker
+            non-running identifié lors de l'échec du ping)
         None: Pas encore vérifié
     """
     status_data = _app_health_cache.get(slug)
@@ -96,20 +146,28 @@ def get_all_health_statuses() -> Dict[str, dict]:
     return _app_health_cache.copy()
 
 
-async def check_app_health(app_slug: str, api_url: str) -> dict:
+async def check_app_health(app_slug: str, api_url: str, docker_detectable: bool = True) -> dict:
     """
     Vérifie la santé d'une application via un ping HTTP.
     
     Args:
         app_slug: Identifiant unique de l'application
         api_url: URL de l'API de l'application
+        docker_detectable: False pour les apps distantes (pas de Docker
+            local → pas de classification Docker, toujours 'unhealthy'
+            sur échec du ping)
         
     Returns:
-        dict avec status ('healthy', 'unhealthy'), response_time_ms, error
+        dict avec status ('healthy', 'unhealthy', 'stopped'), docker_status,
+        response_time_ms, error. Sur échec du ping : si l'état Docker est
+        fiable et non-running → 'stopped' (app volontairement arrêtée) ;
+        Docker indisponible, conteneur 'running' ou app distante →
+        'unhealthy' (jamais 'stopped' sur incertitude).
     """
     result = {
         "slug": app_slug,
         "status": "unhealthy",
+        "docker_status": None,
         "response_time_ms": None,
         "error": None,
         "last_check": utcnow().isoformat()
@@ -150,6 +208,15 @@ async def check_app_health(app_slug: str, api_url: str) -> dict:
     except Exception as e:
         result["error"] = str(e)[:100]
     
+    # Échec du ping (aucun endpoint accessible, timeout, connexion refusée...)
+    # → classifier via l'état Docker. Un seul appel, quel que soit le chemin
+    # d'échec ; chemin healthy : aucun appel Docker.
+    if docker_detectable:
+        docker_status = get_container_state(app_slug)
+        result["docker_status"] = docker_status
+        if docker_status not in (None, "running"):
+            result["status"] = "stopped"
+    
     return result
 
 
@@ -173,8 +240,14 @@ async def run_health_checks():
             apps = result.scalars().all()
             
             # Vérifier toutes les apps en parallèle
+            # (les apps distantes n'ont pas de conteneur Docker local :
+            # pas de classification Docker, 'unhealthy' sur échec du ping)
             check_tasks = [
-                check_app_health(app.slug, app.api_url) 
+                check_app_health(
+                    app.slug,
+                    app.api_url,
+                    docker_detectable=not bool(getattr(app, "is_remote", False)),
+                )
                 for app in apps
             ]
             results = await asyncio.gather(*check_tasks, return_exceptions=True)
