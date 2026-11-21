@@ -512,3 +512,204 @@ class TestCreateAppGitPreflight:
         payload = {"name": "SansGit", "slug": "sansgit", "api_port": 8603}
         r = await client.post("/api/apps/", json=payload, headers=get_auth_header(admin_token))
         assert r.status_code == 201
+
+
+class TestAppsStatusProbe:
+    """Sonde manuelle GET /api/apps/status (bouton « Tester connectivité ») :
+    une app volontairement arrêtée (conteneur Docker off) n'est pas une erreur.
+    Même contrat stopped que le dashboard (routes/apps_health.py, plan
+    notif-app-offline) : classification 'stopped' uniquement quand Docker est
+    certain (état ≠ None et ≠ 'running'), JAMAIS sur incertitude ; un seul
+    appel Docker, seulement sur le chemin d'échec ; app distante exclue."""
+
+    @staticmethod
+    def _container_state_mock(return_value):
+        """Mock de get_container_state (patché sur le module route) : compte les appels."""
+        calls = {"n": 0}
+
+        def _state(slug):
+            calls["n"] += 1
+            return return_value
+
+        return _state, calls
+
+    @staticmethod
+    def _patch_httpx(monkeypatch, fake_client):
+        """Remplace httpx.AsyncClient (la route l'importe au niveau fonction)."""
+        import httpx
+        monkeypatch.setattr(httpx, "AsyncClient", lambda **kwargs: fake_client)
+
+    @staticmethod
+    def _find(data, slug):
+        return next(a for a in data["apps"] if a["slug"] == slug)
+
+    @pytest.mark.asyncio
+    async def test_probe_stopped_container_reports_stopped(self, client, admin_token, test_app, monkeypatch):
+        """Ping fail + conteneur 'exited' -> stopped (pas offline), summary.stopped."""
+        import httpx
+
+        class _ErrorClient:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                return False
+
+            async def get(self, url):
+                raise httpx.ConnectError("Connection refused")
+
+        import app.routes.apps as apps_mod
+        state_mock, calls = self._container_state_mock("exited")
+        self._patch_httpx(monkeypatch, _ErrorClient())
+        monkeypatch.setattr(apps_mod, "get_container_state", state_mock)
+
+        resp = await client.get("/api/apps/status", headers=get_auth_header(admin_token))
+
+        assert resp.status_code == 200
+        app = self._find(resp.json(), "test-app")
+        assert app["status"] == "stopped"
+        assert app["error"] == "Conteneur exited"
+        summary = resp.json()["summary"]
+        assert summary["offline"] == 0
+        assert summary["stopped"] == 1
+        assert calls["n"] == 1  # un seul appel Docker, sur le chemin d'échec
+
+    @pytest.mark.asyncio
+    async def test_probe_absent_container_reports_stopped(self, client, admin_token, test_app, monkeypatch):
+        """Docker joignable mais aucun conteneur -> stopped, 'Conteneur absent'."""
+        import httpx
+
+        class _ErrorClient:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                return False
+
+            async def get(self, url):
+                raise httpx.ConnectError("Connection refused")
+
+        import app.routes.apps as apps_mod
+        state_mock, _ = self._container_state_mock("absent")
+        self._patch_httpx(monkeypatch, _ErrorClient())
+        monkeypatch.setattr(apps_mod, "get_container_state", state_mock)
+
+        resp = await client.get("/api/apps/status", headers=get_auth_header(admin_token))
+
+        app = self._find(resp.json(), "test-app")
+        assert app["status"] == "stopped"
+        assert app["error"] == "Conteneur absent"
+
+    @pytest.mark.asyncio
+    async def test_probe_running_but_unreachable_reports_offline(self, client, admin_token, test_app, monkeypatch):
+        """Conteneur 'running' mais ping fail -> vraie panne : offline (pas stopped)."""
+        import httpx
+
+        class _ErrorClient:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                return False
+
+            async def get(self, url):
+                raise httpx.ConnectError("Connection refused")
+
+        import app.routes.apps as apps_mod
+        state_mock, _ = self._container_state_mock("running")
+        self._patch_httpx(monkeypatch, _ErrorClient())
+        monkeypatch.setattr(apps_mod, "get_container_state", state_mock)
+
+        resp = await client.get("/api/apps/status", headers=get_auth_header(admin_token))
+
+        app = self._find(resp.json(), "test-app")
+        assert app["status"] == "offline"
+        assert resp.json()["summary"]["stopped"] == 0
+
+    @pytest.mark.asyncio
+    async def test_probe_docker_unavailable_reports_offline(self, client, admin_token, test_app, monkeypatch):
+        """Docker indisponible (None) -> incertitude : fallback offline, jamais stopped."""
+        import httpx
+
+        class _ErrorClient:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                return False
+
+            async def get(self, url):
+                raise httpx.ConnectError("Connection refused")
+
+        import app.routes.apps as apps_mod
+        state_mock, _ = self._container_state_mock(None)
+        self._patch_httpx(monkeypatch, _ErrorClient())
+        monkeypatch.setattr(apps_mod, "get_container_state", state_mock)
+
+        resp = await client.get("/api/apps/status", headers=get_auth_header(admin_token))
+
+        app = self._find(resp.json(), "test-app")
+        assert app["status"] == "offline"
+        assert resp.json()["summary"]["stopped"] == 0
+
+    @pytest.mark.asyncio
+    async def test_probe_remote_app_reports_offline(self, client, admin_token, async_session, monkeypatch):
+        """App distante : pas d'appel Docker (get_container_state jamais appelé),
+        status offline même si Docker dirait 'absent' (pas de conteneur local)."""
+        import httpx
+
+        class _ErrorClient:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                return False
+
+            async def get(self, url):
+                raise httpx.ConnectError("Connection refused")
+
+        remote_app = Application(
+            name="Remote App", slug="remote-app",
+            api_url="http://remote.example.com:8000",
+            is_active=True, requires_auth=True,
+            is_remote=True,
+        )
+        async_session.add(remote_app)
+        await async_session.commit()
+
+        import app.routes.apps as apps_mod
+        state_mock, calls = self._container_state_mock("absent")
+        self._patch_httpx(monkeypatch, _ErrorClient())
+        monkeypatch.setattr(apps_mod, "get_container_state", state_mock)
+
+        resp = await client.get("/api/apps/status", headers=get_auth_header(admin_token))
+
+        app = self._find(resp.json(), "remote-app")
+        assert app["status"] == "offline"
+        assert calls["n"] == 0  # garde app distante : zéro appel Docker
+
+    @pytest.mark.asyncio
+    async def test_probe_healthy_path_skips_docker(self, client, admin_token, test_app, monkeypatch):
+        """Chemin sain (ping OK) : zéro appel Docker."""
+        from types import SimpleNamespace
+
+        class _OkClient:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                return False
+
+            async def get(self, url):
+                return SimpleNamespace(status_code=200)
+
+        import app.routes.apps as apps_mod
+        state_mock, calls = self._container_state_mock("absent")
+        self._patch_httpx(monkeypatch, _OkClient())
+        monkeypatch.setattr(apps_mod, "get_container_state", state_mock)
+
+        resp = await client.get("/api/apps/status", headers=get_auth_header(admin_token))
+
+        app = self._find(resp.json(), "test-app")
+        assert app["status"] == "online"
+        assert calls["n"] == 0  # chemin sain : aucun appel Docker
