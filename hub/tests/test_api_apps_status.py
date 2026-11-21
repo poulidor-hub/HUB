@@ -54,9 +54,14 @@ async def test_status_summary_exclut_ateliers(client, admin_headers, test_app, s
     # L'entrée par app est conservée (icônes de la table admin, vue « Atelier »)
     assert "test-app-ws" in slugs
 
-    # Le compteur : 1 seule app de production, l'atelier arrêté est exclu
+    # Le compteur : 1 seule app de production, l'atelier arrêté est exclu.
+    # T3b (notif-app-offline) : une app de prod injoignable sans conteneur
+    # local est classée « stopped » (état volontaire, pas une erreur) quand
+    # Docker est disponible — elle reste comptée dans le total ; sans Docker,
+    # elle reste « offline ». L'invariant somme donc les 4 statuts possibles.
     assert body["summary"]["total"] == 1
-    assert body["summary"]["online"] + body["summary"]["offline"] + body["summary"]["error"] == 1
+    s = body["summary"]
+    assert s["online"] + s["offline"] + s["error"] + s["stopped"] == 1
 
 
 @pytest.mark.asyncio
