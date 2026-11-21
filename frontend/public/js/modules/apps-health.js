@@ -183,7 +183,7 @@ function _cardLine(k, v, tone) {
 }
 
 // Carte : état du corps selon les données DISPONIBLES — plus aucun slot « — » fixe.
-function _cardBodyLines(app, isSystemApp) {
+function _cardBodyLines(app) {
     var latency = app.latency_ms ? app.latency_ms + ' ms' : '';
     var uptime = formatUptime(app.uptime_seconds);
     var lines = [];
@@ -205,7 +205,7 @@ function _cardBodyLines(app, isSystemApp) {
     // App joignable mais sans aucune donnée santé exploitable (pas d'endpoint
     // /health standard) — ne s'applique pas aux apps système (HUB auto-sondé).
     if (!lines.length) {
-        lines.push(_cardLine(isSystemApp ? 'Santé' : 'Santé', 'aucune donnée'));
+        lines.push(_cardLine('Santé', 'aucune donnée'));
     }
     return lines.join('');
 }
@@ -322,7 +322,7 @@ function renderAppCard(app) {
                 _cardDot(app) +
             '</div>' +
             '<div class="ahc2-body" id="appbody-' + slug + '" style="padding:6px 9px 7px;">' +
-                _cardBodyLines(app, isSystemApp) +
+                _cardBodyLines(app) +
             '</div>' +
             wsPanel +
             branchPanel +
@@ -1000,6 +1000,83 @@ function _showModal(title, bodyHtml) {
     div.innerHTML = html;
     document.body.appendChild(div.firstElementChild);
     return document.getElementById('appsHealthModal');
+}
+
+// ─── Mise à jour ciblée d'une carte (SSE app_health_changed) ──────────
+// Payload émis par le checker (hub/app/health_checker.py:295-301) :
+//   { slug, name, health_status: 'healthy'|'unhealthy'|...,
+//     previous_status, error }
+// Tolère aussi les valeurs display (online/offline/degraded/stopped) et un
+// healthItem complet portant status/latency_ms/uptime_seconds/containers_count.
+// Ne touche QUE la carte du slug : pas de re-render de la grille, pas d'API.
+var _SSE_STATUS_MAP = {
+    healthy: 'online', online: 'online',
+    unhealthy: 'offline', offline: 'offline',
+    degraded: 'degraded', stopped: 'stopped',
+};
+
+function updateAppsHealthCard(slug, healthItem) {
+    if (!slug) return;
+    var section = document.getElementById('appsHealthSection');
+    if (!section || section.classList.contains('d-none')) return; // vue non visible
+    var col = document.querySelector('#appsHealthGrid > [data-slug="' + _cssEscape(slug) + '"]');
+    if (!col) return; // app filtrée/absente de la vue : silence
+    var btn = document.getElementById('moreBtn_' + slug);
+    if (btn && btn.classList.contains('loading')) return; // action en cours : le re-sonde rafraîchira
+
+    var data = _healthBySlug[slug];
+    if (!data) return;
+    var raw = (healthItem && (healthItem.health_status || healthItem.status)) || '';
+    var newStatus = _SSE_STATUS_MAP[raw];
+    if (!newStatus) return; // valeur inconnue : ne rien casser
+
+    data.status = newStatus;
+    if (healthItem && healthItem.error !== undefined) data.error = healthItem.error;
+    if (healthItem && healthItem.containers_count !== undefined) data.containers_count = healthItem.containers_count;
+    if (healthItem && healthItem.latency_ms !== undefined) data.latency_ms = healthItem.latency_ms;
+    if (healthItem && healthItem.uptime_seconds !== undefined) data.uptime_seconds = healthItem.uptime_seconds;
+    // Offline/arrêtée : les métriques précédentes ne sont plus valables et le
+    // payload SSE ne les porte pas — on les retire (la carte affiche l'erreur).
+    if (newStatus === 'offline' || newStatus === 'stopped') {
+        data.latency_ms = null;
+        data.uptime_seconds = null;
+    }
+
+    // États à préserver (le re-render d'une carte les recrée fermés/vides) :
+    // panneaux branch/atelier, chip MàJ, version masquée par le chip, data-ws.
+    function _capture(id) {
+        var el = document.getElementById(id);
+        return (el && col.contains(el)) ? { display: el.style.display, html: el.innerHTML } : null;
+    }
+    var branchState = _capture('branch-panel-' + slug);
+    var wsState = _capture('workshop-panel-' + slug);
+    var badgeState = _capture('update-badge-' + slug);
+    var wsChipState = _capture('ws-chip-' + slug);
+    var wsAttr = col.getAttribute('data-ws');
+
+    var tmp = document.createElement('div');
+    tmp.innerHTML = renderAppCard(data);
+    var newCol = tmp.firstElementChild;
+    col.replaceWith(newCol);
+
+    function _restore(id, state) {
+        var el = document.getElementById(id);
+        if (!el || state === null) return;
+        el.innerHTML = state.html;
+        el.style.display = state.display;
+    }
+    _restore('branch-panel-' + slug, branchState);
+    _restore('workshop-panel-' + slug, wsState);
+    if (badgeState && badgeState.html) {
+        _restore('update-badge-' + slug, badgeState);
+        var ver = document.getElementById('appver-' + slug);
+        if (ver) ver.style.display = 'none';
+    }
+    _restore('ws-chip-' + slug, wsChipState);
+    newCol.setAttribute('data-ws', wsAttr || '0');
+
+    // Le filtre statut actif peut désormais cacher/montrer cette carte.
+    if (typeof _applyHealthFilters === 'function') _applyHealthFilters();
 }
 
 // ─── Filtres (client-side, instantanés) ───────────────────────────────

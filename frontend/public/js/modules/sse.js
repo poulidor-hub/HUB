@@ -318,6 +318,15 @@ function handleSSEEvent(data) {
             // Mettre à jour la carte sur le dashboard
             updateAppCardStatus(healthAppSlug, null, newHealthStatus);
             
+            // Vue « Santé des applications » : mise à jour ciblée de la carte
+            // (pastille + statut + corps) sans re-render de la grille — payload
+            // {slug, name, health_status, previous_status, error}, cf.
+            // hub/app/health_checker.py. Ignore silencieusement si la vue
+            // n'est pas visible ou si l'app n'y figure pas.
+            if (typeof updateAppsHealthCard === 'function') {
+                updateAppsHealthCard(healthAppSlug, data.data);
+            }
+            
             // Notification — UNIQUEMENT les transitions impliquant « unhealthy » :
             // toute transition vers « stopped » (app volontairement arrêtée) est
             // silencieuse, et « stopped → healthy » aussi (retour à l'état
