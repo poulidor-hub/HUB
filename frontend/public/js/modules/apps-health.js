@@ -112,6 +112,9 @@ async function renderAppsHealth(data) {
 
     const grid = document.getElementById('appsHealthGrid');
     grid.innerHTML = data.apps.map(app => renderAppCard(app)).join('');
+    // Le filtre actif doit s'appliquer dès ce re-rendu complet (sinon la grille
+    // réapparaît non filtrée jusqu'aux mises à jour SSE ciblées).
+    _applyHealthFilters();
 
     // Lance la verification des mises a jour en arriere-plan
     if (data.apps && data.apps.length) {
