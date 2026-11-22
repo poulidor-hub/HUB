@@ -96,6 +96,24 @@ def _project_network_scan_neutralized(monkeypatch):
     )
 
 
+@pytest.fixture(autouse=True)
+def _health_checker_docker_neutralized(monkeypatch):
+    """Par défaut, les helpers Docker de health_checker ne voient AUCUN conteneur.
+
+    _list_all_containers retourne None (= Docker indisponible : get_container_state
+    → None, count_containers_batch → None, find_containers_for_app → []). Sans
+    cette neutralisation, tout test qui appelle GET /api/apps/health sans patcher
+    count_containers_batch liste le Docker RÉEL de l'hôte (is_available=True sur
+    le parc) : appels sync bloquants dans la loop + fuites d'environnement dans
+    les assertions (68 conteneurs réels par requête mesurés — 2026-11-22, ce
+    biais de charge faisait perdre une course de visibilité async latente à
+    test_app_replace en run séquentiel). Les tests qui veulent un état Docker
+    précis patchent explicitement get_container_state / find_containers_for_app /
+    count_containers_batch (convention existante des fichiers de test health).
+    """
+    monkeypatch.setattr("app.health_checker._list_all_containers", lambda: None)
+
+
 # Champs Settings mutés par certains tests ; sauvegardés puis restaurés par la
 # fixture `settings`.
 _SETTINGS_FIELDS_TO_SNAPSHOT = (
