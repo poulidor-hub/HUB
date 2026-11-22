@@ -109,19 +109,24 @@ function renderWorkshopBlockInner(slug, state) {
     var noGitNote = state.git_ok ? '' :
         '<div class="text-muted" style="font-size:10px;">Sans remote git : mise à jour et déploiement indisponibles.</div>'
         + _renderGitConfigButton(slug);
-    return '<span class="badge text-bg-secondary me-1" title="Atelier actif (contrat .workshop.env)">'
+    return '<span class="badge text-bg-secondary" title="Atelier actif (contrat .workshop.env) : '
+        + escapeHtml(ref) + ' @ ' + escapeHtml(commit) + escapeHtml(version) + '"'
+        + ' style="display:block;max-width:100%;overflow:hidden;text-overflow:ellipsis;margin:0 0 4px;">'
         + 'Atelier : ' + escapeHtml(ref) + ' @ ' + escapeHtml(commit) + version + '</span>'
         + noGitNote
-        + '<div style="display:flex;gap:4px;margin-top:4px;">'
+        + '<div style="display:flex;gap:5px;margin-top:4px;">'
         + '<button data-action="updateWorkshopUI" data-arg1="' + escapeHtml(slug) + '"' + busy + noGit
-        + ' class="btn btn-sm btn-outline-primary py-0 px-2" style="font-size:11px;"'
-        + ' title="Récupérer origin/main et rebuild l\'atelier (clone de DB)">Mettre à jour</button>'
+        + ' class="btn btn-sm btn-outline-primary py-0" aria-label="Mettre à jour l\'atelier"'
+        + ' style="width:28px;height:24px;display:inline-flex;align-items:center;justify-content:center;font-size:12px;padding:0;"'
+        + ' title="Mettre à jour : récupérer origin/main et rebuild l\'atelier (clone de DB)"><i class="bi bi-arrow-repeat"></i></button>'
         + '<button data-action="shipWorkshopUI" data-arg1="' + escapeHtml(slug) + '"' + busy + noGit
-        + ' class="btn btn-sm btn-outline-success py-0 px-2" style="font-size:11px;"'
-        + ' title="Déployer origin/main validé en prod, puis supprimer l\'atelier">Déployer en prod</button>'
+        + ' class="btn btn-sm btn-outline-success py-0" aria-label="Déployer en prod"'
+        + ' style="width:28px;height:24px;display:inline-flex;align-items:center;justify-content:center;font-size:12px;padding:0;"'
+        + ' title="Déployer en prod : origin/main validé en atelier, puis suppression de l\'atelier"><i class="bi bi-rocket-takeoff"></i></button>'
         + '<button data-action="removeWorkshopUI" data-arg1="' + escapeHtml(slug) + '"' + busy
-        + ' class="btn btn-sm btn-outline-danger py-0 px-2" style="font-size:11px;"'
-        + ' title="Supprimer l\'atelier (down -v : conteneurs + volume cloné)">Supprimer</button>'
+        + ' class="btn btn-sm btn-outline-danger py-0" aria-label="Supprimer l\'atelier"'
+        + ' style="width:28px;height:24px;display:inline-flex;align-items:center;justify-content:center;font-size:12px;padding:0;"'
+        + ' title="Supprimer l\'atelier (down -v : conteneurs + volume cloné)"><i class="bi bi-trash"></i></button>'
         + '</div>';
 }
 
