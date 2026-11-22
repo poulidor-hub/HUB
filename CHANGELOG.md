@@ -5,6 +5,18 @@
 
 ---
 
+## [3.100.1] - 22 novembre 2026
+
+### ⚡ Vue santé : filtre réappliqué au re-rendu du sondage + fixes responsive mobile
+
+- **Filtre au re-rendu complet** (`apps-health.js`) : le filtre actif (recherche, statut, atelier) n'était appliqué qu'au rendu intermédiaire et aux maj SSE ciblées — le re-rendu complet après sondage (`renderAppsHealth`) réaffichait **toute la grille non filtrée**, puis elle se « réparait » au fil des événements SSE. Le filtre est désormais réappliqué immédiatement après le re-rendu : la grille n'est plus jamais visible non filtrée, quel que soit le cheminement.
+- **Responsive mobile** (`workshop-ui.js`, `index.html`) :
+  - la pill atelier (« Atelier : {branche} @ {commit} · {version} ») est contrainte à sa carte (`display:block; max-width:100%; overflow:hidden; text-overflow:ellipsis`) — une branche git longue élargissait **toute la page** (scroll horizontal global : titre, summary et filtres coupés) ; le contenu complet reste au `title` ;
+  - les 3 boutons texte du panneau atelier deviennent des **icônes 28 px** (`bi-arrow-repeat` ⬆ / `bi-rocket-takeoff` ▸ / `bi-trash` 🗑, couleurs sémantiques bleu/vert/rouge conservées, `aria-label` + `title` complets, confirmations inchangées) ;
+  - le champ de recherche passe de `max-width:240px` fixe à `flex:1 1 170px; min-width:0` — occupe la largeur mobile et wrap proprement avec les filtres.
+
+---
+
 ## [3.100.0] - 22 novembre 2026
 
 ### ⚡ Vue santé apps : cartes compactes + actions stop/start/restart fiables (multi-conteneurs) + live SSE
