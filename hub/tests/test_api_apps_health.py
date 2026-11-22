@@ -12,6 +12,8 @@ Couvrez les comportements cles introduits par l'enrichissement du probe :
 """
 from urllib.parse import urlparse
 
+import pytest
+
 from app.routes import apps_health
 
 
@@ -336,6 +338,234 @@ async def test_probe_remote_app_reports_offline(client, admin_token, async_sessi
     app = _find(resp.json(), "remote-app")
     assert app["status"] == "offline"
     assert calls["n"] == 0  # garde app distante : zéro appel Docker
+
+
+# ─── Tests actions multi-conteneurs (groupe compose) ───────────────────
+
+class _FakeActionContainer:
+    """Conteneur docker-py fake : enregistre les actions et leurs kwargs."""
+
+    def __init__(self, name, status="running", fail_on=None):
+        self.name = name
+        self.status = status
+        self.fail_on = fail_on  # action qui doit lever (ex: "stop")
+        self.calls = []  # [(action, kwargs)]
+
+    def _do(self, action, kwargs):
+        self.calls.append((action, kwargs))
+        if self.fail_on == action:
+            raise RuntimeError(f"docker {action} failed for {self.name}")
+        self.status = "running" if action in ("start", "restart") else "exited"
+
+    def start(self, **kwargs):
+        self._do("start", kwargs)
+
+    def stop(self, **kwargs):
+        self._do("stop", kwargs)
+
+    def restart(self, **kwargs):
+        self._do("restart", kwargs)
+
+    def reload(self):
+        pass
+
+
+def _fake_group(prefix="monapp", fail_on=None, fail_name=None):
+    """Groupe 3 conteneurs (api, frontend, postgres), trié par nom."""
+    group = [
+        _FakeActionContainer(f"{prefix}-api"),
+        _FakeActionContainer(f"{prefix}-frontend"),
+        _FakeActionContainer(f"{prefix}-postgres", status="exited"),
+    ]
+    if fail_name:
+        for c in group:
+            if c.name == fail_name:
+                c.fail_on = fail_on
+    return group
+
+
+def _patch_group(containers):
+    """Patche find_containers_for_app sur le module route (convention du fichier)."""
+    return patch.object(apps_health, "find_containers_for_app", lambda slug: containers)
+
+
+async def _post_action(client, token, slug, action):
+    return await client.post(
+        f"/api/apps/{slug}/{action}",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+
+@pytest.mark.parametrize("action", ["stop", "start", "restart"])
+async def test_action_targets_all_group_containers(
+    client, admin_token, test_app, action
+):
+    """Stop/start/restart touchent TOUS les conteneurs du groupe (3/3),
+    dans l'ordre stable (tri par nom), timeout=10 sur stop et restart."""
+    group = _fake_group()
+    with _patch_group(group):
+        resp = await _post_action(client, admin_token, "test-app", action)
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["ok"] is True
+    assert len(data["containers"]) == 3
+    # Ordre stable : tri par nom
+    assert [c["name"] for c in data["containers"]] == [
+        "monapp-api", "monapp-frontend", "monapp-postgres",
+    ]
+    # Chaque conteneur a bien reçu l'action UNE fois
+    for c in group:
+        assert [a for a, _ in c.calls] == [action]
+    # Stop/restart : timeout=10 ; start : sans timeout
+    for c in group:
+        kwargs = c.calls[0][1]
+        if action in ("stop", "restart"):
+            assert kwargs == {"timeout": 10}
+        else:
+            assert kwargs == {}
+
+    # Champs rétrocompat : 1er conteneur (tri par nom)
+    assert data.get("container_name") in (None, "monapp-api")
+    if action == "stop":
+        assert data["message"].startswith("Arret de Test App reussi (3/3")
+    elif action == "start":
+        assert data["message"].startswith("Demarrage de Test App reussi (3/3")
+
+
+async def test_restart_response_retrocompat_fields(client, admin_token, test_app):
+    """RestartResponse garde container_name/status (1er conteneur du groupe)
+    + containers[] enrichi."""
+    group = _fake_group()
+    with _patch_group(group):
+        resp = await _post_action(client, admin_token, "test-app", "restart")
+
+    data = resp.json()
+    assert data["ok"] is True
+    assert data["container_name"] == "monapp-api"
+    assert data["status"] == "running"  # état après restart+reload
+    assert [c["name"] for c in data["containers"]] == [
+        "monapp-api", "monapp-frontend", "monapp-postgres",
+    ]
+    assert all(c["ok"] for c in data["containers"])
+    assert all(c["state"] == "running" for c in data["containers"])
+
+
+async def test_stop_partial_failure_aggregates(client, admin_token, test_app):
+    """Un échec sur un conteneur n'interrompt pas les autres : ok global False,
+    message « partiel (2/3) », détail porté par le conteneur fautif."""
+    group = _fake_group(fail_on="stop", fail_name="monapp-frontend")
+    with _patch_group(group):
+        resp = await _post_action(client, admin_token, "test-app", "stop")
+
+    assert resp.status_code == 200  # pas de 500 : le résultat est structuré
+    data = resp.json()
+    assert data["ok"] is False
+    assert "partiel de Test App (2/3)" in data["message"]
+    assert data["detail"] == "docker stop failed for monapp-frontend"
+
+    by_name = {c["name"]: c for c in data["containers"]}
+    assert by_name["monapp-frontend"]["ok"] is False
+    assert by_name["monapp-frontend"]["detail"] == "docker stop failed for monapp-frontend"
+    # Les deux autres ont bien été stoppés malgré l'échec
+    assert by_name["monapp-api"]["ok"] is True
+    assert by_name["monapp-api"]["state"] == "exited"
+    assert by_name["monapp-postgres"]["ok"] is True
+    for c in group:
+        assert len(c.calls) == 1  # chacun actionné exactement une fois
+
+
+@pytest.mark.parametrize("action", ["stop", "start", "restart"])
+async def test_action_group_empty_returns_404(client, admin_token, test_app, action):
+    """Groupe vide (aucun conteneur matché) → 404, message conservé."""
+    with _patch_group([]):
+        resp = await _post_action(client, admin_token, "test-app", action)
+
+    assert resp.status_code == 404
+    detail = resp.json()["detail"]
+    assert f"Aucun conteneur Docker trouve pour 'test-app'" in detail
+    assert f"APP_SLUG=test-app" in detail
+
+
+# ─── Tests containers_count (comptage batch du dashboard) ─────────────
+
+async def test_health_item_containers_count_batch(client, admin_token, test_app):
+    """containers_count rempli via count_containers_batch (UN appel pour tout
+    le dashboard), renvoyé tel quel dans l'item."""
+    batch_calls = {"n": 0}
+
+    def _batch(slugs):
+        batch_calls["n"] += 1
+        return {slug: 3 for slug in slugs}
+
+    routes = {
+        "/api/health": _MockResp(200, {"status": "healthy", "version": "1.0.0"}),
+        "/api/health/detailed": _MockResp(404),
+    }
+    with patch.object(apps_health, "_get_httpx_client", lambda: _MockClient(routes)), \
+         patch.object(apps_health, "get_container_state", _container_state_mock(None)[0]), \
+         patch.object(apps_health, "count_containers_batch", _batch):
+        resp = await _get_health(client, admin_token)
+
+    app = _find(resp.json(), "test-app")
+    assert app["containers_count"] == 3
+    assert batch_calls["n"] == 1  # UNE SEULE liste Docker pour le dashboard
+
+
+async def test_health_item_containers_count_docker_unavailable(client, admin_token, test_app):
+    """Docker indisponible (batch → None) : containers_count reste None."""
+    def _batch(slugs):
+        return {slug: None for slug in slugs}
+
+    routes = {
+        "/api/health": _MockResp(200, {"status": "healthy"}),
+        "/api/health/detailed": _MockResp(404),
+    }
+    with patch.object(apps_health, "_get_httpx_client", lambda: _MockClient(routes)), \
+         patch.object(apps_health, "get_container_state", _container_state_mock(None)[0]), \
+         patch.object(apps_health, "count_containers_batch", _batch):
+        resp = await _get_health(client, admin_token)
+
+    app = _find(resp.json(), "test-app")
+    assert app["containers_count"] is None
+
+
+async def test_health_item_containers_count_remote_app_none(client, admin_token, async_session):
+    """App distante : jamais comptée (batch non interrogé pour son slug)."""
+    from app.models import Application
+    remote_app = Application(
+        name="Remote App", slug="remote-app",
+        api_url="http://remote.example.com:8000",
+        is_active=True, requires_auth=True,
+        is_remote=True,
+    )
+    async_session.add(remote_app)
+    await async_session.commit()
+
+    seen_slugs = []
+
+    def _batch(slugs):
+        seen_slugs.extend(slugs)
+        return {slug: 1 for slug in slugs}
+
+    class _ErrorOrOkClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def get(self, url):
+            raise ConnectionError("refused")
+
+    with patch.object(apps_health, "_get_httpx_client", lambda: _ErrorOrOkClient()), \
+         patch.object(apps_health, "get_container_state", _container_state_mock(None)[0]), \
+         patch.object(apps_health, "count_containers_batch", _batch):
+        resp = await _get_health(client, admin_token)
+
+    app = _find(resp.json(), "remote-app")
+    assert app["containers_count"] is None
+    assert "remote-app" not in seen_slugs  # app distante exclue du batch
 
 
 # ─── Tests releases / diff (GitHub API) ────────────────────────────────
