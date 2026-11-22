@@ -21,7 +21,7 @@ from app.github_client import (
     github_headers, load_db_token, invalidate_token_cache,
     fetch_github_json, fetch_github_raw, parse_github_url,
 )
-from app.health_checker import get_container_state
+from app.health_checker import get_container_state, find_containers_for_app
 
 logger = logging.getLogger(__name__)
 
@@ -69,11 +69,20 @@ class AppsHealthResponse(BaseModel):
     apps: List[AppHealthItem]
     summary: HealthSummary
 
+class ContainerActionResult(BaseModel):
+    """Résultat de l'action sur UN conteneur du groupe compose."""
+    name: str
+    ok: bool
+    state: str  # état docker-py après action (ou avant, si échec)
+    detail: Optional[str] = None
+
+
 class RestartResponse(BaseModel):
     ok: bool
-    container_name: Optional[str] = None
-    status: Optional[str] = None
+    container_name: Optional[str] = None  # rétrocompat : 1er conteneur du groupe
+    status: Optional[str] = None          # rétrocompat : état de ce conteneur
     detail: Optional[str] = None
+    containers: List[ContainerActionResult] = []
 
 
 class HubctlActionResponse(BaseModel):
@@ -81,6 +90,7 @@ class HubctlActionResponse(BaseModel):
     action: str  # "start", "stop", "restart"
     message: str
     detail: Optional[str] = None
+    containers: List[ContainerActionResult] = []
 
 
 class AppLogsResponse(BaseModel):
@@ -145,31 +155,61 @@ def _get_httpx_client():
     )
 
 
-def _find_container_for_app(slug: str):
-    if not docker_scanner.is_available:
-        return None
-    try:
-        containers = docker_scanner.client.containers.list(all=True)
-    except Exception as e:
-        logger.warning(f"Docker list failed: {e}")
-        return None
+# ─── Actions multi-conteneurs ─────────────────────────────────────────
 
+# Une app = 2-3 conteneurs (api, frontend, postgres) partageant APP_SLUG /
+# projet compose. L'action s'applique à CHAQUE conteneur du groupe (anciennement
+# _find_container_for_app n'en retournait qu'un : « Arrêter » coupait parfois
+# le frontend seul, laissant l'app en ligne). Grouping partagé dans
+# app/health_checker.py (find_containers_for_app).
+
+ACTION_LABELS = {"start": "Demarrage", "stop": "Arret", "restart": "Redemarrage"}
+
+
+def _apply_container_action(containers, action: str, admin_username: str, slug: str):
+    """Applique l'action Docker à CHAQUE conteneur du groupe.
+
+    Un échec sur un conteneur n'interrompt pas les autres : l'erreur est
+    portée par le detail du ContainerActionResult concerné.
+    """
+    results = []
     for container in containers:
+        ok = True
+        detail = None
         try:
-            env_list = container.attrs.get('Config', {}).get('Env', [])
-            for env in env_list:
-                if '=' in env:
-                    key, value = env.split('=', 1)
-                    if key == 'APP_SLUG' and value == slug:
-                        return container
-        except Exception:
-            pass
+            if action == "stop":
+                container.stop(timeout=10)
+            elif action == "start":
+                container.start()
+            else:  # restart
+                container.restart(timeout=10)
+            container.reload()
+            state = container.status
+            logger.info(
+                f"{ACTION_LABELS[action]} {container.name} (app: {slug}) "
+                f"par {admin_username}"
+            )
+        except Exception as e:
+            ok = False
+            detail = str(e)[:300]
+            state = getattr(container, "status", "") or ""
+            logger.error(f"Echec {action} {container.name} (app: {slug}): {e}")
+        results.append(ContainerActionResult(
+            name=container.name, ok=ok, state=state, detail=detail,
+        ))
+    return results
 
-        labels = container.labels or {}
-        if labels.get('hub.slug') == slug:
-            return container
 
-    return None
+def _action_message(action: str, app_name: str, results) -> str:
+    """Message résumé : reussi (n/n conteneurs), partiel (k/n) ou echec."""
+    total = len(results)
+    succeeded = sum(1 for r in results if r.ok)
+    noun = ACTION_LABELS[action]
+    if succeeded == total:
+        return f"{noun} de {app_name} reussi ({total}/{total} conteneurs)"
+    if succeeded == 0:
+        return f"Echec du {noun.lower()} de {app_name} (0/{total})"
+    return f"{noun} partiel de {app_name} ({succeeded}/{total})"
 
 
 # ─── Routes ───────────────────────────────────────────────────────────
@@ -353,28 +393,31 @@ async def restart_app(
     if not app:
         raise HTTPException(status_code=404, detail=f"Application '{slug}' non trouvee")
 
-    container = _find_container_for_app(slug)
+    containers = find_containers_for_app(slug)
 
-    if not container:
+    if not containers:
         raise HTTPException(
             status_code=404,
             detail=f"Aucun conteneur Docker trouve pour '{slug}'. "
                    f"Verifiez que le conteneur a APP_SLUG={slug} ou le label hub.slug={slug}."
         )
 
-    try:
-        container.restart(timeout=10)
-        container.reload()
-        logger.info(f"Restart {container.name} (app: {slug}) par {current_admin.username}")
-
-        return RestartResponse(
-            ok=True,
-            container_name=container.name,
-            status=container.status,
-        )
-    except Exception as e:
-        logger.error(f"Echec restart {container.name}: {e}")
-        raise HTTPException(status_code=500, detail=f"Echec du redemarrage: {e}")
+    results = _apply_container_action(
+        containers, "restart", current_admin.username, slug
+    )
+    ok = all(r.ok for r in results)
+    logger.info(
+        f"Restart {slug}: {sum(1 for r in results if r.ok)}/{len(results)} "
+        f"conteneurs par {current_admin.username}"
+    )
+    return RestartResponse(
+        ok=ok,
+        # Rétrocompat : premier conteneur du groupe (ordre trié par nom)
+        container_name=results[0].name,
+        status=results[0].state,
+        detail=next((r.detail for r in results if r.detail), None),
+        containers=results,
+    )
 
 
 # ─── Pilotage hubctl ──────────────────────────────────────────────────
@@ -386,30 +429,24 @@ async def start_app(
     db: AsyncSession = Depends(get_db),
 ):
     app = await _get_app_or_404(db, slug)
-    container = _find_container_for_app(slug)
-    if not container:
+    containers = find_containers_for_app(slug)
+    if not containers:
         raise HTTPException(
             status_code=404,
             detail=f"Aucun conteneur Docker trouve pour '{slug}'. "
                    f"Verifiez que le conteneur a APP_SLUG={slug}.",
         )
-    try:
-        container.start()
-        container.reload()
-        logger.info(f"Start {container.name} (app: {slug}) par {current_admin.username}")
-        return HubctlActionResponse(
-            ok=True,
-            action="start",
-            message=f"Demarrage de {app.name} reussi ({container.name})",
-        )
-    except Exception as e:
-        logger.error(f"Echec start {container.name}: {e}")
-        return HubctlActionResponse(
-            ok=False,
-            action="start",
-            message=f"Echec du demarrage de {app.name}",
-            detail=str(e)[:300],
-        )
+    results = _apply_container_action(
+        containers, "start", current_admin.username, slug
+    )
+    ok = all(r.ok for r in results)
+    return HubctlActionResponse(
+        ok=ok,
+        action="start",
+        message=_action_message("start", app.name, results),
+        detail=next((r.detail for r in results if r.detail), None),
+        containers=results,
+    )
 
 
 @router.post("/{slug}/stop", response_model=HubctlActionResponse)
@@ -419,30 +456,24 @@ async def stop_app(
     db: AsyncSession = Depends(get_db),
 ):
     app = await _get_app_or_404(db, slug)
-    container = _find_container_for_app(slug)
-    if not container:
+    containers = find_containers_for_app(slug)
+    if not containers:
         raise HTTPException(
             status_code=404,
             detail=f"Aucun conteneur Docker trouve pour '{slug}'. "
                    f"Verifiez que le conteneur a APP_SLUG={slug}.",
         )
-    try:
-        container.stop(timeout=10)
-        container.reload()
-        logger.info(f"Stop {container.name} (app: {slug}) par {current_admin.username}")
-        return HubctlActionResponse(
-            ok=True,
-            action="stop",
-            message=f"Arret de {app.name} reussi ({container.name})",
-        )
-    except Exception as e:
-        logger.error(f"Echec stop {container.name}: {e}")
-        return HubctlActionResponse(
-            ok=False,
-            action="stop",
-            message=f"Echec de l'arret de {app.name}",
-            detail=str(e)[:300],
-        )
+    results = _apply_container_action(
+        containers, "stop", current_admin.username, slug
+    )
+    ok = all(r.ok for r in results)
+    return HubctlActionResponse(
+        ok=ok,
+        action="stop",
+        message=_action_message("stop", app.name, results),
+        detail=next((r.detail for r in results if r.detail), None),
+        containers=results,
+    )
 
 
 @router.get("/{slug}/logs", response_model=AppLogsResponse)
@@ -469,9 +500,11 @@ async def get_app_logs(
         except Exception:
             pass
 
-    # Fallback : utiliser le conteneur trouve par APP_SLUG (generalement l'API)
+    # Fallback : premier conteneur du groupe compose de l'app (tri par nom —
+    # l'api remonte en général en premier ; group-aware, pas un seul match)
     if not container:
-        container = _find_container_for_app(slug)
+        group = find_containers_for_app(slug)
+        container = group[0] if group else None
 
     if not container:
         svc_label = service or "tous"
