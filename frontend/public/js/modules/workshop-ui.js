@@ -10,25 +10,79 @@
 window._workshopStates = window._workshopStates || {};
 
 async function loadWorkshopStates(slugs) {
-    // Charge en parallèle l'état atelier de chaque slug, puis met à jour les blocs.
+    // Charge en parallèle l'état atelier de chaque slug. Les cartes ne rendent
+    // PLUS le bloc au chargement (panneau fermé par défaut) : ici on remplit
+    // le chip du footer + le panneau caché (#workshop-panel-<slug>).
     var results = await Promise.all(slugs.map(function(slug) {
         return api.getWorkshopState(slug).then(function(st) { return [slug, st]; })
             .catch(function() { return [slug, null]; });
     }));
     results.forEach(function(pair) {
-        window._workshopStates[pair[0]] = pair[1];
-        var block = document.getElementById('workshop-block-' + pair[0]);
-        if (!block) return;
-        block.innerHTML = pair[1] ? renderWorkshopBlockInner(pair[0], pair[1]) : '';
-        // Pas d'atelier → bloc masqué (sinon ~16px d'espace mort sur la carte)
-        block.style.display = block.innerHTML ? '' : 'none';
+        var slug = pair[0];
+        var state = pair[1];
+        window._workshopStates[slug] = state;
+        _fillWorkshopChip(slug, state);
+        var panel = document.getElementById('workshop-panel-' + slug);
+        if (panel) panel.innerHTML = state ? renderWorkshopBlockInner(slug, state) : '';
         // Filtre « atelier actif » : tenir l'attribut data-ws de la carte à jour
-        var col = document.querySelector('#appsHealthGrid > [data-slug="' + pair[0] + '"]');
+        var col = document.querySelector('#appsHealthGrid > [data-slug="' + slug + '"]');
         if (col) {
-            col.setAttribute('data-ws', (pair[1] && pair[1].exists) ? '1' : '0');
+            col.setAttribute('data-ws', (state && state.exists) ? '1' : '0');
             if (typeof _applyHealthFilters === 'function' && _healthFilterWs) _applyHealthFilters();
         }
     });
+}
+
+// Chip compact dans le footer de carte :
+//  - atelier actif        → « Atelier » (indigo) title ref@commit ;
+//  - pas d'atelier, git OK → « + Atelier » (neutre) pour garder l'accès création ;
+//  - pas de remote git     → « Git » (neutre) pour garder l'accès configuration.
+function _fillWorkshopChip(slug, state) {
+    var chip = document.getElementById('ws-chip-' + slug);
+    if (!chip) return;
+    if (state && state.exists) {
+        var ref = state.ws_ref || '?';
+        var commit = (state.ws_commit || '').slice(0, 8) || '?';
+        chip.innerHTML = '<button data-action="toggleAtelierPanel" data-arg1="' + escapeHtml(slug) + '"'
+            + ' title="Atelier actif (contrat .workshop.env) : ' + escapeHtml(ref) + ' @ ' + escapeHtml(commit) + ' — cliquer pour déplier"'
+            + ' style="display:inline-block;font-size:8.5px;font-weight:700;background:#eef2ff;color:#4338ca;'
+            + 'border:0;border-radius:5px;padding:2px 6px;cursor:pointer;">Atelier</button>';
+        chip.style.display = '';
+    } else if (state && state.git_ok) {
+        chip.innerHTML = '<button data-action="toggleAtelierPanel" data-arg1="' + escapeHtml(slug) + '"'
+            + ' title="Aucun atelier — cliquer pour créer (clone de DB, la prod n\'est pas touchée)"'
+            + ' style="display:inline-block;font-size:8.5px;font-weight:600;background:#f1f5f9;color:#64748b;'
+            + 'border:0;border-radius:5px;padding:2px 6px;cursor:pointer;">+ Atelier</button>';
+        chip.style.display = '';
+    } else if (state) {
+        chip.innerHTML = '<button data-action="toggleAtelierPanel" data-arg1="' + escapeHtml(slug) + '"'
+            + ' title="Pas de remote git configuré — cliquer pour configurer"'
+            + ' style="display:inline-block;font-size:8.5px;font-weight:600;background:#f1f5f9;color:#64748b;'
+            + 'border:0;border-radius:5px;padding:2px 6px;cursor:pointer;">Git</button>';
+        chip.style.display = '';
+    } else {
+        // État inconnu (échec API) : pas de chip, pas d'espace mort.
+        chip.style.display = 'none';
+        chip.innerHTML = '';
+    }
+}
+
+// Ouvre/ferme le panneau atelier sous la carte (fermé par défaut).
+// Fallback : si le panneau est vide (états pas encore chargés), recharge l'état.
+async function toggleAtelierPanel(slug) {
+    var panel = document.getElementById('workshop-panel-' + slug);
+    if (!panel) return;
+    if (panel.style.display !== 'none') { panel.style.display = 'none'; return; }
+    panel.style.display = '';
+    if (!panel.innerHTML.trim()) {
+        var st = window._workshopStates[slug];
+        if (!st) {
+            try { st = await api.getWorkshopState(slug); window._workshopStates[slug] = st; }
+            catch (e) { st = null; }
+            _fillWorkshopChip(slug, st);
+        }
+        if (st) panel.innerHTML = renderWorkshopBlockInner(slug, st);
+    }
 }
 
 function _renderGitConfigButton(slug) {
@@ -69,11 +123,6 @@ function renderWorkshopBlockInner(slug, state) {
         + ' class="btn btn-sm btn-outline-danger py-0 px-2" style="font-size:11px;"'
         + ' title="Supprimer l\'atelier (down -v : conteneurs + volume cloné)">Supprimer</button>'
         + '</div>';
-}
-
-function renderWorkshopBlock(slug) {
-    // Rendu initial (placeholder) — rempli par loadWorkshopStates.
-    return '<div id="workshop-block-' + escapeHtml(slug) + '" style="margin-top:6px;"></div>';
 }
 
 async function createWorkshopUI(slug) {

@@ -76,21 +76,17 @@ async def _close_http_client():
 _health_check_task: Optional[asyncio.Task] = None
 
 
-def get_container_state(slug: str) -> Optional[str]:
-    """
-    Retourne le statut docker-py du conteneur de l'application.
+# Projet compose du Hub lui-même : jamais piloté ni compté via les actions app.
+HUB_BASE_COMPOSE_PROJECT = "hub_base"
 
-    Recherche du conteneur : variable d'env APP_SLUG == slug ou label
-    hub.slug == slug (même logique que _find_container_for_app de
-    routes/apps_health.py). Import paresseux de docker_scanner pour
-    éviter tout cycle d'imports.
+
+def _list_all_containers() -> Optional[list]:
+    """
+    Liste docker-py de TOUS les conteneurs (une seule liste par appel).
 
     Returns:
-        'running', 'created', 'paused', 'restarting', 'exited', 'dead':
-            statut docker-py du conteneur trouvé
-        'absent': Docker joignable mais aucun conteneur pour ce slug
-        None: Docker indisponible ou erreur (incertitude — l'appelant
-            doit rester sur 'unhealthy', jamais classer 'stopped')
+        list de conteneurs docker-py, ou None si Docker indisponible ou
+        erreur (incertitude — l'appelant ne doit rien classifier).
     """
     try:
         # Import paresseux pour éviter tout cycle d'imports
@@ -99,25 +95,161 @@ def get_container_state(slug: str) -> Optional[str]:
         if not docker_scanner.is_available:
             return None
 
-        containers = docker_scanner.client.containers.list(all=True)
+        return docker_scanner.client.containers.list(all=True)
+    except Exception as e:
+        logger.warning(f"Docker: liste des conteneurs impossible: {e}")
+        return None
 
-        for container in containers:
-            try:
-                env_list = container.attrs.get('Config', {}).get('Env', [])
-                for env in env_list:
-                    if '=' in env:
-                        key, value = env.split('=', 1)
-                        if key == 'APP_SLUG' and value == slug:
-                            return container.status
-            except Exception:
-                pass
 
-            labels = container.labels or {}
-            if labels.get('hub.slug') == slug:
-                return container.status
+def _container_matched_slugs(container) -> set:
+    """Slugs matchés par un conteneur : env APP_SLUG ou label hub.slug."""
+    slugs = set()
+    try:
+        env_list = container.attrs.get('Config', {}).get('Env', [])
+        for env in env_list:
+            if '=' in env:
+                key, value = env.split('=', 1)
+                if key == 'APP_SLUG' and value:
+                    slugs.add(value)
+    except Exception:
+        pass
+    labels = container.labels or {}
+    label_slug = labels.get('hub.slug')
+    if label_slug:
+        slugs.add(label_slug)
+    return slugs
 
-        # Docker joignable mais aucun conteneur pour ce slug
-        return 'absent'
+
+def _group_containers_for_slugs(containers: list, slugs: list) -> Dict[str, list]:
+    """
+    Construit {slug: groupe de conteneurs trié par nom} depuis UNE liste Docker.
+
+    Une app = 2-3 conteneurs (api, frontend, postgres) partageant le même env
+    APP_SLUG (postgres n'a que le label com.docker.compose.project). Le groupe
+    = conteneurs matchés (APP_SLUG / hub.slug) + TOUS les conteneurs de leurs
+    projets compose (le project ne suit pas le slug : GED -> feat-ged-v1,
+    exemple-app -> exemple-app — il faut donc le dériver des conteneurs).
+    Le projet hub_base (le Hub lui-même) est exclu, même si matché directement.
+    Déduplication par id docker-py, tri stable par nom.
+    """
+    by_project: Dict[str, list] = {}
+    matched: Dict[str, list] = {slug: [] for slug in slugs}
+
+    for container in containers:
+        labels = container.labels or {}
+        project = labels.get('com.docker.compose.project')
+        if project:
+            by_project.setdefault(project, []).append(container)
+        container_slugs = _container_matched_slugs(container)
+        for slug in slugs:
+            if slug in container_slugs:
+                matched[slug].append(container)
+
+    groups: Dict[str, list] = {}
+    for slug in slugs:
+        seed = matched[slug]
+        # Projets compose dérivés des conteneurs matchés (hors hub_base)
+        projects = {
+            (c.labels or {}).get('com.docker.compose.project') for c in seed
+        }
+        projects.discard(None)
+        projects.discard(HUB_BASE_COMPOSE_PROJECT)
+
+        group = list(seed)
+        for project in projects:
+            group.extend(by_project.get(project, []))
+
+        # Le projet hub_base n'est jamais piloté ni compté : exclu même en
+        # match direct (env/label). Déduplication en gardant le premier ordre.
+        seen = set()
+        deduped = []
+        for container in group:
+            if (container.labels or {}).get(
+                'com.docker.compose.project'
+            ) == HUB_BASE_COMPOSE_PROJECT:
+                continue
+            key = getattr(container, 'id', None) or id(container)
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append(container)
+
+        groups[slug] = sorted(
+            deduped, key=lambda c: getattr(c, 'name', '') or ''
+        )
+    return groups
+
+
+def find_containers_for_app(slug: str) -> list:
+    """
+    Retourne TOUS les conteneurs du groupe compose de l'app (triés par nom).
+
+    Une seule liste Docker. Voir _group_containers_for_slugs pour la logique
+    de grouping (APP_SLUG / hub.slug -> projets compose -> groupe complet).
+
+    Returns:
+        list (vide si aucun conteneur matché ou Docker indisponible)
+    """
+    containers = _list_all_containers()
+    if containers is None:
+        return []
+    return _group_containers_for_slugs(containers, [slug])[slug]
+
+
+def count_containers_batch(slugs) -> Dict[str, Optional[int]]:
+    """
+    Compte les conteneurs du groupe de chaque slug avec UNE SEULE liste Docker.
+
+    Pour le dashboard : ne jamais faire un list() par app (N appels Docker par
+    rafraîchissement). Les slugs dupliqués sont dédupliqués.
+
+    Returns:
+        dict {slug: nombre de conteneurs du groupe} ; None par slug si Docker
+        indisponible ou erreur (incertitude — l'appelant reste à None).
+    """
+    unique_slugs = list(dict.fromkeys(slugs))
+    result: Dict[str, Optional[int]] = {slug: None for slug in unique_slugs}
+    containers = _list_all_containers()
+    if containers is None:
+        return result
+    groups = _group_containers_for_slugs(containers, unique_slugs)
+    for slug, group in groups.items():
+        result[slug] = len(group)
+    return result
+
+
+def get_container_state(slug: str) -> Optional[str]:
+    """
+    Retourne l'état docker-py du GROUPE de conteneurs de l'app (group-aware).
+
+    Une app = 2-3 conteneurs : le statut doit refléter le groupe entier, pas
+    un seul conteneur (l'ancien code pouvait retourner 'exited' pendant que
+    l'api tournait encore). Une seule liste Docker.
+
+    Returns:
+        'running': au moins un conteneur du groupe est running
+        'created', 'paused', 'restarting', 'exited', 'dead':
+            état du premier conteneur non-running du groupe (aucun running) —
+            'stopped' n'est reporté que si TOUS les conteneurs sont off
+        'absent': Docker joignable mais aucun conteneur pour ce slug
+        None: Docker indisponible ou erreur (incertitude — l'appelant
+            doit rester sur 'unhealthy', jamais classer 'stopped')
+    """
+    try:
+        containers = _list_all_containers()
+        if containers is None:
+            return None
+
+        group = _group_containers_for_slugs(containers, [slug])[slug]
+        if not group:
+            # Docker joignable mais aucun conteneur pour ce slug
+            return 'absent'
+
+        for container in group:
+            if container.status == 'running':
+                return 'running'
+        # Tous off : état du premier non-running (ordre de tri par nom)
+        return group[0].status
 
     except Exception as e:
         logger.warning(f"Docker: état du conteneur de '{slug}' indéterminable: {e}")
