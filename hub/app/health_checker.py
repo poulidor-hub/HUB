@@ -196,48 +196,60 @@ def find_containers_for_app(slug: str) -> list:
     return _group_containers_for_slugs(containers, [slug])[slug]
 
 
-def get_container_state(slug: str) -> Optional[str]:
+def count_containers_batch(slugs) -> Dict[str, Optional[int]]:
     """
-    Retourne le statut docker-py du conteneur de l'application.
+    Compte les conteneurs du groupe de chaque slug avec UNE SEULE liste Docker.
 
-    Recherche du conteneur : variable d'env APP_SLUG == slug ou label
-    hub.slug == slug (même logique que _find_container_for_app de
-    routes/apps_health.py). Import paresseux de docker_scanner pour
-    éviter tout cycle d'imports.
+    Pour le dashboard : ne jamais faire un list() par app (N appels Docker par
+    rafraîchissement). Les slugs dupliqués sont dédupliqués.
 
     Returns:
-        'running', 'created', 'paused', 'restarting', 'exited', 'dead':
-            statut docker-py du conteneur trouvé
+        dict {slug: nombre de conteneurs du groupe} ; None par slug si Docker
+        indisponible ou erreur (incertitude — l'appelant reste à None).
+    """
+    unique_slugs = list(dict.fromkeys(slugs))
+    result: Dict[str, Optional[int]] = {slug: None for slug in unique_slugs}
+    containers = _list_all_containers()
+    if containers is None:
+        return result
+    groups = _group_containers_for_slugs(containers, unique_slugs)
+    for slug, group in groups.items():
+        result[slug] = len(group)
+    return result
+
+
+def get_container_state(slug: str) -> Optional[str]:
+    """
+    Retourne l'état docker-py du GROUPE de conteneurs de l'app (group-aware).
+
+    Une app = 2-3 conteneurs : le statut doit refléter le groupe entier, pas
+    un seul conteneur (l'ancien code pouvait retourner 'exited' pendant que
+    l'api tournait encore). Une seule liste Docker.
+
+    Returns:
+        'running': au moins un conteneur du groupe est running
+        'created', 'paused', 'restarting', 'exited', 'dead':
+            état du premier conteneur non-running du groupe (aucun running) —
+            'stopped' n'est reporté que si TOUS les conteneurs sont off
         'absent': Docker joignable mais aucun conteneur pour ce slug
         None: Docker indisponible ou erreur (incertitude — l'appelant
             doit rester sur 'unhealthy', jamais classer 'stopped')
     """
     try:
-        # Import paresseux pour éviter tout cycle d'imports
-        from app.docker_scanner import docker_scanner
-
-        if not docker_scanner.is_available:
+        containers = _list_all_containers()
+        if containers is None:
             return None
 
-        containers = docker_scanner.client.containers.list(all=True)
+        group = _group_containers_for_slugs(containers, [slug])[slug]
+        if not group:
+            # Docker joignable mais aucun conteneur pour ce slug
+            return 'absent'
 
-        for container in containers:
-            try:
-                env_list = container.attrs.get('Config', {}).get('Env', [])
-                for env in env_list:
-                    if '=' in env:
-                        key, value = env.split('=', 1)
-                        if key == 'APP_SLUG' and value == slug:
-                            return container.status
-            except Exception:
-                pass
-
-            labels = container.labels or {}
-            if labels.get('hub.slug') == slug:
-                return container.status
-
-        # Docker joignable mais aucun conteneur pour ce slug
-        return 'absent'
+        for container in group:
+            if container.status == 'running':
+                return 'running'
+        # Tous off : état du premier non-running (ordre de tri par nom)
+        return group[0].status
 
     except Exception as e:
         logger.warning(f"Docker: état du conteneur de '{slug}' indéterminable: {e}")

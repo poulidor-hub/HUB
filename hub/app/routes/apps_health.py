@@ -21,7 +21,9 @@ from app.github_client import (
     github_headers, load_db_token, invalidate_token_cache,
     fetch_github_json, fetch_github_raw, parse_github_url,
 )
-from app.health_checker import get_container_state, find_containers_for_app
+from app.health_checker import (
+    get_container_state, find_containers_for_app, count_containers_batch,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +57,9 @@ class AppHealthItem(BaseModel):
     hub_connected: Optional[bool] = None
     services_count: Optional[int] = None
     m2m_token_available: Optional[bool] = None
+    # Nombre de conteneurs du groupe compose de l'app (None si app distante
+    # ou Docker indisponible) — affiché « N cont. » côté dashboard
+    containers_count: Optional[int] = None
     # App système (HUB lui-même) — traité différemment côté UI
     is_system_app: bool = False
 
@@ -227,6 +232,14 @@ async def get_apps_health(
     )
     apps = result.scalars().all()
 
+    # Comptage batch des conteneurs : UNE SEULE liste Docker pour tout le
+    # dashboard (jamais un list() par app). Apps distantes : aucun conteneur
+    # local fiable → pas comptées (champ None). Docker indisponible → None.
+    local_slugs = [
+        a.slug for a in apps if not bool(getattr(a, "is_remote", False))
+    ]
+    containers_count_map = count_containers_batch(local_slugs) if local_slugs else {}
+
     async def probe_app(app: Application) -> AppHealthItem:
         base_url = app.api_url.rstrip("/")
         now = time.time()
@@ -363,6 +376,7 @@ async def get_apps_health(
             hub_connected=hub_connected,
             services_count=services_count,
             m2m_token_available=m2m_token_available,
+            containers_count=containers_count_map.get(app.slug),
             is_system_app=is_system,
         )
 
