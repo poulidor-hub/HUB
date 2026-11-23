@@ -104,7 +104,8 @@ async def test_probe_extracts_version_from_api_health(client, admin_token, test_
         "/api/health": _MockResp(200, {"status": "healthy", "version": "1.2.3"}),
         "/api/health/detailed": _MockResp(404),
     }
-    with _patch(apps_health, routes):
+    with _patch(apps_health, routes), \
+         patch.object(apps_health, "get_container_state", _container_state_mock("running")[0]):
         resp = await _get_health(client, admin_token)
 
     assert resp.status_code == 200
@@ -121,7 +122,8 @@ async def test_probe_does_not_break_on_4xx(client, admin_token, test_app):
         "/health": _MockResp(200, {"status": "healthy", "version": "9.9.9"}),
         "/api/health/detailed": _MockResp(404),
     }
-    with _patch(apps_health, routes):
+    with _patch(apps_health, routes), \
+         patch.object(apps_health, "get_container_state", _container_state_mock("running")[0]):
         resp = await _get_health(client, admin_token)
 
     app = _find(resp.json(), "test-app")
@@ -143,7 +145,8 @@ async def test_probe_collects_rich_data_from_detailed(client, admin_token, test_
             "services": {"discovered_count": 4},
         }),
     }
-    with _patch(apps_health, routes):
+    with _patch(apps_health, routes), \
+         patch.object(apps_health, "get_container_state", _container_state_mock("running")[0]):
         resp = await _get_health(client, admin_token)
 
     app = _find(resp.json(), "test-app")
@@ -165,7 +168,8 @@ async def test_probe_version_fallback_from_detailed(client, admin_token, test_ap
             "services": {"discovered_count": 0},
         }),
     }
-    with _patch(apps_health, routes):
+    with _patch(apps_health, routes), \
+         patch.object(apps_health, "get_container_state", _container_state_mock("running")[0]):
         resp = await _get_health(client, admin_token)
 
     app = _find(resp.json(), "test-app")
@@ -179,7 +183,8 @@ async def test_probe_degraded_on_5xx(client, admin_token, test_app):
         "/health": _MockResp(500, reason="Internal Server Error"),
         "/": _MockResp(500, reason="Internal Server Error"),
     }
-    with _patch(apps_health, routes):
+    with _patch(apps_health, routes), \
+         patch.object(apps_health, "get_container_state", _container_state_mock("running")[0]):
         resp = await _get_health(client, admin_token)
 
     app = _find(resp.json(), "test-app")
@@ -209,7 +214,8 @@ async def test_probe_4xx_only_is_online_without_version(client, admin_token, tes
         "/": _MockResp(404),
         "/api/health/detailed": _MockResp(404),
     }
-    with _patch(apps_health, routes):
+    with _patch(apps_health, routes), \
+         patch.object(apps_health, "get_container_state", _container_state_mock("running")[0]):
         resp = await _get_health(client, admin_token)
 
     app = _find(resp.json(), "test-app")
@@ -338,6 +344,76 @@ async def test_probe_remote_app_reports_offline(client, admin_token, async_sessi
     app = _find(resp.json(), "remote-app")
     assert app["status"] == "offline"
     assert calls["n"] == 0  # garde app distante : zéro appel Docker
+
+
+# ─── Tests Docker-first + atelier agrégé (chargement unifié) ──────────
+
+async def test_probe_stopped_container_skips_http_entirely(client, admin_token, test_app):
+    """Docker-first : conteneur off -> stopped IMMÉDIAT, zéro requête HTTP.
+
+    Motivation (perf) : l'ancien chemin sondait d'abord en HTTP, l'app off
+    payait PROBE_TIMEOUT x len(HEALTH_PATHS) (jusqu'à 15 s) avant la
+    classification stopped qui n'arrivait qu'en fin de probe.
+    """
+    state_mock, calls = _container_state_mock("exited")
+
+    class _ForbiddenClient:
+        """Tout appel HTTP est un bug : l'app stoppée ne doit pas être sondée."""
+        async def __aenter__(self):
+            raise AssertionError("HTTP ne doit pas être appelé pour une app stoppée")
+        async def __aexit__(self, *a):
+            return False
+        async def get(self, url):
+            raise AssertionError("HTTP ne doit pas être appelé pour une app stoppée")
+
+    with patch.object(apps_health, "_get_httpx_client", lambda: _ForbiddenClient()), \
+         patch.object(apps_health, "get_container_state", state_mock):
+        resp = await _get_health(client, admin_token)
+
+    app = _find(resp.json(), "test-app")
+    assert app["status"] == "stopped"
+    assert calls["n"] == 1  # un seul appel Docker (en tête de probe)
+
+
+async def test_health_response_includes_workshop_state(client, admin_token, test_app):
+    """La réponse /apps/health embarque l'état atelier (chargement unifié) :
+    plus de N x GET /apps/{slug}/workshop côté front, un seul rendu."""
+    async def _git_ok(app_dir):
+        return {"ok": True, "branch": "main", "head": "abc"}
+
+    def _ws_state(slug):
+        return {"exists": True, "ws_ref": "feat/ws", "ws_commit": "abcdef123456",
+                "git_ok": False}  # renseigné par la route via _git_state
+
+    with patch.object(apps_health, "_get_httpx_client", lambda: _MockClient({
+            "/api/health": _MockResp(200, {"status": "healthy", "version": "1.0"}),
+        })), \
+         patch.object(apps_health, "get_container_state", _container_state_mock("running")[0]), \
+         patch.object(apps_health, "get_workshop_state", _ws_state), \
+         patch.object(apps_health, "_git_state", _git_ok):
+        resp = await _get_health(client, admin_token)
+
+    app = _find(resp.json(), "test-app")
+    assert app["workshop"] == {
+        "exists": True, "ws_ref": "feat/ws", "ws_commit": "abcdef123456", "git_ok": True,
+    }
+
+
+async def test_health_workshop_none_on_lookup_error(client, admin_token, test_app):
+    """Échec de lecture atelier -> workshop=None (silencieux, jamais un 500) :
+    le front rend son placeholder caché."""
+    def _ws_state(slug):
+        raise RuntimeError("lecture disque impossible")
+
+    with patch.object(apps_health, "_get_httpx_client", lambda: _MockClient({
+            "/api/health": _MockResp(200, {"status": "healthy", "version": "1.0"}),
+        })), \
+         patch.object(apps_health, "get_container_state", _container_state_mock("running")[0]), \
+         patch.object(apps_health, "get_workshop_state", _ws_state):
+        resp = await _get_health(client, admin_token)
+
+    app = _find(resp.json(), "test-app")
+    assert app["workshop"] is None
 
 
 # ─── Tests actions multi-conteneurs (groupe compose) ───────────────────
