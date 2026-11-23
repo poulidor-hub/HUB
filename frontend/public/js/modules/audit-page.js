@@ -250,49 +250,6 @@ function auditChip(kind, value) {
     }
 }
 
-function renderPageActiveSessions(data) {
-    const container = document.getElementById('pageActiveSessionsTable');
-    const countBadge = document.getElementById('pageActiveSessionCount');
-    
-    countBadge.textContent = data.active_count || 0;
-    
-    if (!data.sessions || data.sessions.length === 0) {
-        container.innerHTML = `
-            <div class="text-center py-4 text-muted">
-                <i class="bi bi-person-x display-6"></i>
-                <p class="mt-2">Aucun utilisateur connecté</p>
-            </div>
-        `;
-        return;
-    }
-    
-    container.innerHTML = `
-        <table class="table audit-tbl table-hover mb-0">
-            <thead>
-                <tr>
-                    <th>Utilisateur</th>
-                    <th>Connecté depuis</th>
-                    <th>Durée</th>
-                    <th>IP</th>
-                </tr>
-            </thead>
-            <tbody>
-                ${data.sessions.map(s => `
-                    <tr>
-                        <td>
-                            <span class="badge bg-secondary me-2"><i class="bi bi-circle-fill text-success" style="font-size: 0.5rem;"></i></span>
-                            <strong>${escapeHtml(s.username || 'Unknown')}</strong>
-                        </td>
-                        <td><small>${formatDateTime(s.login_at)}</small></td>
-                        <td><span class="badge bg-light text-dark">${s.duration_minutes} min</span></td>
-                        <td><code class="small">${s.ip_address || '-'}</code></td>
-                    </tr>
-                `).join('')}
-            </tbody>
-        </table>
-    `;
-}
-
 function renderPageTopUsers(topUsers) {
     const container = document.getElementById('pageTopUsersTable');
     
@@ -866,13 +823,22 @@ async function changePageLogsPage(page) {
 let sessionSortKey = '';
 let sessionSortDir = 'asc';
 
+// Pagination séparée par liste (50/page) ; le refresh SSE garde la page
+// courante de chaque carte, clampée au nombre de pages
+let pageActiveSessionsPage = 1;
+let pageClosedSessionsPage = 1;
+const SESSIONS_PER_PAGE = 50;
+
+// Dernier GET /audit/sessions/history : changer de page ne refait pas l'appel API
+let pageSessionsData = null;
+
 async function loadAuditPageSessions() {
     const days = parseInt(document.getElementById('auditPeriodPage')?.value || 30);
-    
+
     try {
         const history = await api.getSessionHistory(days);
+        pageSessionsData = history;
         renderPageSessionHistory(history);
-        document.getElementById('pageSessionsCount').textContent = `${history.total_sessions || 0} sessions`;
     } catch (error) {
         console.error('Erreur chargement sessions:', error);
         showToast('Erreur', 'Impossible de charger les sessions', 'danger');
@@ -891,6 +857,9 @@ function setSessionSort(key) {
         sessionSortKey = key;
         sessionSortDir = 'asc';
     }
+    // Le tri réorganise les deux listes : retour à la 1re page de chaque carte
+    pageActiveSessionsPage = 1;
+    pageClosedSessionsPage = 1;
     loadAuditPageSessions();
 }
 
@@ -919,143 +888,173 @@ function makeSortTh(key, label) {
 }
 
 function renderPageSessionHistory(data) {
-    const container = document.getElementById('pageSessionHistoryTable');
-    
     const activeSessions = data.sessions?.filter(s => !s.logout_at) || [];
     const closedSessions = data.sessions?.filter(s => s.logout_at) || [];
-    
-    if (!data.sessions || data.sessions.length === 0) {
-        container.innerHTML = `
-            <div class="text-center py-5 text-muted">
-                <i class="bi bi-clock-history display-4 mb-3"></i>
-                <p class="mb-0">Aucune session dans cette période</p>
-                <small class="text-muted">Les sessions apparaîtront ici une fois que des utilisateurs se connecteront</small>
-            </div>`;
-        document.getElementById('auditSessionKpiRow').innerHTML = '';
-        return;
-    }
-    
-    
+
+    // KPIs : toujours rendus, même à zéro session
     const avgSec = closedSessions.length > 0
         ? closedSessions.reduce((s, x) => s + (x.duration_seconds || 0), 0) / closedSessions.length
         : 0;
     const avgMin = Math.round(avgSec / 60);
     document.getElementById('auditSessionKpiRow').innerHTML =
-        auditKpiCard('#e7f1ff', '#0d6efd', 'bi-people-fill', data.total_sessions, 'Total sessions', `<span class="audit-trend flat">${data.period_days}j</span>`) +
+        auditKpiCard('#e7f1ff', '#0d6efd', 'bi-people-fill', data.total_sessions, 'Total sessions', `<span class="audit-trend flat">${data.period_days || 30}j</span>`) +
         auditKpiCard('#e6f4ea', '#28a745', 'bi-broadcast', activeSessions.length, 'Actives', '<span class="audit-trend flat"><span class="audit-pulse"></span></span>') +
         auditKpiCard('#f1f3f5', '#6c757d', 'bi-stop-circle', closedSessions.length, 'Terminées', '') +
         auditKpiCard('#fff1e6', '#fd7e14', 'bi-hourglass-split', `${avgMin} min`, 'Durée moy.', '<span class="audit-trend flat">ferm.</span>');
-    
-    const sortedActive = sortSessions(activeSessions, sessionSortKey, sessionSortDir);
-    const sortedClosed = sortSessions(closedSessions, sessionSortKey, sessionSortDir);
-    
+
+    renderActiveSessionsCard(sortSessions(activeSessions, sessionSortKey, sessionSortDir));
+    renderClosedSessionsCard(sortSessions(closedSessions, sessionSortKey, sessionSortDir));
+}
+
+function changeActiveSessionsPage(page) {
+    pageActiveSessionsPage = parseInt(page) || 1;
+    if (pageSessionsData) renderPageSessionHistory(pageSessionsData);
+}
+
+function changeClosedSessionsPage(page) {
+    pageClosedSessionsPage = parseInt(page) || 1;
+    if (pageSessionsData) renderPageSessionHistory(pageSessionsData);
+}
+
+function renderActiveSessionsCard(sessions) {
+    const container = document.getElementById('pageActiveSessionsTable');
+    const nav = document.getElementById('pageActiveSessionsPagination');
+    const countEl = document.getElementById('pageActiveSessionsCount');
+    if (!container || !nav || !countEl) return;
+
+    const totalPages = Math.ceil(sessions.length / SESSIONS_PER_PAGE);
+    // Clamp : refresh SSE (session révoquée / expirée) sans perdre la page courante
+    pageActiveSessionsPage = Math.min(Math.max(pageActiveSessionsPage, 1), Math.max(totalPages, 1));
+    const pageRows = sessions.slice((pageActiveSessionsPage - 1) * SESSIONS_PER_PAGE, pageActiveSessionsPage * SESSIONS_PER_PAGE);
+    countEl.textContent = `${sessions.length} active${sessions.length > 1 ? 's' : ''}`;
+
+    if (!pageRows.length) {
+        container.innerHTML = `
+            <div class="text-center py-4 text-muted">
+                <i class="bi bi-broadcast me-1"></i>Aucune session active
+            </div>`;
+        nav.innerHTML = '';
+        nav.classList.add('d-none');
+        return;
+    }
+
     container.innerHTML = `
-        <!-- Sessions actives -->
-        ${sortedActive.length > 0 ? `
-        <div class="mb-4 px-3 pt-3">
-            <div class="d-flex align-items-center mb-2">
-                <span class="badge bg-success me-2">${sortedActive.length}</span>
-                <h6 class="mb-0 text-success"><i class="bi bi-broadcast me-1"></i>Sessions actives</h6>
-                ${sessionSortKey ? `<small class="text-muted ms-2"><i class="bi bi-arrow-down-up me-1"></i>Tri actif — re-clic pour inverser</small>` : ''}
-            </div>
-            <table class="table audit-tbl table-hover align-middle mb-0 border rounded">
-                <thead class="table-light">
-                    <tr>
-                        ${makeSortTh('user', 'Utilisateur')}
-                        ${makeSortTh('app', 'Application')}
-                        ${makeSortTh('login', 'Connecté depuis')}
-                        ${makeSortTh('duration', 'Durée')}
-                        ${makeSortTh('idle', 'Activité')}
-                        ${makeSortTh('ip', 'IP')}
-                        <th class="text-end">Action</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    ${sortedActive.map(s => `
-                        <tr class="table-success table-active">
-                            <td>
-                                <div class="d-flex align-items-center">
-                                    <span class="position-relative me-2">
-                                        <i class="bi bi-person-circle fs-5 text-success"></i>
-                                        <span class="position-absolute bottom-0 end-0 translate-middle-x">
-                                            <i class="bi bi-circle-fill text-success" style="font-size: 0.5rem;"></i>
-                                        </span>
+        <table class="table audit-tbl table-hover align-middle mb-0">
+            <thead class="table-light">
+                <tr>
+                    ${makeSortTh('user', 'Utilisateur')}
+                    ${makeSortTh('app', 'Application')}
+                    ${makeSortTh('login', 'Connecté depuis')}
+                    ${makeSortTh('duration', 'Durée')}
+                    ${makeSortTh('idle', 'Activité')}
+                    ${makeSortTh('ip', 'IP')}
+                    <th class="text-end">Action</th>
+                </tr>
+            </thead>
+            <tbody>
+                ${pageRows.map(s => `
+                    <tr class="table-success table-active">
+                        <td>
+                            <div class="d-flex align-items-center">
+                                <span class="position-relative me-2">
+                                    <i class="bi bi-person-circle fs-5 text-success"></i>
+                                    <span class="position-absolute bottom-0 end-0 translate-middle-x">
+                                        <i class="bi bi-circle-fill text-success" style="font-size: 0.5rem;"></i>
                                     </span>
-                                    <strong>${escapeHtml(s.username || 'Unknown')}</strong>
-                                </div>
-                            </td>
-                            <td>
-                                ${s.current_app_name 
-                                    ? `<span class="badge bg-primary bg-gradient"><i class="bi bi-app me-1"></i>${escapeHtml(s.current_app_name)}</span>` 
-                                    : '<span class="badge bg-secondary bg-gradient"><i class="bi bi-house me-1"></i>Hub</span>'}
-                            </td>
-                            <td><small class="text-muted">${formatDateTime(s.login_at)}</small></td>
-                            <td><span class="badge bg-light text-dark border"><i class="bi bi-clock me-1"></i>${s.duration_display || 'en cours'}</span></td>
-                            <td>
-                                ${s.idle_minutes !== undefined && s.idle_minutes > 5 
-                                    ? `<span class="badge bg-warning text-dark" title="Inactif depuis ${s.idle_minutes} min"><i class="bi bi-hourglass-split me-1"></i>${s.idle_minutes}m</span>`
-                                    : '<span class="badge bg-success"><i class="bi bi-activity"></i></span>'}
-                            </td>
-                            <td><code class="small bg-light px-2 py-1 rounded">${s.ip_address || '-'}</code></td>
-                            <td class="text-end">
-                                <a href="#" class="small text-danger fw-semibold text-decoration-none" data-action="auditForceLogout" data-arg1="${s.id}"><i class="bi bi-box-arrow-right me-1"></i>Forcer déco.</a>
-                            </td>
-                        </tr>
-                    `).join('')}
-                </tbody>
-            </table>
-        </div>
-        ` : ''}
-        
-        <!-- Sessions terminées -->
-        ${sortedClosed.length > 0 ? `
-        <div class="px-3 pb-3">
-            <div class="d-flex align-items-center mb-2">
-                <span class="badge bg-secondary me-2">${sortedClosed.length}</span>
-                <h6 class="mb-0 text-muted"><i class="bi bi-clock-history me-1"></i>Sessions terminées</h6>
-            </div>
-            <table class="table audit-tbl table-hover align-middle mb-0 border rounded">
-                <thead class="table-light">
-                    <tr>
-                        ${makeSortTh('user', 'Utilisateur')}
-                        ${makeSortTh('app', 'Application')}
-                        ${makeSortTh('login', 'Connexion')}
-                        ${makeSortTh('logout', 'Déconnexion')}
-                        ${makeSortTh('duration', 'Durée')}
-                        ${makeSortTh('reason', 'Raison')}
-                        ${makeSortTh('ip', 'IP')}
-                    </tr>
-                </thead>
-                <tbody>
-                    ${sortedClosed.map(s => `
-                        <tr>
-                            <td>
-                                <div class="d-flex align-items-center">
-                                    <i class="bi bi-person-circle fs-5 text-muted me-2"></i>
-                                    <span class="text-muted">${escapeHtml(s.username || 'Unknown')}</span>
-                                </div>
-                            </td>
-                            <td>
-                                ${s.current_app_name 
-                                    ? `<span class="badge bg-primary bg-opacity-50"><i class="bi bi-app me-1"></i>${escapeHtml(s.current_app_name)}</span>` 
-                                    : '<span class="text-muted small"><i class="bi bi-house me-1"></i>Hub</span>'}
-                            </td>
-                            <td><small class="text-muted">${formatDateTime(s.login_at)}</small></td>
-                            <td><small class="text-muted">${formatDateTime(s.logout_at)}</small></td>
-                            <td>
-                                <span class="badge bg-light text-dark border">
-                                    ${s.duration_display || '-'}
                                 </span>
-                            </td>
-                            <td>${getLogoutReasonBadge(s.logout_reason)}</td>
-                            <td><code class="small text-muted">${s.ip_address || '-'}</code></td>
-                        </tr>
-                    `).join('')}
-                </tbody>
-            </table>
-        </div>
-        ` : ''}
+                                <strong>${escapeHtml(s.username || 'Unknown')}</strong>
+                            </div>
+                        </td>
+                        <td>
+                            ${s.current_app_name
+                                ? `<span class="badge bg-primary bg-gradient"><i class="bi bi-app me-1"></i>${escapeHtml(s.current_app_name)}</span>`
+                                : '<span class="badge bg-secondary bg-gradient"><i class="bi bi-house me-1"></i>Hub</span>'}
+                        </td>
+                        <td><small class="text-muted">${formatDateTime(s.login_at)}</small></td>
+                        <td><span class="badge bg-light text-dark border"><i class="bi bi-clock me-1"></i>${s.duration_display || 'en cours'}</span></td>
+                        <td>
+                            ${s.idle_minutes !== undefined && s.idle_minutes > 5
+                                ? `<span class="badge bg-warning text-dark" title="Inactif depuis ${s.idle_minutes} min"><i class="bi bi-hourglass-split me-1"></i>${s.idle_minutes}m</span>`
+                                : '<span class="badge bg-success"><i class="bi bi-activity"></i></span>'}
+                        </td>
+                        <td><code class="small bg-light px-2 py-1 rounded">${s.ip_address || '-'}</code></td>
+                        <td class="text-end">
+                            <a href="#" class="small text-danger fw-semibold text-decoration-none" data-action="auditForceLogout" data-arg1="${s.id}"><i class="bi bi-box-arrow-right me-1"></i>Forcer déco.</a>
+                        </td>
+                    </tr>
+                `).join('')}
+            </tbody>
+        </table>
     `;
+    nav.innerHTML = renderPagination(pageActiveSessionsPage, totalPages, 'changeActiveSessionsPage');
+    nav.classList.toggle('d-none', totalPages <= 1);
+}
+
+function renderClosedSessionsCard(sessions) {
+    const container = document.getElementById('pageClosedSessionsTable');
+    const nav = document.getElementById('pageClosedSessionsPagination');
+    const countEl = document.getElementById('pageClosedSessionsCount');
+    if (!container || !nav || !countEl) return;
+
+    const totalPages = Math.ceil(sessions.length / SESSIONS_PER_PAGE);
+    // Clamp : refresh SSE sans perdre la page courante
+    pageClosedSessionsPage = Math.min(Math.max(pageClosedSessionsPage, 1), Math.max(totalPages, 1));
+    const pageRows = sessions.slice((pageClosedSessionsPage - 1) * SESSIONS_PER_PAGE, pageClosedSessionsPage * SESSIONS_PER_PAGE);
+    countEl.textContent = `${sessions.length} terminée${sessions.length > 1 ? 's' : ''}`;
+
+    if (!pageRows.length) {
+        container.innerHTML = `
+            <div class="text-center py-4 text-muted">
+                <i class="bi bi-clock-history me-1"></i>Aucune session terminée dans cette période
+            </div>`;
+        nav.innerHTML = '';
+        nav.classList.add('d-none');
+        return;
+    }
+
+    container.innerHTML = `
+        <table class="table audit-tbl table-hover align-middle mb-0">
+            <thead class="table-light">
+                <tr>
+                    ${makeSortTh('user', 'Utilisateur')}
+                    ${makeSortTh('app', 'Application')}
+                    ${makeSortTh('login', 'Connexion')}
+                    ${makeSortTh('logout', 'Déconnexion')}
+                    ${makeSortTh('duration', 'Durée')}
+                    ${makeSortTh('reason', 'Raison')}
+                    ${makeSortTh('ip', 'IP')}
+                </tr>
+            </thead>
+            <tbody>
+                ${pageRows.map(s => `
+                    <tr>
+                        <td>
+                            <div class="d-flex align-items-center">
+                                <i class="bi bi-person-circle fs-5 text-muted me-2"></i>
+                                <span class="text-muted">${escapeHtml(s.username || 'Unknown')}</span>
+                            </div>
+                        </td>
+                        <td>
+                            ${s.current_app_name
+                                ? `<span class="badge bg-primary bg-opacity-50"><i class="bi bi-app me-1"></i>${escapeHtml(s.current_app_name)}</span>`
+                                : '<span class="text-muted small"><i class="bi bi-house me-1"></i>Hub</span>'}
+                        </td>
+                        <td><small class="text-muted">${formatDateTime(s.login_at)}</small></td>
+                        <td><small class="text-muted">${formatDateTime(s.logout_at)}</small></td>
+                        <td>
+                            <span class="badge bg-light text-dark border">
+                                ${s.duration_display || '-'}
+                            </span>
+                        </td>
+                        <td>${getLogoutReasonBadge(s.logout_reason)}</td>
+                        <td><code class="small text-muted">${s.ip_address || '-'}</code></td>
+                    </tr>
+                `).join('')}
+            </tbody>
+        </table>
+    `;
+    nav.innerHTML = renderPagination(pageClosedSessionsPage, totalPages, 'changeClosedSessionsPage');
+    nav.classList.toggle('d-none', totalPages <= 1);
 }
 
 // ===== Onglet Uptime utilisateurs =====
