@@ -18,6 +18,7 @@ let allUsersPage = [];
 let uptimeSelectedUserId = null;
 let uptimeSelectedDate = new Date().toISOString().split('T')[0]; // UTC
 let uptimeUsersLoaded = false;
+let uptimeUsers = []; // liste triée alphabétiquement, chargée une fois (api.getUsers)
 
 function uptimeFmtDuration(seconds) {
     const h = Math.floor(seconds / 3600), m = Math.round((seconds % 3600) / 60);
@@ -1062,32 +1063,118 @@ function renderPageSessionHistory(data) {
 let uptimePollTimer = null;
 
 async function loadUptimeUserOptions() {
-    const select = document.getElementById('uptimeUserSelect');
-    if (!select) return;
     if (!uptimeUsersLoaded) {
         try {
             const res = await api.getUsers({ page: 0 });  // page=0 = tous
             const users = res.users || res || [];
-            select.innerHTML = users.map(u =>
-                `<option value="${u.id}">${escapeHtml(u.username)}</option>`).join('');
+            // Tri alphabétique côté client (insensible à la casse) — l'API ne trie pas
+            uptimeUsers = [...users].sort((a, b) =>
+                (a.username || '').localeCompare(b.username || '', undefined, { sensitivity: 'base' }));
             uptimeUsersLoaded = true;
+            // Premier chargement : présélection du premier utilisateur trié
+            // (comportement historique du <select> présélectionné sur la 1re option)
+            if (!uptimeSelectedUserId && uptimeUsers.length) {
+                uptimeSelectedUserId = uptimeUsers[0].id;
+            }
         } catch (e) {
             console.error('Erreur chargement utilisateurs:', e);
             showToast('Erreur', 'Impossible de charger la liste des utilisateurs', 'danger');
             return;
         }
     }
-    if (uptimeSelectedUserId) select.value = String(uptimeSelectedUserId);
-    else uptimeSelectedUserId = parseInt(select.value);
+    renderUptimeUserSelection();
 }
 
-// Convention handlers change (cf. changeUsersPerPage) : sans argument, lit le DOM
-function changeUptimeUser() {
-    const select = document.getElementById('uptimeUserSelect');
-    if (!select || !select.value) return;
-    uptimeSelectedUserId = parseInt(select.value);
+function renderUptimeUserSelection() {
+    const nameEl = document.getElementById('uptimeUserSelectedName');
+    if (!nameEl) return;
+    const user = uptimeUsers.find(u => String(u.id) === String(uptimeSelectedUserId));
+    nameEl.textContent = user ? (user.username || `#${user.id}`) : '—';
+}
+
+// Dropdown de résultats filtrés (sous-chaîne insensible à la casse sur le username)
+function renderUptimeUserDropdown() {
+    const dd = document.getElementById('uptimeUserDropdown');
+    const input = document.getElementById('uptimeUserSearchInput');
+    if (!dd || !input) return;
+    const q = (input.value || '').trim().toLowerCase();
+    const matches = uptimeUsers.filter(u => (u.username || '').toLowerCase().includes(q));
+    if (!matches.length) {
+        dd.innerHTML = '<div class="uptime-user-empty">Aucun utilisateur trouvé</div>';
+    } else {
+        dd.innerHTML = matches.map(u => {
+            const selected = String(u.id) === String(uptimeSelectedUserId);
+            return `
+            <div role="option" aria-selected="${selected}"
+                 class="uptime-user-item${selected ? ' selected' : ''}"
+                 data-action="selectUptimeUser" data-arg1="${u.id}">
+                ${escapeHtml(u.username || `#${u.id}`)}
+            </div>`;
+        }).join('');
+    }
+}
+
+function openUptimeUserDropdown() {
+    const dd = document.getElementById('uptimeUserDropdown');
+    const input = document.getElementById('uptimeUserSearchInput');
+    if (!dd || !input) return;
+    renderUptimeUserDropdown();
+    dd.classList.remove('d-none');
+    input.setAttribute('aria-expanded', 'true');
+    document.getElementById('uptimeUserToggleBtn')?.setAttribute('aria-expanded', 'true');
+}
+
+function closeUptimeUserDropdown() {
+    const dd = document.getElementById('uptimeUserDropdown');
+    const input = document.getElementById('uptimeUserSearchInput');
+    if (dd) dd.classList.add('d-none');
+    if (input) input.setAttribute('aria-expanded', 'false');
+    document.getElementById('uptimeUserToggleBtn')?.setAttribute('aria-expanded', 'false');
+}
+
+// À la frappe : filtrage + réouverture du dropdown
+function filterUptimeUsers(el) {
+    if (!el) return;
+    openUptimeUserDropdown();
+}
+
+// Bouton chevron : rouvre la recherche sur la liste complète (filtre remis à zéro)
+function toggleUptimeUserList() {
+    const dd = document.getElementById('uptimeUserDropdown');
+    if (!dd) return;
+    if (dd.classList.contains('d-none')) {
+        const input = document.getElementById('uptimeUserSearchInput');
+        if (input) input.value = '';
+        openUptimeUserDropdown();
+    } else {
+        closeUptimeUserDropdown();
+    }
+}
+
+// Sélection d'un utilisateur dans le dropdown → uptime du jour rechargé
+function selectUptimeUser(userId) {
+    uptimeSelectedUserId = parseInt(userId);
+    closeUptimeUserDropdown();
+    const input = document.getElementById('uptimeUserSearchInput');
+    if (input) input.value = '';
+    renderUptimeUserSelection();
     loadAuditPageUptime();
 }
+
+// Échap ferme le dropdown ; clic sur l'input ouvre, clic extérieur ferme.
+// (l'input porte déjà data-action="filterUptimeUsers" pour l'event input : la
+// convention onKeydown du délégué ne peut pas cohabiter sur le même attribut)
+document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    const dd = document.getElementById('uptimeUserDropdown');
+    if (dd && !dd.classList.contains('d-none')) closeUptimeUserDropdown();
+});
+document.addEventListener('click', (e) => {
+    const search = document.querySelector('.uptime-user-search');
+    if (!search) return;
+    if (!search.contains(e.target)) { closeUptimeUserDropdown(); return; }
+    if (e.target === document.getElementById('uptimeUserSearchInput')) openUptimeUserDropdown();
+});
 
 function shiftUptimeDay(delta) {
     const d = new Date(uptimeSelectedDate + 'T00:00:00Z');

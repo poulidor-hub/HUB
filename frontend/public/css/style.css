@@ -2023,6 +2023,15 @@ body {
 .audit-tbl thead th.cursor-pointer:hover{color:#0d6efd;}
 .app-sort-btn{font-size:.75rem;}
 .audit-tbl tbody tr:hover{background:#f8fafc;}
+/* Recherche utilisateur (onglet uptime) : dropdown filtré sous l'input, sans animation */
+.uptime-user-search{width:250px;}
+.uptime-user-search .input-group{width:100%;}
+.uptime-user-dropdown{position:absolute;top:calc(100% + 2px);left:0;width:100%;max-height:320px;overflow-y:auto;background:#fff;border:1px solid var(--border-color);border-radius:8px;box-shadow:0 .5rem 1rem rgba(0,0,0,.12);z-index:1050;}
+.uptime-user-item{padding:.4rem .75rem;font-size:.85rem;cursor:pointer;}
+.uptime-user-item:hover{background:#f1f3f5;}
+.uptime-user-item.selected{background:#e7f1ff;color:#0d6efd;font-weight:600;}
+.uptime-user-empty{padding:.75rem;font-size:.85rem;color:#6c757d;text-align:center;}
+.uptime-user-selected{margin-top:.35rem;}
 .snapshot-spin{animation:snapshot-spin-anim 1s linear infinite;display:inline-block;}
 @keyframes snapshot-spin-anim{from{transform:rotate(0deg);}to{transform:rotate(360deg);}}
 

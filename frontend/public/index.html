@@ -399,8 +399,24 @@
                 <!-- Uptime utilisateurs -->
                 <div class="tab-pane fade" id="auditPageUptime">
                     <div class="d-flex flex-wrap align-items-center gap-2 mb-4">
-                        <select id="uptimeUserSelect" class="form-select form-select-sm" style="width:auto;min-width:220px;"
-                                data-action="changeUptimeUser"></select>
+                        <div class="uptime-user-search position-relative">
+                            <div class="input-group input-group-sm">
+                                <input type="search" id="uptimeUserSearchInput" class="form-control" placeholder="Rechercher un utilisateur…"
+                                       aria-label="Rechercher un utilisateur" autocomplete="off"
+                                       aria-expanded="false" aria-controls="uptimeUserDropdown"
+                                       data-action="filterUptimeUsers" data-args="$el">
+                                <button type="button" class="btn btn-outline-secondary" id="uptimeUserToggleBtn"
+                                        aria-label="Afficher tous les utilisateurs" title="Afficher tous les utilisateurs"
+                                        aria-expanded="false" aria-controls="uptimeUserDropdown"
+                                        data-action="toggleUptimeUserList">
+                                    <i class="bi bi-chevron-down"></i>
+                                </button>
+                            </div>
+                            <div id="uptimeUserDropdown" class="uptime-user-dropdown d-none" role="listbox" aria-label="Utilisateurs"></div>
+                            <div class="uptime-user-selected small text-muted">
+                                <i class="bi bi-person-check me-1"></i>Sélection&nbsp;: <strong id="uptimeUserSelectedName">—</strong>
+                            </div>
+                        </div>
                         <div class="btn-group btn-group-sm">
                             <button class="btn btn-outline-secondary" data-action="shiftUptimeDay" data-args="-1"><i class="bi bi-chevron-left"></i></button>
                             <button class="btn btn-outline-secondary" id="uptimeCurrentDate" disabled style="min-width:130px;"></button>
