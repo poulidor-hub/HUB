@@ -135,10 +135,19 @@ def compute_activity_heatmap(
     sessions: list[tuple[datetime, Optional[datetime]]],
     start: datetime,
     days: int,
+    now: datetime,
 ) -> list[dict]:
     """
     Grille jour × heure : nombre de sessions actives par bucket horaire (UTC).
-    sessions: liste de (login_at, logout_at|None).
+    sessions: liste de (login_at, logout_at|None) ; `now` est l'instant réel
+    qui borne le calcul (la route passe utcnow()).
+
+    Une session ouverte (logout_at None) a une fin virtuelle `now` — la
+    route fournit idéalement min(now, last_activity_at + timeout) comme fin
+    effective (cohérence cleanup_stale_sessions / get_user_usage_day) et la
+    fonction re-clampe défensivement toute fin à `now` (défense en
+    profondeur) : aucune cellule postérieure à l'heure courante ne peut
+    être remplie.
 
     O(sessions + heures couvertes) : chaque session marque directement
     l'intervalle de buckets qu'elle recouvre, au lieu de re-scanner toute
@@ -153,10 +162,13 @@ def compute_activity_heatmap(
         delta = dt - start
         return (delta.days * 86_400 + delta.seconds) * 1_000_000 + delta.microseconds
 
+    now_us = to_us(now)
     grid = [[0] * 24 for _ in range(days)]
     for login_at, logout_at in sessions:
         s = to_us(login_at)
-        e = to_us(logout_at or datetime.max)
+        e = to_us(logout_at) if logout_at is not None else now_us
+        if e > now_us:
+            e = now_us  # défense en profondeur : rien après maintenant
         if s < 0:
             s = 0
         if e > WINDOW_US:
