@@ -6,6 +6,7 @@ Apps Health Dashboard — monitoring et actions admin sur les apps enregistrees.
 """
 import time
 import logging
+import anyio
 from typing import Optional, List
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -24,6 +25,7 @@ from app.github_client import (
 from app.health_checker import (
     get_container_state, find_containers_for_app, count_containers_batch,
 )
+from app.workshop_service import get_workshop_state, _app_dir, _git_state
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +62,11 @@ class AppHealthItem(BaseModel):
     # Nombre de conteneurs du groupe compose de l'app (None si app distante
     # ou Docker indisponible) — affiché « N cont. » côté dashboard
     containers_count: Optional[int] = None
+    # État atelier agrégé (chargement unifié) : {exists, ws_ref, ws_commit,
+    # git_ok} pour les apps gérées locales ; None pour les apps système,
+    # distantes ou si la lecture échoue (le front rend alors son placeholder
+    # caché). Remplace les N x GET /apps/{slug}/workshop d'après-rendu.
+    workshop: Optional[dict] = None
     # App système (HUB lui-même) — traité différemment côté UI
     is_system_app: bool = False
 
@@ -219,6 +226,31 @@ def _action_message(action: str, app_name: str, results) -> str:
 
 # ─── Routes ───────────────────────────────────────────────────────────
 
+async def _workshop_state_for_app(slug: str) -> Optional[dict]:
+    """État atelier lite pour le payload /apps/health (chargement unifié).
+
+    Lecture disque (get_workshop_state, en thread — I/O fichiers) + git_ok
+    (subprocess async). Échec silencieux -> None : le front rend son
+    placeholder caché, jamais un 500 pour un badge. Les champs lourds du
+    détail (active_operation, git_repo_url, ports…) ne sont pas chargés :
+    le chip du dashboard n'en a pas besoin, la modal atelier appelle la
+    route dédiée GET /{slug}/workshop à l'ouverture.
+    """
+    try:
+        state = await anyio.to_thread.run_sync(get_workshop_state, slug)
+        st = await _git_state(_app_dir(slug))
+        state["git_ok"] = bool(st.get("ok"))
+    except Exception as e:
+        logger.warning(f"Atelier {slug}: lecture impossible ({e})")
+        return None
+    return {
+        "exists": bool(state.get("exists")),
+        "ws_ref": state.get("ws_ref"),
+        "ws_commit": state.get("ws_commit"),
+        "git_ok": bool(state.get("git_ok")),
+    }
+
+
 @router.get("/health", response_model=AppsHealthResponse)
 async def get_apps_health(
     current_admin: User = Depends(get_current_admin),
@@ -253,6 +285,35 @@ async def get_apps_health(
         m2m_token_available = None
         is_system = bool(getattr(app, "is_system_app", False))
         is_hub = is_system and app.slug == "hub"
+        is_remote = bool(getattr(app, "is_remote", False))
+
+        # Docker-first : une app dont le conteneur est off n'est pas sondée en
+        # HTTP — elle paierait PROBE_TIMEOUT x len(HEALTH_PATHS) (jusqu'à 15 s)
+        # pour aboutir à la même conclusion « stopped » (classification qui
+        # n'arrivait qu'en fin de probe). Running, ou Docker indisponible
+        # (None) : sonde HTTP normale, classification existante conservée.
+        if not is_remote:
+            container_state_early = get_container_state(app.slug)
+            if container_state_early is not None and container_state_early != "running":
+                return AppHealthItem(
+                    id=app.id,
+                    slug=app.slug,
+                    name=app.name,
+                    icon=app.icon,
+                    color=app.color,
+                    api_url=app.api_url,
+                    status="stopped",
+                    latency_ms=0,
+                    version=None,
+                    error=(
+                        "Conteneur absent"
+                        if container_state_early == "absent"
+                        else f"Conteneur {container_state_early}"
+                    ),
+                    checked_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now)),
+                    containers_count=containers_count_map.get(app.slug),
+                    is_system_app=is_system,
+                )
 
         # Pour le HUB lui-meme : sonde normale + version lue localement
         async with _get_httpx_client() as client:
@@ -382,6 +443,25 @@ async def get_apps_health(
 
     import asyncio
     items = await asyncio.gather(*[probe_app(app) for app in apps])
+
+    # États atelier agrégés (chargement unifié) : le front n'appelle plus
+    # N x GET /{slug}/workshop après le rendu — lecture disque + git en
+    # parallèle, hors apps système et distantes (hors périmètre atelier).
+    managed_apps = [
+        a for a in apps
+        if not bool(getattr(a, "is_system_app", False))
+        and not bool(getattr(a, "is_remote", False))
+    ]
+    workshop_map: dict = {}
+    if managed_apps:
+        ws_results = await asyncio.gather(
+            *[_workshop_state_for_app(a.slug) for a in managed_apps]
+        )
+        workshop_map = {
+            a.slug: st for a, st in zip(managed_apps, ws_results) if st is not None
+        }
+    for item in items:
+        item.workshop = workshop_map.get(item.slug)
 
     summary = HealthSummary(
         total=len(items),
