@@ -37,39 +37,46 @@ async function loadWorkshopStates(slugs) {
 //  - atelier actif        → « Atelier » (indigo) title ref@commit ;
 //  - pas d'atelier, git OK → « + Atelier » (neutre) pour garder l'accès création ;
 //  - pas de remote git     → « Git » (neutre) pour garder l'accès configuration.
+// Contenu du chip atelier (footer de carte), selon l'état :
+//  - atelier actif        → « Atelier » (indigo) title ref@commit ;
+//  - pas d'atelier, git OK → « + Atelier » (neutre) pour garder l'accès création ;
+//  - pas de remote git     → « Git » (neutre) pour garder l'accès configuration.
+// Fabrique partagée : _fillWorkshopChip (maj à la volée, opérations atelier)
+// ET renderAppCard (apps-health.js) qui rend le chip directement depuis le
+// payload /apps/health agrégé (app.workshop) — un seul rendu, plus de vagues.
+// state inconnu (null) → placeholder « + Atelier » (largeur réservée).
+function _workshopChipInner(slug, state) {
+    if (state && state.exists) {
+        var ref = state.ws_ref || '?';
+        var commit = (state.ws_commit || '').slice(0, 8) || '?';
+        return '<button data-action="toggleAtelierPanel" data-arg1="' + escapeHtml(slug) + '"'
+            + ' title="Atelier actif (contrat .workshop.env) : ' + escapeHtml(ref) + ' @ ' + escapeHtml(commit) + ' — cliquer pour déplier"'
+            + ' style="display:inline-block;font-size:8.5px;font-weight:700;background:#eef2ff;color:#4338ca;'
+            + 'border:0;border-radius:5px;padding:2px 6px;cursor:pointer;">Atelier</button>';
+    }
+    if (state && state.git_ok) {
+        return '<button data-action="toggleAtelierPanel" data-arg1="' + escapeHtml(slug) + '"'
+            + ' title="Aucun atelier — cliquer pour créer (clone de DB, la prod n\'est pas touchée)"'
+            + ' style="display:inline-block;font-size:8.5px;font-weight:600;background:#f1f5f9;color:#64748b;'
+            + 'border:0;border-radius:5px;padding:2px 6px;cursor:pointer;">+ Atelier</button>';
+    }
+    if (state) {
+        return '<button data-action="toggleAtelierPanel" data-arg1="' + escapeHtml(slug) + '"'
+            + ' title="Pas de remote git configuré — cliquer pour configurer"'
+            + ' style="display:inline-block;font-size:8.5px;font-weight:600;background:#f1f5f9;color:#64748b;'
+            + 'border:0;border-radius:5px;padding:2px 6px;cursor:pointer;">Git</button>';
+    }
+    return '+ Atelier';
+}
+
 function _fillWorkshopChip(slug, state) {
     var chip = document.getElementById('ws-chip-' + slug);
     if (!chip) return;
     // Slot réservé : la carte rend un placeholder caché (visibility:hidden,
-    // largeur « + Atelier ») pour la stabilité du layout — on le rend visible
-    // ici, on ne manipule plus display (cf. apps-health.js renderAppCard).
-    if (state && state.exists) {
-        var ref = state.ws_ref || '?';
-        var commit = (state.ws_commit || '').slice(0, 8) || '?';
-        chip.innerHTML = '<button data-action="toggleAtelierPanel" data-arg1="' + escapeHtml(slug) + '"'
-            + ' title="Atelier actif (contrat .workshop.env) : ' + escapeHtml(ref) + ' @ ' + escapeHtml(commit) + ' — cliquer pour déplier"'
-            + ' style="display:inline-block;font-size:8.5px;font-weight:700;background:#eef2ff;color:#4338ca;'
-            + 'border:0;border-radius:5px;padding:2px 6px;cursor:pointer;">Atelier</button>';
-        chip.style.visibility = '';
-    } else if (state && state.git_ok) {
-        chip.innerHTML = '<button data-action="toggleAtelierPanel" data-arg1="' + escapeHtml(slug) + '"'
-            + ' title="Aucun atelier — cliquer pour créer (clone de DB, la prod n\'est pas touchée)"'
-            + ' style="display:inline-block;font-size:8.5px;font-weight:600;background:#f1f5f9;color:#64748b;'
-            + 'border:0;border-radius:5px;padding:2px 6px;cursor:pointer;">+ Atelier</button>';
-        chip.style.visibility = '';
-    } else if (state) {
-        chip.innerHTML = '<button data-action="toggleAtelierPanel" data-arg1="' + escapeHtml(slug) + '"'
-            + ' title="Pas de remote git configuré — cliquer pour configurer"'
-            + ' style="display:inline-block;font-size:8.5px;font-weight:600;background:#f1f5f9;color:#64748b;'
-            + 'border:0;border-radius:5px;padding:2px 6px;cursor:pointer;">Git</button>';
-        chip.style.visibility = '';
-    } else {
-        // État inconnu (échec API) : le placeholder caché reste en place —
-        // conserver l'espace réservé évite un saut de layout à la vague
-        // suivante (stabilité du menu ⋯ et des cartes voisines).
-        chip.style.visibility = 'hidden';
-        chip.innerHTML = '+ Atelier';
-    }
+    // largeur « + Atelier ») pour la stabilité du layout — ici on le remplit
+    // via la fabrique et on le rend visible (plus de display:none).
+    chip.innerHTML = _workshopChipInner(slug, state);
+    chip.style.visibility = state ? '' : 'hidden';
 }
 
 // Ouvre/ferme le panneau atelier sous la carte (fermé par défaut).

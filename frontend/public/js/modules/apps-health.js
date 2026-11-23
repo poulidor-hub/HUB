@@ -116,17 +116,13 @@ async function renderAppsHealth(data) {
     // réapparaît non filtrée jusqu'aux mises à jour SSE ciblées).
     _applyHealthFilters();
 
+    // États atelier : rendus DIRECTEMENT par renderAppCard depuis le payload
+    // agrégé (app.workshop) — plus de vague de N x GET /{slug}/workshop.
+
     // Lance la verification des mises a jour en arriere-plan
     if (data.apps && data.apps.length) {
         await refreshGithubCache();
         checkAllUpdates(data.apps);
-    }
-
-    // États atelier (contrat .workshop.env) — chargés après le rendu, non bloquant
-    var wsSlugs = (data.apps || []).filter(function (a) { return !(a.is_system_app === true || a.slug === 'hub'); })
-        .map(function (a) { return a.slug; });
-    if (wsSlugs.length && typeof loadWorkshopStates === 'function') {
-        loadWorkshopStates(wsSlugs);
     }
 }
 
@@ -289,11 +285,14 @@ function renderAppCard(app) {
         ? '<span style="color:#cbd5e1;">·</span><span title="Conteneurs de l\'application">' + escapeHtml(String(app.containers_count)) + ' cont.</span>'
         : '<span style="visibility:hidden;">·99 cont.</span>';
 
-    // Chip atelier — slot RÉSERVÉ : placeholder caché (largeur « + Atelier »)
-    // présent dès le premier rendu ; loadWorkshopStates (workshop-ui.js) le
-    // remplace. Le panneau est FERMÉ.
+    // Chip atelier — rendu DIRECT depuis le payload agrégé (app.workshop,
+    // champ ajouté à /apps/health) : plus de N x GET /{slug}/workshop après
+    // le rendu. Placeholder caché si état absent/inconnu (stabilité layout).
+    var wsState = (!isSystemApp && app.workshop && typeof app.workshop === 'object') ? app.workshop : null;
     var wsChip = isSystemApp ? ''
-        : '<span id="ws-chip-' + slug + '" style="visibility:hidden;">+ Atelier</span>';
+        : '<span id="ws-chip-' + slug + '"' + (wsState ? '' : ' style="visibility:hidden;"') + '>'
+        + (wsState && typeof _workshopChipInner === 'function' ? _workshopChipInner(slug, wsState) : '+ Atelier')
+        + '</span>';
     var wsPanel = isSystemApp ? ''
         : '<div id="workshop-panel-' + slug + '" class="ahc2-panel" style="display:none;"></div>';
 
@@ -330,7 +329,7 @@ function renderAppCard(app) {
     return (
         '<div class="col-6 col-md-4 col-lg-3 col-xl-2" data-slug="' + slug + '"' +
         ' data-status="' + escapeHtml(app.status || 'checking') + '"' +
-        ' data-ws="0"' +
+        ' data-ws="' + (wsState && wsState.exists ? '1' : '0') + '"' +
         ' data-search="' + escapeHtml((app.name + ' ' + app.slug).toLowerCase()) + '">' +
         '<div style="position:relative;background:#fff;border:1px solid #e2e8f0;border-radius:10px;box-shadow:0 1px 2px rgba(15,23,42,.05);display:flex;flex-direction:column;height:100%;overflow:visible;">' +
             '<div style="background:' + headGrad + ';border-radius:10px 10px 0 0;padding:8px 9px 7px;display:flex;gap:7px;align-items:center;">' +
