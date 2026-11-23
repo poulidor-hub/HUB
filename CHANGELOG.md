@@ -5,6 +5,21 @@
 
 ---
 
+## [3.103.0] - 23 novembre 2026
+
+### 📣 Pour les utilisateurs
+- **Amélioré** : la vue santé se charge nettement plus vite — une application arrêtée n'est plus « sondée » en HTTP (son statut est lu directement depuis Docker au lieu d'attendre des timeouts), et les badges « Atelier » arrivent avec le reste des données au lieu d'apparaître après coup.
+- **Amélioré** : la grille s'affiche en un seul rendu complet — plus de « vagues » successives qui modifiaient les vignettes après leur affichage.
+
+### ⚡ Vue santé : sondage Docker-first + atelier agrégé dans /apps/health (chargement unifié)
+
+- **Docker-first** (`hub/app/routes/apps_health.py`) : `probe_app` interroge Docker **avant** le HTTP — conteneur off → `stopped` immédiat (short-circuit), l'app ne paie plus `PROBE_TIMEOUT` × `len(HEALTH_PATHS)` (jusqu'à 15 s) pour aboutir à la même conclusion (la classification historique n'arrivait qu'en fin de probe). Running ou Docker indisponible (None) : sonde HTTP normale, classification existante conservée (running injoignable = offline, jamais stopped). Le sondage était déjà parallèle (`asyncio.gather`) : le temps total passe de « timeout des pires apps » à « apps running seulement ».
+- **Atelier agrégé** : `AppHealthItem.workshop` = `{exists, ws_ref, ws_commit, git_ok}` pour les apps gérées locales — `get_workshop_state` en thread (`anyio.to_thread`) + `_git_state` async, en `gather` parallèle ; None (silencieux) pour apps système/distantes/échec de lecture. Le front n'appelle plus N × `GET /apps/{slug}/workshop` après le rendu : un seul fetch, un seul rendu complet, plus aucune vague visible.
+- **Front** (`apps-health.js`, `workshop-ui.js`) : `renderAppCard` rend le chip atelier directement depuis `app.workshop` via la fabrique partagée `_workshopChipInner` (3 états) ; placeholder caché si état absent ; `data-ws` (filtre atelier) calculé au rendu ; `_fillWorkshopChip` conserve la mise à jour à la volée (poller atelier). `renderAppsHealth` ne lance plus la vague `loadWorkshopStates`.
+- **Tests** : 3 nouveaux (`test_probe_stopped_container_skips_http_entirely` — zéro HTTP pour une app off ; `test_health_response_includes_workshop_state` ; `test_health_workshop_none_on_lookup_error`) + durcissement des tests HTTP existants (patch `get_container_state('running')` explicite — le chemin HTTP ne dépend plus du Docker de l'hôte). Suite complète : 1897 passed, 1 skipped.
+
+---
+
 ## [3.102.0] - 23 novembre 2026
 
 ### 📣 Pour les utilisateurs
