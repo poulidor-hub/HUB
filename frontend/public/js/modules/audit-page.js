@@ -186,14 +186,33 @@ function auditAlertDetails(deeplink) {
     }
 }
 
+// Pagination "En ce moment" : 8 sessions/page ; le refresh SSE garde la
+// page courante, clampée au nombre de pages
+let auditLivePage = 1;
+let auditLiveSessionsCache = [];
+const AUDIT_LIVE_PER_PAGE = 8;
+
 function renderAuditLiveSessions(data) {
     document.getElementById('auditLiveCount').textContent = data.active_count || 0;
+    auditLiveSessionsCache = data.sessions || [];
+    renderAuditLivePage();
+}
+
+function renderAuditLivePage() {
     const c = document.getElementById('auditLiveSessions');
-    if (!data.sessions || !data.sessions.length) {
+    const nav = document.getElementById('auditLiveSessionsPagination');
+    if (!c || !nav) return;
+    const sessions = auditLiveSessionsCache;
+    if (!sessions.length) {
+        auditLivePage = 1;
         c.innerHTML = '<div class="text-center text-muted py-4"><i class="bi bi-person-x me-1"></i>Aucun utilisateur connecté</div>';
+        nav.innerHTML = '';
+        nav.classList.add('d-none');
         return;
     }
-    c.innerHTML = data.sessions.map(s => `
+    const totalPages = Math.ceil(sessions.length / AUDIT_LIVE_PER_PAGE);
+    auditLivePage = Math.min(Math.max(auditLivePage, 1), totalPages);
+    c.innerHTML = sessions.slice((auditLivePage - 1) * AUDIT_LIVE_PER_PAGE, auditLivePage * AUDIT_LIVE_PER_PAGE).map(s => `
         <div class="p-3 border-bottom">
             <div class="d-flex justify-content-between">
                 <span class="fw-semibold small">${escapeHtml(s.username || 'Unknown')}</span>
@@ -207,6 +226,13 @@ function renderAuditLiveSessions(data) {
                 <a href="#" class="small text-danger fw-semibold text-decoration-none" data-action="auditForceLogout" data-arg1="${s.id}">Forcer déco.</a>
             </div>
         </div>`).join('');
+    nav.innerHTML = renderPagination(auditLivePage, totalPages, 'changeAuditLivePage');
+    nav.classList.toggle('d-none', totalPages <= 1);
+}
+
+function changeAuditLivePage(page) {
+    auditLivePage = parseInt(page) || 1;
+    renderAuditLivePage();
 }
 
 async function auditForceLogout(sessionId) {
