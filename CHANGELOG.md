@@ -5,6 +5,25 @@
 
 ---
 
+## [3.102.0] - 23 novembre 2026
+
+### 📣 Pour les utilisateurs
+- **Corrigé** : sur la vue santé, ouvrir le menu « ⋯ » d'une vignette pendant que les informations se chargent ne fait plus glisser la liste sous le curseur — viser « Logs » clique désormais sur « Logs », plus jamais sur « Redémarrer » par accident.
+- **Amélioré** : les trois petits points « ⋯ » sont ancrés au coin bas-droit de chaque vignette — ils ne se retrouvent plus isolés tout seuls sur une ligne en dessous des badges.
+- **Amélioré** : les vignettes gardent une taille constante pendant le chargement (plus de sauts de mise en page quand les badges « Atelier » et les métriques apparaissent).
+- **Sécurisé** : « Redémarrer » demande désormais une confirmation avant application, comme « Arrêter » — un clic mal placé ne redémarre plus une application sans pouvoir annuler.
+
+### ⚡ Vue santé : vignettes à hauteur stable, menu ⋯ ancré au coin, confirmation Redémarrer
+
+- **Stabilité de layout (fix racine)** (`frontend/public/js/modules/apps-health.js`, `workshop-ui.js`) : le chargement de la vue se fait par vagues (liste rapide → sondage santé → chips atelier × N → chips MàJ × N) et les vignettes n'avaient aucune hauteur réservée : chaque vague grandissait les cartes (corps 1→2 lignes, footer qui wrappe), et le stretch flex de la grille faisait descendre footers et menus de toute la rangée sous un curseur immobile — le misclick « Logs → Redémarrer » était le symptôme. Désormais les slots du footer (version, conteneurs, chip atelier) sont rendus **systématiquement** en `visibility:hidden` (placeholders de largeur réelle) et le corps (2 lignes de métriques) et le footer (2 lignes de chips, `align-content:flex-start`) ont une `min-height` : la hauteur de carte est constante du premier rendu au dernier chip, plus aucun décalage.
+- **Bouton ⋯ ancré au coin** : sorti du flux du footer (`position:absolute` coin bas-droit de la carte, `padding-right` de réserve sur le footer) — il n'est plus jamais wrappé seul sur une ligne en bas (demande utilisateur).
+- **Menu ré-ancré** : `.ahc2-menu` s'ouvre au-dessus du bouton (`bottom:30px`) et `_flipMenuInViewport` est inversé — flip vers le bas seulement si le menu déborderait en haut du viewport (le flip horizontal est inchangé).
+- **Mises à jour ciblées SSE** (`updateAppsHealthCard`) : la capture/restauration d'état inclut désormais `visibility` — les slots réservés sont différenciés des chips réellement remplis lors du remplacement d'une carte.
+- **`_fillWorkshopChip`** (`workshop-ui.js`) : remplit le slot réservé (visibility, plus de display) ; état inconnu (échec API) = placeholder conservé, l'espace ne s'effondre plus.
+- **Confirmation « Redémarrer »** (`_RUN_ACTIONS.restart`) : `confirm` aligné sur start/stop — l'action n'est plus appliquée sans étape annulable.
+
+---
+
 ## [3.101.0] - 23 novembre 2026
 
 ### 📣 Pour les utilisateurs
