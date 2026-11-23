@@ -5,6 +5,19 @@
 
 ---
 
+## [3.103.1] - 23 novembre 2026
+
+### 📣 Pour les utilisateurs
+- **Corrigé** : sur la vue santé, les latences affichées étaient artificiellement gonflées (jusqu'à ~1,3 s) et semblaient « augmenter » selon les vignettes — les vraies latences (quelques dizaines de ms) sont de retour, uniformes sur toute la grille.
+
+### ⚡ Vue santé : états Docker en batch thread — régression latence du sondage (3.103.0)
+
+- **Cause racine** (régression introduite par le Docker-first de la 3.103.0) : `get_container_state` est SYNCHRONE (docker-py) ; appelé au début de chaque probe, les N appels séquentiels bloquaient l'event loop au démarrage des sondes parallèles — les réponses HTTP des premières apps (ordre alphabétique du `asyncio.gather`) étaient traitées en retard, d'où un gradient de latence décroissant parfait (1277 → 36 ms) sur la grille.
+- **Fix** : nouveau `health_checker.get_container_states_batch(slugs)` — UNE liste Docker pour tous les slugs, même contrat par slug (`'running'` / état / `'absent'` / None). La route `/apps/health` l'appelle **une fois, en thread** (`anyio.to_thread`) ; les probes lisent un simple dict (O(1), zéro I/O dans l'event loop). La branche offline finale réutilise le même map : plus AUCUN appel Docker par app.
+- **Tests** : garde structurelle anti-régression (`get_container_state` n'est plus importé par la route) ; test unitaire du batch (mix running/exited/absent, Docker off → None) ; tests existants migrés vers le batch (helper slugs→dict). Suite : 1898 passed.
+
+---
+
 ## [3.103.0] - 23 novembre 2026
 
 ### 📣 Pour les utilisateurs
