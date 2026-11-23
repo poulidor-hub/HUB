@@ -153,9 +153,21 @@ function _injectHealthCardStyles() {
     var st = document.createElement('style');
     st.id = 'ahc2-styles';
     st.textContent =
-        // Menu ⋯ : instantané (display none/block, aucune transition)
-        '.ahc2-menu{position:absolute;top:30px;right:7px;z-index:60;min-width:158px;background:#fff;'
+        // Menu ⋯ : instantané (display none/block, aucune transition).
+        // Ancré au coin bas-droit de la carte (au-dessus du bouton ⋯, lui-même
+        // fixé au coin) — le flip vertical de _flipMenuInViewport l'abaisse
+        // sous le bouton seulement s'il déborderait en haut du viewport.
+        '.ahc2-menu{position:absolute;top:auto;bottom:30px;right:7px;z-index:60;min-width:158px;background:#fff;'
         + 'border:1px solid #e2e8f0;border-radius:9px;box-shadow:0 8px 24px rgba(15,23,42,.14);padding:4px;display:none;}'
+        // Stabilité de layout : le corps réserve 2 lignes de métriques et le
+        // footer 2 lignes de chips (slots cachés systématiques) — les vagues
+        // de chargement (health → chips atelier → chips MàJ) ne changent plus
+        // la hauteur de carte, donc plus rien ne glisse sous un menu ouvert.
+        + '.ahc2-body{min-height:44px;}'
+        + '.ahc2-foot{min-height:47px;align-content:flex-start;}'
+        // Bouton ⋯ : hors du flux du footer, fixé au coin bas-droit de la
+        // carte — jamais wrappé seul sur une ligne.
+        + '.ahc2-more{position:absolute;right:7px;bottom:4px;}'
         + '.ahc2-menu.open{display:block;}'
         + '.ahc2-menu button{display:flex;align-items:center;gap:8px;width:100%;text-align:left;background:none;border:0;'
         + 'border-radius:6px;padding:6px 8px;font-size:12px;color:#1e293b;cursor:pointer;}'
@@ -261,23 +273,27 @@ function renderAppCard(app) {
           + 'background:#eef2ff;color:#4338ca;border-radius:5px;padding:2px 6px;">SYSTÈME</span><span style="color:#cbd5e1;">·</span>'
         : '';
 
-    // Version courante (span masqué si un chip MàJ compact le remplace)
+    // Version courante — slot réservé si inconnue au premier rendu (vague
+    // /apps/all) : largeur fixe cachée, la vraie version arrive avec /health.
     var versionSpan = version
         ? '<span id="appver-' + slug + '" title="Version déployée">v' + escapeHtml(version) + '</span><span style="color:#cbd5e1;">·</span>'
-        : '<span id="appver-' + slug + '"></span>';
+        : '<span id="appver-' + slug + '" style="visibility:hidden;">v0.0.0·</span>';
 
     // Chip « MàJ » compact — conteneur rempli par renderUpdateBadge (check async)
     var updateBadge = '<span id="update-badge-' + slug + '" style="display:none;"></span>';
 
-    // Compteur de conteneurs — affiché SEULEMENT si le backend le fournit
+    // Compteur de conteneurs — slot RÉSERVÉ (placeholder caché de largeur max)
+    // tant que le backend ne le fournit pas : la composition du footer est
+    // identique du premier rendu au remplissage, le wrap ne change jamais.
     var contSpan = (app.containers_count != null)
         ? '<span style="color:#cbd5e1;">·</span><span title="Conteneurs de l\'application">' + escapeHtml(String(app.containers_count)) + ' cont.</span>'
-        : '';
+        : '<span style="visibility:hidden;">·99 cont.</span>';
 
-    // Chip atelier — conteneur vide au rendu ; loadWorkshopStates (workshop-ui.js)
-    // y insère le chip « Atelier » si un atelier est actif. Le panneau est FERMÉ.
+    // Chip atelier — slot RÉSERVÉ : placeholder caché (largeur « + Atelier »)
+    // présent dès le premier rendu ; loadWorkshopStates (workshop-ui.js) le
+    // remplace. Le panneau est FERMÉ.
     var wsChip = isSystemApp ? ''
-        : '<span id="ws-chip-' + slug + '" style="display:none;"></span>';
+        : '<span id="ws-chip-' + slug + '" style="visibility:hidden;">+ Atelier</span>';
     var wsPanel = isSystemApp ? ''
         : '<div id="workshop-panel-' + slug + '" class="ahc2-panel" style="display:none;"></div>';
 
@@ -297,7 +313,7 @@ function renderAppCard(app) {
         moreMenu =
             '<button type="button" class="ahc2-more" id="moreBtn_' + slug + '" data-action="toggleHealthMenu" data-args="$el"'
             + ' title="Actions" aria-label="Actions" aria-haspopup="true" aria-expanded="false"'
-            + ' style="margin-left:auto;width:22px;height:20px;border:1px solid #e2e8f0;background:#fff;border-radius:6px;'
+            + ' style="width:22px;height:20px;border:1px solid #e2e8f0;background:#fff;border-radius:6px;'
             + 'font-size:12px;line-height:1;color:#64748b;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0;flex:none;">⋯</button>'
             + '<div class="ahc2-menu" id="health-menu-' + slug + '" role="menu">'
             + '<button role="menuitem"' + dis(canStart) + ' data-action="runAppAction" data-arg1="' + slug + '" data-arg2="start"><span class="mi">▶</span> Démarrer</button>'
@@ -332,7 +348,7 @@ function renderAppCard(app) {
             '</div>' +
             wsPanel +
             branchPanel +
-            '<div style="margin-top:auto;padding:5px 9px 7px;display:flex;align-items:center;flex-wrap:wrap;font-size:9.5px;color:#94a3b8;gap:4px;">' +
+            '<div class="ahc2-foot" style="margin-top:auto;padding:5px 34px 7px 9px;display:flex;align-items:center;flex-wrap:wrap;font-size:9.5px;color:#94a3b8;gap:4px;">' +
                 systemChip +
                 versionSpan +
                 updateBadge +
@@ -600,7 +616,10 @@ var _RUN_ACTIONS = {
     },
     restart: {
         api: 'restartApp', label: 'Redémarrage', past: 'redémarrés',
-        confirm: null,
+        // Confirmation alignée sur start/stop : le misclick (menu déplacé par
+        // un re-rendu, doigt qui dérape) ne doit jamais redémarrer une app
+        // en production sans étape annulable.
+        confirm: function (slug) { return confirm('Redémarrer ' + slug + ' ? L\'application sera indisponible quelques instants.'); },
     },
 };
 
@@ -1050,9 +1069,11 @@ function updateAppsHealthCard(slug, healthItem) {
 
     // États à préserver (le re-render d'une carte les recrée fermés/vides) :
     // panneaux branch/atelier, chip MàJ, version masquée par le chip, data-ws.
+    // visibility fait partie de l'état : les slots réservés (placeholders
+    // cachés) sont différenciés des chips réellement remplis.
     function _capture(id) {
         var el = document.getElementById(id);
-        return (el && col.contains(el)) ? { display: el.style.display, html: el.innerHTML } : null;
+        return (el && col.contains(el)) ? { display: el.style.display, visibility: el.style.visibility, html: el.innerHTML } : null;
     }
     var branchState = _capture('branch-panel-' + slug);
     var wsState = _capture('workshop-panel-' + slug);
@@ -1070,6 +1091,7 @@ function updateAppsHealthCard(slug, healthItem) {
         if (!el || state === null) return;
         el.innerHTML = state.html;
         el.style.display = state.display;
+        el.style.visibility = state.visibility;
     }
     _restore('branch-panel-' + slug, branchState);
     _restore('workshop-panel-' + slug, wsState);
@@ -1137,15 +1159,15 @@ function _closeAllHealthMenus() {
     });
 }
 
-// Le menu 22px doit rester dans le viewport : mesure à l'ouverture, flip
-// simple vertical (menu ancré en bas de carte si déborderait en bas) et
-// horizontal (ancré au bord gauche de la carte si déborderait à gauche).
+// Le menu (min-width 158px) doit rester dans le viewport. Le bouton ⋯ vit
+// désormais au coin bas-droit de la carte : le menu s'ouvre vers le HAUT par
+// défaut (bottom:30px, CSS) ; flip vers le bas seulement s'il déborderait en
+// haut du viewport. Flip horizontal inchangé (bord gauche de la carte).
 function _flipMenuInViewport(menu) {
     menu.style.left = ''; menu.style.right = ''; menu.style.top = ''; menu.style.bottom = '';
     var r = menu.getBoundingClientRect();
     var vw = window.innerWidth || document.documentElement.clientWidth;
-    var vh = window.innerHeight || document.documentElement.clientHeight;
-    if (r.bottom > vh - 8) { menu.style.top = 'auto'; menu.style.bottom = '30px'; }
+    if (r.top < 8) { menu.style.top = '30px'; menu.style.bottom = 'auto'; }
     if (r.left < 8 && r.right <= vw - 8) { menu.style.left = '7px'; menu.style.right = 'auto'; }
 }
 

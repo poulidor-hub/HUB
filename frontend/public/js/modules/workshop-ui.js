@@ -40,6 +40,9 @@ async function loadWorkshopStates(slugs) {
 function _fillWorkshopChip(slug, state) {
     var chip = document.getElementById('ws-chip-' + slug);
     if (!chip) return;
+    // Slot réservé : la carte rend un placeholder caché (visibility:hidden,
+    // largeur « + Atelier ») pour la stabilité du layout — on le rend visible
+    // ici, on ne manipule plus display (cf. apps-health.js renderAppCard).
     if (state && state.exists) {
         var ref = state.ws_ref || '?';
         var commit = (state.ws_commit || '').slice(0, 8) || '?';
@@ -47,23 +50,25 @@ function _fillWorkshopChip(slug, state) {
             + ' title="Atelier actif (contrat .workshop.env) : ' + escapeHtml(ref) + ' @ ' + escapeHtml(commit) + ' — cliquer pour déplier"'
             + ' style="display:inline-block;font-size:8.5px;font-weight:700;background:#eef2ff;color:#4338ca;'
             + 'border:0;border-radius:5px;padding:2px 6px;cursor:pointer;">Atelier</button>';
-        chip.style.display = '';
+        chip.style.visibility = '';
     } else if (state && state.git_ok) {
         chip.innerHTML = '<button data-action="toggleAtelierPanel" data-arg1="' + escapeHtml(slug) + '"'
             + ' title="Aucun atelier — cliquer pour créer (clone de DB, la prod n\'est pas touchée)"'
             + ' style="display:inline-block;font-size:8.5px;font-weight:600;background:#f1f5f9;color:#64748b;'
             + 'border:0;border-radius:5px;padding:2px 6px;cursor:pointer;">+ Atelier</button>';
-        chip.style.display = '';
+        chip.style.visibility = '';
     } else if (state) {
         chip.innerHTML = '<button data-action="toggleAtelierPanel" data-arg1="' + escapeHtml(slug) + '"'
             + ' title="Pas de remote git configuré — cliquer pour configurer"'
             + ' style="display:inline-block;font-size:8.5px;font-weight:600;background:#f1f5f9;color:#64748b;'
             + 'border:0;border-radius:5px;padding:2px 6px;cursor:pointer;">Git</button>';
-        chip.style.display = '';
+        chip.style.visibility = '';
     } else {
-        // État inconnu (échec API) : pas de chip, pas d'espace mort.
-        chip.style.display = 'none';
-        chip.innerHTML = '';
+        // État inconnu (échec API) : le placeholder caché reste en place —
+        // conserver l'espace réservé évite un saut de layout à la vague
+        // suivante (stabilité du menu ⋯ et des cartes voisines).
+        chip.style.visibility = 'hidden';
+        chip.innerHTML = '+ Atelier';
     }
 }
 
