@@ -5,6 +5,23 @@
 
 ---
 
+## [3.101.0] - 23 novembre 2026
+
+### 📣 Pour les utilisateurs
+- **Corrigé** : sur la page Audit, le graphe « Activité du parc » n'affiche plus d'activité imaginaire entre l'heure actuelle et 23 h sur la ligne du jour — seules les heures réellement écoulées sont comptées.
+- **Amélioré** : dans l'onglet « Uptime utilisateurs », la longue liste déroulante devient une **recherche** : tapez un nom, cliquez sur l'utilisateur dans les résultats (liste triée alphabétiquement).
+- **Amélioré** : l'onglet « Sessions » est désormais en **deux cartes séparées** (« Sessions actives » / « Sessions terminées »), chacune paginée par 50 — plus d'ascenseur géant entre les deux.
+- **Amélioré** : la liste « En ce moment » de la vue d'ensemble est **paginée par 8** au lieu d'afficher d'un coup toutes les cartes.
+
+### ⚡ Audit : heatmap bornée à now + recherche uptime + paginations (sessions & en ce moment)
+
+- **Heatmap « Activité du parc »** (`hub/app/usage_stats.py`, `hub/app/routes/audit.py`) : `compute_activity_heatmap()` reçoit un `now` explicite — la fin virtuelle d'une session ouverte (`logout_at IS NULL`) passe de `datetime.max` clampé à la fin de fenêtre (= minuit du jour suivant, d'où les cellules futures remplies jusqu'à 23 h) à `now`, avec re-clamp défensif de toute fin > now dans la fonction (défense en profondeur). La route `/api/audit/usage/heatmap` appelle désormais `cleanup_stale_sessions()` en tête (comme `/sessions/active`), sélectionne `last_activity_at` et borne la fin effective des sessions ouvertes à `min(now, last_activity_at + session_timeout)` — cohérent avec `get_user_usage_day` et le cleanup des sessions orphelines. Forme de réponse inchangée (aucun impact front). Tests : 3 nouveaux tests unitaires (référence naïve réalignée sur la sémantique `min(fin, now)`) + 1 test API déterministe (`utcnow` figé à 12h00 — reproduction exacte du bug : cellules 12h→23h à 1 avant fix, à 0 après). Suite complète : 1894 passed, 1 skipped.
+- **Recherche utilisateur (onglet Uptime)** (`frontend/public/index.html`, `js/modules/audit-page.js`, `css/style.css`) : le `<select>` non trié (ordre brut de la base) devient un champ de recherche avec dropdown filtré — liste triée alphabétiquement côté client (`localeCompare`, insensible à la casse), filtrage à la frappe par sous-chaîne, ~10 résultats visibles max (scroll interne, zéro animation), sélection au clic (`selectUptimeUser`), fermeture Échap/clic extérieur, affichage de la sélection courante, auto-sélection du premier utilisateur trié au premier chargement (comportement historique du select conservé). Handlers `filterUptimeUsers` / `toggleUptimeUserList` / `selectUptimeUser` remplacent `changeUptimeUser`. `changeUptimeUser` supprimé.
+- **Historique des sessions en 2 cartes paginées** (`index.html`, `audit-page.js`) : la carte unique « Historique des sessions » (un seul conteneur scrollable 500 px mélangeant actives et terminées) devient deux cartes indépendantes — « Sessions actives » (compteur dédié, bouton Forcer déco. conservé) et « Sessions terminées » (compteur dédié) — chacune avec sa propre pagination client 50/page via `renderPagination` (handlers `changeActiveSessionsPage` / `changeClosedSessionsPage`, re-rendu depuis le cache sans refetch). Tri par colonne conservé (les deux pages reviennent à 1 au changement de tri, comme avant). Pages courantes clampées au refresh SSE (page conservée, repli propre sur la dernière page valide si vidée). Suppression du code mort `renderPageActiveSessions` (43 lignes, ciblait des ids inexistants). KPIs sessions rendus même à 0 session (avant : ligne vidée).
+- **« En ce moment » paginé** (`audit-page.js`, `index.html`) : la liste des sessions actives de la vue d'ensemble est tranchée par pages de 8 (`AUDIT_LIVE_PER_PAGE`), pagination compacte `pagination-sm` sous la liste (masquée si ≤ 1 page), compteur total `#auditLiveCount` et lien « Gérer toutes les sessions » inchangés. Forcer déconnexion fonctionne depuis n'importe quelle page ; clamp au refresh SSE.
+
+---
+
 ## [3.100.1] - 22 novembre 2026
 
 ### ⚡ Vue santé : filtre réappliqué au re-rendu du sondage + fixes responsive mobile
