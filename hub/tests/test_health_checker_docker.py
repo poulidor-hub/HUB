@@ -309,3 +309,43 @@ def test_get_container_state_docker_unavailable_none(monkeypatch):
     """Docker indisponible → None (incertitude, contrat inchangé)."""
     _patch_containers(monkeypatch, [], is_available=False)
     assert get_container_state("mon-app") is None
+
+
+# ─── get_container_states_batch (fix gradient de latence) ─────────────
+# Le Docker-first v1 appelait get_container_state (SYNCHRONE, docker-py) au
+# début de CHAQUE probe : N appels séquentiels bloquaient l'event loop au
+# démarrage des sondes, et les réponses HTTP des premières apps étaient
+# traitées en retard -> latences mesurées gonflées en cascade (gradient
+# 1277 -> 36 ms dans l'ordre alphabétique). Le batch fait UNE liste Docker
+# pour tous les slugs, appelée hors event loop par la route.
+
+def test_container_states_batch_mixed(monkeypatch):
+    """Batch : running prend le dessus, tous-off -> état du 1er non-running,
+    slug sans conteneur -> 'absent'. Une seule liste Docker."""
+    calls = {"n": 0}
+
+    def _fake_list():
+        calls["n"] += 1
+        return [
+            _FakeContainer("running", name="ws-api",
+                           attrs={"Config": {"Env": ["APP_SLUG=app-running"]}}),
+            _FakeContainer("exited", name="off-api",
+                           attrs={"Config": {"Env": ["APP_SLUG=app-off"]}}),
+        ]
+
+    monkeypatch.setattr(hc, "_list_all_containers", _fake_list)
+    states = hc.get_container_states_batch(["app-running", "app-off", "app-absent"])
+
+    assert states == {
+        "app-running": "running",
+        "app-off": "exited",
+        "app-absent": "absent",
+    }
+    assert calls["n"] == 1  # UNE liste Docker pour tous les slugs
+
+
+def test_container_states_batch_docker_unavailable(monkeypatch):
+    """Docker indisponible -> None pour tous (incertitude, jamais stopped)."""
+    monkeypatch.setattr(hc, "_list_all_containers", lambda: None)
+    states = hc.get_container_states_batch(["a", "b"])
+    assert states == {"a": None, "b": None}

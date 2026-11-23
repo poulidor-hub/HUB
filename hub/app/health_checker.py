@@ -256,6 +256,45 @@ def get_container_state(slug: str) -> Optional[str]:
         return None
 
 
+def get_container_states_batch(slugs) -> Dict[str, Optional[str]]:
+    """
+    États docker-py du GROUPE de conteneurs de plusieurs apps — UNE SEULE
+    liste Docker pour tous les slugs. Même contrat par slug que
+    get_container_state ('running' | état | 'absent' | None si Docker
+    indisponible), dont c'est la variante batchée.
+
+    Motivation : N appels get_container_state exécutés SYNCHRONEMENT dans
+    l'event loop au démarrage des sondes parallèles bloquent le traitement
+    des réponses HTTP et gonflent artificiellement les latences mesurées
+    (gradient décroissant selon l'ordre du gather). La route /apps/health
+    appelle cette fonction UNE fois, hors event loop (to_thread).
+    """
+    slugs = list(slugs)
+    states: Dict[str, Optional[str]] = {slug: None for slug in slugs}
+    try:
+        containers = _list_all_containers()
+        if containers is None:
+            return states  # Docker indisponible : incertitude pour tous
+
+        groups = _group_containers_for_slugs(containers, slugs)
+        for slug, group in groups.items():
+            if not group:
+                # Docker joignable mais aucun conteneur pour ce slug
+                states[slug] = 'absent'
+                continue
+            for container in group:
+                if container.status == 'running':
+                    states[slug] = 'running'
+                    break
+            if states[slug] is None:
+                # Tous off : état du premier non-running (ordre de tri par nom)
+                states[slug] = group[0].status
+        return states
+    except Exception as e:
+        logger.warning(f"Docker: états des conteneurs indéterminables: {e}")
+        return {slug: None for slug in slugs}
+
+
 def get_app_health_status(slug: str) -> Optional[str]:
     """
     Retourne le statut de santé d'une application depuis le cache.
