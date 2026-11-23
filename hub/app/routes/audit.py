@@ -2171,13 +2171,18 @@ async def get_usage_heatmap(
     if not current_user.is_admin:
         raise HTTPException(status_code=403, detail="Accès admin requis")
 
+    # Nettoyer les sessions expirées d'abord (comme /sessions/active) :
+    # une session orpheline (logout_at NULL, last_activity dépassé) gonflerait
+    # sinon toutes les cellules restantes du jour courant.
+    await cleanup_stale_sessions(db)
+
     end = utcnow()
     # Fenêtre alignée minuit UTC : `days` buckets quotidiens, le dernier = aujourd'hui
     # (requis par compute_daily_uniques / compute_activity_heatmap — fenêtres par offset depuis start)
     start = end.replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=days - 1)
 
     result = await db.execute(
-        select(UserSession.login_at, UserSession.logout_at).where(
+        select(UserSession.login_at, UserSession.logout_at, UserSession.last_activity_at).where(
             and_(
                 UserSession.login_at < end,
                 or_(UserSession.logout_at == None,
@@ -2185,11 +2190,22 @@ async def get_usage_heatmap(
             )
         )
     )
-    sessions = [(row[0], row[1]) for row in result.all()]
+    timeout = timedelta(minutes=settings.session_timeout_minutes)
+    sessions = []
+    for login_at, logout_at, last_activity_at in result.all():
+        if logout_at is not None:
+            sessions.append((login_at, logout_at))
+            continue
+        # Session ouverte : fin effective cohérente avec cleanup_stale_sessions
+        # (last_activity + timeout), plafonnée à maintenant — sinon la session
+        # marquerait toutes les cellules restantes du jour courant (cf.
+        # get_user_usage_day). compute_activity_heatmap re-clampe à `end`
+        # (défense en profondeur).
+        sessions.append((login_at, min(end, (last_activity_at or login_at) + timeout)))
 
     def _aggregate() -> list[dict]:
         """Agrégation CPU-bound (fonction pure) — exécutée hors event loop."""
-        return compute_activity_heatmap(sessions, start, days)
+        return compute_activity_heatmap(sessions, start, days, end)
 
     return {
         "period_days": days,

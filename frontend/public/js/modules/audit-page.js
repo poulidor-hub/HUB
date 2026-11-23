@@ -18,6 +18,7 @@ let allUsersPage = [];
 let uptimeSelectedUserId = null;
 let uptimeSelectedDate = new Date().toISOString().split('T')[0]; // UTC
 let uptimeUsersLoaded = false;
+let uptimeUsers = []; // liste triée alphabétiquement, chargée une fois (api.getUsers)
 
 function uptimeFmtDuration(seconds) {
     const h = Math.floor(seconds / 3600), m = Math.round((seconds % 3600) / 60);
@@ -185,14 +186,33 @@ function auditAlertDetails(deeplink) {
     }
 }
 
+// Pagination "En ce moment" : 8 sessions/page ; le refresh SSE garde la
+// page courante, clampée au nombre de pages
+let auditLivePage = 1;
+let auditLiveSessionsCache = [];
+const AUDIT_LIVE_PER_PAGE = 8;
+
 function renderAuditLiveSessions(data) {
     document.getElementById('auditLiveCount').textContent = data.active_count || 0;
+    auditLiveSessionsCache = data.sessions || [];
+    renderAuditLivePage();
+}
+
+function renderAuditLivePage() {
     const c = document.getElementById('auditLiveSessions');
-    if (!data.sessions || !data.sessions.length) {
+    const nav = document.getElementById('auditLiveSessionsPagination');
+    if (!c || !nav) return;
+    const sessions = auditLiveSessionsCache;
+    if (!sessions.length) {
+        auditLivePage = 1;
         c.innerHTML = '<div class="text-center text-muted py-4"><i class="bi bi-person-x me-1"></i>Aucun utilisateur connecté</div>';
+        nav.innerHTML = '';
+        nav.classList.add('d-none');
         return;
     }
-    c.innerHTML = data.sessions.map(s => `
+    const totalPages = Math.ceil(sessions.length / AUDIT_LIVE_PER_PAGE);
+    auditLivePage = Math.min(Math.max(auditLivePage, 1), totalPages);
+    c.innerHTML = sessions.slice((auditLivePage - 1) * AUDIT_LIVE_PER_PAGE, auditLivePage * AUDIT_LIVE_PER_PAGE).map(s => `
         <div class="p-3 border-bottom">
             <div class="d-flex justify-content-between">
                 <span class="fw-semibold small">${escapeHtml(s.username || 'Unknown')}</span>
@@ -206,6 +226,13 @@ function renderAuditLiveSessions(data) {
                 <a href="#" class="small text-danger fw-semibold text-decoration-none" data-action="auditForceLogout" data-arg1="${s.id}">Forcer déco.</a>
             </div>
         </div>`).join('');
+    nav.innerHTML = renderPagination(auditLivePage, totalPages, 'changeAuditLivePage');
+    nav.classList.toggle('d-none', totalPages <= 1);
+}
+
+function changeAuditLivePage(page) {
+    auditLivePage = parseInt(page) || 1;
+    renderAuditLivePage();
 }
 
 async function auditForceLogout(sessionId) {
@@ -247,49 +274,6 @@ function auditChip(kind, value) {
         const el = document.getElementById('pageLogsFilterApp'); if (el) el.value = value;
         openAuditTab('logs'); pageAuditLogsPage = 1; loadAuditPageLogsTab();
     }
-}
-
-function renderPageActiveSessions(data) {
-    const container = document.getElementById('pageActiveSessionsTable');
-    const countBadge = document.getElementById('pageActiveSessionCount');
-    
-    countBadge.textContent = data.active_count || 0;
-    
-    if (!data.sessions || data.sessions.length === 0) {
-        container.innerHTML = `
-            <div class="text-center py-4 text-muted">
-                <i class="bi bi-person-x display-6"></i>
-                <p class="mt-2">Aucun utilisateur connecté</p>
-            </div>
-        `;
-        return;
-    }
-    
-    container.innerHTML = `
-        <table class="table audit-tbl table-hover mb-0">
-            <thead>
-                <tr>
-                    <th>Utilisateur</th>
-                    <th>Connecté depuis</th>
-                    <th>Durée</th>
-                    <th>IP</th>
-                </tr>
-            </thead>
-            <tbody>
-                ${data.sessions.map(s => `
-                    <tr>
-                        <td>
-                            <span class="badge bg-secondary me-2"><i class="bi bi-circle-fill text-success" style="font-size: 0.5rem;"></i></span>
-                            <strong>${escapeHtml(s.username || 'Unknown')}</strong>
-                        </td>
-                        <td><small>${formatDateTime(s.login_at)}</small></td>
-                        <td><span class="badge bg-light text-dark">${s.duration_minutes} min</span></td>
-                        <td><code class="small">${s.ip_address || '-'}</code></td>
-                    </tr>
-                `).join('')}
-            </tbody>
-        </table>
-    `;
 }
 
 function renderPageTopUsers(topUsers) {
@@ -865,13 +849,22 @@ async function changePageLogsPage(page) {
 let sessionSortKey = '';
 let sessionSortDir = 'asc';
 
+// Pagination séparée par liste (50/page) ; le refresh SSE garde la page
+// courante de chaque carte, clampée au nombre de pages
+let pageActiveSessionsPage = 1;
+let pageClosedSessionsPage = 1;
+const SESSIONS_PER_PAGE = 50;
+
+// Dernier GET /audit/sessions/history : changer de page ne refait pas l'appel API
+let pageSessionsData = null;
+
 async function loadAuditPageSessions() {
     const days = parseInt(document.getElementById('auditPeriodPage')?.value || 30);
-    
+
     try {
         const history = await api.getSessionHistory(days);
+        pageSessionsData = history;
         renderPageSessionHistory(history);
-        document.getElementById('pageSessionsCount').textContent = `${history.total_sessions || 0} sessions`;
     } catch (error) {
         console.error('Erreur chargement sessions:', error);
         showToast('Erreur', 'Impossible de charger les sessions', 'danger');
@@ -890,6 +883,9 @@ function setSessionSort(key) {
         sessionSortKey = key;
         sessionSortDir = 'asc';
     }
+    // Le tri réorganise les deux listes : retour à la 1re page de chaque carte
+    pageActiveSessionsPage = 1;
+    pageClosedSessionsPage = 1;
     loadAuditPageSessions();
 }
 
@@ -918,143 +914,173 @@ function makeSortTh(key, label) {
 }
 
 function renderPageSessionHistory(data) {
-    const container = document.getElementById('pageSessionHistoryTable');
-    
     const activeSessions = data.sessions?.filter(s => !s.logout_at) || [];
     const closedSessions = data.sessions?.filter(s => s.logout_at) || [];
-    
-    if (!data.sessions || data.sessions.length === 0) {
-        container.innerHTML = `
-            <div class="text-center py-5 text-muted">
-                <i class="bi bi-clock-history display-4 mb-3"></i>
-                <p class="mb-0">Aucune session dans cette période</p>
-                <small class="text-muted">Les sessions apparaîtront ici une fois que des utilisateurs se connecteront</small>
-            </div>`;
-        document.getElementById('auditSessionKpiRow').innerHTML = '';
-        return;
-    }
-    
-    
+
+    // KPIs : toujours rendus, même à zéro session
     const avgSec = closedSessions.length > 0
         ? closedSessions.reduce((s, x) => s + (x.duration_seconds || 0), 0) / closedSessions.length
         : 0;
     const avgMin = Math.round(avgSec / 60);
     document.getElementById('auditSessionKpiRow').innerHTML =
-        auditKpiCard('#e7f1ff', '#0d6efd', 'bi-people-fill', data.total_sessions, 'Total sessions', `<span class="audit-trend flat">${data.period_days}j</span>`) +
+        auditKpiCard('#e7f1ff', '#0d6efd', 'bi-people-fill', data.total_sessions, 'Total sessions', `<span class="audit-trend flat">${data.period_days || 30}j</span>`) +
         auditKpiCard('#e6f4ea', '#28a745', 'bi-broadcast', activeSessions.length, 'Actives', '<span class="audit-trend flat"><span class="audit-pulse"></span></span>') +
         auditKpiCard('#f1f3f5', '#6c757d', 'bi-stop-circle', closedSessions.length, 'Terminées', '') +
         auditKpiCard('#fff1e6', '#fd7e14', 'bi-hourglass-split', `${avgMin} min`, 'Durée moy.', '<span class="audit-trend flat">ferm.</span>');
-    
-    const sortedActive = sortSessions(activeSessions, sessionSortKey, sessionSortDir);
-    const sortedClosed = sortSessions(closedSessions, sessionSortKey, sessionSortDir);
-    
+
+    renderActiveSessionsCard(sortSessions(activeSessions, sessionSortKey, sessionSortDir));
+    renderClosedSessionsCard(sortSessions(closedSessions, sessionSortKey, sessionSortDir));
+}
+
+function changeActiveSessionsPage(page) {
+    pageActiveSessionsPage = parseInt(page) || 1;
+    if (pageSessionsData) renderPageSessionHistory(pageSessionsData);
+}
+
+function changeClosedSessionsPage(page) {
+    pageClosedSessionsPage = parseInt(page) || 1;
+    if (pageSessionsData) renderPageSessionHistory(pageSessionsData);
+}
+
+function renderActiveSessionsCard(sessions) {
+    const container = document.getElementById('pageActiveSessionsTable');
+    const nav = document.getElementById('pageActiveSessionsPagination');
+    const countEl = document.getElementById('pageActiveSessionsCount');
+    if (!container || !nav || !countEl) return;
+
+    const totalPages = Math.ceil(sessions.length / SESSIONS_PER_PAGE);
+    // Clamp : refresh SSE (session révoquée / expirée) sans perdre la page courante
+    pageActiveSessionsPage = Math.min(Math.max(pageActiveSessionsPage, 1), Math.max(totalPages, 1));
+    const pageRows = sessions.slice((pageActiveSessionsPage - 1) * SESSIONS_PER_PAGE, pageActiveSessionsPage * SESSIONS_PER_PAGE);
+    countEl.textContent = `${sessions.length} active${sessions.length > 1 ? 's' : ''}`;
+
+    if (!pageRows.length) {
+        container.innerHTML = `
+            <div class="text-center py-4 text-muted">
+                <i class="bi bi-broadcast me-1"></i>Aucune session active
+            </div>`;
+        nav.innerHTML = '';
+        nav.classList.add('d-none');
+        return;
+    }
+
     container.innerHTML = `
-        <!-- Sessions actives -->
-        ${sortedActive.length > 0 ? `
-        <div class="mb-4 px-3 pt-3">
-            <div class="d-flex align-items-center mb-2">
-                <span class="badge bg-success me-2">${sortedActive.length}</span>
-                <h6 class="mb-0 text-success"><i class="bi bi-broadcast me-1"></i>Sessions actives</h6>
-                ${sessionSortKey ? `<small class="text-muted ms-2"><i class="bi bi-arrow-down-up me-1"></i>Tri actif — re-clic pour inverser</small>` : ''}
-            </div>
-            <table class="table audit-tbl table-hover align-middle mb-0 border rounded">
-                <thead class="table-light">
-                    <tr>
-                        ${makeSortTh('user', 'Utilisateur')}
-                        ${makeSortTh('app', 'Application')}
-                        ${makeSortTh('login', 'Connecté depuis')}
-                        ${makeSortTh('duration', 'Durée')}
-                        ${makeSortTh('idle', 'Activité')}
-                        ${makeSortTh('ip', 'IP')}
-                        <th class="text-end">Action</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    ${sortedActive.map(s => `
-                        <tr class="table-success table-active">
-                            <td>
-                                <div class="d-flex align-items-center">
-                                    <span class="position-relative me-2">
-                                        <i class="bi bi-person-circle fs-5 text-success"></i>
-                                        <span class="position-absolute bottom-0 end-0 translate-middle-x">
-                                            <i class="bi bi-circle-fill text-success" style="font-size: 0.5rem;"></i>
-                                        </span>
+        <table class="table audit-tbl table-hover align-middle mb-0">
+            <thead class="table-light">
+                <tr>
+                    ${makeSortTh('user', 'Utilisateur')}
+                    ${makeSortTh('app', 'Application')}
+                    ${makeSortTh('login', 'Connecté depuis')}
+                    ${makeSortTh('duration', 'Durée')}
+                    ${makeSortTh('idle', 'Activité')}
+                    ${makeSortTh('ip', 'IP')}
+                    <th class="text-end">Action</th>
+                </tr>
+            </thead>
+            <tbody>
+                ${pageRows.map(s => `
+                    <tr class="table-success table-active">
+                        <td>
+                            <div class="d-flex align-items-center">
+                                <span class="position-relative me-2">
+                                    <i class="bi bi-person-circle fs-5 text-success"></i>
+                                    <span class="position-absolute bottom-0 end-0 translate-middle-x">
+                                        <i class="bi bi-circle-fill text-success" style="font-size: 0.5rem;"></i>
                                     </span>
-                                    <strong>${escapeHtml(s.username || 'Unknown')}</strong>
-                                </div>
-                            </td>
-                            <td>
-                                ${s.current_app_name 
-                                    ? `<span class="badge bg-primary bg-gradient"><i class="bi bi-app me-1"></i>${escapeHtml(s.current_app_name)}</span>` 
-                                    : '<span class="badge bg-secondary bg-gradient"><i class="bi bi-house me-1"></i>Hub</span>'}
-                            </td>
-                            <td><small class="text-muted">${formatDateTime(s.login_at)}</small></td>
-                            <td><span class="badge bg-light text-dark border"><i class="bi bi-clock me-1"></i>${s.duration_display || 'en cours'}</span></td>
-                            <td>
-                                ${s.idle_minutes !== undefined && s.idle_minutes > 5 
-                                    ? `<span class="badge bg-warning text-dark" title="Inactif depuis ${s.idle_minutes} min"><i class="bi bi-hourglass-split me-1"></i>${s.idle_minutes}m</span>`
-                                    : '<span class="badge bg-success"><i class="bi bi-activity"></i></span>'}
-                            </td>
-                            <td><code class="small bg-light px-2 py-1 rounded">${s.ip_address || '-'}</code></td>
-                            <td class="text-end">
-                                <a href="#" class="small text-danger fw-semibold text-decoration-none" data-action="auditForceLogout" data-arg1="${s.id}"><i class="bi bi-box-arrow-right me-1"></i>Forcer déco.</a>
-                            </td>
-                        </tr>
-                    `).join('')}
-                </tbody>
-            </table>
-        </div>
-        ` : ''}
-        
-        <!-- Sessions terminées -->
-        ${sortedClosed.length > 0 ? `
-        <div class="px-3 pb-3">
-            <div class="d-flex align-items-center mb-2">
-                <span class="badge bg-secondary me-2">${sortedClosed.length}</span>
-                <h6 class="mb-0 text-muted"><i class="bi bi-clock-history me-1"></i>Sessions terminées</h6>
-            </div>
-            <table class="table audit-tbl table-hover align-middle mb-0 border rounded">
-                <thead class="table-light">
-                    <tr>
-                        ${makeSortTh('user', 'Utilisateur')}
-                        ${makeSortTh('app', 'Application')}
-                        ${makeSortTh('login', 'Connexion')}
-                        ${makeSortTh('logout', 'Déconnexion')}
-                        ${makeSortTh('duration', 'Durée')}
-                        ${makeSortTh('reason', 'Raison')}
-                        ${makeSortTh('ip', 'IP')}
-                    </tr>
-                </thead>
-                <tbody>
-                    ${sortedClosed.map(s => `
-                        <tr>
-                            <td>
-                                <div class="d-flex align-items-center">
-                                    <i class="bi bi-person-circle fs-5 text-muted me-2"></i>
-                                    <span class="text-muted">${escapeHtml(s.username || 'Unknown')}</span>
-                                </div>
-                            </td>
-                            <td>
-                                ${s.current_app_name 
-                                    ? `<span class="badge bg-primary bg-opacity-50"><i class="bi bi-app me-1"></i>${escapeHtml(s.current_app_name)}</span>` 
-                                    : '<span class="text-muted small"><i class="bi bi-house me-1"></i>Hub</span>'}
-                            </td>
-                            <td><small class="text-muted">${formatDateTime(s.login_at)}</small></td>
-                            <td><small class="text-muted">${formatDateTime(s.logout_at)}</small></td>
-                            <td>
-                                <span class="badge bg-light text-dark border">
-                                    ${s.duration_display || '-'}
                                 </span>
-                            </td>
-                            <td>${getLogoutReasonBadge(s.logout_reason)}</td>
-                            <td><code class="small text-muted">${s.ip_address || '-'}</code></td>
-                        </tr>
-                    `).join('')}
-                </tbody>
-            </table>
-        </div>
-        ` : ''}
+                                <strong>${escapeHtml(s.username || 'Unknown')}</strong>
+                            </div>
+                        </td>
+                        <td>
+                            ${s.current_app_name
+                                ? `<span class="badge bg-primary bg-gradient"><i class="bi bi-app me-1"></i>${escapeHtml(s.current_app_name)}</span>`
+                                : '<span class="badge bg-secondary bg-gradient"><i class="bi bi-house me-1"></i>Hub</span>'}
+                        </td>
+                        <td><small class="text-muted">${formatDateTime(s.login_at)}</small></td>
+                        <td><span class="badge bg-light text-dark border"><i class="bi bi-clock me-1"></i>${s.duration_display || 'en cours'}</span></td>
+                        <td>
+                            ${s.idle_minutes !== undefined && s.idle_minutes > 5
+                                ? `<span class="badge bg-warning text-dark" title="Inactif depuis ${s.idle_minutes} min"><i class="bi bi-hourglass-split me-1"></i>${s.idle_minutes}m</span>`
+                                : '<span class="badge bg-success"><i class="bi bi-activity"></i></span>'}
+                        </td>
+                        <td><code class="small bg-light px-2 py-1 rounded">${s.ip_address || '-'}</code></td>
+                        <td class="text-end">
+                            <a href="#" class="small text-danger fw-semibold text-decoration-none" data-action="auditForceLogout" data-arg1="${s.id}"><i class="bi bi-box-arrow-right me-1"></i>Forcer déco.</a>
+                        </td>
+                    </tr>
+                `).join('')}
+            </tbody>
+        </table>
     `;
+    nav.innerHTML = renderPagination(pageActiveSessionsPage, totalPages, 'changeActiveSessionsPage');
+    nav.classList.toggle('d-none', totalPages <= 1);
+}
+
+function renderClosedSessionsCard(sessions) {
+    const container = document.getElementById('pageClosedSessionsTable');
+    const nav = document.getElementById('pageClosedSessionsPagination');
+    const countEl = document.getElementById('pageClosedSessionsCount');
+    if (!container || !nav || !countEl) return;
+
+    const totalPages = Math.ceil(sessions.length / SESSIONS_PER_PAGE);
+    // Clamp : refresh SSE sans perdre la page courante
+    pageClosedSessionsPage = Math.min(Math.max(pageClosedSessionsPage, 1), Math.max(totalPages, 1));
+    const pageRows = sessions.slice((pageClosedSessionsPage - 1) * SESSIONS_PER_PAGE, pageClosedSessionsPage * SESSIONS_PER_PAGE);
+    countEl.textContent = `${sessions.length} terminée${sessions.length > 1 ? 's' : ''}`;
+
+    if (!pageRows.length) {
+        container.innerHTML = `
+            <div class="text-center py-4 text-muted">
+                <i class="bi bi-clock-history me-1"></i>Aucune session terminée dans cette période
+            </div>`;
+        nav.innerHTML = '';
+        nav.classList.add('d-none');
+        return;
+    }
+
+    container.innerHTML = `
+        <table class="table audit-tbl table-hover align-middle mb-0">
+            <thead class="table-light">
+                <tr>
+                    ${makeSortTh('user', 'Utilisateur')}
+                    ${makeSortTh('app', 'Application')}
+                    ${makeSortTh('login', 'Connexion')}
+                    ${makeSortTh('logout', 'Déconnexion')}
+                    ${makeSortTh('duration', 'Durée')}
+                    ${makeSortTh('reason', 'Raison')}
+                    ${makeSortTh('ip', 'IP')}
+                </tr>
+            </thead>
+            <tbody>
+                ${pageRows.map(s => `
+                    <tr>
+                        <td>
+                            <div class="d-flex align-items-center">
+                                <i class="bi bi-person-circle fs-5 text-muted me-2"></i>
+                                <span class="text-muted">${escapeHtml(s.username || 'Unknown')}</span>
+                            </div>
+                        </td>
+                        <td>
+                            ${s.current_app_name
+                                ? `<span class="badge bg-primary bg-opacity-50"><i class="bi bi-app me-1"></i>${escapeHtml(s.current_app_name)}</span>`
+                                : '<span class="text-muted small"><i class="bi bi-house me-1"></i>Hub</span>'}
+                        </td>
+                        <td><small class="text-muted">${formatDateTime(s.login_at)}</small></td>
+                        <td><small class="text-muted">${formatDateTime(s.logout_at)}</small></td>
+                        <td>
+                            <span class="badge bg-light text-dark border">
+                                ${s.duration_display || '-'}
+                            </span>
+                        </td>
+                        <td>${getLogoutReasonBadge(s.logout_reason)}</td>
+                        <td><code class="small text-muted">${s.ip_address || '-'}</code></td>
+                    </tr>
+                `).join('')}
+            </tbody>
+        </table>
+    `;
+    nav.innerHTML = renderPagination(pageClosedSessionsPage, totalPages, 'changeClosedSessionsPage');
+    nav.classList.toggle('d-none', totalPages <= 1);
 }
 
 // ===== Onglet Uptime utilisateurs =====
@@ -1062,32 +1088,118 @@ function renderPageSessionHistory(data) {
 let uptimePollTimer = null;
 
 async function loadUptimeUserOptions() {
-    const select = document.getElementById('uptimeUserSelect');
-    if (!select) return;
     if (!uptimeUsersLoaded) {
         try {
             const res = await api.getUsers({ page: 0 });  // page=0 = tous
             const users = res.users || res || [];
-            select.innerHTML = users.map(u =>
-                `<option value="${u.id}">${escapeHtml(u.username)}</option>`).join('');
+            // Tri alphabétique côté client (insensible à la casse) — l'API ne trie pas
+            uptimeUsers = [...users].sort((a, b) =>
+                (a.username || '').localeCompare(b.username || '', undefined, { sensitivity: 'base' }));
             uptimeUsersLoaded = true;
+            // Premier chargement : présélection du premier utilisateur trié
+            // (comportement historique du <select> présélectionné sur la 1re option)
+            if (!uptimeSelectedUserId && uptimeUsers.length) {
+                uptimeSelectedUserId = uptimeUsers[0].id;
+            }
         } catch (e) {
             console.error('Erreur chargement utilisateurs:', e);
             showToast('Erreur', 'Impossible de charger la liste des utilisateurs', 'danger');
             return;
         }
     }
-    if (uptimeSelectedUserId) select.value = String(uptimeSelectedUserId);
-    else uptimeSelectedUserId = parseInt(select.value);
+    renderUptimeUserSelection();
 }
 
-// Convention handlers change (cf. changeUsersPerPage) : sans argument, lit le DOM
-function changeUptimeUser() {
-    const select = document.getElementById('uptimeUserSelect');
-    if (!select || !select.value) return;
-    uptimeSelectedUserId = parseInt(select.value);
+function renderUptimeUserSelection() {
+    const nameEl = document.getElementById('uptimeUserSelectedName');
+    if (!nameEl) return;
+    const user = uptimeUsers.find(u => String(u.id) === String(uptimeSelectedUserId));
+    nameEl.textContent = user ? (user.username || `#${user.id}`) : '—';
+}
+
+// Dropdown de résultats filtrés (sous-chaîne insensible à la casse sur le username)
+function renderUptimeUserDropdown() {
+    const dd = document.getElementById('uptimeUserDropdown');
+    const input = document.getElementById('uptimeUserSearchInput');
+    if (!dd || !input) return;
+    const q = (input.value || '').trim().toLowerCase();
+    const matches = uptimeUsers.filter(u => (u.username || '').toLowerCase().includes(q));
+    if (!matches.length) {
+        dd.innerHTML = '<div class="uptime-user-empty">Aucun utilisateur trouvé</div>';
+    } else {
+        dd.innerHTML = matches.map(u => {
+            const selected = String(u.id) === String(uptimeSelectedUserId);
+            return `
+            <div role="option" aria-selected="${selected}"
+                 class="uptime-user-item${selected ? ' selected' : ''}"
+                 data-action="selectUptimeUser" data-arg1="${u.id}">
+                ${escapeHtml(u.username || `#${u.id}`)}
+            </div>`;
+        }).join('');
+    }
+}
+
+function openUptimeUserDropdown() {
+    const dd = document.getElementById('uptimeUserDropdown');
+    const input = document.getElementById('uptimeUserSearchInput');
+    if (!dd || !input) return;
+    renderUptimeUserDropdown();
+    dd.classList.remove('d-none');
+    input.setAttribute('aria-expanded', 'true');
+    document.getElementById('uptimeUserToggleBtn')?.setAttribute('aria-expanded', 'true');
+}
+
+function closeUptimeUserDropdown() {
+    const dd = document.getElementById('uptimeUserDropdown');
+    const input = document.getElementById('uptimeUserSearchInput');
+    if (dd) dd.classList.add('d-none');
+    if (input) input.setAttribute('aria-expanded', 'false');
+    document.getElementById('uptimeUserToggleBtn')?.setAttribute('aria-expanded', 'false');
+}
+
+// À la frappe : filtrage + réouverture du dropdown
+function filterUptimeUsers(el) {
+    if (!el) return;
+    openUptimeUserDropdown();
+}
+
+// Bouton chevron : rouvre la recherche sur la liste complète (filtre remis à zéro)
+function toggleUptimeUserList() {
+    const dd = document.getElementById('uptimeUserDropdown');
+    if (!dd) return;
+    if (dd.classList.contains('d-none')) {
+        const input = document.getElementById('uptimeUserSearchInput');
+        if (input) input.value = '';
+        openUptimeUserDropdown();
+    } else {
+        closeUptimeUserDropdown();
+    }
+}
+
+// Sélection d'un utilisateur dans le dropdown → uptime du jour rechargé
+function selectUptimeUser(userId) {
+    uptimeSelectedUserId = parseInt(userId);
+    closeUptimeUserDropdown();
+    const input = document.getElementById('uptimeUserSearchInput');
+    if (input) input.value = '';
+    renderUptimeUserSelection();
     loadAuditPageUptime();
 }
+
+// Échap ferme le dropdown ; clic sur l'input ouvre, clic extérieur ferme.
+// (l'input porte déjà data-action="filterUptimeUsers" pour l'event input : la
+// convention onKeydown du délégué ne peut pas cohabiter sur le même attribut)
+document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    const dd = document.getElementById('uptimeUserDropdown');
+    if (dd && !dd.classList.contains('d-none')) closeUptimeUserDropdown();
+});
+document.addEventListener('click', (e) => {
+    const search = document.querySelector('.uptime-user-search');
+    if (!search) return;
+    if (!search.contains(e.target)) { closeUptimeUserDropdown(); return; }
+    if (e.target === document.getElementById('uptimeUserSearchInput')) openUptimeUserDropdown();
+});
 
 function shiftUptimeDay(delta) {
     const d = new Date(uptimeSelectedDate + 'T00:00:00Z');

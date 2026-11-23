@@ -134,7 +134,8 @@ def test_perf_90j_window():
 def test_activity_heatmap():
     # Une session 10:00→12:30 le 15/08 : couvre les heures 10, 11, 12
     sessions = [(T0, T0 + timedelta(hours=2, minutes=30))]
-    out = compute_activity_heatmap(sessions, datetime(2026, 8, 15), 1)
+    out = compute_activity_heatmap(sessions, datetime(2026, 8, 15), 1,
+                                   datetime(2026, 8, 15, 23))
     assert len(out) == 1
     hours = out[0]["hours"]
     assert len(hours) == 24
@@ -142,16 +143,60 @@ def test_activity_heatmap():
     assert hours[9] == 0 and hours[13] == 0
 
 
-def _naive_activity_heatmap(sessions, start, days):
+def test_activity_heatmap_open_session_bounded_to_now():
+    """Régression heatmap : une session ouverte (logout_at None) ne doit
+    remplir AUCUN bucket postérieur à `now`. Bug observé : à 09h09, les
+    cellules 10h→23h du jour courant étaient remplies (fin virtuelle
+    datetime.max clampée à la fin de fenêtre au lieu de maintenant)."""
+    start = datetime(2026, 8, 15)                # minuit UTC, fenêtre 1 jour
+    now = start + timedelta(hours=9, minutes=9)  # « maintenant » = 09h09
+    sessions = [(start + timedelta(hours=9), None)]  # ouverte depuis 09h00
+    out = compute_activity_heatmap(sessions, start, 1, now)
+    hours = out[0]["hours"]
+    assert hours[9] == 1                          # en cours à 09h09
+    assert hours[:9] == [0] * 9                   # pas encore connectée avant
+    assert hours[10:] == [0] * 14, f"cellules futures remplies: {hours}"
+
+
+def test_activity_heatmap_closed_session_unchanged_by_now():
+    """Session fermée normalement : la sémantique [login, logout) reste
+    inchangée (now >= logout n'altère aucun bucket)."""
+    start = datetime(2026, 8, 15)
+    now = start + timedelta(hours=23)
+    sessions = [(start + timedelta(hours=10),
+                 start + timedelta(hours=12, minutes=30))]
+    out = compute_activity_heatmap(sessions, start, 1, now)
+    hours = out[0]["hours"]
+    assert hours[10] == 1 and hours[11] == 1 and hours[12] == 1
+    assert hours[9] == 0 and hours[13] == 0
+
+
+def test_activity_heatmap_defensive_clamp_end_after_now():
+    """Défense en profondeur : une fin fournie postérieure à `now` est
+    ramenée à `now` — aucune cellule future ne peut être remplie, même si
+    l'appelant (la route) n'a pas clampé."""
+    start = datetime(2026, 8, 15)
+    now = start + timedelta(hours=9, minutes=9)
+    sessions = [(start + timedelta(hours=8), start + timedelta(hours=20))]
+    out = compute_activity_heatmap(sessions, start, 1, now)
+    hours = out[0]["hours"]
+    assert hours[8] == 1 and hours[9] == 1
+    assert hours[10:] == [0] * 14, f"fin > now non clampée: {hours}"
+
+
+def _naive_activity_heatmap(sessions, start, days, now):
     """Référence de spécification (lente) : une session compte dans le
     bucket horaire (jour, heure) ssi login_at < fin_bucket et fin_virtuelle
-    > début_bucket."""
+    > début_bucket. Fin virtuelle : min(logout_at, now) — `now` pour une
+    session ouverte ; aucune cellule postérieure à maintenant."""
     out = []
     for d in range(days):
         day_start = start + timedelta(days=d)
         hours = [0] * 24
         for login_at, logout_at in sessions:
-            end = logout_at or datetime.max
+            end = logout_at if logout_at is not None else now
+            if end > now:
+                end = now
             for h in range(24):
                 b_start = day_start + timedelta(hours=h)
                 b_end = b_start + timedelta(hours=1)
@@ -167,6 +212,7 @@ def test_activity_heatmap_matches_naive_reference():
     import random
     rng = random.Random(42)
     start = datetime(2026, 6, 1)
+    now = start + timedelta(days=90)  # fin de fenêtre : comportement hérité
     cases = [
         [],                                        # vide
         [(start, start)],                          # durée nulle au bord
@@ -188,8 +234,8 @@ def test_activity_heatmap_matches_naive_reference():
                                                microseconds=rng.randint(0, 999999)))]
         cases.append(sessions)
     for sessions in cases:
-        got = compute_activity_heatmap(sessions, start, 90)
-        want = _naive_activity_heatmap(sessions, start, 90)
+        got = compute_activity_heatmap(sessions, start, 90, now)
+        want = _naive_activity_heatmap(sessions, start, 90, now)
         assert got == want, f"divergence pour sessions={sessions[:1]}…"
 
 
@@ -204,7 +250,7 @@ def test_perf_activity_heatmap_90j():
         dur = rng.randint(60, 8 * 3600)
         sessions.append((login, login + timedelta(seconds=dur)))
     t0 = time.monotonic()
-    out = compute_activity_heatmap(sessions, T0, 90)
+    out = compute_activity_heatmap(sessions, T0, 90, T0 + timedelta(days=90))
     elapsed = time.monotonic() - t0
     assert len(out) == 90 and len(out[0]["hours"]) == 24
     assert elapsed < 1.0, f"heatmap 90j trop lente: {elapsed:.1f}s"

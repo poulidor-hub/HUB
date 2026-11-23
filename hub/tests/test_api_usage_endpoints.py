@@ -123,6 +123,28 @@ async def test_usage_heatmap_structure(client, async_session, admin_token, test_
 
 
 @pytest.mark.asyncio
+async def test_usage_heatmap_open_session_bounded_to_now(
+    client, async_session, admin_token, test_user, monkeypatch
+):
+    """Régression heatmap : une session ouverte ne doit remplir aucune
+    cellule du jour courant postérieure à maintenant (12h00 figé).
+    Bug observé : les cellules 13h→23h apparaissaient remplies à midi."""
+    _freeze_utcnow(monkeypatch)
+    s = await _make_session(async_session, test_user)
+    s.login_at = FROZEN_NOW - timedelta(minutes=10)  # connectée à 11h50
+    await async_session.commit()
+
+    resp = await client.get(
+        "/api/audit/usage/heatmap?days=1",
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert resp.status_code == 200
+    hours = resp.json()["days"][-1]["hours"]
+    assert hours[11] == 1                            # active sur 11h→12h
+    assert hours[12:] == [0] * 12, f"cellules futures remplies: {hours}"
+
+
+@pytest.mark.asyncio
 async def test_usage_apps_filter_by_app(client, async_session, admin_token, test_user):
     s = await _make_session(async_session, test_user)
     await touch_app_presence(async_session, s, "test-app")
