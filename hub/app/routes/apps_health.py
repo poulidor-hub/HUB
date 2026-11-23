@@ -23,7 +23,7 @@ from app.github_client import (
     fetch_github_json, fetch_github_raw, parse_github_url,
 )
 from app.health_checker import (
-    get_container_state, find_containers_for_app, count_containers_batch,
+    get_container_states_batch, find_containers_for_app, count_containers_batch,
 )
 from app.workshop_service import get_workshop_state, _app_dir, _git_state
 
@@ -272,6 +272,18 @@ async def get_apps_health(
     ]
     containers_count_map = count_containers_batch(local_slugs) if local_slugs else {}
 
+    # États Docker batchés : UNE SEULE liste Docker pour toutes les apps,
+    # exécutée EN THREAD (jamais dans l'event loop). Le Docker-first v1
+    # appelait get_container_state (synchrone, docker-py) au début de CHAQUE
+    # probe : les N appels séquentiels bloquaient la boucle au démarrage des
+    # sondes parallèles, les réponses HTTP des premières apps étaient traitées
+    # en retard -> latences mesurées gonflées en cascade (gradient 1277 -> 36 ms
+    # dans l'ordre alphabétique).
+    container_states_map = (
+        await anyio.to_thread.run_sync(get_container_states_batch, local_slugs)
+        if local_slugs else {}
+    )
+
     async def probe_app(app: Application) -> AppHealthItem:
         base_url = app.api_url.rstrip("/")
         now = time.time()
@@ -292,28 +304,30 @@ async def get_apps_health(
         # pour aboutir à la même conclusion « stopped » (classification qui
         # n'arrivait qu'en fin de probe). Running, ou Docker indisponible
         # (None) : sonde HTTP normale, classification existante conservée.
-        if not is_remote:
-            container_state_early = get_container_state(app.slug)
-            if container_state_early is not None and container_state_early != "running":
-                return AppHealthItem(
-                    id=app.id,
-                    slug=app.slug,
-                    name=app.name,
-                    icon=app.icon,
-                    color=app.color,
-                    api_url=app.api_url,
-                    status="stopped",
-                    latency_ms=0,
-                    version=None,
-                    error=(
-                        "Conteneur absent"
-                        if container_state_early == "absent"
-                        else f"Conteneur {container_state_early}"
-                    ),
-                    checked_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now)),
-                    containers_count=containers_count_map.get(app.slug),
-                    is_system_app=is_system,
-                )
+        # État lu depuis le batch pré-calculé (aucun appel Docker ici : tout
+        # appel synchrone dans l'event loop bloque le traitement des réponses
+        # HTTP des autres sondes et gonfle les latences mesurées).
+        container_state_early = container_states_map.get(app.slug)
+        if container_state_early is not None and container_state_early != "running":
+            return AppHealthItem(
+                id=app.id,
+                slug=app.slug,
+                name=app.name,
+                icon=app.icon,
+                color=app.color,
+                api_url=app.api_url,
+                status="stopped",
+                latency_ms=0,
+                version=None,
+                error=(
+                    "Conteneur absent"
+                    if container_state_early == "absent"
+                    else f"Conteneur {container_state_early}"
+                ),
+                checked_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now)),
+                containers_count=containers_count_map.get(app.slug),
+                is_system_app=is_system,
+            )
 
         # Pour le HUB lui-meme : sonde normale + version lue localement
         async with _get_httpx_client() as client:
@@ -387,7 +401,7 @@ async def get_apps_health(
                 if not error:
                     error = "Aucune reponse sur /health, /api/health, /"
             else:
-                container_state = get_container_state(app.slug)
+                container_state = container_states_map.get(app.slug)
                 if container_state is not None and container_state != "running":
                     # Docker joignable et conteneur non-actif : arrêt volontaire.
                     status = "stopped"

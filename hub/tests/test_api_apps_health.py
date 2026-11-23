@@ -75,14 +75,16 @@ def _patch(module, routes):
 
 
 def _container_state_mock(return_value):
-    """Mock de get_container_state : retourne return_value et compte les appels."""
-    calls = {"n": 0}
+    """Mock de get_container_states_batch : même état pour tous les slugs
+    demandés, et traçage des appels (n + slugs demandés)."""
+    calls = {"n": 0, "slugs": []}
 
-    def _state(slug):
+    def _batch(slugs):
         calls["n"] += 1
-        return return_value
+        calls["slugs"].extend(slugs)
+        return {slug: return_value for slug in slugs}
 
-    return _state, calls
+    return _batch, calls
 
 
 async def _get_health(client, token):
@@ -105,7 +107,7 @@ async def test_probe_extracts_version_from_api_health(client, admin_token, test_
         "/api/health/detailed": _MockResp(404),
     }
     with _patch(apps_health, routes), \
-         patch.object(apps_health, "get_container_state", _container_state_mock("running")[0]):
+         patch.object(apps_health, "get_container_states_batch", _container_state_mock("running")[0]):
         resp = await _get_health(client, admin_token)
 
     assert resp.status_code == 200
@@ -123,7 +125,7 @@ async def test_probe_does_not_break_on_4xx(client, admin_token, test_app):
         "/api/health/detailed": _MockResp(404),
     }
     with _patch(apps_health, routes), \
-         patch.object(apps_health, "get_container_state", _container_state_mock("running")[0]):
+         patch.object(apps_health, "get_container_states_batch", _container_state_mock("running")[0]):
         resp = await _get_health(client, admin_token)
 
     app = _find(resp.json(), "test-app")
@@ -146,7 +148,7 @@ async def test_probe_collects_rich_data_from_detailed(client, admin_token, test_
         }),
     }
     with _patch(apps_health, routes), \
-         patch.object(apps_health, "get_container_state", _container_state_mock("running")[0]):
+         patch.object(apps_health, "get_container_states_batch", _container_state_mock("running")[0]):
         resp = await _get_health(client, admin_token)
 
     app = _find(resp.json(), "test-app")
@@ -169,7 +171,7 @@ async def test_probe_version_fallback_from_detailed(client, admin_token, test_ap
         }),
     }
     with _patch(apps_health, routes), \
-         patch.object(apps_health, "get_container_state", _container_state_mock("running")[0]):
+         patch.object(apps_health, "get_container_states_batch", _container_state_mock("running")[0]):
         resp = await _get_health(client, admin_token)
 
     app = _find(resp.json(), "test-app")
@@ -184,7 +186,7 @@ async def test_probe_degraded_on_5xx(client, admin_token, test_app):
         "/": _MockResp(500, reason="Internal Server Error"),
     }
     with _patch(apps_health, routes), \
-         patch.object(apps_health, "get_container_state", _container_state_mock("running")[0]):
+         patch.object(apps_health, "get_container_states_batch", _container_state_mock("running")[0]):
         resp = await _get_health(client, admin_token)
 
     app = _find(resp.json(), "test-app")
@@ -197,7 +199,7 @@ async def test_probe_offline_when_unreachable(client, admin_token, test_app):
     Docker indisponible (None) : fallback offline, jamais stopped."""
     state_mock, _ = _container_state_mock(None)
     with patch.object(apps_health, "_get_httpx_client", lambda: _ErrorClient()), \
-         patch.object(apps_health, "get_container_state", state_mock):
+         patch.object(apps_health, "get_container_states_batch", state_mock):
         resp = await _get_health(client, admin_token)
 
     app = _find(resp.json(), "test-app")
@@ -215,7 +217,7 @@ async def test_probe_4xx_only_is_online_without_version(client, admin_token, tes
         "/api/health/detailed": _MockResp(404),
     }
     with _patch(apps_health, routes), \
-         patch.object(apps_health, "get_container_state", _container_state_mock("running")[0]):
+         patch.object(apps_health, "get_container_states_batch", _container_state_mock("running")[0]):
         resp = await _get_health(client, admin_token)
 
     app = _find(resp.json(), "test-app")
@@ -260,7 +262,7 @@ async def test_summary_counts(client, admin_token, async_session):
             return online_routes.get(urlparse(url).path, _MockResp(404))
 
     with patch.object(apps_health, "_get_httpx_client", lambda: _HybridClient()), \
-         patch.object(apps_health, "get_container_state", _container_state_mock(None)[0]):
+         patch.object(apps_health, "get_container_states_batch", _container_state_mock(None)[0]):
         resp = await _get_health(client, admin_token)
 
     summary = resp.json()["summary"]
@@ -274,7 +276,7 @@ async def test_probe_stopped_container_reports_stopped(client, admin_token, test
     """Ping fail + conteneur 'exited' -> stopped, compté dans summary.stopped."""
     state_mock, calls = _container_state_mock("exited")
     with patch.object(apps_health, "_get_httpx_client", lambda: _ErrorClient()), \
-         patch.object(apps_health, "get_container_state", state_mock):
+         patch.object(apps_health, "get_container_states_batch", state_mock):
         resp = await _get_health(client, admin_token)
 
     app = _find(resp.json(), "test-app")
@@ -282,14 +284,14 @@ async def test_probe_stopped_container_reports_stopped(client, admin_token, test
     summary = resp.json()["summary"]
     assert summary["offline"] == 0
     assert summary["stopped"] == 1
-    assert calls["n"] == 1  # un seul appel Docker, sur la branche offline
+    assert calls["n"] == 1  # un seul appel Docker batch (aucun par-app)
 
 
 async def test_probe_absent_container_reports_stopped(client, admin_token, test_app):
     """Docker joignable mais aucun conteneur -> stopped, 'Conteneur absent'."""
     state_mock, _ = _container_state_mock("absent")
     with patch.object(apps_health, "_get_httpx_client", lambda: _ErrorClient()), \
-         patch.object(apps_health, "get_container_state", state_mock):
+         patch.object(apps_health, "get_container_states_batch", state_mock):
         resp = await _get_health(client, admin_token)
 
     app = _find(resp.json(), "test-app")
@@ -301,7 +303,7 @@ async def test_probe_running_but_unreachable_reports_offline(client, admin_token
     """Conteneur 'running' mais ping fail -> vraie panne : offline (pas stopped)."""
     state_mock, _ = _container_state_mock("running")
     with patch.object(apps_health, "_get_httpx_client", lambda: _ErrorClient()), \
-         patch.object(apps_health, "get_container_state", state_mock):
+         patch.object(apps_health, "get_container_states_batch", state_mock):
         resp = await _get_health(client, admin_token)
 
     app = _find(resp.json(), "test-app")
@@ -315,7 +317,7 @@ async def test_probe_docker_unavailable_reports_offline(client, admin_token, tes
     """Docker indisponible (None) -> incertitude : fallback offline, jamais stopped."""
     state_mock, _ = _container_state_mock(None)
     with patch.object(apps_health, "_get_httpx_client", lambda: _ErrorClient()), \
-         patch.object(apps_health, "get_container_state", state_mock):
+         patch.object(apps_health, "get_container_states_batch", state_mock):
         resp = await _get_health(client, admin_token)
 
     app = _find(resp.json(), "test-app")
@@ -338,12 +340,14 @@ async def test_probe_remote_app_reports_offline(client, admin_token, async_sessi
 
     state_mock, calls = _container_state_mock("absent")
     with patch.object(apps_health, "_get_httpx_client", lambda: _ErrorClient()), \
-         patch.object(apps_health, "get_container_state", state_mock):
+         patch.object(apps_health, "get_container_states_batch", state_mock):
         resp = await _get_health(client, admin_token)
 
     app = _find(resp.json(), "remote-app")
     assert app["status"] == "offline"
-    assert calls["n"] == 0  # garde app distante : zéro appel Docker
+    # Le batch n'a été demandé que pour les apps LOCALES : jamais pour la
+    # distante (aucun conteneur local fiable — pas d'état, pas de stopped).
+    assert "remote-app" not in calls["slugs"]
 
 
 # ─── Tests Docker-first + atelier agrégé (chargement unifié) ──────────
@@ -367,7 +371,7 @@ async def test_probe_stopped_container_skips_http_entirely(client, admin_token, 
             raise AssertionError("HTTP ne doit pas être appelé pour une app stoppée")
 
     with patch.object(apps_health, "_get_httpx_client", lambda: _ForbiddenClient()), \
-         patch.object(apps_health, "get_container_state", state_mock):
+         patch.object(apps_health, "get_container_states_batch", state_mock):
         resp = await _get_health(client, admin_token)
 
     app = _find(resp.json(), "test-app")
@@ -388,7 +392,7 @@ async def test_health_response_includes_workshop_state(client, admin_token, test
     with patch.object(apps_health, "_get_httpx_client", lambda: _MockClient({
             "/api/health": _MockResp(200, {"status": "healthy", "version": "1.0"}),
         })), \
-         patch.object(apps_health, "get_container_state", _container_state_mock("running")[0]), \
+         patch.object(apps_health, "get_container_states_batch", _container_state_mock("running")[0]), \
          patch.object(apps_health, "get_workshop_state", _ws_state), \
          patch.object(apps_health, "_git_state", _git_ok):
         resp = await _get_health(client, admin_token)
@@ -408,12 +412,33 @@ async def test_health_workshop_none_on_lookup_error(client, admin_token, test_ap
     with patch.object(apps_health, "_get_httpx_client", lambda: _MockClient({
             "/api/health": _MockResp(200, {"status": "healthy", "version": "1.0"}),
         })), \
-         patch.object(apps_health, "get_container_state", _container_state_mock("running")[0]), \
+         patch.object(apps_health, "get_container_states_batch", _container_state_mock("running")[0]), \
          patch.object(apps_health, "get_workshop_state", _ws_state):
         resp = await _get_health(client, admin_token)
 
     app = _find(resp.json(), "test-app")
     assert app["workshop"] is None
+
+
+async def test_health_never_calls_per_app_container_state(client, admin_token, test_app):
+    """Anti-régression (gradient de latence) : la route ne doit JAMAIS appeler
+    get_container_state par app. L'appel docker-py SYNCHRONE dans l'event loop
+    bloquait le traitement des réponses HTTP au démarrage des sondes en
+    parallèle -> latences mesurées gonflées en cascade (1277 -> 36 ms dans
+    l'ordre alphabétique). Les états passent par le batch en thread."""
+    # Garde structurelle : le nom n'est même plus importé par la route.
+    assert not hasattr(apps_health, "get_container_state")
+
+    with patch.object(apps_health, "_get_httpx_client", lambda: _MockClient({
+            "/api/health": _MockResp(200, {"status": "healthy", "version": "1.0"}),
+        })), \
+         patch.object(apps_health, "get_container_states_batch",
+                      lambda slugs: {slug: "running" for slug in slugs}):
+        resp = await _get_health(client, admin_token)
+
+    assert resp.status_code == 200
+    app = _find(resp.json(), "test-app")
+    assert app["status"] == "online"
 
 
 # ─── Tests actions multi-conteneurs (groupe compose) ───────────────────
@@ -579,7 +604,7 @@ async def test_health_item_containers_count_batch(client, admin_token, test_app)
         "/api/health/detailed": _MockResp(404),
     }
     with patch.object(apps_health, "_get_httpx_client", lambda: _MockClient(routes)), \
-         patch.object(apps_health, "get_container_state", _container_state_mock(None)[0]), \
+         patch.object(apps_health, "get_container_states_batch", _container_state_mock(None)[0]), \
          patch.object(apps_health, "count_containers_batch", _batch):
         resp = await _get_health(client, admin_token)
 
@@ -598,7 +623,7 @@ async def test_health_item_containers_count_docker_unavailable(client, admin_tok
         "/api/health/detailed": _MockResp(404),
     }
     with patch.object(apps_health, "_get_httpx_client", lambda: _MockClient(routes)), \
-         patch.object(apps_health, "get_container_state", _container_state_mock(None)[0]), \
+         patch.object(apps_health, "get_container_states_batch", _container_state_mock(None)[0]), \
          patch.object(apps_health, "count_containers_batch", _batch):
         resp = await _get_health(client, admin_token)
 
@@ -635,7 +660,7 @@ async def test_health_item_containers_count_remote_app_none(client, admin_token,
             raise ConnectionError("refused")
 
     with patch.object(apps_health, "_get_httpx_client", lambda: _ErrorOrOkClient()), \
-         patch.object(apps_health, "get_container_state", _container_state_mock(None)[0]), \
+         patch.object(apps_health, "get_container_states_batch", _container_state_mock(None)[0]), \
          patch.object(apps_health, "count_containers_batch", _batch):
         resp = await _get_health(client, admin_token)
 
