@@ -5,6 +5,21 @@
 
 ---
 
+## [3.104.0] - 24 novembre 2026
+
+### 📣 Pour les utilisateurs
+
+- **Amélioré** : les applications qui tournent en plusieurs instances (API + workers) peuvent démarrer ensemble sans se disputer leurs identifiants — plus de messages d'erreur « secret invalide » en cascade au lancement.
+- **Amélioré** : quand une application déjà connue se réinscrit en prouvant son identité (token M2M valide de son service account), le Hub conserve son secret au lieu d'en générer un nouveau — les autres instances ne sont plus déconnectées par effet de bord.
+
+### ⚡ Register idempotent : anti-course d'identité M2M au boot multi-instances
+
+- `POST /api/apps/register` : sur slug existant, le marqueur `X-Hub-Register-Idempotent: 1` + un token M2M **valide du SA owner** (`_service_account_from_m2m_token` + `is_owner_service_account`) → mise à jour des champs (version, URLs, enforcement, audit) SANS rotation de `client_secret_hash` ; réponse `secret_rotated: false`, `credentials` réduites à `client_id` ; log « register idempotent — secret conservé » et audit `m2m_reregistration_enforced` avec details « secret conservé (idempotent) ».
+- Tous les autres chemins inchangés + `secret_rotated: true` explicite (champ `AppRegisterResponse`, défaut `True` → compat vieux clients) : sans marqueur, sans token, token non-owner, SA owner absent (T1), FORCE_REPLACE_APP, création.
+- Tests : 5 tests idempotents à effets réels (token owner → secret conservé et ancien secret toujours vivant ; sans marqueur → rotation ; marqueur sans token → rotation ; token non-owner → rotation ; champs version/URL mis à jour sans rotation), mints réels via `/api/auth/token`, assertions en base. Suite apps : 38 passed.
+
+---
+
 ## [3.103.1] - 23 novembre 2026
 
 ### 📣 Pour les utilisateurs
