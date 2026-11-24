@@ -65,7 +65,7 @@ async def github_headers(db: Optional[AsyncSession] = None) -> dict:
 async def fetch_github_json(url: str, db: Optional[AsyncSession] = None) -> tuple:
     """GET JSON depuis l'API GitHub. Retourne (data, status) ou (None, status)."""
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(10), verify=False) as client:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(10)) as client:
             resp = await client.get(url, headers=await github_headers(db))
             return resp.json() if 200 <= resp.status_code < 300 else None, resp.status_code
     except Exception:
@@ -75,7 +75,7 @@ async def fetch_github_json(url: str, db: Optional[AsyncSession] = None) -> tupl
 async def fetch_github_raw(url: str, db: Optional[AsyncSession] = None) -> Optional[str]:
     """GET contenu brut depuis raw.githubusercontent.com."""
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(10), verify=False) as client:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(10)) as client:
             resp = await client.get(url, headers=await github_headers(db))
             return resp.text if 200 <= resp.status_code < 300 else None
     except Exception:
@@ -88,7 +88,7 @@ async def fetch_github_raw_with_status(url: str, db: Optional[AsyncSession] = No
     strict : une panne réseau ne doit pas être confondue avec un fichier absent).
     Retourne (texte|None, status)."""
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(10), verify=False) as client:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(10)) as client:
             resp = await client.get(url, headers=await github_headers(db))
             return (resp.text if 200 <= resp.status_code < 300 else None), resp.status_code
     except Exception:

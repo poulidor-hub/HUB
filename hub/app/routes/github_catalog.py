@@ -235,7 +235,7 @@ async def refresh_github_repos(
     all_repos = []
     url = "https://api.github.com/user/repos?affiliation=owner,organization_member&per_page=100&sort=updated&direction=desc"
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(15), verify=False) as client:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(15)) as client:
             while url and len(all_repos) < GITHUB_MAX_REPOS:
                 resp = await client.get(url, headers=headers)
                 if resp.status_code == 403 and resp.headers.get("X-RateLimit-Remaining") == "0":

@@ -76,7 +76,7 @@ async def _api_repo_status(owner_repo: tuple[str, str], token: str | None) -> in
     if token:
         headers["Authorization"] = f"Bearer {token}"
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(TIMEOUT_API), verify=False) as client:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(TIMEOUT_API)) as client:
             resp = await client.get(
                 f"https://api.github.com/repos/{owner}/{repo}", headers=headers
             )
