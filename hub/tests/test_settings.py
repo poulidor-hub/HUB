@@ -12,7 +12,11 @@ Couvre :
 - PUT non-admin → 403
 - PUT chaîne quelconque acceptée (booléens normalisés, strings tels quels)
 - PUT avec valeur numérique → 400
+- PUT d'une clé sensible (token, secret, password…) : valeur jamais journalisée
+  ni diffusée par SSE ; les clés ordinaires gardent le comportement d'origine
 """
+
+import logging
 
 import pytest
 from httpx import AsyncClient
@@ -20,6 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import User, AppSetting
 from app.auth import get_password_hash
+from app.routes import settings as settings_routes
 from tests.conftest import get_auth_header
 
 
@@ -288,3 +293,169 @@ class TestUpdateSetting:
             headers=get_auth_header(admin_token),
         )
         assert resp.status_code == 400
+
+
+# =============================================================================
+# PUT /api/settings/{key} — réglages à valeur secrète
+# =============================================================================
+# La mise à jour de `github_token` journalisait le PAT en clair puis le
+# diffusait par SSE à tous les utilisateurs connectés (admin ou non). Une clé
+# « sensible » (nom contenant token, secret, password…) est désormais tracée
+# sans sa valeur et diffusée sans champ `value`.
+
+# Valeur sentinelle : ne ressemble pas à un vrai secret
+SENTINELLE = "SENTINELLE-JETON-TEST-1234"
+
+
+@pytest.fixture
+def broadcasts(monkeypatch):
+    """Capture les événements passés à broadcast_event — liste de (type, data).
+
+    update_setting fait un import LOCAL de broadcast_event (dans le try) :
+    c'est l'attribut du module app.routes.events qui est résolu à chaque
+    appel, la fonction doit donc être remplacée là-bas (un patch côté
+    app.routes.settings ne prendrait aucun effet).
+    """
+    captured = []
+
+    async def fake_broadcast_event(event_type, data=None):
+        captured.append((event_type, data))
+
+    monkeypatch.setattr("app.routes.events.broadcast_event", fake_broadcast_event)
+    return captured
+
+
+class TestUpdateSettingSecretValue:
+    """PUT d'une clé sensible : la valeur n'est ni journalisée ni diffusée."""
+
+    async def test_secret_value_not_logged(
+        self,
+        client: AsyncClient,
+        admin_user: User,
+        admin_token: str,
+        caplog,
+    ):
+        """PUT github_token : la valeur n'apparaît dans aucun enregistrement de journal."""
+        with caplog.at_level(logging.INFO, logger="app.routes.settings"):
+            resp = await client.put(
+                "/api/settings/github_token",
+                json={"value": SENTINELLE},
+                headers=get_auth_header(admin_token),
+            )
+        assert resp.status_code == 200
+
+        # La mise à jour reste tracée (clé visible), seule la valeur est masquée
+        settings_messages = [
+            record.getMessage()
+            for record in caplog.records
+            if record.name == "app.routes.settings"
+        ]
+        assert any("github_token" in message for message in settings_messages)
+
+        for record in caplog.records:
+            assert SENTINELLE not in record.getMessage(), (
+                f"valeur secrète journalisée par {record.name} : {record.getMessage()}"
+            )
+
+    async def test_secret_value_not_broadcast(
+        self,
+        client: AsyncClient,
+        admin_user: User,
+        admin_token: str,
+        broadcasts,
+    ):
+        """PUT github_token : l'événement SSE part avec la clé, SANS champ value."""
+        resp = await client.put(
+            "/api/settings/github_token",
+            json={"value": SENTINELLE},
+            headers=get_auth_header(admin_token),
+        )
+        assert resp.status_code == 200
+
+        assert len(broadcasts) == 1, "l'événement settings_updated doit être diffusé"
+        event_type, data = broadcasts[0]
+        assert event_type == "settings_updated"
+        assert data == {"key": "github_token"}
+
+    async def test_ordinary_value_still_broadcast(
+        self,
+        client: AsyncClient,
+        admin_user: User,
+        admin_token: str,
+        async_session: AsyncSession,
+        broadcasts,
+    ):
+        """PUT account_requests_enabled : l'événement SSE garde la valeur.
+
+        Le frontend s'en sert pour le toggle (sse.js, case 'settings_updated').
+        """
+        await ensure_setting(async_session, value="true")
+
+        resp = await client.put(
+            "/api/settings/account_requests_enabled",
+            json={"value": "false"},
+            headers=get_auth_header(admin_token),
+        )
+        assert resp.status_code == 200
+
+        assert broadcasts == [
+            ("settings_updated", {"key": "account_requests_enabled", "value": "false"}),
+        ]
+
+    async def test_ordinary_value_still_logged(
+        self,
+        client: AsyncClient,
+        admin_user: User,
+        admin_token: str,
+        async_session: AsyncSession,
+        caplog,
+    ):
+        """PUT account_requests_enabled : la valeur reste journalisée (inchangé)."""
+        await ensure_setting(async_session, value="true")
+
+        with caplog.at_level(logging.INFO, logger="app.routes.settings"):
+            resp = await client.put(
+                "/api/settings/account_requests_enabled",
+                json={"value": "false"},
+                headers=get_auth_header(admin_token),
+            )
+        assert resp.status_code == 200
+
+        settings_messages = [
+            record.getMessage()
+            for record in caplog.records
+            if record.name == "app.routes.settings"
+        ]
+        assert any(
+            "account_requests_enabled" in message and "false" in message
+            for message in settings_messages
+        )
+
+
+class TestIsSecretSettingKey:
+    """Détection des clés sensibles : fragment du nom, insensible à la casse."""
+
+    @pytest.mark.parametrize("key", [
+        "github_token",
+        "GITHUB_TOKEN",
+        "smtp_password",
+        "Backup_PassPhrase",
+        "signing_private_key",
+        "openai_api_key",
+        "hub_credential",
+        "hub_credentials",
+    ])
+    def test_secret_keys(self, key):
+        """Un nom contenant un fragment sensible désigne un réglage secret."""
+        assert settings_routes._is_secret_setting_key(key) is True
+
+    @pytest.mark.parametrize("key", [
+        "account_requests_enabled",
+        "messages_badge_priorities",
+        "hub_host",
+        "new_feature_flag",
+        "",
+    ])
+    def test_ordinary_keys(self, key):
+        """Les autres noms (et le nom vide) ne sont pas des réglages secrets."""
+        assert settings_routes._is_secret_setting_key(key) is False
