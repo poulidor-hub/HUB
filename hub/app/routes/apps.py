@@ -1471,7 +1471,14 @@ async def register_app(
     )
     existing_app = result.scalar_one_or_none()
     registration_sa = await _service_account_from_m2m_token(token, db) if token else None
-    
+
+    # Register idempotent (anti-course multi-instances au boot) : le marqueur
+    # seul ne suffit pas — il exige la PREUVE M2M (token valide, résolu dans
+    # registration_sa ci-dessus) ET que ce token soit celui du SA owner de
+    # l'app (vérifié au moment de la rotation, via is_owner_service_account).
+    # Sans marqueur ou sans preuve → rotation actuelle (compat vieux socles).
+    idempotent = request.headers.get("X-Hub-Register-Idempotent") == "1"
+
     replaced = False
     old_app_info = None
     
@@ -1512,7 +1519,21 @@ async def register_app(
         else:
             # Mode sans remplacement - MAIS mettre à jour les URLs et infos si nécessaire
             logger.info(f"⚠️ Application '{app_data.slug}' déjà enregistrée, vérification des mises à jour...")
-            
+
+            # Le chemin idempotent (décidé plus bas, à la sélection du SA owner)
+            # conserve le secret : résolu ICI tant que la relation service_accounts
+            # est fraîche (les commit/refresh des mises à jour l'expirent), pour
+            # rendre l'audit de réinscription discriminant (review 24/11/2026).
+            idempotent_owner_path = (
+                idempotent
+                and registration_sa is not None
+                and any(
+                    sa.id == registration_sa.id
+                    and is_owner_service_account(sa, app_data.slug, existing_app.name)
+                    for sa in existing_app.service_accounts
+                )
+            )
+
             updated_fields = []
             if registration_sa and existing_app.m2m_enforcement_mode != "enforced":
                 existing_app.m2m_enforcement_mode = "enforced"
@@ -1710,7 +1731,11 @@ async def register_app(
                     target=app_data.slug,
                     request=request,
                     response_status=status.HTTP_200_OK,
-                    details="Réinscription authentifiée par service account",
+                    details=(
+                        "Réinscription authentifiée par service account — secret conservé (idempotent)"
+                        if idempotent_owner_path
+                        else "Réinscription authentifiée par service account"
+                    ),
                 )
                 await db.commit()
             
@@ -1744,7 +1769,25 @@ async def register_app(
                 if workshop_auto_approved and not sa.is_active:
                     sa.is_active = True
                     logger.info(f"✅ SA activé pour atelier auto-approuvé '{app_data.slug}'")
-                
+
+                # Register idempotent : marqueur + preuve M2M valide ET le SA
+                # du token EST le SA owner (sélectionné ci-dessus via
+                # is_owner_service_account) → conserver le secret, AUCUNE
+                # rotation. Au boot simultané de N instances, les registers
+                # croisés ne s'invalident plus mutuellement : l'instance qui
+                # détient encore le bon secret le prouve via son token.
+                # Sinon (vieux socle sans marqueur, token absent ou non-owner)
+                # → rotation ci-dessous, comportement inchangé.
+                if idempotent and registration_sa is not None and registration_sa.id == sa.id:
+                    logger.info(f"register idempotent — secret conservé (slug={app_data.slug})")
+                    return AppRegisterResponse(
+                        message=message,
+                        application=AppResponse.model_validate(existing_app),
+                        credentials={"client_id": sa.client_id},
+                        is_new=False,
+                        secret_rotated=False,
+                    )
+
                 client_secret = ServiceAccount.generate_client_secret()
                 sa.client_secret_hash = get_password_hash(client_secret)
                 await db.commit()
@@ -2035,7 +2078,8 @@ async def register_app(
             "hub_api_port": settings.hub_api_port
         },
         is_new=True,
-        pending_approval=not auto_approve_workshop  # Pas d'attente si auto-approuvé
+        pending_approval=not auto_approve_workshop,  # Pas d'attente si auto-approuvé
+        secret_rotated=True,  # Chemin création : credentials fraîches émises (uniformité contrat register)
     )
 
 
