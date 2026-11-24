@@ -1519,7 +1519,21 @@ async def register_app(
         else:
             # Mode sans remplacement - MAIS mettre à jour les URLs et infos si nécessaire
             logger.info(f"⚠️ Application '{app_data.slug}' déjà enregistrée, vérification des mises à jour...")
-            
+
+            # Le chemin idempotent (décidé plus bas, à la sélection du SA owner)
+            # conserve le secret : résolu ICI tant que la relation service_accounts
+            # est fraîche (les commit/refresh des mises à jour l'expirent), pour
+            # rendre l'audit de réinscription discriminant (review 24/11/2026).
+            idempotent_owner_path = (
+                idempotent
+                and registration_sa is not None
+                and any(
+                    sa.id == registration_sa.id
+                    and is_owner_service_account(sa, app_data.slug, existing_app.name)
+                    for sa in existing_app.service_accounts
+                )
+            )
+
             updated_fields = []
             if registration_sa and existing_app.m2m_enforcement_mode != "enforced":
                 existing_app.m2m_enforcement_mode = "enforced"
@@ -1717,7 +1731,11 @@ async def register_app(
                     target=app_data.slug,
                     request=request,
                     response_status=status.HTTP_200_OK,
-                    details="Réinscription authentifiée par service account",
+                    details=(
+                        "Réinscription authentifiée par service account — secret conservé (idempotent)"
+                        if idempotent_owner_path
+                        else "Réinscription authentifiée par service account"
+                    ),
                 )
                 await db.commit()
             
