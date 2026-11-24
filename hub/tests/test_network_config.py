@@ -156,18 +156,17 @@ async def test_put_hub_host_keeps_400_contract(client, admin_token, no_publish):
 
 async def test_put_hub_host_follows_unique_validator_for_ipv6(
         client, admin_token, no_publish):
-    """hub_host alimente lui aussi `http://{hub_host}:{port}` : il suit le
-    validateur unique — un IPv6 nu est refusé, la forme entre crochets acceptée."""
+    """hub_host suit le validateur unique. L'IPv6 n'est pas géré de bout en bout
+    pour le hôte du Hub (fichier de zone) : les deux formes sont refusées —
+    l'IPv6 nu, qui produisait des URL `http://::1:4200` invalides, et la forme
+    entre crochets, refusée avant la délégation et qui casserait le fichier de
+    zone."""
     headers = get_auth_header(admin_token)
-    r = await client.put("/api/config/network/hub-host",
-                         json={"hub_host": "::1"}, headers=headers)
-    assert r.status_code == 400
-    assert r.json()["detail"] == "IP ou hostname invalide"
-
-    r = await client.put("/api/config/network/hub-host",
-                         json={"hub_host": "[::1]"}, headers=headers)
-    assert r.status_code == 200
-    assert r.json()["hub_host"] == "[::1]"
+    for value in ("::1", "[::1]", "2001:db8::1", "[2001:db8::1]"):
+        r = await client.put("/api/config/network/hub-host",
+                             json={"hub_host": value}, headers=headers)
+        assert r.status_code == 400, f"{value!r}: {r.status_code}"
+        assert r.json()["detail"] == "IP ou hostname invalide"
 
 
 # --- DELETE : retour env / auto-détection ---
