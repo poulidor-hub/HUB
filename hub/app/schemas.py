@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from enum import Enum
 
 from app.models import highest_role
+from app.host_validation import validate_host
 
 
 def to_naive_utc(value: Optional[datetime]) -> Optional[datetime]:
@@ -337,6 +338,12 @@ class AppCreateSimplified(BaseModel):
     is_unmanaged: bool = Field(False, description="App non gérée (launcher-only) : présente/lancable mais exclue du health-check, backup et sync Docker")
     git_repo_url: Optional[str] = Field(None, max_length=512, description="URL du dépôt Git (GitHub) pour le changelog et la détection de mises à jour")
     bypass_manifest_check: bool = Field(False, description="Forcer la création sans certificat hub-app.yaml (admin, loggué)")
+
+    @field_validator("custom_host")
+    @classmethod
+    def validate_custom_host(cls, value: Optional[str]) -> Optional[str]:
+        """Host passé par le validateur unique (vide → None = absent)."""
+        return validate_host(value)
 
 
 class AppCreate(AppBase):
@@ -1021,6 +1028,12 @@ class AppRegisterRequest(BaseModel):
     api_endpoints: Optional[Dict[str, Any]] = Field(None, description="Spécification OpenAPI (JSON) décrivant les endpoints métier de l'application")
     version: Optional[str] = Field(None, max_length=50, description="Version de l'app (fichier VERSION), capturée à l'enregistrement")
 
+    @field_validator("custom_host")
+    @classmethod
+    def validate_custom_host(cls, value: Optional[str]) -> Optional[str]:
+        """Host passé par le validateur unique (vide → None = absent)."""
+        return validate_host(value)
+
 
 class AppRegisterResponse(BaseModel):
     """Réponse à l'auto-enregistrement"""
@@ -1042,6 +1055,12 @@ class AllocatePortsRequest(BaseModel):
     """Requête d'allocation de ports (pré-vol, avant docker compose up)."""
     slug: str = Field(..., min_length=2, max_length=50, pattern=r'^[a-z0-9-]+$', description="Slug unique de l'application")
     host: Optional[str] = Field(None, description="Host/IP de l'app (collision scopée par host). Si absent, le host du Hub est utilisé.")
+
+    @field_validator("host")
+    @classmethod
+    def validate_host(cls, value: Optional[str]) -> Optional[str]:
+        """Host passé par le validateur unique (vide → None = host du Hub)."""
+        return validate_host(value)
 
 
 class AllocatePortsResponse(BaseModel):
