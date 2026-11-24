@@ -13,6 +13,11 @@
 // Filtre atelier : 'false' (prod), 'true' (ateliers), 'all' (tout)
 let workshopFilter = 'false';
 
+// Apps désactivées : masquées par défaut sur la vue principale (elles
+// saturent le launcher — 22 cartes « En maintenance » pour 16 apps vivantes).
+// Préférence mémorisée : chip « Désactivées » pour les afficher à la demande.
+let showInactiveApps = localStorage.getItem('dashboardShowInactive') === '1';
+
 async function loadApps() {
     console.log('📱 loadApps() appelé, currentPage:', currentPage, 'workshopFilter:', workshopFilter);
     try {
@@ -61,6 +66,16 @@ function setDashboardFilter(filter) {
     filterDashboardApps();
 }
 
+function toggleShowInactiveApps() {
+    showInactiveApps = !showInactiveApps;
+    localStorage.setItem('dashboardShowInactive', showInactiveApps ? '1' : '0');
+    document.querySelectorAll('.inactive-filter-btn').forEach(btn => {
+        btn.classList.toggle('active', showInactiveApps);
+        btn.setAttribute('aria-pressed', showInactiveApps ? 'true' : 'false');
+    });
+    filterDashboardApps();
+}
+
 function clearAppSearch() {
     const input = document.getElementById('appSearchInput');
     if (input) { input.value = ''; }
@@ -73,6 +88,13 @@ function filterDashboardApps() {
     const query = (searchInput ? searchInput.value : '').toLowerCase().trim();
 
     if (clearBtn) clearBtn.classList.toggle('d-none', !query);
+
+    // Le chip « Désactivées » est statique dans index.html : synchroniser son
+    // état visuel avec la préférence mémorisée (localStorage).
+    document.querySelectorAll('.inactive-filter-btn').forEach(btn => {
+        btn.classList.toggle('active', showInactiveApps);
+        btn.setAttribute('aria-pressed', showInactiveApps ? 'true' : 'false');
+    });
 
     let filtered = dashboardApps;
 
@@ -90,6 +112,13 @@ function filterDashboardApps() {
     // Filtre actif ('all' | 'favorites' — les catégories se cherchent via la recherche)
     if (dashboardFilter === 'favorites') {
         filtered = filtered.filter(app => app.is_favorite);
+    }
+
+    // Apps désactivées : masquées par défaut (chip « Désactivées » pour les
+    // afficher). On ne masque que is_active === false — une app active sans
+    // URL de lancement reste visible avec son message dédié.
+    if (!showInactiveApps) {
+        filtered = filtered.filter(app => app.is_active !== false);
     }
 
     renderAppsGrid(filtered);
