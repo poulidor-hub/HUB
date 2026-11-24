@@ -51,6 +51,12 @@ def _validate_host(raw) -> str:
     if host is None:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
                             detail="IP ou hostname invalide")
+    if host.startswith("["):
+        # L'IPv6 n'est pas géré de bout en bout pour le hôte du Hub (fichier de
+        # zone) : la forme entre crochets reste refusée ici, comme avant la
+        # délégation au validateur unique.
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                            detail="IP ou hostname invalide")
     return host
 
 
