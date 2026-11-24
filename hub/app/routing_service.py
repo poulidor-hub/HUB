@@ -10,6 +10,7 @@ docs/superpowers/specs/2026-11-02-routage-dns-design.md
 """
 
 import asyncio
+import logging
 import re
 from pathlib import Path
 from urllib.parse import urlparse
@@ -18,6 +19,9 @@ from sqlalchemy import select
 
 from app import database
 from app.config import get_settings
+from app.host_validation import validate_host
+
+logger = logging.getLogger(__name__)
 
 RESERVED_DNS_NAMES = {"www", "mail", "ns1", "ns2", "api", "hub"}
 
@@ -56,6 +60,46 @@ def validate_zone(zone: str) -> str:
             "minuscules/chiffres/tirets."
         )
     return zone
+
+
+# proxy_pass : schéma http/https (nginx le compare sans tenir compte de la
+# casse), hôte repris du validateur unique, port optionnel, chemin borné.
+_PROXY_PASS_RE = re.compile(
+    r"^(?P<scheme>https?)://"
+    r"(?P<host>\[[^\]]*\]|[^/:?#@()\[\]]+)"
+    r"(?::(?P<port>[0-9]{1,5}))?"
+    r"(?P<path>/[A-Za-z0-9._~:@/?%&=+-]*)?$",
+    re.IGNORECASE,
+)
+
+
+def _proxy_pass_refusal(url) -> str | None:
+    """Raison pour laquelle `url` est refusée comme proxy_pass (None si sûre)."""
+    if not isinstance(url, str):
+        return "valeur absente ou non textuelle"
+    match = _PROXY_PASS_RE.match(url)
+    if not match:
+        return "http:// ou https:// + hôte + port optionnel + chemin attendus"
+    try:
+        host_ok = validate_host(match["host"]) == match["host"]
+    except ValueError:
+        host_ok = False
+    if not host_ok:
+        return "hôte invalide"
+    if match["port"] is not None and not 1 <= int(match["port"]) <= 65535:
+        return "port hors de 1-65535"
+    return None
+
+
+def safe_proxy_pass(url) -> str | None:
+    """Dernier rempart avant l'écriture d'une directive `proxy_pass`.
+
+    N'accepte que `http://` ou `https://` + un hôte valide (mêmes règles que
+    host_validation.validate_host) + un port optionnel + un chemin limité aux
+    caractères `[A-Za-z0-9._~:@/?%&=+-]` ; retourne None sinon. L'URL acceptée
+    est renvoyée telle quelle : le rendu des entrées valides ne change pas.
+    """
+    return url if _proxy_pass_refusal(url) is None else None
 
 
 # ---------------------------------------------------------------- collecte
@@ -221,6 +265,16 @@ def render_vhosts(entries: list[dict], zone: str, wildcard_dir: str) -> dict[str
         return {}
     vhosts: dict[str, str] = {}
     for e in sorted(entries, key=lambda e: e["fqdn"]):
+        proxy_pass = safe_proxy_pass(e["proxy_pass"])
+        if proxy_pass is None:
+            # Un refus ne produit JAMAIS de vhost : une proxy_pass injectée
+            # dans le registre ne doit pas atteindre la configuration nginx.
+            logger.warning(
+                "Routage : proxy_pass refusée pour « %s » (%s), vhost non généré — %s ; valeur=%s",
+                e.get("ref"), e.get("kind"), _proxy_pass_refusal(e["proxy_pass"]),
+                repr(e["proxy_pass"])[:200],
+            )
+            continue
         vhosts[f"{e['dns_name']}.conf"] = (
             "# Généré par hub-api (routing_service) — NE PAS ÉDITER\n"
             "server {\n"
@@ -229,7 +283,7 @@ def render_vhosts(entries: list[dict], zone: str, wildcard_dir: str) -> dict[str
             f"    ssl_certificate     {wildcard_dir}/server.crt;\n"
             f"    ssl_certificate_key {wildcard_dir}/server.key;\n"
             "    location / {\n"
-            f"        proxy_pass {e['proxy_pass']};\n"
+            f"        proxy_pass {proxy_pass};\n"
             "        proxy_set_header Host $host;\n"
             "        proxy_set_header X-Real-IP $remote_addr;\n"
             "        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n"
