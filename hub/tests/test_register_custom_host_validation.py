@@ -38,6 +38,24 @@ MALICIOUS_HOSTS = [
 ]
 
 
+@pytest.fixture(autouse=True)
+def _no_dashboard_stats_read(monkeypatch):
+    """Neutralise le calcul des stats du dashboard — effet de bord hors sujet.
+
+    notify_stats_update() (routes/apps.py, appelé par /register et la création
+    d'app) recalcule les stats en tâche de fond : lecture DB immédiate, puis
+    flush différé jusqu'à 5 s (routes/events.py). Sur la SQLite de test
+    (StaticPool : une seule connexion partagée), la session de fond refermée
+    en cours de requête annule la transaction en vol (« Could not refresh
+    instance ») ou heurte le drop_all du fixture async_engine (« database
+    table is locked »). On neutralise la lecture elle-même : cela couvre aussi
+    le flush différé hérité d'un test précédent."""
+    async def _no_stats():
+        return None
+
+    monkeypatch.setattr("app.routes.events._do_broadcast_stats", _no_stats)
+
+
 @pytest.fixture
 def trusted_docker_network(tmp_path):
     """Réseau Docker de confiance — condition d'accès de /register et
