@@ -5,6 +5,38 @@
 
 ---
 
+## [3.104.3] - 25 novembre 2026
+
+### 📣 Pour les utilisateurs
+- **Corrigé** : la valeur d'un réglage sensible (par exemple le jeton d'accès GitHub) n'apparaît plus dans les journaux du Hub ni dans les notifications temps réel envoyées aux utilisateurs connectés. Seul le nom du réglage y figure désormais.
+- **Corrigé** : les appels du Hub vers l'API GitHub vérifient désormais le certificat du serveur. Si votre serveur se trouve derrière un proxy qui intercepte les connexions sécurisées, indiquez son certificat racine par la variable d'environnement `SSL_CERT_FILE`.
+- **Corrigé** : l'hôte déclaré par une application, à son inscription comme lors de l'allocation de ses ports, est désormais contrôlé (adresse IP ou nom de domaine, sans schéma ni port). Une valeur mal formée est refusée au lieu d'être acceptée telle quelle.
+- **Corrigé** : une adresse déjà enregistrée qui ne respecterait pas ce format ne reçoit plus de configuration de routage ; un avertissement nommant l'application est écrit dans les journaux du Hub.
+- **Corrigé** : la page d'administration du hôte du Hub refuse l'IPv6, qui n'était pas géré de bout en bout pour ce réglage.
+
+### ⚡ Sécurité — réglage sensible jamais journalisé ni diffusé, TLS vérifié vers GitHub
+
+- `routes/settings.py` : `_is_secret_setting_key()` (fragments de nom `token`, `secret`, `password`, `passphrase`, `private_key`, `api_key`, `credential`, insensible à la casse). Pour une clé sensible, le journal ne porte que la clé (« valeur masquée ») et l'événement SSE `settings_updated` part sans `value` — cet événement est diffusé à tous les clients connectés, admin ou non. Les clés ordinaires sont inchangées (le frontal utilise leur valeur, `sse.js`).
+- `verify=False` retiré des cinq appels vers `api.github.com` et `raw.githubusercontent.com` : `github_client.py` (`fetch_github_json`, `fetch_github_raw`, `fetch_github_raw_with_status`), `repo_access.py` (`_api_repo_status`), `routes/github_catalog.py` (`refresh_github_repos`). Les appels internes vers les applications du parc (certificats auto-signés) sont inchangés. Aucune option de repli : un environnement à proxy interceptant le TLS se règle par `SSL_CERT_FILE` / `SSL_CERT_DIR`.
+- **Action après mise à jour** : faire tourner le jeton d'accès GitHub, qui a pu être journalisé ou diffusé avant cette version.
+- Tests : `test_settings.py` (+4 comportements, +13 cas paramétrés sur le helper) ; nouveau `test_github_tls_verification.py` (un test par site, par interception de `httpx.AsyncClient`).
+
+### ⚡ Sécurité — hôte validé à l'inscription, `proxy_pass` contrôlée au rendu
+
+- Nouveau `app/host_validation.py` : `validate_host()` accepte une IPv4, un nom d'hôte (labels RFC 1123, 253 caractères au plus) ou un IPv6 entre crochets ; refuse un IPv6 nu, un suffixe `:port`, un schéma, un chemin et tout caractère de configuration (retour à la ligne, `;`, `{`, `}`, `#`, guillemets). Une valeur vide devient `None`. Le message d'erreur ne reprend jamais la valeur saisie.
+- `schemas.py` : `field_validator` sur `AppRegisterRequest.custom_host`, `AppCreateSimplified.custom_host` et `AllocatePortsRequest.host` — valeur refusée = erreur de validation 422. Au passage, `custom_host: ""` sur `POST /api/apps/register` faisait un 500 (`is_remote=''`).
+- `routing_service.py` : `safe_proxy_pass()` — dernier rempart avant l'écriture d'une directive `proxy_pass` (schéma `http`/`https`, hôte validé, port 1-65535, chemin borné). Une entrée refusée ne génère AUCUN vhost, avec un `logger.warning` (application, raison, valeur tronquée et échappée). Le rendu des entrées valides est inchangé à l'octet près ; `collect_entries` n'est pas modifié.
+- `routes/network.py` : `_validate_host` délègue au validateur unique (contrat 400 et messages inchangés). L'IPv6 entre crochets reste refusé pour le hôte du Hub, non géré de bout en bout (fichier de zone). Seul changement de comportement visible : un IPv6 nu répond 400 au lieu d'être accepté en produisant des URL invalides.
+- Compatibilité vérifiée avant fusion sur le parc de référence : aucune des applications déclarant un hôte n'est refusée par le nouveau validateur.
+- Tests : nouveaux `test_host_validation.py` (59 cas) et `test_register_custom_host_validation.py` (32 cas) ; `test_routing_render.py` (+38, dont un vhost de référence octet pour octet) ; `test_network_config.py` (+2).
+
+### ⚠️ Suite de tests — course préexistante, non corrigée dans cette version
+
+- Une tâche différée du throttle des statistiques SSE (`_flush_pending_stats`, `routes/events.py`, fenêtre de 5 s en variables de module) survit à son test et ouvre une session sur la connexion SQLite en mémoire du test suivant : un test peut alors échouer isolément (`Could not refresh instance`, `NoResultFound`, ou un 404 sur une ligne venant d'être créée).
+- Sur le code de cette version (2058 tests), deux passages de la suite complète : tel quel, 2055 réussites et 2 échecs de cette famille (`test_app_replace.py`, `test_register_recreates_missing_sa.py` — fichiers non modifiés par cette version) ; avec l'annulation des tâches orphelines avant chaque test, 2057 réussites et 1 ignoré. Un correctif de la suite (fixture de nettoyage dans `conftest.py`) reste à faire.
+
+---
+
 ## [3.104.2] - 24 novembre 2026
 
 ### 📣 Pour les utilisateurs
