@@ -15,7 +15,6 @@ singleton get_settings() est effective immédiatement pour tous les consommateur
 (hub-host public, credentials M2M, OIDC, deploy).
 """
 
-import ipaddress
 import logging
 import os
 import re
@@ -28,6 +27,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import get_instance_id, get_server_ip, get_settings
 from app.database import get_db
 from app.deploy_service import _run_cmd
+from app.host_validation import validate_host
 from app.models import AppSetting, User
 from app.auth import get_current_admin
 
@@ -37,27 +37,18 @@ router = APIRouter(prefix="/api/config/network", tags=["Network"])
 
 HUB_HOST_KEY = "hub_host"
 
-# Hostname RFC 1123 (labels alphanumériques, pas de tiret en tête/queue)
-_HOSTNAME_RE = re.compile(
-    r"^(?=.{1,253}$)(?!-)[A-Za-z0-9-]{1,63}(?<!-)(\.(?!-)[A-Za-z0-9-]{1,63}(?<!-))*$"
-)
-
 
 def _validate_host(raw) -> str:
     """Normalise et valide une IP ou un hostname. Lève HTTPException 400 sinon."""
     if raw is None or not isinstance(raw, str):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
                             detail="Le champ 'hub_host' est requis (chaîne)")
-    host = raw.strip()
-    if not host or len(host) > 253 or any(c.isspace() for c in host):
+    try:
+        host = validate_host(raw)
+    except ValueError:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
                             detail="IP ou hostname invalide")
-    try:
-        ipaddress.ip_address(host)
-        return host
-    except ValueError:
-        pass
-    if not _HOSTNAME_RE.match(host):
+    if host is None:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
                             detail="IP ou hostname invalide")
     return host
