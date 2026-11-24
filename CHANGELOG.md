@@ -5,6 +5,17 @@
 
 ---
 
+## [3.104.1] - 24 novembre 2026
+
+### 📣 Pour les utilisateurs
+- **Corrigé** : pendant le chargement de la vue santé, toutes les applications du parc (y compris désactivées) s'affichaient brièvement avant que la grille ne se réduise aux applications actives — la grille reste désormais stable d'un seul tenant, seuls les statuts se remplissent.
+
+### ⚡ Vue santé : périmètre du rendu d'attente aligné sur /apps/health
+
+- `loadAppsHealth` filtre la liste rapide (`GET /apps/all`) sur le même périmètre que le sondage (`is_active !== false && is_unmanaged !== true`) : le rendu pending et le rendu final portent sur les mêmes apps, plus aucun flash 37 → 16 au chargement. Compteur « Vérification de N apps en cours… » cohérent.
+
+---
+
 ## [3.104.0] - 24 novembre 2026
 
 ### 📣 Pour les utilisateurs
