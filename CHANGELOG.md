@@ -5,6 +5,18 @@
 
 ---
 
+## [3.104.2] - 24 novembre 2026
+
+### 📣 Pour les utilisateurs
+- **Amélioré** : la page « Mes Applications » n'affiche plus les applications désactivées par défaut — la vue principale ne montre que les apps utilisables. Un chip « Désactivées » dans la barre de filtres permet de les afficher à la demande (préférence mémorisée).
+
+### ⚡ Launcher : chip « Désactivées » — apps désactivées masquées par défaut
+
+- `dashboard.js` : nouvel état `showInactiveApps` (localStorage `dashboardShowInactive`, off par défaut) ; `filterDashboardApps` masque `is_active === false` (une app active sans URL de lancement reste visible avec son message dédié).
+- Chip « Désactivées » ajouté dans la barre de filtres (`index.html`, après « Prod + Atelier ») ; `toggleShowInactiveApps` bascule, persiste et re-filtre instantanément ; état visuel synchronisé au filtrage (le chip est statique dans le HTML depuis la refactor des filtres).
+
+---
+
 ## [3.104.1] - 24 novembre 2026
 
 ### 📣 Pour les utilisateurs
