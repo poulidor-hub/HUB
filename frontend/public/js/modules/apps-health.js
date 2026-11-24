@@ -39,10 +39,16 @@ async function loadAppsHealth() {
 
     // 1) Rendu IMMÉDIAT : liste des apps (lecture DB, rapide) en état
     //    « vérification… » — plus d'écran vide pendant le sondage du parc.
+    //    Périmètre IDENTIQUE à /apps/health (is_active && !is_unmanaged) :
+    //    sinon les apps désactivées / non gérées s'affichent en « Sondage… »
+    //    puis disparaissent au rendu final (flash de la grille au chargement).
     try {
         const listing = await api.getAllApps('false');
         const raw = Array.isArray(listing) ? listing : (listing.apps || []);
-        const apps = raw.map(function (a) {
+        const probeable = raw.filter(function (a) {
+            return a.is_active !== false && a.is_unmanaged !== true;
+        });
+        const apps = probeable.map(function (a) {
             return { name: a.name, slug: a.slug, icon: a.icon, color: a.color,
                      is_system_app: a.is_system_app, version: a.version || a.app_version || '' };
         });
