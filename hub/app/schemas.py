@@ -1029,6 +1029,12 @@ class AppRegisterResponse(BaseModel):
     credentials: Optional[dict] = None  # client_id, client_secret (retourné une seule fois)
     is_new: bool  # True si nouvelle app, False si existante
     pending_approval: bool = False  # True si l'app est en attente d'approbation admin
+    # False = register idempotent : credentials du SA owner CONSERVÉES (secret
+    # non roté, absent de credentials) — le client doit garder ses credentials
+    # mémoire. True (défaut, compat vieux socles) = secret roté, présent dans
+    # credentials. Clé contractuelle pour le socle hub-client (anti-course
+    # multi-instances au boot).
+    secret_rotated: bool = True
 
 
 # ===== Allocation dynamique des ports =====

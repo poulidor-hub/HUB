@@ -5,10 +5,14 @@
 Tests d'intégration pour les endpoints API des applications
 """
 import pytest
+from pathlib import Path
+from unittest.mock import patch
 from httpx import AsyncClient
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import create_access_token, get_password_hash
-from app.models import User, Application, UserAppRole
+from app.models import User, Application, UserAppRole, ServiceAccount
 from tests.conftest import get_auth_header
 
 
@@ -713,3 +717,196 @@ class TestAppsStatusProbe:
         app = self._find(resp.json(), "test-app")
         assert app["status"] == "online"
         assert calls["n"] == 0  # chemin sain : aucun appel Docker
+
+
+class TestRegisterIdempotent:
+    """Task 6 (plan 2026-11-24-m2m-boot-identity-race) — register idempotent
+    sur preuve M2M valide (anti-course multi-instances).
+
+    Au boot simultané de N instances, chaque POST /api/apps/register rotait le
+    secret du SA owner et invalidait mutuellement les instances qui bootent
+    ensemble. Avec le marqueur `X-Hub-Register-Idempotent: 1` ET un token M2M
+    valide du SA owner, le Hub conserve le secret (`secret_rotated=false`,
+    sans `client_secret`). Sans marqueur ou sans token → rotation préservée
+    (compat ascendante bidirectionnelle avec les vieux socles).
+    """
+
+    @staticmethod
+    async def _register_and_approve(
+        client: AsyncClient,
+        async_session: AsyncSession,
+        tmp_path: Path,
+        slug: str,
+        name: str,
+        api_port: int,
+    ) -> dict:
+        """Register initial + approbation admin. L'app créée via /register est
+        pending avec un SA inactif : le mint client_credentials exige un SA
+        actif, on simule donc l'approbation avant de mint."""
+        with patch("app.routes.apps.is_docker_network_ip", return_value=True), \
+             patch("app.routes.service_accounts.SECRETS_DIR", tmp_path):
+            response = await client.post(
+                "/api/apps/register",
+                json={
+                    "slug": slug,
+                    "name": name,
+                    "api_port": api_port,
+                    "frontend_port": api_port + 1,
+                },
+            )
+        assert response.status_code == 200, f"{response.status_code}: {response.text}"
+        creds = response.json()["credentials"]
+        assert creds["client_secret"], "credentials incomplètes au register initial"
+
+        result = await async_session.execute(
+            select(Application).where(Application.slug == slug)
+        )
+        app = result.scalar_one()
+        app.approval_status = "approved"
+        app.is_active = True
+        result_sa = await async_session.execute(
+            select(ServiceAccount).where(ServiceAccount.client_id == creds["client_id"])
+        )
+        sa = result_sa.scalar_one()
+        sa.is_active = True
+        await async_session.commit()
+        return creds
+
+    @staticmethod
+    async def _mint(client: AsyncClient, client_id: str, client_secret: str):
+        return await client.post(
+            "/api/auth/token",
+            data={
+                "grant_type": "client_credentials",
+                "client_id": client_id,
+                "client_secret": client_secret,
+            },
+        )
+
+    @pytest.mark.asyncio
+    async def test_register_idempotent_with_valid_token_keeps_secret(
+        self, client: AsyncClient, async_session: AsyncSession, tmp_path: Path
+    ):
+        """Marqueur + token M2M valide du SA owner → secret conservé."""
+        creds = await self._register_and_approve(
+            client, async_session, tmp_path, "idem-app", "Idem App", 9405
+        )
+        old_secret = creds["client_secret"]
+
+        # Mint M2M avec les credentials initiales (comme une instance qui a booté)
+        mint = await self._mint(client, creds["client_id"], old_secret)
+        assert mint.status_code == 200, f"{mint.status_code}: {mint.text}"
+        token = mint.json()["access_token"]
+
+        # Re-register idempotent : header + Bearer du SA owner
+        with patch("app.routes.apps.is_docker_network_ip", return_value=True), \
+             patch("app.routes.service_accounts.SECRETS_DIR", tmp_path):
+            response = await client.post(
+                "/api/apps/register",
+                json={
+                    "slug": "idem-app",
+                    "name": "Idem App",
+                    "api_port": 9405,
+                    "frontend_port": 9406,
+                },
+                headers={
+                    "X-Hub-Register-Idempotent": "1",
+                    "Authorization": f"Bearer {token}",
+                },
+            )
+
+        assert response.status_code == 200, f"{response.status_code}: {response.text}"
+        data = response.json()
+        assert data["is_new"] is False
+        assert data["secret_rotated"] is False
+        assert data["credentials"]["client_id"] == creds["client_id"]
+        assert "client_secret" not in data["credentials"], (
+            "Le secret ne doit JAMAIS être retourné sur le chemin idempotent"
+        )
+
+        # Preuve que la rotation n'a PAS eu lieu : l'ANCIEN secret mint encore
+        remint = await self._mint(client, creds["client_id"], old_secret)
+        assert remint.status_code == 200, (
+            f"L'ancien secret ne mint plus ({remint.status_code}) — rotation "
+            f"indue sur le chemin idempotent : {remint.text}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_register_without_marker_rotates(
+        self, client: AsyncClient, async_session: AsyncSession, tmp_path: Path
+    ):
+        """Sans marqueur (vieux socle) → rotation préservée, ancien secret invalidé."""
+        creds = await self._register_and_approve(
+            client, async_session, tmp_path, "oldsocle-app", "Oldsocle App", 9415
+        )
+        old_secret = creds["client_secret"]
+
+        mint = await self._mint(client, creds["client_id"], old_secret)
+        assert mint.status_code == 200
+
+        # Re-register SANS header NI token (vieux socle : comportement actuel)
+        with patch("app.routes.apps.is_docker_network_ip", return_value=True), \
+             patch("app.routes.service_accounts.SECRETS_DIR", tmp_path):
+            response = await client.post(
+                "/api/apps/register",
+                json={
+                    "slug": "oldsocle-app",
+                    "name": "Oldsocle App",
+                    "api_port": 9415,
+                    "frontend_port": 9416,
+                },
+            )
+
+        assert response.status_code == 200, f"{response.status_code}: {response.text}"
+        data = response.json()
+        assert data["is_new"] is False
+        assert data["secret_rotated"] is True
+        assert data["credentials"]["client_id"] == creds["client_id"]
+        new_secret = data["credentials"]["client_secret"]
+        assert new_secret and new_secret != old_secret, "Le secret n'a pas été roté"
+
+        # L'ancien secret ne mint plus (invalidé par la rotation)
+        remint_old = await self._mint(client, creds["client_id"], old_secret)
+        assert remint_old.status_code == 401
+
+        # Le nouveau secret est utilisable
+        mint_new = await self._mint(client, creds["client_id"], new_secret)
+        assert mint_new.status_code == 200, f"{mint_new.status_code}: {mint_new.text}"
+
+    @pytest.mark.asyncio
+    async def test_register_with_marker_but_no_token_rotates(
+        self, client: AsyncClient, async_session: AsyncSession, tmp_path: Path
+    ):
+        """Marqueur sans token M2M → rotation (pas de preuve d'identité)."""
+        creds = await self._register_and_approve(
+            client, async_session, tmp_path, "marker-app", "Marker App", 9425
+        )
+        old_secret = creds["client_secret"]
+
+        mint = await self._mint(client, creds["client_id"], old_secret)
+        assert mint.status_code == 200
+
+        # Header présent, MAIS pas de Bearer → pas de preuve → rotation
+        with patch("app.routes.apps.is_docker_network_ip", return_value=True), \
+             patch("app.routes.service_accounts.SECRETS_DIR", tmp_path):
+            response = await client.post(
+                "/api/apps/register",
+                json={
+                    "slug": "marker-app",
+                    "name": "Marker App",
+                    "api_port": 9425,
+                    "frontend_port": 9426,
+                },
+                headers={"X-Hub-Register-Idempotent": "1"},
+            )
+
+        assert response.status_code == 200, f"{response.status_code}: {response.text}"
+        data = response.json()
+        assert data["is_new"] is False
+        assert data["secret_rotated"] is True
+        new_secret = data["credentials"]["client_secret"]
+        assert new_secret and new_secret != old_secret, "Le secret n'a pas été roté"
+
+        # L'ancien secret ne mint plus (invalidé par la rotation)
+        remint_old = await self._mint(client, creds["client_id"], old_secret)
+        assert remint_old.status_code == 401
