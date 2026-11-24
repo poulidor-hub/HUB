@@ -143,6 +143,32 @@ async def test_put_hub_host_strips_whitespace(client, admin_token, monkeypatch):
     assert r.json()["hub_host"] == "192.0.2.51"
 
 
+async def test_put_hub_host_keeps_400_contract(client, admin_token, no_publish):
+    """Le contrat de l'endpoint est inchangé : champ absent ou non textuel →
+    400 « requis », valeur refusée → 400 « invalide » (jamais un 500)."""
+    headers = get_auth_header(admin_token)
+    for payload in ({}, {"hub_host": None}, {"hub_host": 123}, {"hub_host": "x\n;y"}):
+        r = await client.put("/api/config/network/hub-host", json=payload,
+                             headers=headers)
+        assert r.status_code == 400, f"{payload!r}: {r.status_code}"
+        assert isinstance(r.json()["detail"], str)
+
+
+async def test_put_hub_host_follows_unique_validator_for_ipv6(
+        client, admin_token, no_publish):
+    """hub_host suit le validateur unique. L'IPv6 n'est pas géré de bout en bout
+    pour le hôte du Hub (fichier de zone) : les deux formes sont refusées —
+    l'IPv6 nu, qui produisait des URL `http://::1:4200` invalides, et la forme
+    entre crochets, refusée avant la délégation et qui casserait le fichier de
+    zone."""
+    headers = get_auth_header(admin_token)
+    for value in ("::1", "[::1]", "2001:db8::1", "[2001:db8::1]"):
+        r = await client.put("/api/config/network/hub-host",
+                             json={"hub_host": value}, headers=headers)
+        assert r.status_code == 400, f"{value!r}: {r.status_code}"
+        assert r.json()["detail"] == "IP ou hostname invalide"
+
+
 # --- DELETE : retour env / auto-détection ---
 
 async def test_delete_hub_host_restores_env(client, admin_token, async_session,
