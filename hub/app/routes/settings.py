@@ -25,6 +25,19 @@ router = APIRouter(prefix="/api/settings", tags=["Settings"])
 # Clés accessibles sans authentification
 PUBLIC_KEYS = {"account_requests_enabled"}
 
+# Fragments de nom (insensible à la casse) désignant un réglage à valeur secrète.
+# Sa valeur ne doit jamais être journalisée en clair ni diffusée par SSE : ce
+# dernier part à tous les utilisateurs connectés, pas seulement aux admins.
+_SECRET_KEY_FRAGMENTS = (
+    "token", "secret", "password", "passphrase", "private_key", "api_key", "credential",
+)
+
+
+def _is_secret_setting_key(key: str) -> bool:
+    """True si la clé désigne un réglage à valeur secrète (jeton, mot de passe…)."""
+    lowered = key.lower()
+    return any(fragment in lowered for fragment in _SECRET_KEY_FRAGMENTS)
+
 
 @router.get("/{key}")
 async def get_setting(
@@ -96,12 +109,24 @@ async def update_setting(
         except ImportError:
             pass
 
-    logger.info(f"Setting '{key}' mis à jour à '{value}' par {current_admin.username}")
+    is_secret = _is_secret_setting_key(key)
 
-    # Broadcast SSE
+    # Un réglage secret n'est jamais journalisé en clair : la mise à jour reste
+    # tracée par sa clé.
+    if is_secret:
+        logger.info(f"Setting '{key}' mis à jour (valeur masquée) par {current_admin.username}")
+    else:
+        logger.info(f"Setting '{key}' mis à jour à '{value}' par {current_admin.username}")
+
+    # Broadcast SSE — un réglage secret part sans sa valeur : l'événement est
+    # diffusé à tous les clients connectés, admin ou non. Le frontend n'utilise
+    # la valeur que pour les clés ordinaires (sse.js, case 'settings_updated').
+    event_data = {"key": key}
+    if not is_secret:
+        event_data["value"] = value
     try:
         from app.routes.events import broadcast_event
-        await broadcast_event("settings_updated", {"key": key, "value": value})
+        await broadcast_event("settings_updated", event_data)
     except ImportError:
         pass
 
