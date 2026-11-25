@@ -3380,6 +3380,15 @@ async def approve_or_reject_app(
         message = f"❌ Application '{slug}' rejetée. Raison: {approval.reason}"
         logger.info(f"❌ Application '{slug}' rejetée par {admin.username}: {approval.reason}")
     
+    # Chantier B : republier le routage — une application approuvée entre dans
+    # la zone DNS et les hôtes virtuels, une application rejetée en sort.
+    # Non bloquant : l'approbation reste acquise si la publication échoue.
+    try:
+        from app.routing_service import regenerate as _regenerate_routing
+        await _regenerate_routing()
+    except Exception:
+        pass
+
     return AppApprovalResponse(
         message=message,
         application=AppResponse.model_validate(app),
