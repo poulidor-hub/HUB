@@ -10,8 +10,9 @@
 # $request_uri, $remote_addr...) doivent survivre intactes.
 #
 # Usage : render-philia-conf.sh <fichier_modèle> <fichier_sortie> <domaine>
-# Code 0 : vhost écrit. Code 1 : refus ou échec — rien n'est écrit, la sortie
-# existante reste intacte et aucun fichier temporaire ne subsiste.
+# Code 0 : vhost écrit. Code 1 : domaine refusé. Code 2 : rendu impossible.
+# Sur toute erreur rien n'est écrit, la sortie existante reste intacte et
+# aucun fichier temporaire ne subsiste.
 #
 # POSIX sh et sed uniquement : l'image hub-frontend (nginx:alpine) n'a que
 # BusyBox — ni bash, ni envsubst.
@@ -22,11 +23,20 @@ set -eu
 TOKEN=__PHILIA_NG_DOMAIN__
 
 echec() {
-    printf '❌ render-philia-conf.sh : %s\n' "$*" >&2
-    exit 1
+    # $1 = message, $2 = code de sortie (1 refus, 2 rendu impossible).
+    printf '❌ render-philia-conf.sh : %s\n' "$1" >&2
+    exit "$2"
 }
 
-[ "$#" -eq 3 ] || echec "usage : render-philia-conf.sh <fichier_modèle> <fichier_sortie> <domaine> — $# argument(s) reçu(s) au lieu de 3"
+imprimable() {
+    # Une valeur refusée peut contenir sauts de ligne et caractères de
+    # contrôle : ils deviennent des espaces, elle ne part jamais telle quelle
+    # dans les journaux. Plage explicite : la classe [:print:] n'est pas
+    # interprétée par le tr de BusyBox.
+    printf '%s' "$1" | tr '\000-\037\177' ' '
+}
+
+[ "$#" -eq 3 ] || echec "usage : render-philia-conf.sh <fichier_modèle> <fichier_sortie> <domaine> — $# argument(s) reçu(s) au lieu de 3" 2
 
 TEMPLATE=$1
 OUTPUT=$2
@@ -36,7 +46,7 @@ DOMAIN=$3
 # rien d'autre que des lettres, chiffres, points et tirets.
 case "$DOMAIN" in
     ""|*[!A-Za-z0-9.-]*)
-        echec "domaine PhiliaNG refusé, vide ou hors de A-Za-z0-9.- : '$DOMAIN'"
+        echec "domaine PhiliaNG refusé, vide ou hors de A-Za-z0-9.- : '$(imprimable "$DOMAIN")'" 1
         ;;
 esac
 
@@ -45,9 +55,9 @@ esac
 TMP="$OUTPUT.tmp"
 if ! sed "s/$TOKEN/$DOMAIN/g" "$TEMPLATE" > "$TMP"; then
     rm -f "$TMP"
-    echec "rendu impossible : $TEMPLATE → $OUTPUT"
+    echec "rendu impossible : $TEMPLATE → $OUTPUT" 2
 fi
 if ! mv "$TMP" "$OUTPUT"; then
     rm -f "$TMP"
-    echec "écriture impossible vers $OUTPUT"
+    echec "écriture impossible vers $OUTPUT" 2
 fi

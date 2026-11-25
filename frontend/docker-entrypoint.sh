@@ -24,18 +24,29 @@ if [ "${HUB_HTTPS_ENABLED:-true}" = "true" ] && [ -f "$SSL_CRT" ] && [ -f "$SSL_
     # Le modèle porte le jeton __PHILIA_NG_DOMAIN__ : le vhost est rendu au
     # démarrage avec PHILIA_NG_DOMAIN (proxy.example.lan par défaut) — le même
     # nom que celui du certificat, généré par hub-api sur la même variable.
-    # Rendu refusé ou impossible : on s'arrête net, sans jamais lancer Nginx sur
-    # un vhost absent ou à moitié rendu.
+    # Domaine refusé (code 1) : ce réglage est facultatif, on démarre sans le
+    # vhost plutôt que de priver le Hub de son frontend, et sans résidu.
+    # Rendu impossible (code 2) : on s'arrête net, sans jamais lancer Nginx sur
+    # une configuration à moitié rendue.
     if [ -f "$PHILIA_CRT" ] && [ -f "$PHILIA_KEY" ]; then
         PHILIA_DOMAIN="${PHILIA_NG_DOMAIN:-proxy.example.lan}"
-        if ! /usr/local/bin/render-philia-conf.sh \
-                /etc/nginx/templates/nginx-philia-ng.conf \
-                /etc/nginx/conf.d/philia-ng.conf "$PHILIA_DOMAIN"; then
+        PHILIA_STATUT=0
+        /usr/local/bin/render-philia-conf.sh \
+            /etc/nginx/templates/nginx-philia-ng.conf \
+            /etc/nginx/conf.d/philia-ng.conf "$PHILIA_DOMAIN" || PHILIA_STATUT=$?
+        if [ "$PHILIA_STATUT" -eq 1 ]; then
+            # Un vhost rendu par un démarrage précédent ne survit pas au refus.
+            # La valeur, refusée, n'est imprimée que rendue imprimable.
+            rm -f /etc/nginx/conf.d/philia-ng.conf /etc/nginx/conf.d/philia-ng.conf.tmp
+            printf "❌ PhiliaNG : PHILIA_NG_DOMAIN='%s' refusé, vide ou hors de A-Za-z0-9.- — Nginx démarre sans le vhost PhiliaNG, le proxy transparent ne répondra pas. Corrigez la ligne PHILIA_NG_DOMAIN dans .env, puis recréez hub-frontend (docker compose up -d hub-frontend).\n" \
+                "$(printf '%s' "$PHILIA_DOMAIN" | tr '\000-\037\177' ' ')" >&2
+        elif [ "$PHILIA_STATUT" -ne 0 ]; then
             printf "❌ PhiliaNG : rendu du vhost impossible (PHILIA_NG_DOMAIN='%s') — démarrage de Nginx annulé\n" \
                 "$PHILIA_DOMAIN" >&2
             exit 1
+        else
+            echo "   → PhiliaNG activé ($PHILIA_DOMAIN)"
         fi
-        echo "   → PhiliaNG activé ($PHILIA_DOMAIN)"
     else
         echo "   → PhiliaNG désactivé (certificats absents)"
     fi
