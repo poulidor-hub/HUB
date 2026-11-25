@@ -4,7 +4,7 @@
 
 # =============================================================================
 # Entrypoint Nginx — sélection HTTP-only vs dual-stack (HTTP+HTTPS)
-# + inclusion conditionnelle de PhiliaNG (service.example.org)
+# + inclusion conditionnelle de PhiliaNG
 # =============================================================================
 set -e
 
@@ -22,7 +22,7 @@ if [ "${HUB_HTTPS_ENABLED:-true}" = "true" ] && [ -f "$SSL_CRT" ] && [ -f "$SSL_
         /etc/nginx/templates/nginx-ssl.conf > /etc/nginx/conf.d/default.conf
     # PhiliaNG : inclus uniquement si les certificats sont présents
     if [ -f "$PHILIA_CRT" ] && [ -f "$PHILIA_KEY" ]; then
-        echo "   → PhiliaNG (service.example.org) activé"
+        echo "   → PhiliaNG activé"
         cp /etc/nginx/templates/nginx-philia-ng.conf /etc/nginx/conf.d/philia-ng.conf
     else
         echo "   → PhiliaNG désactivé (certificats absents)"
