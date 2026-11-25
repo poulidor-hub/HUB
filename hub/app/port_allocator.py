@@ -96,7 +96,7 @@ async def fleet_env_occupied(settings, host: str) -> tuple[set[str], set[int]]:
     Les scans Docker ne voient que le VIVANT : une app legacy (absente du
     registre Hub) ou arrêtée au moment de l'allocation — réseau pruné,
     conteneurs down — était invisible et se faisait ré-attribuer ports et
-    sous-réseau (bug 2026-11-13 : intendance vs contrat-w-pr / exemple-app).
+    sous-réseau (bug 2026-11-13 : exemple-app-20 vs tiers-app-ws / exemple-app-9).
     Les `.env` de la flotte (montage `apps_host_path`) sont la source de
     vérité durable : leurs `APP_SUBNET`/`API_PORT`/`FRONTEND_PORT`/
     `FRONTEND_HTTPS_PORT` comptent comme occupés même sans conteneur vivant.
@@ -276,7 +276,7 @@ async def _used_subnets(db: AsyncSession, cutoff=None) -> set[str]:
     le démon Docker est partagé par toutes les apps colocalisées, et l'host
     détecté est instable (même machine vue sous plusieurs IP selon
     l'interface/VPN). Le scoping par host a permis des collisions réelles
-    (10.50.1.0/24 alloué à exemple-app ET exemple-app-test — bug 2026-10-10).
+    (10.50.1.0/24 alloué à exemple-app-2 ET exemple-app-2-test — bug 2026-10-10).
     Retourne les CIDR en chaîne (ex: "10.50.0.0/24"). `cutoff` exclut les
     réservations expirées (sans app associée et antérieures à la date limite).
     """
@@ -301,8 +301,8 @@ async def reconcile_subnet_with_docker(
     diverge du réseau existant (ré-allocation après purge / re-création /
     host instable, pendant que le réseau persistait), tout `make up` tente de
     recréer le réseau — refusé si des conteneurs tiers y sont attachés (exit 2,
-    exemple-app 2026-10-10), conteneurs de l'app cassés sinon
-    (« network not found », exemple-app-test #9).
+    exemple-app-3 2026-10-10), conteneurs de l'app cassés sinon
+    (« network not found », exemple-app-2-test #9).
 
     Règle : le réseau vivant gagne. L'allocation DB est réécrite ; l'appelant
     écrit ensuite APP_SUBNET réconcilié dans le .env (aucune divergence

@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 settings = get_settings()
 
 # Dimensionnement du pool (incidents 13/11/2026 : auto-register + approve de
-# 'exemple-app') — les événements d'ajout d'app déclenchent des tempêtes de
+# 'exemple-app-18') — les événements d'ajout d'app déclenchent des tempêtes de
 # requêtes (broadcast SSE → vagues /api/apps/pending, /api/apps/,
 # token/refresh, unread-count) dont la demande concurrente dépassait le
 # défaut 5 + 10 = 15 connexions → QueuePool TimeoutError (500 en cascade).

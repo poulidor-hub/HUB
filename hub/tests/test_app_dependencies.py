@@ -21,19 +21,19 @@ def _sa_headers(service_account) -> dict:
 @pytest.mark.asyncio
 async def test_app_dependency_model_persists(async_session):
     dep = AppDependency(
-        source_slug="exemple-apps",
-        target_slug="exemple-app-2",
-        note="Catalogue articles",
+        source_slug="exemple-app-19",
+        target_slug="MON_APP",
+        note="Catalogue d'exemple",
     )
     async_session.add(dep)
     await async_session.commit()
 
     result = await async_session.execute(
-        select(AppDependency).where(AppDependency.source_slug == "exemple-apps")
+        select(AppDependency).where(AppDependency.source_slug == "exemple-app-19")
     )
     row = result.scalar_one()
-    assert row.target_slug == "exemple-app-2"
-    assert row.note == "Catalogue articles"
+    assert row.target_slug == "MON_APP"
+    assert row.note == "Catalogue d'exemple"
     assert row.declared_at is not None
     assert row.last_sync_at is None
 
@@ -56,8 +56,8 @@ async def test_post_dependencies_creates_rows(client: AsyncClient, test_app, ser
     r = await client.post(
         "/api/apps/dependencies",
         json={"depends_on": [
-            {"slug": "exemple-app-2", "note": "articles"},
-            {"slug": "exemple-app"},
+            {"slug": "MON_APP", "note": "articles"},
+            {"slug": "ExempleApp"},
         ]},
         headers={**_sa_headers(service_account), "X-Slug": test_app.slug},
     )
@@ -70,9 +70,9 @@ async def test_post_dependencies_creates_rows(client: AsyncClient, test_app, ser
         select(AppDependency).where(AppDependency.source_slug == test_app.slug)
     )).scalars().all()
     targets = {r.target_slug: r for r in rows}
-    assert set(targets.keys()) == {"exemple-app-2", "exemple-app"}
-    assert targets["exemple-app-2"].note == "articles"
-    assert targets["exemple-app"].note is None
+    assert set(targets.keys()) == {"MON_APP", "ExempleApp"}
+    assert targets["MON_APP"].note == "articles"
+    assert targets["ExempleApp"].note is None
 
 
 @pytest.mark.asyncio
@@ -83,16 +83,16 @@ async def test_post_dependencies_replaces_existing_and_preserves_last_sync(
     from datetime import timedelta
     old_sync = utcnow() - timedelta(hours=2)
     existing = AppDependency(
-        source_slug=test_app.slug, target_slug="exemple-app-2",
+        source_slug=test_app.slug, target_slug="MON_APP",
         note="old note", last_sync_at=old_sync,
     )
     async_session.add(existing)
     await async_session.commit()
 
-    # Remplace par une nouvelle liste qui contient encore exemple-app-2
+    # Remplace par une nouvelle liste qui contient encore MON_APP
     r = await client.post(
         "/api/apps/dependencies",
-        json={"depends_on": [{"slug": "exemple-app-2", "note": "new note"}]},
+        json={"depends_on": [{"slug": "MON_APP", "note": "new note"}]},
         headers={**_sa_headers(service_account), "X-Slug": test_app.slug},
     )
     assert r.status_code == 200
@@ -128,14 +128,14 @@ async def test_post_dependencies_clears_when_empty_list(client: AsyncClient, tes
 
 @pytest.mark.asyncio
 async def test_sync_report_updates_existing_row(client: AsyncClient, test_app, service_account, async_session):
-    dep = AppDependency(source_slug=test_app.slug, target_slug="exemple-app-2")
+    dep = AppDependency(source_slug=test_app.slug, target_slug="MON_APP")
     async_session.add(dep)
     await async_session.commit()
     assert dep.last_sync_at is None
 
     r = await client.post(
         "/api/apps/sync-report",
-        json={"target": "exemple-app-2"},
+        json={"target": "MON_APP"},
         headers={**_sa_headers(service_account), "X-Slug": test_app.slug},
     )
     assert r.status_code == 200

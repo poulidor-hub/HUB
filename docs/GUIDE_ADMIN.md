@@ -283,4 +283,4 @@ docker compose exec db pg_dump -U hubadmin hub_auth > backup_$(date +%Y%m%d).sql
 
 - **Documentation développeur** : `INTEGRATION.md` (contrat d'intégration Hub ↔ Apps)
 - **Sécurité** : `SECURITY_AUDIT.md` (audit complet)
-- **Messages** : `exemple-app.md` (système de notifications)
+- **Messages** : documentation du système de notifications (fichier local, non distribué)

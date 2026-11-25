@@ -132,7 +132,7 @@ def _ws_override_env(slug: str) -> dict[str, str]:
     """Env d'overrides compose de l'atelier (APPS/<slug>/.workshop.overrides.env).
 
     Motivation : les apps qui bindent des ports host métier via des vars de
-    leur .env prod (ex. exemple-app : "${PHILIA_NG_PORT:-42690}:8080")
+    leur .env prod (ex. exemple-app-6 : "${APP_METIER_PORT:-42690}:8080")
     retombaient sur le port prod dans l'atelier → conflit de bind → restart
     loop. Compose lit lui-même le .env prod du working tree (partagé avec la
     prod) : l'OS doit pouvoir lui imposer les valeurs atelier, sans toucher
@@ -593,7 +593,7 @@ async def _op_recreate(op_id: int, slug: str) -> None:
     précédent) a changé.
     Les overlays HTTPS/GPU de l'app sont injectés comme le fait son
     `make up` — sinon la recréation (ex. propagation d'IP) fait perdre le
-    port HTTPS de l'app (incident exemple-app 27-28/10/2026)."""
+    port HTTPS de l'app (incident 27-28/10/2026)."""
     app_dir = _app_dir(slug)
     compose_file = app_dir / "docker-compose.yml"
     if not compose_file.exists():

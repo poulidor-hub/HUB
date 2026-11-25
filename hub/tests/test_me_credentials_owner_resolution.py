@@ -6,8 +6,8 @@ AN-1 (banc 2026-09-10) — `/api/apps/me/credentials` doit résoudre l'app
 propriétaire du service account, jamais un élément arbitraire de la
 relation N-N non ordonnée (`sa.applications[0]`).
 
-Repro banc : le SA de `controle-socle` (« SA - Contrôle Socle ») a accès à
-13 apps ; l'endpoint retournait `app_slug: exemple-app-ws` (app
+Repro banc : le SA de `exemple-app-15` (« SA - Exemple App 15 ») a accès à
+13 apps ; l'endpoint retournait `app_slug: exemple-app-8-ws` (app
 arbitraire) au lieu de l'app propriétaire du SA. L'identité d'app étant
 falsifiée, le risque est la rotation/le secret livrés au mauvais slug.
 
@@ -75,16 +75,16 @@ class TestMeCredentialsResolvesOwnerApp:
         # L'app « autre » est liée EN PREMIER : avec le bug, c'est elle que
         # `sa.applications[0]` retournait (ordre d'insertion = rowid sqlite).
         other_app = await _create_app(
-            async_session, "exemple-app-ws", "exemple-app-7",
+            async_session, "exemple-app-8-ws", "Exemple App 8",
             is_shared=True, is_workshop=True,
         )
-        my_app = await _create_app(async_session, "controle-socle", "Controle Socle")
+        my_app = await _create_app(async_session, "exemple-app-15", "Exemple App 15")
 
         sa = ServiceAccount(
-            name="SA - Controle Socle",
+            name="SA - Exemple App 15",
             client_id="sa_bench_multi_app",
             client_secret_hash="x",
-            description="Service account auto-créé pour Controle Socle",
+            description="Service account auto-créé pour Exemple App 15",
             is_active=True,
         )
         async_session.add(sa)
@@ -94,8 +94,8 @@ class TestMeCredentialsResolvesOwnerApp:
         await _link(async_session, sa, my_app)
 
         token = _m2m_token(sa, {
-            "exemple-app-ws": "service",
-            "controle-socle": "service",
+            "exemple-app-8-ws": "service",
+            "exemple-app-15": "service",
         })
         response = await client.get(
             "/api/apps/me/credentials",
@@ -104,10 +104,10 @@ class TestMeCredentialsResolvesOwnerApp:
 
         assert response.status_code == 200, response.text
         data = response.json()
-        assert data["app_slug"] == "controle-socle", (
+        assert data["app_slug"] == "exemple-app-15", (
             f"AN-1 non corrigé : app arbitraire retournée ({data['app_slug']})"
         )
-        assert data["app_name"] == "Controle Socle"
+        assert data["app_name"] == "Exemple App 15"
         assert data["client_id"] == "sa_bench_multi_app"
 
     @pytest.mark.asyncio
@@ -175,13 +175,13 @@ class TestMeCredentialsResolvesOwnerApp:
         """Path déprécié (IP Docker + X-Client-ID) : même contrat que le path
         token (la ligne 2368 avait le même bug `[0]`)."""
         other_app = await _create_app(
-            async_session, "exemple-app-ws", "exemple-app-7",
+            async_session, "exemple-app-8-ws", "Exemple App 8",
             is_shared=True, is_workshop=True,
         )
-        my_app = await _create_app(async_session, "controle-socle", "Controle Socle")
+        my_app = await _create_app(async_session, "exemple-app-15", "Exemple App 15")
 
         sa = ServiceAccount(
-            name="SA - Controle Socle",
+            name="SA - Exemple App 15",
             client_id="sa_bench_deprecated",
             client_secret_hash="x",
             is_active=True,
@@ -199,4 +199,4 @@ class TestMeCredentialsResolvesOwnerApp:
             )
 
         assert response.status_code == 200, response.text
-        assert response.json()["app_slug"] == "controle-socle"
+        assert response.json()["app_slug"] == "exemple-app-15"

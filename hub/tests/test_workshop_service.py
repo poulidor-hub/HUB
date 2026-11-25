@@ -600,8 +600,8 @@ async def test_op_recreate_env_sans_fuite_hub(tmp_path, monkeypatch, async_sessi
 async def test_op_recreate_inclut_overlay_https(tmp_path, monkeypatch, async_session):
     """La recréation (propagation IP, bouton « Recréer ») doit injecter
     l'overlay HTTPS de l'app comme le fait son `make up` — sinon les
-    conteneurs sont recréés sans le port HTTPS (incident exemple-app
-    27-28/10/2026 : 4231 injoignable après propagation)."""
+    conteneurs sont recréés sans le port HTTPS (incident 27-28/10/2026 :
+    4231 injoignable après propagation)."""
     app = _mk_app(tmp_path, monkeypatch)
     (app / "docker-compose.https.yml").write_text("services: {}\n")
     (app / ".env").write_text(

@@ -83,17 +83,17 @@ def test_db_write_errors_alert():
 def test_app_offline_alert_with_slug_key():
     state = {}
     alerts = evaluate_alerts(
-        _metrics(apps_offline_min={"exemple-app": 7}), THRESHOLDS, state, NOW
+        _metrics(apps_offline_min={"mon-app": 7}), THRESHOLDS, state, NOW
     )
-    assert _keys(alerts) == ["app_offline:exemple-app"]
+    assert _keys(alerts) == ["app_offline:mon-app"]
     assert alerts[0]["priority"] == "warning"
-    assert alerts[0]["title"] == "🔧 App injoignable : exemple-app"
+    assert alerts[0]["title"] == "🔧 App injoignable : mon-app"
 
 
 def test_app_offline_below_threshold_no_alert():
     state = {}
     alerts = evaluate_alerts(
-        _metrics(apps_offline_min={"exemple-app": 2}), THRESHOLDS, state, NOW
+        _metrics(apps_offline_min={"mon-app": 2}), THRESHOLDS, state, NOW
     )
     assert alerts == []
 
@@ -106,17 +106,17 @@ def test_app_offline_fires_once_per_episode():
     """
     state = {}
     first = evaluate_alerts(
-        _metrics(apps_offline_min={"exemple-app": 7}), THRESHOLDS, state, NOW
+        _metrics(apps_offline_min={"mon-app": 7}), THRESHOLDS, state, NOW
     )
-    assert _keys(first) == ["app_offline:exemple-app"]
+    assert _keys(first) == ["app_offline:mon-app"]
     # même épisode 1 min plus tard : silence
     second = evaluate_alerts(
-        _metrics(apps_offline_min={"exemple-app": 7}), THRESHOLDS, state, NOW + 60
+        _metrics(apps_offline_min={"mon-app": 7}), THRESHOLDS, state, NOW + 60
     )
     assert second == []
     # même épisode bien après le cooldown : toujours silence
     third = evaluate_alerts(
-        _metrics(apps_offline_min={"exemple-app": 7}), THRESHOLDS, state,
+        _metrics(apps_offline_min={"mon-app": 7}), THRESHOLDS, state,
         NOW + THRESHOLDS["cooldown_min"] * 60 + 1,
     )
     assert third == []
@@ -127,18 +127,18 @@ def test_app_offline_rearms_after_recovery():
     un nouvel épisode offline re-déclenche une alerte."""
     state = {}
     first = evaluate_alerts(
-        _metrics(apps_offline_min={"exemple-app": 7}), THRESHOLDS, state, NOW
+        _metrics(apps_offline_min={"mon-app": 7}), THRESHOLDS, state, NOW
     )
-    assert _keys(first) == ["app_offline:exemple-app"]
+    assert _keys(first) == ["app_offline:mon-app"]
     # récupération : plus rien d'offline → 0 alerte
     recovered = evaluate_alerts(_metrics(), THRESHOLDS, state, NOW + 60)
     assert recovered == []
     # 2e épisode : le slug re-passe offline 7 min → nouvelle alerte
     # (malgré un clock bien antérieur à l'expiration du cooldown)
     second = evaluate_alerts(
-        _metrics(apps_offline_min={"exemple-app": 7}), THRESHOLDS, state, NOW + 600
+        _metrics(apps_offline_min={"mon-app": 7}), THRESHOLDS, state, NOW + 600
     )
-    assert _keys(second) == ["app_offline:exemple-app"]
+    assert _keys(second) == ["app_offline:mon-app"]
 
 
 def test_app_offline_below_threshold_does_not_arm():
@@ -146,10 +146,10 @@ def test_app_offline_below_threshold_does_not_arm():
     dans state) — l'armement ne se fait qu'au-delà du seuil."""
     state = {}
     alerts = evaluate_alerts(
-        _metrics(apps_offline_min={"exemple-app": 2}), THRESHOLDS, state, NOW
+        _metrics(apps_offline_min={"mon-app": 2}), THRESHOLDS, state, NOW
     )
     assert alerts == []
-    assert "app_offline:exemple-app" not in state
+    assert "app_offline:mon-app" not in state
 
 
 # =============================================================================
@@ -275,9 +275,9 @@ def test_db_write_errors_alert_has_no_action():
 def test_app_offline_alert_has_no_action():
     """App offline : aucune ligne Audit correspondante (état santé, pas d'erreur HTTP)."""
     alerts = evaluate_alerts(
-        _metrics(apps_offline_min={"exemple-app": 7}), THRESHOLDS, {}, NOW
+        _metrics(apps_offline_min={"mon-app": 7}), THRESHOLDS, {}, NOW
     )
-    a = _alert_by_key(alerts, "app_offline:exemple-app")
+    a = _alert_by_key(alerts, "app_offline:mon-app")
     assert "action_url" not in a
     assert "action_label" not in a
 
@@ -384,10 +384,10 @@ async def test_deliver_alerts_without_action_persists_null_fields(
     from app.alert_checker import deliver_alerts
 
     alerts = [{
-        "key": "app_offline:exemple-app",
+        "key": "app_offline:mon-app",
         "priority": "urgent",
-        "title": "🚨 App offline : exemple-app",
-        "body": "L'app exemple-app est injoignable depuis ~9 min.",
+        "title": "🚨 App offline : mon-app",
+        "body": "L'app mon-app est injoignable depuis ~9 min.",
     }]
     delivered = await deliver_alerts(alerts)
     assert delivered == 1

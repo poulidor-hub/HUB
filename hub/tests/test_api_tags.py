@@ -1119,7 +1119,7 @@ class TestOnboardingReason:
         }, headers=user_headers)
         assert r.status_code == 200
 
-        # La source ne connaît plus « Nord » (renommée côté exemple-app)
+        # La source ne connaît plus « Nord » (renommée côté application source)
         monkeypatch.setattr(
             "app.routes.tags.httpx.AsyncClient",
             TestLiveValues._StubAsyncClient,

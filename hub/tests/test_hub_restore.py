@@ -138,8 +138,9 @@ async def test_ensure_hub_system_application_reuses_existing_sa(async_session):
 async def test_export_import_preserves_identity_anchors(async_session):
     """Test money : export → import sur hub vide préserve uuid/oidc_sub/prenom/nom.
 
-    Sans ces ancres, un restore sur hub vide casserait les liaisons
-    exemple-app-16 (user_uuid) et OIDC des users renommés.
+    Sans ces ancres, un restore sur hub vide casserait les liaisons des
+    applications par identifiant stable (user_uuid) et les liaisons OIDC
+    des users renommés.
     """
     from app.hub_self_backup import _do_export, _build_zip_archive
 

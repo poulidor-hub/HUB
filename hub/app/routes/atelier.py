@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (C) 2026 POULIDOR Audit & Développement (Valérian Poulidor)
 
-"""Ateliers (workshops) — liste native pour l'admin Hub et l'agent exemple-app.
+"""Ateliers (workshops) — liste native pour l'admin Hub et l'agent d'administration.
 
 Découverte par marqueurs : tout dossier de apps_host_path contenant un
 .workshop.env (contrat hubctl v0.6.1, cf. workshop_service.WS_ENV_KEYS) est un
@@ -9,7 +9,7 @@ atelier. L'état des conteneurs (projet compose = ws_slug, suffixe -ws) est lu
 via le client Docker socket :ro de docker_scanner — Docker injoignable ⇒
 containers_state="inconnu", la route ne lève jamais 500.
 
-Shape de sortie (contrat, consommé par l'agent exemple-app et l'UI admin) :
+Shape de sortie (contrat, consommé par l'agent d'administration et l'UI admin) :
     {"ateliers": [{"app", "ws_slug", "api_port", "frontend_port",
                    "containers_state"}, ...],
      "ghosts":   [{"slug", "name", "created_at"}, ...],
@@ -193,7 +193,7 @@ async def list_ateliers(_: User = Depends(get_current_admin)):
     Read-only : lecture du disque apps_host_path, du socket Docker :ro et de
     la table applications ; Docker ou DB indisponible ⇒ état "inconnu"/liste
     vide, jamais d'erreur 500. La clé "ateliers" est inchangée (rétro-compat
-    agent exemple-app / UI admin).
+    agent d'administration / UI admin).
     """
     docker_client = None
     try:

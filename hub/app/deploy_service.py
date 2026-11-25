@@ -316,7 +316,7 @@ async def _run_deployment(deployment_id: int, slug: str, session_factory=None) -
                 # Réconciliation subnet Hub ↔ réseau Docker vivant (le réseau
                 # gagne) : sinon Compose recrée le réseau au premier
                 # divergent APP_SUBNET et le déploiement échoue
-                # (bugs 2026-10-10 exemple-app / exemple-app-test).
+                # (bugs 2026-10-10 exemple-app-3 / exemple-app-2-test).
                 await reconcile_subnet_with_docker(db, slug, allocation, get_settings())
                 token = await _get_github_token(db)
 

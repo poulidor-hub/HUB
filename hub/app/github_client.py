@@ -117,7 +117,7 @@ def normalize_github_url(git_repo_url: Optional[str]) -> Optional[str]:
     Le PAT ne s'applique qu'au HTTPS et le conteneur hub n'a pas de binaire
     ssh : une URL SSH (git@github.com:owner/repo.git) faisait échouer le clone
     avec « cannot run ssh: No such file or directory » (bug 2026-10-03, 4
-    échecs exemple-app). Les formes scp-like et ssh:// sont converties ;
+    échecs de déploiement d'une application). Les formes scp-like et ssh:// sont converties ;
     les autres URLs (HTTPS, non-git) sont rendues inchangées.
     """
     if not git_repo_url:

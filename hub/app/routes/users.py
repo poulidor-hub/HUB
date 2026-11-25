@@ -204,7 +204,7 @@ async def m2m_list_users(
     """
     Listing de tous les utilisateurs Hub pour les Service Accounts.
 
-    Cas d'usage (spec exemple-app §5.5) : résoudre localement les user_id
+    Cas d'usage (spec de l'application de notifications §5.5) : résoudre localement les user_id
     en usernames (et inversement) pour l'affichage. Contrairement à
     /m2m/search (filtrée sur les apps autorisées du SA), cette liste n'est
     PAS filtrée par application : les messages M2M synchronisés via
@@ -783,7 +783,7 @@ async def rename_user(
 
     Effets : username normalisé (strip+lower), révocation de tous les tokens,
     force_logout SSE (l'utilisateur doit se reconnecter), entrée audit.
-    Prérequis : exemple-app-16 à jour (matching par uid) — cf. spec §7.1.
+    Prérequis : application source à jour (matching par uid) — cf. spec §7.1.
     """
     new_username = payload.username.strip().lower()
     if len(new_username) < 3:

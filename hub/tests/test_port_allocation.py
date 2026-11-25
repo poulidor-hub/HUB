@@ -204,7 +204,7 @@ async def test_ports_status_exposes_host_occupied_ports(client: AsyncClient, adm
 
 # ===== Exclusion des sous-réseaux Docker occupés (scan hôte local) =====
 # Bug constaté : le Hub n'allouait que selon sa table port_allocations et a
-# proposé 10.50.5.0/24 alors que exemple-app-network l'occupe déjà (épinglage
+# proposé 10.50.5.0/24 alors que exemple-paie-network l'occupe déjà (épinglage
 # manuel). Les sous-réseaux Docker réellement présents doivent être exclus,
 # comme les ports le sont via get_used_host_ports.
 
@@ -487,7 +487,7 @@ async def test_expired_reservation_same_slug_gets_clean_realloc(async_session, t
 # mais le démon Docker est partagé par toutes les apps colocalisées et l'host
 # détecté est instable (même machine vue sous plusieurs IP selon
 # l'interface/VPN) : 10.50.1.0/24 s'est retrouvé alloué à deux apps en même
-# temps (exemple-app / exemple-app-test).
+# temps (exemple-app-2 / exemple-app-2-test).
 
 @pytest.mark.asyncio
 async def test_subnets_not_scoped_by_host(async_session):

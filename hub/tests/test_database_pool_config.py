@@ -3,7 +3,7 @@
 
 """Configuration du pool de connexions DB du HUB.
 
-Contexte (incidents 13/11/2026, auto-register + approve de 'exemple-app') :
+Contexte (incidents 13/11/2026, auto-register + approve de 'exemple-app-18') :
 les événements d'ajout d'app déclenchent des tempêtes de requêtes
 (broadcast SSE → vagues de /api/apps/pending, /api/apps/, token/refresh,
 unread-count) dont la demande concurrente de sessions dépassait le pool

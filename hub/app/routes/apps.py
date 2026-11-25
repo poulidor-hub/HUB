@@ -309,12 +309,12 @@ def _sa_matches_owner_name(sa_name: str, app_slug: str, app_name: str) -> bool:
       3. forme slug-normalisée de (1).
 
     Historique : le matching par sous-chaîne (`app_slug in sa_name_lower`)
-    faisait que le register de `transmission` rotait le secret de
-    « SA - Transmission Paie » (app `exemple-app`) — livré à la mauvaise
+    faisait que le register de `exemple` rotait le secret de
+    « SA - Exemple Paie » (app `exemple-paie`) — livré à la mauvaise
     stack, 401 en boucle sans issue self-service (V4, 15/11/2026 ; même
-    classe que l'incident Philia Proxy → exemple-app-7). Les familles
-    d'apps aux noms préfixés (transmission/exemple-app/exemple-app, dipec-*,
-    contrat-*) ne doivent jamais se voler leurs secrets entre elles.
+    classe que l'incident Philia Proxy → Exemple App 8). Les familles
+    d'apps aux noms préfixés (exemple/exemple-paie/exemple-pec, autre-app-*,
+    tiers-app-*) ne doivent jamais se voler leurs secrets entre elles.
     """
     sa_name_clean = (sa_name or "").strip().lower()
     canonical = f"sa - {app_name}".strip().lower()
@@ -334,7 +334,7 @@ def is_owner_service_account(sa, app_slug: str, app_name: str) -> bool:
 
     Matching en égalité exacte (cf. `_sa_matches_owner_name`) — les
     sous-chaînes faisaient matcher des SA d'autres apps de la même famille
-    nominale (transmission vs exemple-app/exemple-app)."""
+    nominale (exemple vs exemple-paie/exemple-pec)."""
     return _sa_matches_owner_name(sa.name, app_slug, app_name)
 
 
@@ -442,7 +442,7 @@ async def discover_shared_services(
     **Authentification requise** : Token M2M (Service Account) uniquement.
     
     **Usage** : Permet aux applications de découvrir dynamiquement les APIs
-    de données disponibles (ex: API Salariés, API Référentiels) sans
+    de données disponibles (ex: API RH, API référentiels) sans
     configuration manuelle.
     
     **Exemple de réponse** :
@@ -450,9 +450,9 @@ async def discover_shared_services(
     {
         "shared_services": [
             {
-                "slug": "salarie",
-                "name": "API Salariés",
-                "description": "Données RH des employés",
+                "slug": "exemple-app-10",
+                "name": "API d'exemple",
+                "description": "Données d'exemple",
                 "api_url": "http://192.0.2.11:18087",
                 "is_shared_service": true
             }
@@ -1523,7 +1523,7 @@ async def register_app(
         # ré-inscription sans jeton, depuis un réseau autorisé (IP vérifiée plus
         # haut), reste la seule voie de réparation. Le flow T1 plus bas recrée
         # le compte, retourne des credentials frais et audite m2m_sa_recreated
-        # (incident transmission du 16/11/2026, serveur distant).
+        # (incident du 16/11/2026, serveur distant).
         owner_sa_present = any(
             is_owner_service_account(sa, app_data.slug, existing_app.name)
             for sa in existing_app.service_accounts
@@ -1654,7 +1654,7 @@ async def register_app(
                     if base_app_rr is None:
                         # Fallback par NOM (incident 09-10/11/2026) : le slug
                         # de l'app principale peut différer du préfixe du slug
-                        # atelier (ex. `exemple-app-ws` vs `exemple-app`).
+                        # atelier (ex. `exemple-app-5-ws` vs `exemple-app-5-base`).
                         # Sans ce fallback l'atelier reste pending à vie et
                         # l'app martèle register/token (SA désactivé → 403).
                         lookup_name = app_data.name or existing_app.name
@@ -1786,7 +1786,7 @@ async def register_app(
             # Ne sélectionner que le SA "propriétaire" de cette app. Pour une
             # app partagée, la relation N-N contient aussi les SA des autres
             # apps (accès shared) : rotationner leur secret casserait leur M2M
-            # (bug réel : SA de Philia Proxy livré à exemple-app-7).
+            # (bug réel : SA de Philia Proxy livré à Exemple App 8).
             sa = next(
                 (
                     sa
@@ -1929,7 +1929,7 @@ async def register_app(
             if base_app is None and app_data.name:
                 # Fallback par NOM (incident 09-10/11/2026) : le slug de
                 # l'app principale peut différer du préfixe du slug atelier
-                # (ex. atelier `exemple-app-ws` vs app `exemple-app`).
+                # (ex. atelier `exemple-app-5-ws` vs app `exemple-app-5-base`).
                 # L'atelier hérite du nom de l'app principale : si une app
                 # approuvée NON-atelier porte ce nom, c'est la base.
                 result = await db.execute(

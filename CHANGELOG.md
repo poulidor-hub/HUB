@@ -218,7 +218,7 @@
 
 ### ⚡ Vue santé apps : cartes compactes + actions stop/start/restart fiables (multi-conteneurs) + live SSE
 
-**Racine du bug corrigé** : `_find_container_for_app()` ne retournait qu'**UN** conteneur par app (le premier trouvé dans l'ordre arbitraire du daemon Docker), alors que chaque app du parc = 2 à 3 conteneurs (`api`, `frontend`, `postgres`) partageant le même `APP_SLUG`. Conséquence : « Arrêter » ne coupait qu'un conteneur au hasard — souvent le frontend, laissant l'API répondre (l'app restait en ligne, la carte verte). Preuve terrain : `exemple-app-api-v3-ws-frontend` resté `Exited` pendant que son `api` et sa `postgres` tournaient. Le project compose ne suit pas le slug (`GED` → `feat-ged-v1`, `exemple-app` → `exemple-app`) : le groupe doit être dérivé des conteneurs matchés, jamais du nom.
+**Racine du bug corrigé** : `_find_container_for_app()` ne retournait qu'**UN** conteneur par app (le premier trouvé dans l'ordre arbitraire du daemon Docker), alors que chaque app du parc = 2 à 3 conteneurs (`api`, `frontend`, `postgres`) partageant le même `APP_SLUG`. Conséquence : « Arrêter » ne coupait qu'un conteneur au hasard — souvent le frontend, laissant l'API répondre (l'app restait en ligne, la carte verte). Preuve terrain : `exemple-app-4-api-v3-ws-frontend` resté `Exited` pendant que son `api` et sa `postgres` tournaient. Le project compose ne suit pas le slug (`exemple-app-12` → `projet-v1`, `exemple-app-9` → `exemple_app_9`) : le groupe doit être dérivé des conteneurs matchés, jamais du nom.
 
 - **Groupe multi-conteneurs** (`hub/app/health_checker.py`) : nouveau `_list_all_containers()` (une liste Docker, `None` si indisponible) + `_group_containers_for_slugs()` — match env `APP_SLUG` OU label `hub.slug`, dérivation des `com.docker.compose.project` depuis ces conteneurs, ajout de **tous** les conteneurs de ces projets (inclut les `postgres` sans `APP_SLUG`), exclusion stricte du project `hub_base`, dédup par id, tri par nom. Helpers publics : `find_containers_for_app(slug)` (pluriel), `count_containers_batch(slugs)` (une seule liste Docker pour N apps), `get_container_state(slug)` devenu **group-aware** — `stopped` seulement si **tous** les conteneurs du groupe sont off ; l'API qui tourne mais ne répond pas reste `unhealthy` (vraie panne) ; groupe vide → `absent`, Docker off → `None` (contrat inchangé). `_find_container_for_app` supprimé.
 - **Routes stop/start/restart** (`hub/app/routes/apps_health.py`) : l'action est appliquée à **chaque** conteneur du groupe (`_apply_container_action`), échec non bloquant pour les autres. Réponses enrichies rétrocompatibles : `containers: [{name, ok, state, detail}]` + `ok` global + message « reussi (n/n conteneurs) » / « partiel (k/n) ». `restart` ne lève plus de 500 : `200 + ok=false` structuré (aligné sur start/stop) ; `container_name`/`status` conservés (1ᵉʳ du groupe). Groupe vide → 404 (messages inchangés). Fallback logs group-aware.
@@ -243,7 +243,7 @@ La page admin « Préférences » datait visuellement (tables Bootstrap brutes, 
 - **Onglet Catégories** : les 4 cartes stats (Total/Actives/Multiples/Uniques) remplacées par des stats fondues dans la toolbar (« X/Y actives · ★ Z · n/total users renseignés », calculé client depuis `GET /users`), recherche, et nouvelles colonnes : ★ Principal (`primary_enabled`), Source (Manuel / M2M · app), slug en sous-texte.
 - **Modal nouvelle/édition préférence** : sections empilées ① Identité (slug auto en direct) ② Comportement (segmenté Unique/Multiples + switch « Secteur principal ★ ») ③ Valeurs (saisie manuelle / import M2M app→table→colonne). Tous les IDs et `data-action` conservés.
 - **Passerelle Secteur principal** : la modal d'édition admin d'un utilisateur charge `primary` (`getUserTags`) et sauvegarde `{tags, primary}` — corrige au passage un bug de collecte à clé `null`. Helper partagé `buildTagsFormHTML` étendu (4ᵉ arg `primaryMap`), rétro-compatible onboarding + « Mes préférences » (intacts).
-- **Tests** (`hub/tests/test_api_tags.py`) : +6 (primary exposé et groupé par user, PUT admin pose/reset vérifié en base, 400 si catégorie sans `primary_enabled`, `source_app_name` m2m/csv). Suite conteneur : 1793 passed (2 échecs préexistants hors périmètre : pyotp 2.12 hôte 2.9 — secret de test < 112 bits ; override workshop réel `exemple-app` visible via le montage APPS/ — à traiter sur une branche dédiée).
+- **Tests** (`hub/tests/test_api_tags.py`) : +6 (primary exposé et groupé par user, PUT admin pose/reset vérifié en base, 400 si catégorie sans `primary_enabled`, `source_app_name` m2m/csv). Suite conteneur : 1793 passed (2 échecs préexistants hors périmètre : pyotp 2.12 hôte 2.9 — secret de test < 112 bits ; override workshop réel `exemple-app-6` visible via le montage APPS/ — à traiter sur une branche dédiée).
 
 ---
 
@@ -251,7 +251,7 @@ La page admin « Préférences » datait visuellement (tables Bootstrap brutes, 
 
 ### ⚡ Notifications — fin du spam « App offline » : état Docker + alerte à la transition
 
-Incident : les admins recevaient des centaines d'alertes « 🚨 App offline » urgentes par semaine pour des apps volontairement arrêtées (ateliers workshop, apps non démarrées), répétées toutes les 30 min — le health checker pingait les apps sans jamais consulter l'état Docker, rendant indiscernables arrêt volontaire et crash réel. 550 alertes/semaine pour le seul `exemple-app-ws`.
+Incident : les admins recevaient des centaines d'alertes « 🚨 App offline » urgentes par semaine pour des apps volontairement arrêtées (ateliers workshop, apps non démarrées), répétées toutes les 30 min — le health checker pingait les apps sans jamais consulter l'état Docker, rendant indiscernables arrêt volontaire et crash réel. 550 alertes/semaine pour le seul `mon-app-ws`.
 
 - **Classification Docker** (`hub/app/health_checker.py`) : nouveau `get_container_state(slug)` (conteneur par env `APP_SLUG` ou label `hub.slug`, via `docker_scanner`) ; sur échec de ping, statut `"stopped"` si le conteneur est absent ou non-`running` (état volontaire), `"unhealthy"` sinon (vraie erreur). Fallback : Docker indisponible → `"unhealthy"` (jamais de `stopped` sur incertitude) ; apps distantes (`is_remote`) → pas de classification Docker. Le chemin sain ne consulte jamais Docker.
 - **Alerte à la transition** (`hub/app/alert_checker.py`) : seuls les statuts `"unhealthy"` alimentent le tracking offline ; `app_offline:{slug}` passe en priorité `warning`, titre « 🔧 App injoignable », déclenchement **unique par épisode** (ré-armement à la récupération, plus de répétition post-cooldown) ; les 5 autres types d'alertes gardent leur cooldown.
@@ -271,8 +271,8 @@ Incident : `wg0.conf` a disparu du volume `vpn-config` en prod (18-20/11, suppre
 - **`startup_auto_repair()` au boot de hub-api** (lifespan `hub/app/main.py`, non bloquant) : `vpn_enabled=true` + clés présentes + conf absente → régénération depuis la DB puis application. Couvre le boot/réboot hôte : plus besoin d'un toggle manuel.
 - **`_regenerate_and_sync()`** : interface wg0 absente (`wg show wg0 listen-port` sans réponse) → **restart du conteneur** au lieu d'un `wg syncconf` silencieusement sans effet (l'interface n'existe pas) ; le conteneur arrêté est démarré au passage.
 - **Tests** : 44 tests `test_vpn.py` (toggle OFF réel, préservation conf, ON après OFF, startup repair ×4, interface absente → restart) — rouges avant fix, verts sur hôte et dans l'image runtime (`make test-docker`, pouly-test).
-- **Diagnostic incident** : tunnel/DataPath intacts (endpoint `82.65.83.106:51821` correct, port-forward OK, DNS hub répondeur sur `10.8.0.1:53`, gateway OK via IP VPN, cert valide) ; 2 échecs préexistants de la suite conteneur attribués (pyotp 112 bits vs version hôte ; test chmod 000 lu par root) ; flakiness xdist host confirmée préexistante (cf. note 3.97.3).
-- **Hors périmètre (à traiter séparément)** : `hub-vpn-firewall.service` non installé sur l'hôte (cloisonnement defense-in-depth inopérant) ; confs clients « PC boulo »/« th » à re-télécharger (endpoint/port modifiés le 05/10).
+- **Diagnostic incident** : tunnel/DataPath intacts (endpoint `203.0.113.10:51820` correct, port-forward OK, DNS hub répondeur sur `10.8.0.1:53`, gateway OK via IP VPN, cert valide) ; 2 échecs préexistants de la suite conteneur attribués (pyotp 112 bits vs version hôte ; test chmod 000 lu par root) ; flakiness xdist host confirmée préexistante (cf. note 3.97.3).
+- **Hors périmètre (à traiter séparément)** : `hub-vpn-firewall.service` non installé sur l'hôte (cloisonnement defense-in-depth inopérant) ; des configurations clients à re-télécharger (endpoint/port modifiés le 05/10).
 
 ---
 
@@ -501,15 +501,15 @@ Incident : `wg0.conf` a disparu du volume `vpn-config` en prod (18-20/11, suppre
   supprimé + IP Docker trusted (déjà vérifiée) → la réinscription passe
   et la branche T1 recrée le SA, des credentials frais, et audite
   `m2m_sa_recreated`. Avant : chicken-and-egg — register exigeait un
-  token qu'aucun SA vivant ne pouvait minter (incident transmission,
-  serveur distant, 16/11 : apps sauvées en compat, première mordue en
-  enforced).
+  token qu'aucun SA vivant ne pouvait minter (incident du 16/11, serveur
+  distant : apps sauvées en compat, première mordue en enforced).
 - **Audit des mutations de service accounts** : `log_action` désormais
   sur la bascule `is_active` (PUT → `sa_deactivated` / `sa_reactivated`),
   le DELETE (`sa_deleted`, imputable via target/details — la FK met la
   ref à NULL) et regenerate-secret (`sa_secret_regenerated`). Seul
-  `can_admin_read` était audité : le SA - Impayé désactivé le 16/11 et
-  le SA transmission supprimé étaient non imputables.
+  `can_admin_read` était audité : le compte de service d'une application
+  désactivé le 16/11 et celui d'une autre application supprimé étaient non
+  imputables.
 - Tests : `test_sa_selfheal_enforced_audit.py` (5 tests, rouge → vert) ;
   suite complète 1771 passed, 0 failed.
 
@@ -548,17 +548,17 @@ Incident : `wg0.conf` a disparu du volume `vpn-config` en prod (18-20/11, suppre
 - **Rotations croisées de secrets éliminées** : `is_owner_service_account`
   (et ses 2 variantes `_is_owner_service_account` + bloc « retire l'app des
   SA partagés ») testait l'appartenance par **sous-chaîne**
-  (`app_slug in sa_name_lower`) : le register de `transmission` rotait le
-  secret de « SA - Transmission Paie » (app `exemple-app`) et le livrait à la
+  (`app_slug in sa_name_lower`) : le register de `exemple` rotait le
+  secret de « SA - Exemple Paie » (app `exemple-paie`) et le livrait à la
   mauvaise stack → 401 en boucle sans issue self-service (V4, 15/11/2026 ;
-  même classe que l'incident Philia Proxy → exemple-app-7).
+  même classe que l'incident Philia Proxy → Exemple App 8).
 - **Nouveau contrat** (`_sa_matches_owner_name`, partagé par les 3 sites) :
   égalité exacte insensible casse/espacements sur les formes canoniques —
   « SA - <App Name> », slug pur, slug-normalisé. Les familles d'apps aux
-  noms préfixés (transmission/exemple-app/exemple-app, dipec-*, contrat-*)
+  noms préfixés (exemple/exemple-paie/exemple-pec, autre-app-*, tiers-app-*)
   ne peuvent plus se voler leurs secrets.
 - **Conséquence assumée** : les SA legacy nommés hors convention (ex.
-  « SA - Outil de transmission » pour une app renommée depuis) ne sont plus
+  « SA - Outil d'exemple » pour une app renommée depuis) ne sont plus
   reconnus comme propriétaires — le register crée un SA neuf au lieu de
   roter l'ancien (l'orphelin reste listé côté admin, sans risque de vol).
 - Tests : +12 (cycle rouge/vert `test_sa_owner_matching.py`), non-régression
@@ -632,8 +632,8 @@ Incident : `wg0.conf` a disparu du volume `vpn-config` en prod (18-20/11, suppre
 ### 📣 Pour les utilisateurs
 
 - **Ajouté** : dans les Préférences, vous choisissez désormais les secteurs que vous gérez (renfort / binôme inclus), puis désignez votre **secteur principal** parmi eux.
-- **Amélioré** : la fenêtre de bienvenue ne réapparaît plus à chaque connexion une fois vos choix enregistrés ; les secteurs proposés sont actualisés en direct depuis exemple-app (et restent modifiables même si elle est momentanément injoignable).
-- **Corrigé** : la sauvegarde des préférences ne bloque plus si un secteur a été renommé côté exemple-app — les valeurs devenues invalides sont retirées proprement avec un simple avertissement.
+- **Amélioré** : la fenêtre de bienvenue ne réapparaît plus à chaque connexion une fois vos choix enregistrés ; les secteurs proposés sont actualisés en direct depuis API référentiels (et restent modifiables même si elle est momentanément injoignable).
+- **Corrigé** : la sauvegarde des préférences ne bloque plus si un secteur a été renommé côté API référentiels — les valeurs devenues invalides sont retirées proprement avec un simple avertissement.
 
 ### ⚡ Refonte préférences : secteurs gérés + secteur principal
 
@@ -885,7 +885,7 @@ restorable — en VM comme en prod.
 
 ### ⚡ Allocation ports/subnets : revendications .env de la flotte
 
-Bug 13/11/2026 : l'ajout d'intendance a ré-attribué 10.50.16.0/24 (claim .env de contrat-w-pr, réseau prunable) et le port API 9019 (claim exemple-app, conteneurs down au moment de l'allocation) → « Pool overlaps with other one » puis « port is already allocated » au premier make up. Cause racine : l'allocateur ne consultait que port_allocations (la flotte legacy n'y figure jamais — 4 lignes seulement) et les scans Docker, qui ne voient que le vivant.
+Bug 13/11/2026 : l'ajout d'une nouvelle application a ré-attribué 10.50.16.0/24 (claim .env de tiers-app-ws, réseau prunable) et le port API 9019 (claim exemple-app-9, conteneurs down au moment de l'allocation) → « Pool overlaps with other one » puis « port is already allocated » au premier make up. Cause racine : l'allocateur ne consultait que port_allocations (la flotte legacy n'y figure jamais — 4 lignes seulement) et les scans Docker, qui ne voient que le vivant.
 
 - Nouveau hub/app/fleet_env_scanner.py : lit les .env de la flotte (montage apps_host_path) → (sous-réseaux, ports) revendiqués ; un seul niveau de dossiers, fichier exact .env uniquement (sauvegardes .env.pre-* ignorées), valeurs invalides ignorées
 - port_allocator.py : fleet_env_occupied() (thread, host local uniquement, flag fleet_env_scan_enabled, best-effort jamais levé) fusionnée dans les deux chemins d'allocation — backfill rétroactif du subnet et nouvelle allocation (ports via extra_used, subnets directs)
@@ -899,7 +899,7 @@ Bug 13/11/2026 : l'ajout d'intendance a ré-attribué 10.50.16.0/24 (claim .env 
 
 ### ⚡ Dimensionnement du pool DB hub-api (tempêtes d'ajout d'app)
 
-Incidents 13/11/2026 : l'auto-register (11:09) puis l'approbation (11:18) de `exemple-app` ont déclenché des tempêtes de requêtes (broadcast SSE → vagues `/api/apps/pending` ~1/s, rafales `GET /api/apps/`, herds `POST /api/auth/token/refresh`, `unread-count` jusqu'à 123/min) dont la demande concurrente de sessions a dépassé le pool SQLAlchemy 5 + 10 = 15 connexions → `QueuePool TimeoutError` après 30 s d'attente → 500 en cascade pendant ~50 s (139 erreurs pool en 24 h, readtimeout M2M côté app qui s'enregistre). Diagnostic : aucune fuite de connexion (sessions toutes fermées correctement dans `get_db`, pipeline deploy, ateliers, SSE) — pur sous-dimensionnement face aux pics ; hub-db disposait de 100 `max_connections` avec ~7 utilisées.
+Incidents 13/11/2026 : l'auto-register (11:09) puis l'approbation (11:18) de `exemple-app-18` ont déclenché des tempêtes de requêtes (broadcast SSE → vagues `/api/apps/pending` ~1/s, rafales `GET /api/apps/`, herds `POST /api/auth/token/refresh`, `unread-count` jusqu'à 123/min) dont la demande concurrente de sessions a dépassé le pool SQLAlchemy 5 + 10 = 15 connexions → `QueuePool TimeoutError` après 30 s d'attente → 500 en cascade pendant ~50 s (139 erreurs pool en 24 h, readtimeout M2M côté app qui s'enregistre). Diagnostic : aucune fuite de connexion (sessions toutes fermées correctement dans `get_db`, pipeline deploy, ateliers, SSE) — pur sous-dimensionnement face aux pics ; hub-db disposait de 100 `max_connections` avec ~7 utilisées.
 
 - `hub/app/database.py` : `pool_size` 5 → 25, `max_overflow` 10 → 25 (plafond 50, marge conservée sous `max_connections` PG = 100) via constantes `DB_POOL_SIZE` / `DB_MAX_OVERFLOW`
 - Nouveau `hub/tests/test_database_pool_config.py` : couverture tempêtes (pool ≥ 20 + overflow ≥ 20), plafond global ≤ 60, conformité de l'engine réel aux constantes (cycle rouge → vert vérifié dans le conteneur hub-api)
@@ -911,7 +911,7 @@ Incidents 13/11/2026 : l'auto-register (11:09) puis l'approbation (11:18) de `ex
 
 ### ⚡ Réconciliation des fourches 028/029 après restore legacy
 
-Un dump hub legacy (hub-legacy 3.9.x) marque 028 = `create_hub_snapshots` et 029 = `add_snapshot_settings` : les migrations homonymes du hub neuf n'étaient jamais rejouées après un restore → colonne `account_requests.email` manquante (crash runtime prouvé sur le hub 12/11/2026 : 44 tracebacks `UndefinedColumnError` en 48h) et tables `backup_clusters` résiduelles.
+Un dump d'un hub legacy (version 3.9.x) marque 028 = `create_hub_snapshots` et 029 = `add_snapshot_settings` : les migrations homonymes du hub neuf n'étaient jamais rejouées après un restore → colonne `account_requests.email` manquante (crash runtime prouvé sur le hub 12/11/2026 : 44 tracebacks `UndefinedColumnError` en 48h) et tables `backup_clusters` résiduelles.
 
 - `FORKED_MIGRATIONS` (hub/app/restore_snapshot.py) passe de `(version, table)` à `(version, type_contrôle, cible)` :
   - `027 table_absent port_allocations` (comportement historique inchangé) ;
@@ -1014,7 +1014,7 @@ onglet admin « Dépendances » (après « Applications ») :
 
 | Élément | Détail |
 |---------|--------|
-| **`frontend/public/js/modules/admin-app-dependencies.js`** (nouveau) | Graphe SVG statique, sans lib externe ni animation (perf/stabilité) : nœuds classés appelants / mixtes / services appelés ; statut par nœud (active / inactive / **hors registre** — visualise immédiatement les cibles déclarées inexistantes au registre, ex. `exemple-apps` ou `exemple-app`) ; couleur d'arête par fraîcheur `last_sync_at` (≤ 7 j / 7–30 j / jamais) ; tooltip HTML (note métier, dates, nom d'app) ; clic nœud = focus des liens connexes. Tableau compact sous le graphe (source → cible, badge fraîcheur, dernière synchro, note), clic ligne = même focus. |
+| **`frontend/public/js/modules/admin-app-dependencies.js`** (nouveau) | Graphe SVG statique, sans lib externe ni animation (perf/stabilité) : nœuds classés appelants / mixtes / services appelés ; statut par nœud (active / inactive / **hors registre** — visualise immédiatement les cibles déclarées inexistantes au registre, ex. `exemple-app-4` ou `exemple-app-13`) ; couleur d'arête par fraîcheur `last_sync_at` (≤ 7 j / 7–30 j / jamais) ; tooltip HTML (note métier, dates, nom d'app) ; clic nœud = focus des liens connexes. Tableau compact sous le graphe (source → cible, badge fraîcheur, dernière synchro, note), clic ligne = même focus. |
 | **`frontend/public/js/api.js`** | `getAppDependencies()` sur le pattern `HubAPI.request`. |
 | **`frontend/public/index.html`** | Onglet `#deps-tab` → pane `#tabDependencies` (statut, wrapper + tooltip, table), include du module. |
 | **`frontend/public/js/modules/init.js`** | Dispatch `shown.bs.tab` → `loadDependenciesGraph()`. |
@@ -1125,7 +1125,7 @@ Incident 10/11 02:56 (user vpoulidor, messages 917+922) : l'auto-delivery de l'i
 
 ### ⚡ Fix : auto-approbation atelier par fallback nom — fin des boucles legacy_reregistration
 
-Incident 09-10/11/2026 (nocturne) : ouverture de l'atelier `exemple-app-ws`. L'auto-approbation workshop matchait l'app de base **uniquement par slug dérivé** (`<slug>-ws` → `<slug>` = `exemple-app`), mais l'app principale porte le slug `exemple-app` → aucun match → atelier resté `pending`/`inactive` à vie, SA créé désactivé → 403 au mint → martèlement register/token sans état entre cycles : **2019 réinscriptions legacy + 2523×403 + 257×429 en 2h35** (22:38 → 01:14, fin à la fermeture de l'atelier). Le plafond M2M par client_id (3.85.2) a contenu la casse (257 429s au lieu de ~2500, **zéro collatéral** — les autres apps ont continué à minter normalement toute la nuit).
+Incident 09-10/11/2026 (nocturne) : ouverture de l'atelier `exemple-app-5-ws`. L'auto-approbation workshop matchait l'app de base **uniquement par slug dérivé** (`<slug>-ws` → `<slug>` = `exemple-app-5`), mais l'app principale porte le slug `exemple-app-5-base` → aucun match → atelier resté `pending`/`inactive` à vie, SA créé désactivé → 403 au mint → martèlement register/token sans état entre cycles : **2019 réinscriptions legacy + 2523×403 + 257×429 en 2h35** (22:38 → 01:14, fin à la fermeture de l'atelier). Le plafond M2M par client_id (3.85.2) a contenu la casse (257 429s au lieu de ~2500, **zéro collatéral** — les autres apps ont continué à minter normalement toute la nuit).
 
 | Élément | Détail |
 |---------|--------|
@@ -1273,7 +1273,7 @@ Audit SSE du 08/11/2026 : le navigateur recrée ses flux SSE toutes les ~60 s (c
 
 ### ⚡ Ateliers : overrides compose par app (`.workshop.overrides.env`) — fix durable Task 0
 
-Bug Task 0 (exemple-app) : le contrat `.workshop.env` (7 clés + `HTTPS_ENABLED` à la création) ne couvre pas les ports host métier d'une app — l'atelier retombait sur les ports prod du `.env` (ex. `PHILIA_NG_PORT=42690` déjà bindé) → conflit de bind → restart loop à chaque recréation.
+Bug Task 0 (exemple-app-6) : le contrat `.workshop.env` (7 clés + `HTTPS_ENABLED` à la création) ne couvre pas les ports host métier d'une app — l'atelier retombait sur les ports prod du `.env` (ex. `PHILIA_NG_PORT=42690` déjà bindé) → conflit de bind → restart loop à chaque recréation.
 
 | Élément | Détail |
 |---------|--------|
@@ -1283,7 +1283,7 @@ Bug Task 0 (exemple-app) : le contrat `.workshop.env` (7 clés + `HTTPS_ENABLED`
 | **Contrat inchangé** | le `.workshop.env` généré reste strictement aux clés du contrat — contract tests 3.82.0 verts sans modification d'assertion ; `hubctl` (0.17.0) implémente la parité côté CLI |
 | **hub/tests** | nouveau `test_workshop_overrides.py` (8 tests : no-op, merge, précédence, clés réservées + warning, create path, illisible, non-UTF-8) — périmètre atelier/workshop : 139 verts |
 
-> Premier utilisateur : exemple-app 3.5.2 (`.workshop.overrides.env` committé, `PHILIA_NG_PORT=5290` / `PHILIA_NG_HTTPS_PORT=5291`).
+> Premier utilisateur : exemple-app-6 3.5.2 (`.workshop.overrides.env` committé, `PHILIA_NG_PORT=5290` / `PHILIA_NG_HTTPS_PORT=5291`).
 
 ---
 
@@ -1302,7 +1302,7 @@ Cause racine du diagnostic (« Ateliers: 1, badges ATELIER: 5, gestion des appli
 | **frontend/public/js/modules/admin-apps.js** | le sélecteur Mode (Production/Atelier/Tout) déclenche un **re-fetch serveur** au changement (fini le refiltrage client d'une liste fetchée en `false` qui affichait toujours 0 atelier) ; idem pour « Réinitialiser » et `focusPendingApps()` |
 | **hub/tests** | +13 tests : succès `_op_remove`/`_op_ship` malgré OSError(30) avec purge DB vérifiée, détection ghosts/orphans (exclusions prod, DB/Docker down), endpoint reconcile (auth, purge, skip, garde is_workshop, erreurs sans 500). Périmètre atelier/workshop : 132 verts |
 
-> Nettoyage d'état associé (op du 07/11, hors repo) : 10 lignes `-ws` fantômes purgées via la cascade officielle, marqueur zombie `exemple-app` supprimé, atelier sauvage worktree `exemple-app-ws` détruit (down -v + purge), volumes orphelins (`exemple-app-ws-postgres-data`, `exemple-app-ws_*`) supprimés.
+> Nettoyage d'état associé (op du 07/11, hors repo) : 10 lignes `-ws` fantômes purgées via la cascade officielle, marqueur zombie d'atelier supprimé, atelier sauvage worktree `exemple-app-8-ws` détruit (down -v + purge), volumes orphelins d'ateliers supprimés.
 
 ---
 
@@ -1329,7 +1329,7 @@ Cause racine du diagnostic (« Ateliers: 1, badges ATELIER: 5, gestion des appli
 | Élément | Détail |
 |---------|--------|
 | **scripts/hooks/pre-commit-gitleaks.sh** | scan gitleaks des fichiers stagés — bloque le commit si secret détecté (`gitleaks:allow` pour exemption justifiée) |
-| **scripts/hooks/install-hooks.sh** | installe le hook dans `.git/hooks/pre-commit` en chaînant tout pre-commit existant (ne casse pas les hooks en place) |
+| **scripts/hooks/install-hooks.sh** | installe le hook dans `.git/hooks/pre-commit` : le crée s'il est absent, le chaîne à un pre-commit existant qui ne contient pas « gitleaks », mais le remplace dans le cas contraire — d'où son remplacement depuis par l'installateur du méta-repo, qui ne recopie jamais un script par-dessus un hook |
 | **CONTRIBUTING.md** | section « Hooks » : activation par `./scripts/hooks/install-hooks.sh` |
 | **Contexte** | préparation open source — prévention de la réintroduction de secrets (cf. purge 0.80.x) |
 
@@ -1341,7 +1341,7 @@ Cause racine du diagnostic (« Ateliers: 1, badges ATELIER: 5, gestion des appli
 
 | Élément | Détail |
 |---------|--------|
-| **INTEGRATION.md** | IPs réelles → RFC 5737 ; slugs d'exemple `salarie`/`exemple-app`/`referentiels` → `mon-api`/`mon-app`/`mon-referentiel` (38 remplacements) |
+| **INTEGRATION.md** | IPs réelles → RFC 5737 ; slugs d'exemple réels → `mon-api`/`mon-app`/`mon-referentiel` (38 remplacements) |
 | **docs/ROUTAGE-DNS.md** | réécrit avec des exemples génériques (`hub.exemple.priv`, `mon-app`, `192.0.2.10`, « organisation ») — la doc technique dnsmasq/SNI reste complète |
 | **docs/GUIDE_INSTALLATION.md** | IP exemple scrubée ; section Mise à jour alignée sur la routine officielle (`docs/ops/mise-a-jour.md` du méta-repo) au lieu de `git pull`/`compose` en sous-module |
 | **.env.example / hub-profile.example.json** | IP serveur → 192.0.2.x |
@@ -1508,7 +1508,7 @@ création en collision → 400.
 | PKI | wildcard `*.<hub_dns_zone>` émis par pki.py (réémission au changement de zone) |
 | Garde-fous | `test_compose_socket_proxy.py` (chantier A) + `test_compose_routing.py` + `test_frontend_js_syntax` (collision let/function attrapée) |
 | Publication | `_apply_dir` in-place (bind mounts EBUSY au rename) + rollback contenu + `routing_last_error` dans le bandeau |
-| Live | zone `hub.example.lan` configurée : résolution 42 noms, SNI exemple-app cert wildcard Verification OK → app 200, renommage live régénéré, WG DNS ✓ ; suite hôte 1485 passed / 3 failed PRÉ-EXISTANTS au HEAD (oidc×2 + slo, prouvés par run baseline) |
+| Live | zone `hub.example.lan` configurée : résolution 42 noms, SNI mon-app cert wildcard Verification OK → app 200, renommage live régénéré, WG DNS ✓ ; suite hôte 1485 passed / 3 failed PRÉ-EXISTANTS au HEAD (oidc×2 + slo, prouvés par run baseline) |
 | Vues supprimées | onglet Réseau (propagation .env — obsolète), modal Pool de ports, section ports du formulaire |
 
 ---
@@ -1567,7 +1567,7 @@ création en collision → 400.
   `hub-frontend` (l'entrypoint en a besoin pour construire l'URL).
 - **Non-cassage vérifié** : les appels machine passent par l'API `:8000`
   (réseau interne) ou par `:443` (`ALLOWED_ORIGINS` déjà https-only) ;
-  le vhost PhiliaNG (`service.example.org`, `listen 80` sans `default_server`)
+  le vhost PhiliaNG (`proxy.example.lan`, `listen 80` sans `default_server`)
   garde son comportement propre.
 - Syntaxe validée par `nginx -t` dans un conteneur jetable sur le réseau
   compose (upstream `hub-api` résolu).
@@ -1703,7 +1703,7 @@ création en collision → 400.
 
 Incident : le badge « 1 » de l'onglet Applications restait affiché alors qu'aucune
 approbation n'était visible. Cause racine : un atelier enregistré avant son app de
-base (ex. `exemple-app-ws` vs `exemple-app` — dérivation de slug divergente) reste
+base (ex. `exemple-app-9-ws` vs `exemple-app-9` — dérivation de slug divergente) reste
 `approval_status=pending` à vie ; le badge le compte alors qu'il est invisible
 (liste d'approbation dédiée retirée de l'HTML, ateliers masqués par défaut dans le
 tableau admin).
@@ -1728,7 +1728,7 @@ tableau admin).
 
 ### ⚡ Recréation d'app (propagation IP) — overlays https/gpu injectés
 
-- **Corrigé** : `_op_recreate` (propagation d'IP, bouton « Recréer ») lançait `docker compose -f docker-compose.yml up -d --force-recreate` — les conteneurs étaient recréés **sans l'overlay HTTPS de l'app**, qui perdait son port HTTPS (incident exemple-app 27-28/10/2026 : 4231 injoignable après propagation)
+- **Corrigé** : `_op_recreate` (propagation d'IP, bouton « Recréer ») lançait `docker compose -f docker-compose.yml up -d --force-recreate` — les conteneurs étaient recréés **sans l'overlay HTTPS de l'app**, qui perdait son port HTTPS (incident 27-28/10/2026 : 4231 injoignable après propagation)
 - **Nouveau** : `_prod_overlay_files()` injecte `docker-compose.https.yml` (sauf `HTTPS_ENABLED=false` dans le .env de l'app) et `docker-compose.gpu.yml` (si `DOCKER_GPU`), chacun seulement si le fichier existe — parité avec `make up`, `--force-recreate` conservé (indispensable aux variables .env non référencées)
 - Tests : 2 nouveaux (overlay injecté / respect de `HTTPS_ENABLED=false`) — 54 passés (workshop + propagation réseau)
 
@@ -1762,7 +1762,7 @@ tableau admin).
 
 ## [3.75.0] - 27 octobre 2026
 
-### ✨ Ateliers (workshops) — pilotage depuis l'admin Hub et l'agent exemple-app
+### ✨ Ateliers (workshops) — pilotage depuis l'admin Hub et l'agent d'administration
 
 - **Ajouté** : `GET /api/admin/atelier` — liste native des ateliers actifs (scan `${APPS_HOST_PATH}/*/.workshop.env` + état des conteneurs `-ws` via le socket Docker **read-only** ; Docker injoignable → état « inconnu », jamais 500). Admin-only, audit standard
 - **Ajouté** : `POST /api/admin/atelier/close-all` — proxy authentifié vers `hubctl atelier serve` (hôte, localhost:8777, token fichier) ; **600 s** de timeout (`atelier_close_timeout`), 200/207 passthrough, **503 verbatim** si service hôte injoignable
@@ -1841,11 +1841,11 @@ tableau admin).
 
 | Fonctionnalité | Description |
 |----------------|-------------|
-| **Nouvel endpoint M2M** | `GET /api/users/m2m/list` (spec exemple-app §5.5) : permet aux apps clientes de résoudre localement les user_id en usernames (et inversement) pour leur affichage — endpoint documenté mais jamais implémenté jusqu'ici (les apps appelantes recevaient un 404). |
+| **Nouvel endpoint M2M** | `GET /api/users/m2m/list` (spec de l'application de notifications §5.5) : permet aux apps clientes de résoudre localement les user_id en usernames (et inversement) pour leur affichage — endpoint documenté mais jamais implémenté jusqu'ici (les apps appelantes recevaient un 404). |
 | **Réservé Service Accounts** | Auth M2M obligatoire : token utilisateur humain → 403 (pattern `m2m/search`) ; sans token → 401. |
 | **Non filtré par app** | Contrairement à `/api/users/m2m/search` (filtrée sur les apps autorisées du SA), la liste n'est pas restreinte : les messages M2M synchronisés via `/api/messages/m2m/sync` peuvent référencer n'importe quel user (expéditeur admin, destinataires cross-apps). |
 | **Users inactifs inclus** | Flag `is_active` dans la réponse : une app peut résoudre des identifiants d'anciens messages même si le compte a été désactivé depuis. |
-| **Contrat** | Réponse `{users: [{id, username, email, is_active, is_admin}], total}` — conforme à la spec §5.5 ; doc `exemple-app.md` mise à jour (§5.5 et plan d'implémentation). |
+| **Contrat** | Réponse `{users: [{id, username, email, is_active, is_admin}], total}` — conforme à la spec §5.5 ; doc du centre de notifications mise à jour (§5.5 et plan d'implémentation). |
 | **Tests** | TDD : 2 tests (`TestM2MUsersList` — contrat SA 200 + 403 humain) dans `test_api_users.py` ; suite complète 1382 passed (hôte) et vérification runtime Docker `pouly-test` : 401 sans auth, flow `client_credentials` → 200 conforme. |
 
 ---
@@ -1919,8 +1919,8 @@ tableau admin).
 
 | Fonctionnalité | Description |
 |----------------|-------------|
-| **Réconciliation subnet au déploiement** | `docker_scanner.get_project_network_subnets()` lit les sous-réseaux des réseaux Docker du projet Compose (label `com.docker.compose.project`) ; `port_allocator.reconcile_subnet_with_docker()` aligne l'allocation DB sur le réseau vivant avant l'écriture du `.env` (règle : le réseau gagne). No-op si 0 ou 2+ réseaux, host distant, flag désactivé ; jamais de raise. Corrige l'échec `Échec (2) de 'make'` à l'étape `up` (exemple-app #14/#15) et le crash `network not found` (exemple-app-test #9) : Compose ne recrée plus jamais le réseau d'une app vivante. |
-| **Sous-réseaux non scopés par host** | `_used_subnets_for_host` → `_used_subnets` : le démon Docker est partagé et l'host détecté est instable (même machine, plusieurs IP) — supprime les collisions cross-host constatées (10.50.1.0/24 alloué à `exemple-app` ET `exemple-app-test`). |
+| **Réconciliation subnet au déploiement** | `docker_scanner.get_project_network_subnets()` lit les sous-réseaux des réseaux Docker du projet Compose (label `com.docker.compose.project`) ; `port_allocator.reconcile_subnet_with_docker()` aligne l'allocation DB sur le réseau vivant avant l'écriture du `.env` (règle : le réseau gagne). No-op si 0 ou 2+ réseaux, host distant, flag désactivé ; jamais de raise. Corrige l'échec `Échec (2) de 'make'` à l'étape `up` (exemple-app-3 #14/#15) et le crash `network not found` (exemple-app-2-test #9) : Compose ne recrée plus jamais le réseau d'une app vivante. |
+| **Sous-réseaux non scopés par host** | `_used_subnets_for_host` → `_used_subnets` : le démon Docker est partagé et l'host détecté est instable (même machine, plusieurs IP) — supprime les collisions cross-host constatées (10.50.1.0/24 alloué à `exemple-app-2` ET `exemple-app-2-test`). |
 | **Tests** | 13 nouveaux tests (scanner, réconciliation, pipeline `.env` réconcilié, collision cross-host) + fixture autouse de neutralisation du scan Docker ; suite complète : 1362 (hôte) / 1321 (conteneur pouly-test) passed. |
 
 ---
@@ -1931,10 +1931,10 @@ tableau admin).
 
 | Fonctionnalité | Description |
 |----------------|-------------|
-| **Contexte** | La synchronisation d'une catégorie de préférences depuis une app source (ex. exemple-app-api-v3) échouait systématiquement : « L'application a retourné 401 » (découverte) / « L'app source a retourné 401 » (import). |
+| **Contexte** | La synchronisation d'une catégorie de préférences depuis une app source (ex. exemple-app-4-api-v3) échouait systématiquement : « L'application a retourné 401 » (découverte) / « L'app source a retourné 401 » (import). |
 | **`routes/tags.py`** | `discover_tables`, `discover_columns` et `import_m2m` mintent désormais un token de service éphémère (5 min, `apps={slug: "admin"}`, pattern `app_socle_check.py`) envoyé en `Authorization: Bearer` — les apps du socle exigent `require_role("admin")` sur `/api/hub/data/*`, l'appel nu donnait 401 → 502. |
 | **`import_m2m`** | Tolère le format objet `{"values": [...]}` retourné par les routes `/api/hub/data/values` des apps du socle, en plus de la liste JSON directe. |
-| **Dépendance côté apps** | À combiner avec le correctif app `hub_data.py` (session en `Depends(get_db)` au lieu de `async with`, sinon 500 une fois l'auth passée) — exemple-app-api-v3 v1.20.10. |
+| **Dépendance côté apps** | À combiner avec le correctif app `hub_data.py` (session en `Depends(get_db)` au lieu de `async with`, sinon 500 une fois l'auth passée) — exemple-app-4-api-v3 v1.20.10. |
 
 ---
 
@@ -2070,8 +2070,8 @@ tableau admin).
   qui annulerait le lot.
 - **Résolution slug → répertoire** (`_resolve_app_dir`) : le slug
   registre peut différer du nom du répertoire `APPS/` (ex.
-  `exemple-app` ↔ `exemple-app`, `exemple-app` ↔
-  `exemple-app`) — résolution par `APP_SLUG` du `.env` avec
+  `exemple-app-5-base` ↔ `exemple-app-5`, `exemple-pec` ↔
+  `exemple-app-7-pec`) — résolution par `APP_SLUG` du `.env` avec
   fallback `<slug>`. Ces apps n'apparaissent plus en `no_env` dans le
   plan : elles sont désormais propageables et recréables.
 - **`GET /api/config/network/propagation-plan`** : nouveau champ
@@ -2359,8 +2359,8 @@ Campagne de tests fonctionnels de tous les contrôles (04/10/2026, Hub réel) �
 - **`integrated_app_slug`** (backend + front) : `GET /api/apps/github/repos`
   renvoie le slug de l'APP liée au repo (par `git_repo_url` ou par slug
   dérivé) ; « Voir l'app » l'utilise — repo POULIDOR trouve désormais l'app
-  « hub », exemple-app-2 l'app « exemple-app » (avant : recherche sur « poulidor » /
-  « exemple-app » → 0 résultat).
+  « hub », MON_APP l'app « mon-app » (avant : recherche sur « poulidor » /
+  « mon_app » → 0 résultat).
 
 Tests : +4 (`TestGlobalFetchedAt`, `TestIntegratedAppSlug` ×3). Suite verte
 : 116 tests (catalogue, hub_host, deploy, github_client, repo_access, token
@@ -2405,10 +2405,10 @@ monitor). Validation E2E sur le Hub réel post-déploiement.
 
 ## [3.62.5] - 3 octobre 2026
 
-### 🔧 Fix — Déploiement GitHub des apps : 3 causes d'échec corrigées (E2E exemple-app)
+### 🔧 Fix — Déploiement GitHub des apps : 3 causes d'échec corrigées (E2E exemple-app-2)
 
 Campagne de tests E2E du déploiement d'apps depuis le front-end (token GitHub
-PAT), cobaye `exemple-app-test` (template v0.3.0) — 2026-10-03.
+PAT), cobaye `exemple-app-2-test` (template v0.3.0) — 2026-10-03.
 
 - **`app/config.py` — `get_hub_host()` en exécution conteneurisée (critique)** :
   l'IP LAN de l'hôte n'étant jamais une interface locale du conteneur, le check
@@ -2426,11 +2426,11 @@ PAT), cobaye `exemple-app-test` (template v0.3.0) — 2026-10-03.
   points d'entrée — `POST /api/apps` (stockage), `check_repo_access`
   (préflight), clone du pipeline (défense pour les apps existantes). Le PAT ne
   s'applique qu'au HTTPS et le conteneur hub n'a pas de binaire ssh
-  (« cannot run ssh » — 4 échecs exemple-app du 18 au 26/09).
+  (« cannot run ssh » — 4 échecs exemple-app-5 du 18 au 26/09).
 - **`app/routes/github_catalog.py` — `already_integrated` par slug** : un repo
   dont le slug dérivé est pris par une app existante sans `git_repo_url`
   (déployée manuellement) apparaissait « Dispo » puis 409 « slug déjà utilisé »
-  à la création (cas exemple-app). La carte est désormais « Intégré ».
+  à la création (cas exemple-app-2). La carte est désormais « Intégré ».
 - **`hub/Dockerfile`** : `pytest.ini` + `hub/tests` embarqués dans l'image —
   suite exécutable in-conteneur sans docker cp ni `-o asyncio_mode=auto`
   (workflow verify-feature).
@@ -2590,7 +2590,7 @@ PAT), cobaye `exemple-app-test` (template v0.3.0) — 2026-10-03.
 
 | Changement | Description |
 |------------|-------------|
-| **`client_max_body_size` 50M → 1G** | `frontend/nginx.conf`, `nginx-ssl.conf` (80/443) et `nginx-philia-ng.conf` (proxy externe). La limite volontaire de 3.47.4 (posée contre le défaut nginx 1 Mo) bloquait en 413 tout import de backup > 50 Mo — incompatibles avec les backups volumineux (incident exemple-app > 150 Mo). Contexte local : relève à 1 G |
+| **`client_max_body_size` 50M → 1G** | `frontend/nginx.conf`, `nginx-ssl.conf` (80/443) et `nginx-philia-ng.conf` (proxy externe). La limite volontaire de 3.47.4 (posée contre le défaut nginx 1 Mo) bloquait en 413 tout import de backup > 50 Mo — incompatibles avec les backups volumineux (incident mon-app > 150 Mo). Contexte local : relève à 1 G |
 
 ---
 
@@ -2643,7 +2643,7 @@ PAT), cobaye `exemple-app-test` (template v0.3.0) — 2026-10-03.
 
 | Correctif | Description |
 |-----------|-------------|
-| **Cause** | Un user robot créé le 13/09 avec l'email `exports-robot@hub.local` (domaine spécial RFC 6761, rejeté par email-validator ≥ 2.x) faisait échouer TOUTE la liste : `UserResponse.email` est un `EmailStr` qui revalide chaque lecture → ValidationError → 500. Présent depuis le 13/09, indépendant du fix frontend |
+| **Cause** | Un user robot créé le 13/09 avec l'email `integration-robot@hub.local` (domaine spécial RFC 6761, rejeté par email-validator ≥ 2.x) faisait échouer TOUTE la liste : `UserResponse.email` est un `EmailStr` qui revalide chaque lecture → ValidationError → 500. Présent depuis le 13/09, indépendant du fix frontend |
 | **Fix** | Lecture tolérante : `email: Optional[str]` sur les schémas de réponse (`UserResponse`, `M2MUserSearchItem`, `AccountRequestNotificationAdmin`) — une donnée existante ne doit jamais casser sa lecture. La validation stricte reste à l'écriture (`UserCreate`/`UserUpdate`/`BulkUserCreate`/`AccountRequestCreate` gardent `EmailStr`) |
 | **Test** | `test_list_users_tolerates_legacy_invalid_email` : user avec email `@hub.local` en base → `GET /api/users/` 200 (échouait avant fix) |
 
@@ -2743,7 +2743,7 @@ PAT), cobaye `exemple-app-test` (template v0.3.0) — 2026-10-03.
 ### ⚡ Retrait de la fonction « Droits Philia » du portail
 
 Fonction métier (gestion des droits PhiliaNG) déplacée exclusivement dans
-l'app exemple-app (page `/users-rights`). Le HUB redevient un portail neutre.
+l'app exemple-app-6 (page `/users-rights`). Le HUB redevient un portail neutre.
 
 - **Frontend** : retrait du bouton nav, du tab pane `#tabPhiliaRights`, de la
   modale de confirmation et du script `admin-philia-rights.js` (fichier
@@ -2754,8 +2754,8 @@ l'app exemple-app (page `/users-rights`). Le HUB redevient un portail neutre.
   (`main.py`, `routes/__init__.py`) ; suppression de
   `tests/test_philia_rights_proxy.py` ; commentaire de `test_socle_check.py`
   nettoyé.
-- **Inchangé** : infra SNI/certs `service.example.org` (`pki.py`, confs nginx),
-  API métier de l'app (`/api/admin/philia-rights/*` côté exemple-app).
+- **Inchangé** : infra SNI/certs `proxy.example.lan` (`pki.py`, confs nginx),
+  API métier de l'app (`/api/admin/philia-rights/*` côté exemple-app-6).
 - **Validation** : 1099 tests PASS ; rebuild hub-api + hub-frontend ; vérifié
   live : tab absent du HTML servi, 404 sur le module JS et sur
   `/api/philia-rights/users`, onglets admin restants intacts.
@@ -2803,10 +2803,10 @@ app re-mise en ligne sur ses ports d'origine 9002/4204-4205, conteneurs
 healthy). Aucun code impacté — entrée opérationnelle.
 
 Restaurations faites en base / sur le dépôt pour rendre le test possible
-(l'app exemple-app existait mais son enregistrement était incomplet) :
+(l'app ExempleApp existait mais son enregistrement était incomplet) :
 
 - `applications.git_repo_url` pour `exemple-app` : `NULL` →
-  `https://github.com/Poutchouli/exemple-app.git` (sans lui, le endpoint
+  `https://github.com/exemple-org/ExempleApp.git` (sans lui, le endpoint
   `/deploy` répond 400).
 - Ligne `port_allocations` recréée pour `exemple-app` @ 192.0.2.10 :
   (9002, 4204, 4205, subnet `192.168.80.0/20`) — valeurs relevées sur l'état
@@ -2815,8 +2815,8 @@ Restaurations faites en base / sur le dépôt pour rendre le test possible
   attribué de NOUVEAUX ports (9002/4204 étant vus occupés) → l'app aurait
   déménagé et les URLs du registre seraient devenues mortes.
 - Remote git local de l'app basculé SSH → HTTPS
-  (`git@github.com:Poutchouli/exemple-app.git` →
-  `https://github.com/Poutchouli/exemple-app.git`) : le conteneur hub-api n'a
+  (`git@github.com:exemple-org/ExempleApp.git` →
+  `https://github.com/exemple-org/ExempleApp.git`) : le conteneur hub-api n'a
   ni client SSH ni clé ; l'auth de déploiement du hub = HTTPS + PAT
   (`http.extraheader`, cf. `deploy_service._git_auth_args`).
 
@@ -2876,8 +2876,8 @@ build` → `make up` transitivement via le Makefile de l'app) :
   403. Audit : `oidc_self_client_create|regenerate|get`
   (service_account_id tracé).
 - Finalité : premier déploiement d'app 100 % automatique (SSO sans
-  HUB_ADMIN_PASSWORD côté app) — cf. spec exemple-app
-  `docs/superpowers/specs/2026-09-14-oidc-self-provisioning-design.md`.
+  HUB_ADMIN_PASSWORD côté app) — cf. spec de l'outil d'administration de
+  Vikunja : `docs/superpowers/specs/2026-09-14-oidc-self-provisioning-design.md`.
 - Tests : 10 nouveaux (`test_oidc_self_client.py`) ; suite complète
   1098 passed / 0 failed.
 
@@ -2930,10 +2930,10 @@ build` → `make up` transitivement via le Makefile de l'app) :
   et `app.version` **imbriqués** — pas de clés top-level `hub_connected`/`version`.
   Le module livré en 3.53.0 lisait les clés top-level (hypothèse reprise telle
   quelle dans les mocks des tests) : contrôles health et versions en fail à tort
-  (5/7 observé sur `controle-socle`, app pourtant enregistrée et saine).
+  (5/7 observé sur `exemple-app-15`, app pourtant enregistrée et saine).
 - **Corrigé** : `_hub_connected()` / `_app_version_of()` lisent les deux formats
   (imbriqué socle en priorité, top-level conservé pour tolérance).
-- Détecté par la vérification en conditions réelles sur `controle-socle`
+- Détecté par la vérification en conditions réelles sur `exemple-app-15`
   (socle 2.23.3) ; 2 tests ajoutés au format réel — suite hub **1072 passed**.
 
 | Fonctionnalité | Description |
@@ -2961,7 +2961,7 @@ build` → `make up` transitivement via le Makefile de l'app) :
 - **Corrigé** : le bouton « Créer l'atelier » de la vue Santé échouait pour les applications dont le dossier technique ne porte pas le même nom que leur identifiant (ex. Transfert de fichiers). Le passage en atelier depuis la vue Santé fonctionne désormais de bout en bout pour ces applications.
 
 ### ⚡ Routes atelier : résolution dossier par slug (passage en atelier depuis la vue santé)
-- `routes/workshop.py` : les 5 contrôles git/remote utilisaient `APPS/{slug}/` — pour les apps au dossier ≠ slug (ex. `exemple-app`→`exemple-app`), la création d'atelier répondait 400 « pas de repo git » alors même que le dépôt est correct. Tous les points d'appel passent par le résolveur `_app_dir(slug)` (v3.52.1).
+- `routes/workshop.py` : les 5 contrôles git/remote utilisaient `APPS/{slug}/` — pour les apps au dossier ≠ slug (ex. `ExempleApp5`→`exemple-app-5-base`), la création d'atelier répondait 400 « pas de repo git » alors même que le dépôt est correct. Tous les points d'appel passent par le résolveur `_app_dir(slug)` (v3.52.1).
 - Tests : `test_create_ok_dir_differs_from_slug` (repo git réel dans un dossier au nom différent, 30 passed).
 
 ---
@@ -2972,7 +2972,7 @@ build` → `make up` transitivement via le Makefile de l'app) :
 - **Corrigé** : dans la vue Santé, l'atelier d'une application dont le dossier technique ne porte pas le même nom que son identifiant (ex. Philia Proxy) apparaissait comme inexistant — le bloc « Atelier : … » avec les actions Mettre à jour / Déployer ne s'affichait pas. Il est de nouveau visible et fonctionnel.
 
 ### ⚡ Résolution dossier app par slug (workshop) + nettoyage fiche atelier fantôme
-- `workshop_service` : nouveau résolveur `_app_dir(slug)` — cas canonique `APPS/<slug>/` (validé par `APP_SLUG` du `.env`), sinon **scan des `.env`** des apps, repli `APPS/<slug>/` (comportement historique). Corrige la vue Santé et toutes les opérations atelier pour les apps dont dossier ≠ slug (`exemple-app`→`philia-proxy`, `exemple-app`→`exemple-app`, …) : 8 sites d'appel branchés.
+- `workshop_service` : nouveau résolveur `_app_dir(slug)` — cas canonique `APPS/<slug>/` (validé par `APP_SLUG` du `.env`), sinon **scan des `.env`** des apps, repli `APPS/<slug>/` (comportement historique). Corrige la vue Santé et toutes les opérations atelier pour les apps dont dossier ≠ slug (`ExempleApp5`→`exemple-app-5-base`, …) : 8 sites d'appel branchés.
 - Tests : `test_workshop_state_dir_name_differs_from_slug`, `test_app_dir_resolver` (hub/tests/test_workshop_routes.py, 29 passed).
 
 ---
@@ -2987,16 +2987,16 @@ build` → `make up` transitivement via le Makefile de l'app) :
 ### 🔐 Sécurité M2M : identité d'app fiable (`/me/credentials`) + périmètre minimal des service accounts (AN-1/AN-2, banc 2026-09-10)
 
 Traitement des 2 tickets 🔴 critiques issus de la campagne de banc du socle
-2.23.1 (apps controle-socle / exemple-app vs Hub .68).
+2.23.1 (apps exemple-app-15 / exemple-app-5-base vs Hub .68).
 
 | Élément | Description |
 |---------|-------------|
-| **AN-1 — `/api/apps/me/credentials`** | L'endpoint résolvait l'app par `sa.applications[0]` (relation N-N **non ordonnée**) : tout SA multi-apps recevait les credentials d'une app arbitraire (observé : SA de `controle-socle` → `exemple-app-ws`). Désormais : app propriétaire du SA (convention de nommage existante), sinon unique app liée, sinon **409** (jamais d'app arbitraire). Appliqué au path token M2M **et** au path déprécié `X-Client-ID` |
+| **AN-1 — `/api/apps/me/credentials`** | L'endpoint résolvait l'app par `sa.applications[0]` (relation N-N **non ordonnée**) : tout SA multi-apps recevait les credentials d'une app arbitraire (observé : SA de `exemple-app-15` → `exemple-app-8-ws`). Désormais : app propriétaire du SA (convention de nommage existante), sinon unique app liée, sinon **409** (jamais d'app arbitraire). Appliqué au path token M2M **et** au path déprécié `X-Client-ID` |
 | **AN-2 — périmètre M2M (Option B validée)** | Nouveau module `app/m2m_scope.py` : (1) `grant_shared_apps_to_sa` — les services partagés (`is_shared_service`, approuvés) sont accordés aux SA avec **parité de contexte atelier** (SA prod → services prod, SA atelier → ateliers) ; (2) `sa_apps_claim` — le claim JWT `apps` n'émet plus que les apps **actives + approuvées + du contexte du SA** (défense en profondeur) |
 | **Harmonisation des 6 sites de copie** | Approbation (source du banc), création admin, auto-register, batch-import, regenerate-secret : parité atelier systématique via le helper central ; self-healing T1 et création SA manuelle factorisés sur le même code |
-| **Purge one-shot** | `scripts/purge_workshop_m2m_leaks.py` (dry-run par défaut, `--apply`) : retire les liens N-N croisés atelier↔prod ; SA ambigus intacts et signalés. Exécutée sur la prod : **13 liens retirés** (SA Contrôle Socle/exemple-app −`exemple-app-ws` ; SA atelier `exemple-app-ws` −11 apps prod). Le SA de `exemple-app` **prod** (id 53) est intact |
+| **Purge one-shot** | `scripts/purge_workshop_m2m_leaks.py` (dry-run par défaut, `--apply`) : retire les liens N-N croisés atelier↔prod ; SA ambigus intacts et signalés. Exécutée sur la prod : **13 liens retirés** (SA Exemple App 15/Exemple App 16 −`exemple-app-8-ws` ; SA atelier `exemple-app-5-ws` −11 apps prod). Le SA de `exemple-app-5-base` **prod** (id 53) est intact |
 | **Impact parc / écosystème** | ⚠️ Les SA d'ateliers n'ont **plus** d'accès M2M aux apps prod (et inversement) : toute app atelier qui testait du cross-apps vers des prods doit passer par une élévation explicite. Les apps prod continuent de découvrir les services prod partagés (M2M discovery préservé). Les tokens déjà émis gardent leur claim jusqu'à expiration (≤8 h) ; le garde runtime `m2m_authorization` bloquait déjà le cross-workshop |
-| **Tests** | TDD : 15 nouveaux tests (`test_me_credentials_owner_resolution.py`, `test_m2m_scope_parity.py` — repro banc exact, parité sur 6 points d'entrée, claim JWT, purge, helper). Suite complète **1055 pass**. Validé en réel sur hub-api : repro banc AN-1 corrigé (`controle-socle` retourné) ; claim M2M de controle-socle passé de 13 apps (1 atelier) à 12 apps (0 atelier) |
+| **Tests** | TDD : 15 nouveaux tests (`test_me_credentials_owner_resolution.py`, `test_m2m_scope_parity.py` — repro banc exact, parité sur 6 points d'entrée, claim JWT, purge, helper). Suite complète **1055 pass**. Validé en réel sur hub-api : repro banc AN-1 corrigé (`exemple-app-15` retourné) ; claim M2M de exemple-app-15 passé de 13 apps (1 atelier) à 12 apps (0 atelier) |
 
 ---
 
@@ -3055,7 +3055,7 @@ droits) à venir.
 
 | Élément | Description |
 |---------|-------------|
-| Comportement | `GET /api/audit/usage/user/{id}` exclut désormais les segments dont le slug se termine par « -ws » (ateliers) : timeline, « Répartition du temps par application » et temps total ne comptent que l'usage **production**. Avant, une session atelier apparaissait comme une app séparée (ex. 2 lignes « exemple-app-7 » = prod + atelier) |
+| Comportement | `GET /api/audit/usage/user/{id}` exclut désormais les segments dont le slug se termine par « -ws » (ateliers) : timeline, « Répartition du temps par application » et temps total ne comptent que l'usage **production**. Avant, une session atelier apparaissait comme une app séparée (ex. 2 lignes « Exemple App 8 » = prod + atelier) |
 | Implémentation | Filtre SQL `~AppUsageSegment.app_slug.endswith("-ws")` dans `get_user_usage_day` (la convention `{slug}-ws` est réservée aux ateliers : hubctl + workshop_service) |
 | Tests | `test_usage_user_excludes_workshop_segments` (régression : segments prod + atelier → seul le prod compte dans segments/totals/day_total) ; suites usage/SLO 18/18 |
 | Fichiers | `hub/app/routes/audit.py`, `hub/tests/test_api_usage_endpoints.py` |
@@ -3068,7 +3068,7 @@ droits) à venir.
 
 | Élément | Description |
 |---------|-------------|
-| Symptôme | Les noms à gauche du graphique ne correspondaient pas aux barres (ex. label « Philia Proxy » mais tooltip « Annuaire Téléphonie ») et les durées semblaient incohérentes avec l'activité du jour |
+| Symptôme | Les noms à gauche du graphique ne correspondaient pas aux barres (ex. label « Philia Proxy » mais tooltip « Exemple App 13 ») et les durées semblaient incohérentes avec l'activité du jour |
 | Cause racine | Le rendu utilisait **une série bar par app** (valeurs null partout sauf à sa position). Avec N séries bar sur un axe catégorie, ECharts place les N barres **côte à côte dans un cluster** par bande de 30 px : dès 2-3 apps, les barres (18 px) débordent de leur bande et atterrissent visuellement à côté du mauvais label. Les données backend étaient correctes (vérifié en prod : totaux = somme exacte des segments) — c'était purement le rendu |
 | Fix | **Une seule série** : chaque data item porte sa valeur, sa couleur et son `decal` (motif différenciant les couleurs dupliquées, via `itemStyle` de l'item — ECharts 5.5) ; tooltip par `dataIndex`. Chaque barre est désormais centrée exactement sur son label |
 | Fichiers | `frontend/public/js/modules/audit-charts.js` (`renderUserDayBreakdown`) |
@@ -3147,12 +3147,12 @@ droits) à venir.
 
 | Élément | Description |
 |---------|-------------|
-| Incident | `POST /api/apps/allocate-ports` a attribué `10.50.5.0/24` à une app alors que `exemple-app-network` l'occupait déjà (épinglage manuel hors Hub) → `docker compose up` échouait avec « invalid pool request: Pool overlaps with other one on this address space » |
+| Incident | `POST /api/apps/allocate-ports` a attribué `10.50.5.0/24` à une app alors que `exemple-paie-network` l'occupait déjà (épinglage manuel hors Hub) → `docker compose up` échouait avec « invalid pool request: Pool overlaps with other one on this address space » |
 | Cause racine | Les **ports** étaient filtrés par un scan Docker du réel (`get_used_host_ports`), mais les **sous-réseaux** n'étaient consultés que dans la table `port_allocations` : tout réseau Docker créé manuellement (ou par un stack tiers) était invisible de l'allocateur |
 | Fix scanner | `DockerScanner.get_used_network_subnets()` : scan best-effort des sous-réseaux (IPAM) de tous les réseaux Docker existants, symétrique de `get_used_host_ports` — ne lève jamais, `set()` si Docker indisponible |
 | Fix allocateur | `docker_occupied_subnets()` (flag `subnet_scan_docker_enabled`, host local uniquement, exécution en thread) fusionné dans `allocate_ports_for_app` : nouvelle allocation **et** backfill paresseux des allocations antérieures sans subnet |
 | Tests | 6 nouveaux tests (exclusion, host distant ignoré, flag désactivé, fallback échec scan, backfill) ; suite port_allocation 26/26 verte |
-| Déploiement | Rebuild `hub-api` ; vérifié en réel : allocation exemple-app renvoie désormais `10.50.8.0/24` en sautant 10.50.5/.6/.7 épinglés manuellement |
+| Déploiement | Rebuild `hub-api` ; vérifié en réel : l'allocation d'une nouvelle application renvoie désormais `10.50.8.0/24` en sautant 10.50.5/.6/.7 épinglés manuellement |
 
 ---
 
@@ -3313,7 +3313,7 @@ droits) à venir.
 | Périmètre env | Couvre create/update/remove/ship (compose atelier, make prod et rollback) ET `_op_recreate` (même classe de fuite vers les apps prod recréées depuis l'UI) |
 | Fix fantômes | Suppression d'atelier (remove et ship) : la fiche `Application {slug}-ws` enregistrée par l'app est désormais supprimée (`_delete_workshop_app_row`, garde `is_workshop=True`, réutilise `delete_app_cascade` : SA owner, ports, cascades), appel best-effort non bloquant. Sans cela, les lignes fantômes pointaient sur des ports réattribués à un autre atelier → mauvaise app ouverte depuis le hub |
 | Tests | 10 nouveaux (allowlist, non-fuite create/ship/recreate, suppression fiche nominale/garde prod/absente/échec non bloquant) — 43/43 workshop, suite complète verte |
-| Remédiation prod | Atelier exemple-app-ws recréé avec env sain (enregistrement OK) ; 4 fiches fantômes nettoyées en DB (exemple-app-ws, canari-ws, exemple-app-api-v3-ws, test-template-ws) |
+| Remédiation prod | Atelier exemple-app-ws recréé avec env sain (enregistrement OK) ; 4 fiches fantômes nettoyées en DB (exemple-app-8-ws, canari-ws, exemple-app-4-api-v3-ws, test-template-ws) |
 | Limites | hubctl (CLI hôte) garde `{**os.environ, ...}` : sans risque sauf si le shell hôte exporte des clés en collision ; parité à prévoir (sous-module hubctl_src) |
 
 ---
@@ -3337,7 +3337,7 @@ droits) à venir.
 | Export | `UserExport` porte désormais `uuid`, `oidc_sub`, `prenom`, `nom` |
 | Restore | Création : ancres exportées respectées si présentes ; fallback génération sinon (backups legacy rétrocompatibles) |
 | Restore | Mise à jour (match username) : inchangée — jamais d'écrasement des ancres existantes |
-| Impact | Un disaster recovery ne casse plus les liaisons exemple-app-16 (`user_uuid`) ni les liaisons OIDC des renommés ; prénom/nom préservés |
+| Impact | Un disaster recovery ne casse plus les liaisons EXEMPLE_APP_4 (`user_uuid`) ni les liaisons OIDC des renommés ; prénom/nom préservés |
 
 | Fonctionnalité | Description |
 |----------------|-------------|
@@ -3700,7 +3700,7 @@ droits) à venir.
 
 | Fonctionnalité | Description |
 |----------------|-------------|
-| **Sélection du SA propriétaire** | `POST /api/apps/register` (branche ré-enregistrement) sélectionne désormais le SA *propriétaire* via la convention nominale de `delete_app_cascade` (helper partagé `is_owner_service_account`). Corrige un bug préexistant : une app partagée rotationnait le secret du premier SA venu de la relation N-N — c'est-à-dire le SA d'une *autre* app (cas réel : exemple-app-7 a reçu le SA de Philia Proxy, invalidant son secret). |
+| **Sélection du SA propriétaire** | `POST /api/apps/register` (branche ré-enregistrement) sélectionne désormais le SA *propriétaire* via la convention nominale de `delete_app_cascade` (helper partagé `is_owner_service_account`). Corrige un bug préexistant : une app partagée rotationnait le secret du premier SA venu de la relation N-N — c'est-à-dire le SA d'une *autre* app (cas réel : Exemple App 8 a reçu le SA de Philia Proxy, invalidant son secret). |
 | **Recréation du SA disparu** | Une app existante dont le SA a été supprimé en cascade (ex. `delete_app` d'une inscription doublon) retrouve un SA dédié recréé automatiquement au ré-enregistrement (actif, lié à l'app + shared services, parité atelier), tracé en audit `m2m_sa_recreated`. Elle n'est plus muette à vie. |
 | **Sécurité inchangée** | `regenerate-secret` sans token M2M reste 401 (H9) ; garde `is_docker_network_ip` sur `/api/apps/register` inchangée ; le secret n'est jamais loggé. |
 
@@ -3734,7 +3734,7 @@ droits) à venir.
 
 ### ⚡ Déploiement auto — schéma HTTP du HUB forcé
 
-- **Corrigé** : certaines apps (cas exemple-app) joignent l'API du HUB en `https://…:8000` alors que ce port est servi en HTTP (SSL : WRONG_VERSION_NUMBER → JWKS inaccessible → 503 « Service d'authentification non disponible »). Le pipeline injecte désormais `HUB_HTTPS_ENABLED=false` dans le `.env` généré (remplacement si présent + ajout sinon : « le HUB décide, l'app suit »).
+- **Corrigé** : certaines apps (cas ExempleApp) joignent l'API du HUB en `https://…:8000` alors que ce port est servi en HTTP (SSL : WRONG_VERSION_NUMBER → JWKS inaccessible → 503 « Service d'authentification non disponible »). Le pipeline injecte désormais `HUB_HTTPS_ENABLED=false` dans le `.env` généré (remplacement si présent + ajout sinon : « le HUB décide, l'app suit »).
 
 ---
 
@@ -3754,7 +3754,7 @@ droits) à venir.
 - **Ajouté** : `GET /api/apps/{slug}/deploy/status` (admin) — statut courant, étape, logs (cappés 100 Ko), historique (max 10). Table `app_deployments` (migration 056), persistance inter-restarts, annulation propre au shutdown du HUB.
 - **Ajouté** : champ `last_deployment` dans `GET /api/apps` (dernier déploiement success/failed par app).
 - **Ajouté** : image hub-api enrichie de `git`, `make`, CLI docker + compose v2 (binaires statiques pinés) ; montage `APPS/` au même chemin absolu hôte/conteneur (`APPS_HOST_PATH`) pour la résolution des bind mounts par le daemon. `cap_drop: ALL` et socket `:ro` inchangés.
-- **Modifié (UI)** : après validation du formulaire d'ajout d'app avec URL Git, le déploiement se lance automatiquement et une modal « Déploiement » suit les 5 étapes en temps réel (polling 2 s, logs, bouton Réessayer). Le banner « 📋 Copier le .env » est supprimé (relique du flux manuel). Badge « Non déployée » + bouton fusée sur les apps avec `git_repo_url` sans déploiement réussi (cas exemple-app).
+- **Modifié (UI)** : après validation du formulaire d'ajout d'app avec URL Git, le déploiement se lance automatiquement et une modal « Déploiement » suit les 5 étapes en temps réel (polling 2 s, logs, bouton Réessayer). Le banner « 📋 Copier le .env » est supprimé (relique du flux manuel). Badge « Non déployée » + bouton fusée sur les apps avec `git_repo_url` sans déploiement réussi (cas ExempleApp).
 - **Corrigé** : `test_api_health_alias_returns_health_payload` attendait un payload sans `version` (test préexistant cassé sur main depuis l'ajout du champ au health).
 
 ### 🔧 Technique
@@ -3872,12 +3872,12 @@ droits) à venir.
 ### ⚡ Certificat PhiliaNG auto-généré au démarrage (proxy transparent actif par défaut)
 
 - `hub/pki.py` : `create_server_cert()` accepte désormais `--cn` et `--san` (CLI + API Python) pour générer un certificat serveur avec un CN/SAN explicite, sans fuiter les domaines hub (`PKI_CERT_DOMAINS`). Refactor : la conversion DNS/IP → entrées SAN est extraite en `_values_to_san()`, réutilisable.
-- `hub/entrypoint.sh` : après la génération du cert hub, le hub-api génère automatiquement le cert PhiliaNG (`certs/server/philia-ng/`, CN=`service.example.org`, SAN=`DNS:service.example.org`) signé par la CA interne du Hub s'il est absent.
-- `docker-compose.yml` : la variable `PHILIA_NG_DOMAIN` (défaut `service.example.org`) est passée au hub-api pour piloter le domaine du certificat généré.
+- `hub/entrypoint.sh` : après la génération du cert hub, le hub-api génère automatiquement le cert PhiliaNG (`certs/server/philia-ng/`, CN=`proxy.example.lan`, SAN=`DNS:proxy.example.lan`) signé par la CA interne du Hub s'il est absent.
+- `docker-compose.yml` : la variable `PHILIA_NG_DOMAIN` (défaut `proxy.example.lan`) est passée au hub-api pour piloter le domaine du certificat généré.
 - `.env.example` : documentation de `PHILIA_NG_DOMAIN`.
 - `hub/tests/test_pki.py` : 2 nouveaux tests (CN/SAN surchargés sans fuite des domaines hub + CLI `--cn`/`--san`).
 
-**Bénéfice** : suite logique du SNI automatique (v3.28.3). Le proxy transparent PhiliaNG (`service.example.org → :4443`) est désormais actif **par défaut sur tout déploiement** — `git pull && docker compose up -d` suffit, plus de génération/copie manuelle du certificat. De plus, le cert est signé par la CA interne du Hub (au lieu d'auto-signé) : les postes ayant importé la CA n'auront plus d'avertissement SSL.
+**Bénéfice** : suite logique du SNI automatique (v3.28.3). Le proxy transparent PhiliaNG (`proxy.example.lan → :4443`) est désormais actif **par défaut sur tout déploiement** — `git pull && docker compose up -d` suffit, plus de génération/copie manuelle du certificat. De plus, le cert est signé par la CA interne du Hub (au lieu d'auto-signé) : les postes ayant importé la CA n'auront plus d'avertissement SSL.
 
 ---
 
@@ -3894,8 +3894,8 @@ droits) à venir.
   filtrage existant des 404 non-API. Le rejet reste identique côté client (HTTP 401) et
   les accès restent visibles dans les access logs (déjà filtrés par
   `_SuppressLegacySSE401Filter`).
-- Les 4 apps legacy concernées (exemple-app, exemple-app-16_API_v3, exemple-app_v3,
-  exemple-app) sont corrigées par ailleurs (token SSE en query param) ; le point est
+- Les 4 apps legacy concernées (exemple-app-14, EXEMPLE_APP_4_API_v3, EXEMPLE_APP_10_API_v3,
+  EXEMPLE_APP_13) sont corrigées par ailleurs (token SSE en query param) ; le point est
   documenté dans le skill de migration (`migrate-app-template` § D.3.2).
 
 ---
@@ -3937,7 +3937,7 @@ droits) à venir.
 
 ### ⚡ PhiliaNG — inclusion conditionnelle (plus de crash au boot sans certs)
 
-- **Corrigé** : le bloc serveur PhiliaNG (`service.example.org`) dans `nginx-ssl.conf`
+- **Corrigé** : le bloc serveur PhiliaNG (`proxy.example.lan`) dans `nginx-ssl.conf`
   plantait nginx au démarrage si les certificats `/etc/nginx/ssl/server/philia-ng/`
   étaient absents (machine sans PhiliaNG déployé). Les certificats sont dans
   `certs/` (gitignoré) — ils ne voyagent pas avec le repo.
@@ -3967,23 +3967,24 @@ droits) à venir.
 
 ### ⚡ SNI routing PhiliaNG transparent proxy
 
-- **Ajouté** : bloc serveur SNI `service.example.org` sur le port 443, route le trafic vers le conteneur Philia proxy-frontend (port 4443)
-- **Ajouté** : redirection HTTP→HTTPS pour `service.example.org` sur le port 80
-- **Ajouté** : certificat dédié CN=service.example.org (auto-signé) pour la validation navigateur des cookies Keycloak exemple Connect
+- **Ajouté** : bloc serveur SNI `proxy.example.lan` sur le port 443, route le trafic vers le conteneur Philia proxy-frontend (port 4443)
+- **Ajouté** : redirection HTTP→HTTPS pour `proxy.example.lan` sur le port 80
+- **Ajouté** : certificat dédié CN=proxy.example.lan (auto-signé) pour la validation navigateur des cookies du fournisseur d'identité
 - **Ajouté** : support SSE et long-polling (proxy_buffering off, proxy_read_timeout 86400s)
 - **Modifié** : le serveur Hub sur les ports 80 et 443 passe en `default_server` (catch-all)
 
 ## [3.26.1] - 6 août 2026
 
-### ⚡ SLO v2 — Câblage M2M HUB→exemple-app + Known Bug
+### ⚡ SLO v2 — Câblage M2M HUB→outil d'administration de Vikunja + Known Bug
 
 #### Ajouté
 - **`slo_orchestrator.py`** : module qui appelle chaque traducteur (app M2M) pour
   révoquer les sessions distantes de l'ancien user via le SA interne `hub-internal`.
 - **SA `hub-internal`** : Service Account dédié (client_id=`hub-internal`), secret
   stocké dans `.env` (`HUB_INTERNAL_SA_CLIENT_ID`/`HUB_INTERNAL_SA_CLIENT_SECRET`),
-  associé à l'app `exemple-app`. Permet au HUB de s'appeler lui-même en
-  `grant_type=client_credentials` puis d'appeler les traducteurs en M2M.
+  associé à l'app de l'outil d'administration de Vikunja. Permet au HUB de
+  s'appeler lui-même en `grant_type=client_credentials` puis d'appeler les
+  traducteurs en M2M.
 - **Variables `hub_internal_sa_*`** dans `config.py` + `docker-compose.yml`.
 - **Intégration login** : `auth.py` appelle `propagate_remote_revoke()` au login
   quand un switch est détecté (best-effort, ne bloque pas le login).
@@ -4021,7 +4022,7 @@ purge pas plus, mais si le JWT est expiré entre-temps, le flow OIDC redémarre)
 - **Fork Vikunja** pour ajouter un endpoint de révocation de JWT (jti blacklist) —
   lourd mais seule solution vraiment immédiate.
 - **Désactiver l'ancien user** (`users.status`) côté Vikunja via le traducteur —
-  l'API exemple-app le permet mais c'est sémantiquement un **offboarding**
+  l'API admin de Vikunja le permet mais c'est sémantiquement un **offboarding**
   (inadapté pour un simple switch de poste).
 - **`prompt=login`** dans le flow OIDC — standard, mais Vikunja ne le supporte pas
   côté RP (il ne le passe pas à l'IdP).
@@ -4055,7 +4056,7 @@ purge pas plus, mais si le JWT est expiré entre-temps, le flow OIDC redémarre)
 - **Kill-switch** : nouvelle var `OIDC_SLO_ENABLED` (défaut **False** en 3.26.0 — activer
   via `.env` après validation e2e atelier) et `OIDC_SLO_IFRAME_TIMEOUT_MS` (défaut 1500).
 - **Helpers internes** : `slo_helpers.py` (`detect_user_switch_and_collect_logouts`,
-  `lookup_translator_slug`, mapping statique `APP_TRANSLATORS = {"vikunja": "exemple-app"}`).
+  `lookup_translator_slug`, mapping statique `APP_TRANSLATORS`, de l'app « vikunja » à l'outil d'administration de Vikunja).
 - **Frontend** : nouveau module `slo-purge.js` + intégration post-login dans
   `auth-navigation.js`. Best-effort (try/catch) — n'affiche jamais d'erreur visible.
 - **Spec** : `docs/superpowers/specs/2026-08-06-slo-shared-workstation-design.md`.
@@ -4068,8 +4069,8 @@ purge pas plus, mais si le JWT est expiré entre-temps, le flow OIDC redémarre)
 
 ### 🔒 Sécurité
 
-- Nouvel endpoint M2M côté `exemple-app` uniquement (cf. release exemple-app
-  séparée) — non câblé côté HUB en 3.26.0 (câblage reporté v2).
+- Nouvel endpoint M2M côté outil d'administration de Vikunja uniquement (cf.
+  release séparée de cet outil) — non câblé côté HUB en 3.26.0 (câblage reporté v2).
 
 ### ⚠️ Notes de déploiement
 
@@ -4258,7 +4259,7 @@ purge pas plus, mais si le JWT est expiré entre-temps, le flow OIDC redémarre)
 
 ### 📣 Pour les utilisateurs
 
-- **Ajouté** : nouvelle option « Non gérée (lien only) » dans les paramètres d'une application. Permet de déclarer qu'une app est pilotée par un proxy externe (ex. Vikunja piloté par exemple-app) — le HUB ne la sonde plus (santé, backup, sync) mais elle reste visible et cliquable dans le launcher.
+- **Ajouté** : nouvelle option « Non gérée (lien only) » dans les paramètres d'une application. Permet de déclarer qu'une app est pilotée par un proxy externe (ex. Vikunja piloté par l'outil d'administration de Vikunja) — le HUB ne la sonde plus (santé, backup, sync) mais elle reste visible et cliquable dans le launcher.
 - **Ajouté** : filtre « Gestion » (Toutes / Gérées / Non gérées) dans la vue admin des applications, pour distinguer les apps pilotées directement par le HUB de celles pilotées par un proxy.
 - **Amélioré** : badge visuel « Non gérée » sur les apps concernées, avec une icône dédiée.
 
@@ -4269,7 +4270,7 @@ purge pas plus, mais si le JWT est expiré entre-temps, le flow OIDC redémarre)
 - **Backup** : refus du backup manuel (HTTP 400) et exclusion du scheduler planifié et du snapshot global pour les apps non gérées.
 - **Sync Docker** : exclusion des apps non gérées du repositionnement automatique de `is_active`.
 - **Frontend admin** : toggle « Non gérée » dans le formulaire, badge « Non gérée » sur les lignes, filtre « Gestion » (Toutes/Gérées/Non gérées) dans la toolbar.
-- **Vikunja (id=6)** : flaggée `is_unmanaged=True, backup_mode=disabled` — l'app Docker Vikunja pilotée par `exemple-app` (id=5) n'est plus health-checkée ni backupée.
+- **Vikunja (id=6)** : flaggée `is_unmanaged=True, backup_mode=disabled` — l'app Docker Vikunja pilotée par l'outil d'administration de Vikunja (id=5) n'est plus health-checkée ni backupée.
 
 ---
 
@@ -4934,7 +4935,7 @@ purge pas plus, mais si le JWT est expiré entre-temps, le flow OIDC redémarre)
 |----------------|-------------|
 | **Messagerie in-app** | Nouveau module `/api/messages` pour envoi admin ciblé ou broadcast, consultation utilisateur, compteurs non lus, accusés de lecture, export CSV et purge |
 | **Envoi applicatif M2M** | Les applications peuvent pousser des messages via `/api/messages/m2m/send` avec un service account |
-| **Synchronisation NotifCenter** | Ajout des endpoints `/api/messages/m2m/sync`, `/api/messages/m2m/receipts`, `/api/messages/m2m/stats` et du détail de message pour une synchro incrémentale |
+| **Synchronisation d'un centre de notifications** | Ajout des endpoints `/api/messages/m2m/sync`, `/api/messages/m2m/receipts`, `/api/messages/m2m/stats` et du détail de message pour une synchro incrémentale |
 | **Traçabilité des renvois** | Ajout de `target_username`, `is_resend` et `original_message_id` pour le filtrage et l'historique |
 | **Panneau de notifications** | Nouveau panneau flottant côté frontend avec cartes de messages utilisateur |
 
@@ -4954,7 +4955,7 @@ purge pas plus, mais si le JWT est expiré entre-temps, le flow OIDC redémarre)
 
 - Simplification de l'application des migrations avec points de sauvegarde et nettoyage du code obsolète
 - Harmonisation des dates sur `utcnow()` pour une meilleure compatibilité Python 3.12+
-- Ajout du document `exemple-app.md` pour cadrer l'intégration d'un centre de notifications externe
+- Ajout d'un document de cadrage pour l'intégration d'un centre de notifications externe
 
 ---
 
@@ -5027,9 +5028,9 @@ L'endpoint permet aux applications de :
 {
   "shared_services": [
     {
-      "slug": "salarie",
-      "name": "API Salariés",
-      "description": "Données RH des employés",
+      "slug": "exemple-app-10",
+      "name": "API d'exemple",
+      "description": "Données d'exemple",
       "api_url": "http://192.0.2.11:18087",
       "is_shared_service": true
     }
@@ -5107,8 +5108,8 @@ get_token() → Cache valide? → Oui → Retourne token
 | JavaScript | Ajout d'une nouvelle méthode `hasAppAccess()` compatible dict/liste |
 
 **Formats du champ `apps`** :
-- **Dictionnaire** : `{"salarie": "admin", "compta": "viewer"}` (tokens utilisateur)
-- **Liste** : `["salarie", "exemple-app"]` (certains tokens M2M/service account)
+- **Dictionnaire** : `{"exemple-app-10": "admin", "compta": "viewer"}` (tokens utilisateur)
+- **Liste** : `["exemple-app-10", "mon-app"]` (certains tokens M2M/service account)
 
 **Code de normalisation recommandé** (Python) :
 ```python
@@ -5139,7 +5140,7 @@ Ajout d'une section complète de dépannage pour les erreurs M2M :
 ### 🔧 Solutions documentées pour erreur 403 M2M
 
 1. **Option A** : Marquer l'API cible comme `is_shared_service = TRUE`
-   - Via SQL : `UPDATE applications SET is_shared_service = TRUE WHERE slug = 'salarie';`
+   - Via SQL : `UPDATE applications SET is_shared_service = TRUE WHERE slug = 'exemple-app-10';`
    - Via API : `PATCH /api/apps/{app_id}` avec `{"is_shared_service": true}`
 
 2. **Option B** : Ajouter manuellement l'accès au Service Account
@@ -5273,7 +5274,7 @@ Les applications doivent :
 
 #### Services Partagés M2M
 - **Nouvelle section 7** : "Services Partagés (APIs de données)"
-- Les applications peuvent accéder automatiquement aux APIs partagées (ex: API Salariés)
+- Les applications peuvent accéder automatiquement aux APIs partagées (ex: API d'exemple)
 - Nouveau champ `is_shared_service` sur le modèle `Application`
 - Attribution automatique des droits aux APIs partagées lors de l'auto-enregistrement
 
@@ -5306,8 +5307,8 @@ Les applications doivent :
 -- Nouveau champ (déjà migré)
 ALTER TABLE applications ADD COLUMN is_shared_service BOOLEAN DEFAULT FALSE;
 
--- Marquer API Salariés comme partagée
-UPDATE applications SET is_shared_service = TRUE WHERE slug = 'salarie';
+-- Marquer API d'exemple comme partagée
+UPDATE applications SET is_shared_service = TRUE WHERE slug = 'exemple-app-10';
 ```
 
 ### 📋 Checklist pour agents IA

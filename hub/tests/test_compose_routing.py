@@ -58,8 +58,8 @@ async def test_toggle_active_triggers_regenerate(client, admin_token, async_sess
     """Le toggle actif/inactif d'une app déclenche la publication (regenerate)."""
     from app.models import Application
 
-    app = Application(name="Inv", slug="exemple-app", api_url="http://192.0.2.10:9001",
-                      frontend_url="http://192.0.2.10:4201", dns_name="exemple-app")
+    app = Application(name="Mon App", slug="mon-app", api_url="http://192.0.2.10:9001",
+                      frontend_url="http://192.0.2.10:4201", dns_name="mon-app")
     async_session.add(app)
     await async_session.commit()
 

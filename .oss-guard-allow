@@ -1,0 +1,11 @@
+# .oss-guard-allow — exceptions à la garde des valeurs interdites (scripts/oss-guard.sh).
+# Un chemin exact par ligne ; « # » en commentaire.
+#
+# Décision du mainteneur : le code de la déconnexion unique (SLO) qui référence
+# fonctionnellement un outil interne est conservé tel quel. C'est une référence
+# fonctionnelle, comme les noms PHILIA_* — pas une mention documentaire.
+hub/app/slo_helpers.py
+hub/app/slo_orchestrator.py
+hub/tests/test_slo_helpers.py
+hub/tests/test_slo_login.py
+hub/tests/test_slo_orchestrator.py

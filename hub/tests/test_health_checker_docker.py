@@ -160,17 +160,17 @@ def test_find_containers_groups_by_compose_project(monkeypatch):
     1 postgres (projet seul, sans APP_SLUG) — l'autre app et le Hub exclus."""
     containers = [
         _app_container("zz-autre-api", slug="autre", project="autre"),
-        _app_container("exemple-app-api", slug="exemple-app", project="exemple-app"),
-        _app_container("exemple-app-frontend", slug="exemple-app", project="exemple-app"),
+        _app_container("exemple-app-11-api", slug="exemple-app-11", project="exemple_app_11"),
+        _app_container("exemple-app-11-frontend", slug="exemple-app-11", project="exemple_app_11"),
         # postgres : PAS d'APP_SLUG, seulement le label projet compose
-        _app_container("exemple-app-postgres", status="exited", project="exemple-app"),
+        _app_container("exemple-app-11-postgres", status="exited", project="exemple_app_11"),
         _app_container("hub-api", project="hub_base"),
     ]
     _patch_containers(monkeypatch, containers)
 
-    group = find_containers_for_app("exemple-app")
+    group = find_containers_for_app("exemple-app-11")
     assert [c.name for c in group] == [
-        "exemple-app-api", "exemple-app-frontend", "exemple-app-postgres",
+        "exemple-app-11-api", "exemple-app-11-frontend", "exemple-app-11-postgres",
     ]
 
 
@@ -178,14 +178,14 @@ def test_find_containers_excludes_hub_base_even_when_matched(monkeypatch):
     """Un conteneur du projet hub_base matché directement (env/label) est
     exclu, et n'entraîne pas les autres conteneurs de hub_base."""
     containers = [
-        _app_container("hub-api", slug="exemple-app", project="hub_base"),
+        _app_container("hub-api", slug="exemple-app-11", project="hub_base"),
         _app_container("hub-frontend", project="hub_base"),
-        _app_container("exemple-app-api", slug="exemple-app", project="exemple-app"),
+        _app_container("exemple-app-11-api", slug="exemple-app-11", project="exemple_app_11"),
     ]
     _patch_containers(monkeypatch, containers)
 
-    group = find_containers_for_app("exemple-app")
-    assert [c.name for c in group] == ["exemple-app-api"]
+    group = find_containers_for_app("exemple-app-11")
+    assert [c.name for c in group] == ["exemple-app-11-api"]
 
 
 def test_find_containers_matches_label_hub_slug(monkeypatch):
@@ -194,15 +194,15 @@ def test_find_containers_matches_label_hub_slug(monkeypatch):
         _FakeContainer(
             "running",
             attrs={"Config": {"Env": []}},
-            labels={"hub.slug": "exemple-app", "com.docker.compose.project": "exemple-app"},
-            name="exemple-app-api",
+            labels={"hub.slug": "exemple-app-9", "com.docker.compose.project": "exemple_app_9"},
+            name="exemple-app-9-api",
         ),
-        _app_container("exemple-app-postgres", project="exemple-app"),
+        _app_container("exemple-app-9-postgres", project="exemple_app_9"),
     ]
     _patch_containers(monkeypatch, containers)
 
-    group = find_containers_for_app("exemple-app")
-    assert [c.name for c in group] == ["exemple-app-api", "exemple-app-postgres"]
+    group = find_containers_for_app("exemple-app-9")
+    assert [c.name for c in group] == ["exemple-app-9-api", "exemple-app-9-postgres"]
 
 
 def test_find_containers_deduplicates(monkeypatch):

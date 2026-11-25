@@ -186,7 +186,7 @@ async def _apply_user_tags(
     return stored, ignored
 
 
-# ─── Résolveur valeurs live (exemple-app) ────────────────────────
+# ─── Résolveur valeurs live (application source) ───────────────────
 
 # Cache mémoire process : {category_id: (monotonic, [valeurs])}. TTL court :
 # un redémarrage ou une invalidation (import-m2m, PATCH/POST catégorie)

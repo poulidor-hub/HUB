@@ -39,8 +39,8 @@ def test_application_has_dns_name_nullable():
 
 @pytest.mark.asyncio
 async def test_backfill_dns_names_fills_slugs_and_is_idempotent(async_session):
-    app_a = _make_app("exemple-app")  # sans dns_name → backfillé avec son slug
-    app_b = _make_app("exemple-app", dns_name="ls-custom")  # déjà posé → inchangé
+    app_a = _make_app("mon-app")  # sans dns_name → backfillé avec son slug
+    app_b = _make_app("exemple-app-4", dns_name="nom-custom")  # déjà posé → inchangé
     async_session.add_all([app_a, app_b])
     await async_session.commit()
 
@@ -50,8 +50,8 @@ async def test_backfill_dns_names_fills_slugs_and_is_idempotent(async_session):
     async_session.expire_all()  # backfill = autre session → invalider le cache d'identité
     rows = (await async_session.execute(select(Application))).scalars().all()
     by_slug = {a.slug: a.dns_name for a in rows}
-    assert by_slug["exemple-app"] == "exemple-app"
-    assert by_slug["exemple-app"] == "ls-custom"
+    assert by_slug["mon-app"] == "mon-app"
+    assert by_slug["exemple-app-4"] == "nom-custom"
 
     # Idempotence : deuxième appel ne modifie rien
     assert await backfill_dns_names() == 0

@@ -272,7 +272,7 @@ class Settings(BaseSettings):
     #   (/api/admin/restore, /api/admin/backup/import[/upload|/preview],
     #    /api/apps/{slug}/backup/import,
     #   /api/apps/{slug}/backup/restore/upload) — backups volumineux
-    #   (cf. incident exemple-app > 150 Mo).
+    #   (cf. incident de sauvegarde > 150 Mo).
     max_body_size_mb: int = 10
     max_upload_body_size_mb: int = 512
 
@@ -420,7 +420,7 @@ class Settings(BaseSettings):
     # volontairement neutre, JAMAIS un chemin de machine de développement.
     apps_host_path: str = "/data/apps"
 
-    # === Atelier (pilotage par l'agent exemple-app) ===
+    # === Atelier (pilotage par l'agent d'administration) ===
     # Réservés à la route proxy /api/admin/atelier/proxy (Task 4) : URL du
     # service atelier hôte (hubctl) + fichier du token partagé (monté ro).
     atelier_service_url: str = "http://host.docker.internal:8777"

@@ -73,12 +73,12 @@ if [ "${HUB_HTTPS_ENABLED:-true}" = "true" ]; then
         echo "🔐 HTTPS activé, certificats existants → conservés."
     fi
 
-    # Cert PhiliaNG (proxy transparent SNI service.example.org).
-    # Auto-généré s'il manque pour que le vhost service.example.org du hub-frontend
+    # Cert PhiliaNG (proxy transparent SNI proxy.example.lan).
+    # Auto-généré s'il manque pour que le vhost proxy.example.lan du hub-frontend
     # soit actif PAR DÉFAUT sur tout déploiement — l'utilisation depuis un autre
     # serveur est la norme, pas une exception demandant une manip manuelle.
-    # Le domaine doit matcher le server_name de frontend/nginx-philia-ng.conf.
-    PHILIA_DOMAIN="${PHILIA_NG_DOMAIN:-service.example.org}"
+    # Même valeur que le hub-frontend, qui la rend dans le server_name du vhost.
+    PHILIA_DOMAIN="${PHILIA_NG_DOMAIN:-proxy.example.lan}"
     if [ ! -f /code/certs/server/philia-ng/server.crt ]; then
         echo "🔐 Certificat PhiliaNG absent → génération ($PHILIA_DOMAIN)..."
         [ -f /code/certs/ca/ca.crt ] || gosu appuser python pki.py init
