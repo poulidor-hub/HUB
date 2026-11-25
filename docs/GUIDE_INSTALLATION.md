@@ -236,8 +236,15 @@ service de l'application peut la modifier.
 1. Ouvrir **Administration → Comptes de service** (outil « Service Accounts »)
 2. Régénérer le secret du compte de l'application — le nouveau secret n'est affiché qu'une fois
 3. Placer `M2M_CLIENT_ID` et `M2M_CLIENT_SECRET` dans l'environnement de l'application
-4. Redémarrer l'application en recréant son conteneur (`docker compose up -d`) :
-   un `restart` ne recharge pas le `.env`
+4. **Supprimer le cache d'identifiants de l'application** : sur l'hôte,
+   `rm APPS/<slug>/backend/storage/.hub_credentials` (dans le conteneur :
+   `/app/storage/.hub_credentials`). Le socle lit ce fichier AVANT l'environnement :
+   tant qu'il contient l'ancien secret, le nouveau n'est jamais présenté au Hub
+   et l'application continue de recevoir 401. Si `HUB_CLIENT_STORAGE_DIR` est
+   défini pour l'application, le fichier se trouve dans ce dossier.
+5. Redémarrer l'application en recréant son conteneur (`docker compose up -d`) :
+   un `restart` ne recharge pas le `.env`. Le fichier de cache est recréé au
+   premier démarrage, avec les identifiants de l'environnement.
 
 ### Les pages du dashboard ne se chargent pas (CORS)
 

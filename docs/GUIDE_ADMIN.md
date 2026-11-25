@@ -60,7 +60,7 @@ compte de service (M2M). Si elle a perdu ses identifiants, le Hub lui répond
 
 1. **Administration → Comptes de service** (outil « Service Accounts ») → bouton **Régénérer le secret** sur la ligne du compte de l'application
 2. ⚠️ L'ancien secret est immédiatement invalidé ; le nouveau n'est affiché qu'une fois
-3. Placer `M2M_CLIENT_ID` et `M2M_CLIENT_SECRET` dans l'environnement de l'application, puis redémarrer celle-ci
+3. Placer `M2M_CLIENT_ID` et `M2M_CLIENT_SECRET` dans l'environnement de l'application, **supprimer son cache d'identifiants** (`APPS/<slug>/backend/storage/.hub_credentials` : le socle le lit avant l'environnement), puis recréer son conteneur (`docker compose up -d`)
 
 Parcours détaillé : « 401 — Token M2M requis pour réinscrire cette application »
 dans `GUIDE_INSTALLATION.md` (Résolution de problèmes).
