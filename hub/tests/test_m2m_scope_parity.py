@@ -15,7 +15,7 @@ AN-2 (banc 2026-09-10) — Périmètre M2M des service accounts (Option B valid�
    croisés atelier↔prod existants, sans toucher aux liens same-context ni
    aux SA ambigus (propriétaire non identifiable).
 
-Repro banc : le SA de `controle-socle` (prod) portait 13 apps dont
+Repro banc : le SA de `exemple-app-15` (prod) portait 13 apps dont
 l'atelier `exemple-app-8-ws` (rôle service) — compromission de l'atelier
 en cas de fuite du secret prod.
 """
@@ -102,11 +102,11 @@ class TestApproveGrantsSameContextOnly:
 
         # App prod en attente + SA inactif lié (comme après /register)
         pending_app = await _make_app(
-            async_session, "controle-socle", "Controle Socle",
+            async_session, "exemple-app-15", "Exemple App 15",
             approved=False, active=False,
         )
         sa = ServiceAccount(
-            name="SA - Controle Socle",
+            name="SA - Exemple App 15",
             client_id="sa_an2_approve",
             client_secret_hash="x",
             is_active=False,
@@ -118,14 +118,14 @@ class TestApproveGrantsSameContextOnly:
 
         token, _, _ = create_access_token(username=admin_user.username, apps={})
         response = await client.post(
-            "/api/apps/controle-socle/approve",
+            "/api/apps/exemple-app-15/approve",
             json={"approve": True},
             headers=get_auth_header(token),
         )
         assert response.status_code == 200, response.text
 
         slugs = await _sa_app_ids(async_session, sa.id)
-        assert "controle-socle" in slugs
+        assert "exemple-app-15" in slugs
         assert "exemple-app-4" in slugs, "le service partagé prod doit être accordé"
         assert "exemple-app-8-ws" not in slugs, (
             "AN-2 : l'atelier ne doit PAS être accordé au SA d'une app prod"
@@ -276,11 +276,11 @@ class TestJWTAppsClaimFiltered:
             async_session, "service-pending", "Pending",
             is_shared=True, approved=False,
         )
-        my_app = await _make_app(async_session, "controle-socle", "Controle Socle")
+        my_app = await _make_app(async_session, "exemple-app-15", "Exemple App 15")
 
         secret = "secret-an2-jwt"
         sa = ServiceAccount(
-            name="SA - Controle Socle",
+            name="SA - Exemple App 15",
             client_id="sa_an2_jwt",
             client_secret_hash=get_password_hash(secret),
             is_active=True,
@@ -312,7 +312,7 @@ class TestJWTAppsClaimFiltered:
     ):
         apps = await self._get_claim(client, async_session)
 
-        assert apps.get("controle-socle") == "service", "l'app propriétaire doit y être"
+        assert apps.get("exemple-app-15") == "service", "l'app propriétaire doit y être"
         assert apps.get("exemple-app-4") == "service", "shared prod active/approuvée attendue"
 
     @pytest.mark.asyncio
@@ -343,12 +343,12 @@ class TestPurgeWorkshopLeaks:
         self, async_session: AsyncSession
     ):
         prod_shared, ws_shared = await _make_shared_context(async_session)
-        my_app = await _make_app(async_session, "controle-socle", "Controle Socle")
+        my_app = await _make_app(async_session, "exemple-app-15", "Exemple App 15")
         ws_app = await _make_app(async_session, "ghost-ws", "Ghost Atelier", is_workshop=True)
 
         # SA prod (owner identifiable) avec une fuite atelier
         sa_prod = ServiceAccount(
-            name="SA - Controle Socle",
+            name="SA - Exemple App 15",
             client_id="sa_purge_prod",
             client_secret_hash="x",
             is_active=True,
@@ -373,7 +373,7 @@ class TestPurgeWorkshopLeaks:
 
         prod_slugs = await _sa_app_ids(async_session, sa_prod.id)
         assert "exemple-app-8-ws" not in prod_slugs, "fuite atelier purgée du SA prod"
-        assert {"controle-socle", "exemple-app-4"} <= prod_slugs, "liens prod intacts"
+        assert {"exemple-app-15", "exemple-app-4"} <= prod_slugs, "liens prod intacts"
 
         ws_slugs = await _sa_app_ids(async_session, sa_ws.id)
         assert "exemple-app-4" not in ws_slugs, "fuite prod purgée du SA atelier"
