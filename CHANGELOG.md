@@ -5,6 +5,20 @@
 
 ---
 
+## [3.106.0] - 25 novembre 2026
+
+### ⚡ Neutralisation open source — valeurs d'exemple, vhost PhiliaNG paramétrable, garde-fous de dépôt
+
+| Élément | Détail |
+|---------|--------|
+| **Valeurs d'exemple** | Valeurs réelles (adresses IP, noms d'hôtes, identifiants de clients, slugs d'applications privées, noms d'outils internes) remplacées par des valeurs d'exemple dans le code, les tests, la documentation et les commentaires (82 fichiers). |
+| **Vhost PhiliaNG paramétrable** | Le nom public servi par ce vhost se règle désormais via `PHILIA_NG_DOMAIN` dans `.env` (défaut : valeur d'exemple). Valeur refusée (caractères hors `A-Za-z0-9.-`) → démarrage dégradé du frontal ; rendu impossible → arrêt explicite. Nouveau `frontend/render-philia-conf.sh`, couvert par `hub/tests/test_philia_ng_render.py`. Installation existante : ajouter `PHILIA_NG_DOMAIN=<nom-public>` dans `.env`. |
+| **Garde de dépôt** | `.oss-guard-allow` : exceptions documentées pour les références fonctionnelles volontairement conservées (contrôlées par la garde du méta-repo). |
+| **Hooks** | `scripts/hooks/install-hooks.sh` aligné sur le méta-repo : auteurs autorisés (noreply du mainteneur + signature agent `Jellycode <dev@poulidor.fr>`), contrôle d'auteur à chaque commit, hook gitleaks bloquant (3.105.1). |
+| **Docs & tests** | CONTRIBUTING : procédure de scan de secrets utilisable depuis ce seul dépôt ; test `apps_host_path` réécrit ; suite complète : 2124 passed, 1 skipped. |
+
+---
+
 ## [3.105.1] - 25 novembre 2026
 
 ### ⚡ Filet de sécurité du dépôt — hook gitleaks bloquant, faux positifs de référence
