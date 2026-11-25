@@ -85,6 +85,19 @@ class TestAppAutoReplace:
         old_sa_id = old_sa.id
         old_client_id = old_sa.client_id
         
+        # Le remplacement est une modification de l'app existante : il exige le
+        # jeton M2M de son compte de service propriétaire
+        mint = await client.post(
+            "/api/auth/token",
+            data={
+                "grant_type": "client_credentials",
+                "client_id": old_client_id,
+                "client_secret": "old_secret",
+            },
+        )
+        assert mint.status_code == 200, f"{mint.status_code}: {mint.text}"
+        owner_token = mint.json()["access_token"]
+        
         # Simuler une IP Docker et FORCE_REPLACE_APP=true
         with patch('app.routes.apps.is_docker_network_ip', return_value=True), \
              patch('app.routes.apps.settings.force_replace_app', True):
@@ -94,7 +107,8 @@ class TestAppAutoReplace:
                     "slug": "existing-app",  # Même slug
                     "api_port": 9999,
                     "frontend_port": 4000
-                }
+                },
+                headers={"Authorization": f"Bearer {owner_token}"},
             )
         
         assert response.status_code == 200
@@ -174,10 +188,11 @@ class TestAppAutoReplace:
             assert data["credentials"]["client_secret"]
 
     @pytest.mark.asyncio
-    async def test_legacy_reregistration_stays_compat_and_is_audited(
+    async def test_reregistration_without_token_selfheals_when_owner_sa_absent_and_is_audited(
         self, client: AsyncClient, async_session: AsyncSession, test_app
     ):
-        """Sans Bearer, la compatibilite est preservee avec audit sans secret."""
+        """Sans jeton, une app dont le compte propriétaire a disparu se répare
+        (self-healing), avec un audit qui en donne le motif — sans secret."""
         with patch('app.routes.apps.is_docker_network_ip', return_value=True), \
              patch('app.routes.apps.settings.force_replace_app', False):
             response = await client.post(
@@ -195,6 +210,10 @@ class TestAppAutoReplace:
             )
         )
         entry = audit.scalar_one()
+        assert "SA owner absent" in (entry.details or ""), (
+            "le motif d'audit doit dire pourquoi la ré-inscription sans jeton a été "
+            f"autorisée : {entry.details!r}"
+        )
         assert "secret" not in (entry.details or "").lower()
 
     @pytest.mark.asyncio
