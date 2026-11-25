@@ -155,25 +155,39 @@ def test_render_refuse_un_domaine_invalide(travail: Path, domaine: str):
     assert "refus" in proc.stderr, "le refus doit être explicité sur stderr"
 
 
-def test_render_refuse_un_domaine_absent(travail: Path):
-    """Deux arguments au lieu de trois : pas de domaine, donc rien à rendre."""
+def test_render_annonce_le_refus_sur_une_seule_ligne(travail: Path):
+    """La valeur refusée finit dans les journaux du conteneur : ses sauts de
+    ligne et caractères de contrôle sont remplacés, le refus tient sur une ligne."""
+    proc, _ = _rendre(travail, "proxy\ntest.lan")
+    assert proc.returncode == 1, f"code {proc.returncode} — {proc.stdout}{proc.stderr}"
+    assert len(proc.stderr.splitlines()) == 1, f"le refus doit tenir sur une ligne : {proc.stderr!r}"
+    assert "refus" in proc.stderr
+    assert "proxy" in proc.stderr and "test.lan" in proc.stderr, "la valeur fautive doit rester reconnaissable"
+
+
+# ---------------------------------------------------------------- échec
+#
+# Le code 1 est réservé au refus du domaine ; les autres échecs rendent 2.
+# C'est ce qui permet à l'entrypoint de ne démarrer en mode dégradé que sur un
+# refus, et de s'arrêter net dans les autres cas.
+
+
+def test_render_echoue_sur_un_appel_incomplet(travail: Path):
+    """Deux arguments au lieu de trois : échec (code 2), rien écrit."""
     proc = subprocess.run(
         ["sh", str(RENDER), str(travail / "modele.conf"), str(travail / "sortie" / "philia-ng.conf")],
         capture_output=True, text=True, timeout=30,
     )
-    assert proc.returncode == 1, f"code {proc.returncode} — {proc.stdout}{proc.stderr}"
+    assert proc.returncode == 2, f"code {proc.returncode} — {proc.stdout}{proc.stderr}"
     assert list((travail / "sortie").iterdir()) == []
 
 
-# ---------------------------------------------------------------- échec
-
-
 def test_render_en_echec_laisse_la_sortie_existante_intacte(travail: Path):
-    """Modèle absent : code 1, l'ancien vhost reste en place, pas de résidu."""
+    """Modèle absent : code 2, l'ancien vhost reste en place, pas de résidu."""
     sortie = travail / "sortie" / "philia-ng.conf"
     sortie.write_text("ANCIEN VHOST\n")
     proc, sortie = _rendre(travail, "philia.test.lan", modele=None)
-    assert proc.returncode == 1, f"code {proc.returncode} — {proc.stdout}{proc.stderr}"
+    assert proc.returncode == 2, f"code {proc.returncode} — {proc.stdout}{proc.stderr}"
     assert sortie.read_text() == "ANCIEN VHOST\n", "une sortie à moitié rendue ne doit pas remplacer l'ancienne"
     assert [p.name for p in sortie.parent.iterdir()] == ["philia-ng.conf"], (
         "aucun fichier temporaire ne doit rester derrière"
@@ -182,10 +196,10 @@ def test_render_en_echec_laisse_la_sortie_existante_intacte(travail: Path):
 
 
 def test_render_en_echec_ne_cree_rien(travail: Path, tmp_path: Path):
-    """Dossier de sortie inexistant : code 1, et il n'apparaît pas."""
+    """Dossier de sortie inexistant : code 2, et il n'apparaît pas."""
     ailleurs = tmp_path / "ailleurs" / "philia-ng.conf"
     proc, _ = _rendre(travail, "philia.test.lan", sortie=ailleurs)
-    assert proc.returncode == 1, f"code {proc.returncode} — {proc.stdout}{proc.stderr}"
+    assert proc.returncode == 2, f"code {proc.returncode} — {proc.stdout}{proc.stderr}"
     assert not ailleurs.parent.exists()
 
 
@@ -206,13 +220,14 @@ def _script_de_rendu() -> str:
     return chemins.pop()
 
 
-def _lancer_entrypoint(travail: Path, certificats_philia: bool,
-                       domaine: str | None) -> tuple[subprocess.CompletedProcess, Path]:
+def _lancer_entrypoint(travail: Path, certificats_philia: bool, domaine: str | None,
+                       avant_lancement=None) -> tuple[subprocess.CompletedProcess, Path]:
     """Exécute l'entrypoint réel, ses chemins /etc/nginx/ redirigés vers `travail`.
 
     Trois remplacements, rien de plus : la racine nginx, le chemin du script
     de rendu (ramené à celui du checkout) et le « exec nginx » final, changé
-    en « exit 99 ». `domaine=None` laisse PHILIA_NG_DOMAIN hors de l'environnement.
+    en « exit 99 ». `domaine=None` laisse PHILIA_NG_DOMAIN hors de l'environnement ;
+    `avant_lancement(nginx)` reçoit l'arbre nginx du bac à sable avant l'exécution.
     """
     nginx = travail / "etc" / "nginx"
     (nginx / "templates").mkdir(parents=True)
@@ -227,6 +242,9 @@ def _lancer_entrypoint(travail: Path, certificats_philia: bool,
         dossier.mkdir(parents=True)
         (dossier / "server.crt").touch()
         (dossier / "server.key").touch()
+
+    if avant_lancement is not None:
+        avant_lancement(nginx)
 
     texte = ENTRYPOINT.read_text()
     texte = texte.replace("/etc/nginx/", f"{nginx}/")
@@ -268,15 +286,61 @@ def test_entrypoint_rend_le_vhost_avec_le_domaine_par_defaut(travail: Path):
     )
 
 
-def test_entrypoint_annule_le_demarrage_si_le_domaine_est_refuse(travail: Path):
+def test_entrypoint_demarre_sans_le_vhost_si_le_domaine_est_refuse(travail: Path):
+    """PHILIA_NG_DOMAIN est facultatif : une faute de frappe ne doit pas priver
+    le Hub de son frontend."""
     proc, conf_d = _lancer_entrypoint(travail, certificats_philia=True, domaine="proxy test.lan")
-    assert proc.returncode != NGINX_LANCE, "Nginx ne doit pas être lancé sur un rendu refusé"
+    assert proc.returncode == NGINX_LANCE, f"Nginx doit démarrer sans le vhost — {proc.stdout}{proc.stderr}"
+    signaux = [l for l in proc.stderr.splitlines() if "PhiliaNG" in l and RENDER.name not in l]
+    assert len(signaux) == 1, f"l'entrypoint lui-même doit signaler le refus, sur une ligne : {proc.stderr!r}"
+    signal = signaux[0]
+    assert "PHILIA_NG_DOMAIN" in signal and "proxy test.lan" in signal, "le signal doit citer la valeur fautive"
+    assert ".env" in signal, "le signal doit donner le remède : corriger la ligne dans .env"
+    residus = [p.name for p in conf_d.iterdir() if "philia" in p.name]
+    assert residus == [], f"aucun fichier PhiliaNG ne doit rester dans conf.d : {residus}"
+    assert (conf_d / "routing-gateway.conf").is_file(), "le reste du démarrage doit se dérouler"
+
+
+def test_entrypoint_retire_le_vhost_d_un_demarrage_precedent_apres_un_refus(travail: Path):
+    """Un vhost rendu plus tôt (redémarrage du conteneur) ne doit pas survivre au refus."""
+
+    def seme(nginx: Path) -> None:
+        conf_d = nginx / "conf.d"
+        (conf_d / "philia-ng.conf").write_text("ANCIEN VHOST\n")
+        (conf_d / "philia-ng.conf.tmp").write_text("résidu\n")
+
+    proc, conf_d = _lancer_entrypoint(travail, certificats_philia=True, domaine="proxy test.lan",
+                                      avant_lancement=seme)
+    assert proc.returncode == NGINX_LANCE, proc.stdout + proc.stderr
+    restes = [p.name for p in conf_d.iterdir() if "philia" in p.name]
+    assert restes == [], f"aucun fichier PhiliaNG ne doit rester dans conf.d après un refus : {restes}"
+
+
+def test_entrypoint_signale_le_refus_sur_deux_lignes(travail: Path):
+    """Deux lignes de signal dans les journaux, jamais plus, même avec un saut
+    de ligne dans la valeur."""
+    proc, _ = _lancer_entrypoint(travail, certificats_philia=True, domaine="proxy\ntest.lan")
+    assert proc.returncode == NGINX_LANCE, proc.stdout + proc.stderr
+    lignes = proc.stderr.splitlines()
+    assert len(lignes) == 2, f"deux lignes de signal attendues : {proc.stderr!r}"
+    assert RENDER.name in lignes[0] and "PhiliaNG" in lignes[0], "le script annonce la cause"
+    assert "PhiliaNG" in lignes[1] and RENDER.name not in lignes[1], "l'entrypoint annonce la suite"
+    assert "proxy" in lignes[1] and "test.lan" in lignes[1], "la valeur fautive doit rester reconnaissable"
+
+
+def test_entrypoint_annule_le_demarrage_si_le_rendu_est_impossible(travail: Path):
+    """Inchangé : hors refus du domaine (ici, modèle absent), on s'arrête net."""
+
+    def sans_modele(nginx: Path) -> None:
+        (nginx / "templates" / "nginx-philia-ng.conf").unlink()
+
+    proc, conf_d = _lancer_entrypoint(travail, certificats_philia=True, domaine="philia.test.lan",
+                                      avant_lancement=sans_modele)
+    assert proc.returncode != NGINX_LANCE, "Nginx ne doit pas être lancé sur un rendu impossible"
     assert proc.returncode == 1, f"code {proc.returncode} — {proc.stdout}{proc.stderr}"
     signaux = [l for l in proc.stderr.splitlines() if "PhiliaNG" in l and RENDER.name not in l]
-    assert signaux, "l'entrypoint lui-même doit signaler l'échec, pas seulement le script"
-    assert "PHILIA_NG_DOMAIN" in signaux[0], "le signal doit nommer la variable à corriger"
-    residus = [p.name for p in conf_d.iterdir() if "philia" in p.name]
-    assert residus == [], f"aucun vhost PhiliaNG, pas même à moitié rendu, ne doit rester dans conf.d : {residus}"
+    assert signaux and "annulé" in signaux[0], "l'entrypoint doit annoncer l'arrêt"
+    assert [p.name for p in conf_d.iterdir() if "philia" in p.name] == []
 
 
 def test_entrypoint_sans_certificats_philia_ng_n_inclut_aucun_vhost(travail: Path):
