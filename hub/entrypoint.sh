@@ -77,7 +77,7 @@ if [ "${HUB_HTTPS_ENABLED:-true}" = "true" ]; then
     # Auto-généré s'il manque pour que le vhost proxy.example.lan du hub-frontend
     # soit actif PAR DÉFAUT sur tout déploiement — l'utilisation depuis un autre
     # serveur est la norme, pas une exception demandant une manip manuelle.
-    # Le domaine doit matcher le server_name de frontend/nginx-philia-ng.conf.
+    # Même valeur que le hub-frontend, qui la rend dans le server_name du vhost.
     PHILIA_DOMAIN="${PHILIA_NG_DOMAIN:-proxy.example.lan}"
     if [ ! -f /code/certs/server/philia-ng/server.crt ]; then
         echo "🔐 Certificat PhiliaNG absent → génération ($PHILIA_DOMAIN)..."

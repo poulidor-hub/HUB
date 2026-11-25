@@ -20,10 +20,22 @@ if [ "${HUB_HTTPS_ENABLED:-true}" = "true" ] && [ -f "$SSL_CRT" ] && [ -f "$SSL_
     # template construit l'URL de redirection du bloc 80 (301).
     sed -e "s/\${HTTPS_PORT}/${HUB_HTTPS_PORT:-443}/g" \
         /etc/nginx/templates/nginx-ssl.conf > /etc/nginx/conf.d/default.conf
-    # PhiliaNG : inclus uniquement si les certificats sont présents
+    # PhiliaNG : inclus uniquement si les certificats sont présents.
+    # Le modèle porte le jeton __PHILIA_NG_DOMAIN__ : le vhost est rendu au
+    # démarrage avec PHILIA_NG_DOMAIN (proxy.example.lan par défaut) — le même
+    # nom que celui du certificat, généré par hub-api sur la même variable.
+    # Rendu refusé ou impossible : on s'arrête net, sans jamais lancer Nginx sur
+    # un vhost absent ou à moitié rendu.
     if [ -f "$PHILIA_CRT" ] && [ -f "$PHILIA_KEY" ]; then
-        echo "   → PhiliaNG activé"
-        cp /etc/nginx/templates/nginx-philia-ng.conf /etc/nginx/conf.d/philia-ng.conf
+        PHILIA_DOMAIN="${PHILIA_NG_DOMAIN:-proxy.example.lan}"
+        if ! /usr/local/bin/render-philia-conf.sh \
+                /etc/nginx/templates/nginx-philia-ng.conf \
+                /etc/nginx/conf.d/philia-ng.conf "$PHILIA_DOMAIN"; then
+            printf "❌ PhiliaNG : rendu du vhost impossible (PHILIA_NG_DOMAIN='%s') — démarrage de Nginx annulé\n" \
+                "$PHILIA_DOMAIN" >&2
+            exit 1
+        fi
+        echo "   → PhiliaNG activé ($PHILIA_DOMAIN)"
     else
         echo "   → PhiliaNG désactivé (certificats absents)"
     fi

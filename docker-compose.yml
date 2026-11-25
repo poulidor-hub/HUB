@@ -195,8 +195,9 @@ services:
       - MAX_UPLOAD_BODY_SIZE_MB=${MAX_UPLOAD_BODY_SIZE_MB:-512}
       - HUB_HTTPS_ENABLED=${HUB_HTTPS_ENABLED:-true}
       - HUB_HTTPS_PORT=${HUB_HTTPS_PORT:-443}
-      # Domaine du proxy transparent PhiliaNG (cert auto-généré par pki.py).
-      # Doit matcher le server_name de frontend/nginx-philia-ng.conf.
+      # Domaine du proxy transparent PhiliaNG : pilote le certificat auto-généré
+      # par pki.py ET le server_name du vhost (même variable passée à
+      # hub-frontend, qui la rend au démarrage depuis nginx-philia-ng.conf).
       - PHILIA_NG_DOMAIN=${PHILIA_NG_DOMAIN:-proxy.example.lan}
       - FORCE_REPLACE_APP=${FORCE_REPLACE_APP:-false}
       - LEGACY_COMPAT_ENABLED=${LEGACY_COMPAT_ENABLED:-false}
@@ -308,6 +309,10 @@ services:
       # Port publié du HTTPS (docker-entrypoint.sh : URL de redirection du
       # bloc 80 — nginx interne écoute 443, le mapping peut différer).
       - HUB_HTTPS_PORT=${HUB_HTTPS_PORT:-443}
+      # Domaine du vhost PhiliaNG : docker-entrypoint.sh le substitue au jeton
+      # __PHILIA_NG_DOMAIN__ de nginx-philia-ng.conf au démarrage. Même
+      # expression que hub-api : le certificat est émis pour ce nom.
+      - PHILIA_NG_DOMAIN=${PHILIA_NG_DOMAIN:-proxy.example.lan}
     volumes:
       - ./certs:/etc/nginx/ssl:ro
       # Vhosts SNI générés par hub-api (chantier B — routage par noms)
