@@ -282,7 +282,7 @@ Contraintes:
 
 ### Réponse
 
-La réponse est un dictionnaire dont la clé est l'identifiant demandé (nomAD/username Hub), avec le profil Hub et les apps/roles visibles :
+La réponse est un dictionnaire dont la clé est l'identifiant demandé (identifiant/username Hub), avec le profil Hub et les apps/roles visibles :
 
 ```json
 {

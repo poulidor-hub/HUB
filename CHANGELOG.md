@@ -260,7 +260,7 @@ Incident : `wg0.conf` a disparu du volume `vpn-config` en prod (18-20/11, suppre
 - **`_regenerate_and_sync()`** : interface wg0 absente (`wg show wg0 listen-port` sans réponse) → **restart du conteneur** au lieu d'un `wg syncconf` silencieusement sans effet (l'interface n'existe pas) ; le conteneur arrêté est démarré au passage.
 - **Tests** : 44 tests `test_vpn.py` (toggle OFF réel, préservation conf, ON après OFF, startup repair ×4, interface absente → restart) — rouges avant fix, verts sur hôte et dans l'image runtime (`make test-docker`, pouly-test).
 - **Diagnostic incident** : tunnel/DataPath intacts (endpoint `203.0.113.10:51820` correct, port-forward OK, DNS hub répondeur sur `10.8.0.1:53`, gateway OK via IP VPN, cert valide) ; 2 échecs préexistants de la suite conteneur attribués (pyotp 112 bits vs version hôte ; test chmod 000 lu par root) ; flakiness xdist host confirmée préexistante (cf. note 3.97.3).
-- **Hors périmètre (à traiter séparément)** : `hub-vpn-firewall.service` non installé sur l'hôte (cloisonnement defense-in-depth inopérant) ; confs clients « PC boulo »/« th » à re-télécharger (endpoint/port modifiés le 05/10).
+- **Hors périmètre (à traiter séparément)** : `hub-vpn-firewall.service` non installé sur l'hôte (cloisonnement defense-in-depth inopérant) ; des configurations clients à re-télécharger (endpoint/port modifiés le 05/10).
 
 ---
 
@@ -873,7 +873,7 @@ restorable — en VM comme en prod.
 
 ### ⚡ Allocation ports/subnets : revendications .env de la flotte
 
-Bug 13/11/2026 : l'ajout d'intendance a ré-attribué 10.50.16.0/24 (claim .env de tiers-app-ws, réseau prunable) et le port API 9019 (claim exemple-app-9, conteneurs down au moment de l'allocation) → « Pool overlaps with other one » puis « port is already allocated » au premier make up. Cause racine : l'allocateur ne consultait que port_allocations (la flotte legacy n'y figure jamais — 4 lignes seulement) et les scans Docker, qui ne voient que le vivant.
+Bug 13/11/2026 : l'ajout d'une nouvelle application a ré-attribué 10.50.16.0/24 (claim .env de tiers-app-ws, réseau prunable) et le port API 9019 (claim exemple-app-9, conteneurs down au moment de l'allocation) → « Pool overlaps with other one » puis « port is already allocated » au premier make up. Cause racine : l'allocateur ne consultait que port_allocations (la flotte legacy n'y figure jamais — 4 lignes seulement) et les scans Docker, qui ne voient que le vivant.
 
 - Nouveau hub/app/fleet_env_scanner.py : lit les .env de la flotte (montage apps_host_path) → (sous-réseaux, ports) revendiqués ; un seul niveau de dossiers, fichier exact .env uniquement (sauvegardes .env.pre-* ignorées), valeurs invalides ignorées
 - port_allocator.py : fleet_env_occupied() (thread, host local uniquement, flag fleet_env_scan_enabled, best-effort jamais levé) fusionnée dans les deux chemins d'allocation — backfill rétroactif du subnet et nouvelle allocation (ports via extra_used, subnets directs)
@@ -2631,7 +2631,7 @@ PAT), cobaye `exemple-app-2-test` (template v0.3.0) — 2026-10-03.
 
 | Correctif | Description |
 |-----------|-------------|
-| **Cause** | Un user robot créé le 13/09 avec l'email `exports-robot@hub.local` (domaine spécial RFC 6761, rejeté par email-validator ≥ 2.x) faisait échouer TOUTE la liste : `UserResponse.email` est un `EmailStr` qui revalide chaque lecture → ValidationError → 500. Présent depuis le 13/09, indépendant du fix frontend |
+| **Cause** | Un user robot créé le 13/09 avec l'email `integration-robot@hub.local` (domaine spécial RFC 6761, rejeté par email-validator ≥ 2.x) faisait échouer TOUTE la liste : `UserResponse.email` est un `EmailStr` qui revalide chaque lecture → ValidationError → 500. Présent depuis le 13/09, indépendant du fix frontend |
 | **Fix** | Lecture tolérante : `email: Optional[str]` sur les schémas de réponse (`UserResponse`, `M2MUserSearchItem`, `AccountRequestNotificationAdmin`) — une donnée existante ne doit jamais casser sa lecture. La validation stricte reste à l'écriture (`UserCreate`/`UserUpdate`/`BulkUserCreate`/`AccountRequestCreate` gardent `EmailStr`) |
 | **Test** | `test_list_users_tolerates_legacy_invalid_email` : user avec email `@hub.local` en base → `GET /api/users/` 200 (échouait avant fix) |
 
@@ -3056,7 +3056,7 @@ droits) à venir.
 
 | Élément | Description |
 |---------|-------------|
-| Symptôme | Les noms à gauche du graphique ne correspondaient pas aux barres (ex. label « Philia Proxy » mais tooltip « Annuaire Téléphonie ») et les durées semblaient incohérentes avec l'activité du jour |
+| Symptôme | Les noms à gauche du graphique ne correspondaient pas aux barres (ex. label « Philia Proxy » mais tooltip « Exemple App 13 ») et les durées semblaient incohérentes avec l'activité du jour |
 | Cause racine | Le rendu utilisait **une série bar par app** (valeurs null partout sauf à sa position). Avec N séries bar sur un axe catégorie, ECharts place les N barres **côte à côte dans un cluster** par bande de 30 px : dès 2-3 apps, les barres (18 px) débordent de leur bande et atterrissent visuellement à côté du mauvais label. Les données backend étaient correctes (vérifié en prod : totaux = somme exacte des segments) — c'était purement le rendu |
 | Fix | **Une seule série** : chaque data item porte sa valeur, sa couleur et son `decal` (motif différenciant les couleurs dupliquées, via `itemStyle` de l'item — ECharts 5.5) ; tooltip par `dataIndex`. Chaque barre est désormais centrée exactement sur son label |
 | Fichiers | `frontend/public/js/modules/audit-charts.js` (`renderUserDayBreakdown`) |
@@ -3140,7 +3140,7 @@ droits) à venir.
 | Fix scanner | `DockerScanner.get_used_network_subnets()` : scan best-effort des sous-réseaux (IPAM) de tous les réseaux Docker existants, symétrique de `get_used_host_ports` — ne lève jamais, `set()` si Docker indisponible |
 | Fix allocateur | `docker_occupied_subnets()` (flag `subnet_scan_docker_enabled`, host local uniquement, exécution en thread) fusionné dans `allocate_ports_for_app` : nouvelle allocation **et** backfill paresseux des allocations antérieures sans subnet |
 | Tests | 6 nouveaux tests (exclusion, host distant ignoré, flag désactivé, fallback échec scan, backfill) ; suite port_allocation 26/26 verte |
-| Déploiement | Rebuild `hub-api` ; vérifié en réel : allocation exemple-app renvoie désormais `10.50.8.0/24` en sautant 10.50.5/.6/.7 épinglés manuellement |
+| Déploiement | Rebuild `hub-api` ; vérifié en réel : l'allocation d'une nouvelle application renvoie désormais `10.50.8.0/24` en sautant 10.50.5/.6/.7 épinglés manuellement |
 
 ---
 
@@ -5017,7 +5017,7 @@ L'endpoint permet aux applications de :
     {
       "slug": "exemple-app-10",
       "name": "API d'exemple",
-      "description": "Données RH des employés",
+      "description": "Données d'exemple",
       "api_url": "http://192.0.2.11:18087",
       "is_shared_service": true
     }
