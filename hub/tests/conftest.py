@@ -220,6 +220,22 @@ def _stop_session_cleanup_task():
     force_stop_cleanup_task()
 
 
+@pytest.fixture(autouse=True)
+def _no_orphan_stats_task():
+    """Annule la tâche différée du throttle des stats SSE après chaque test.
+
+    La boucle est de session (event_loop) : laissée vivante, cette tâche ouvre
+    plus tard une session sur la connexion SQLite du test en cours et annule sa
+    transaction (« Could not refresh instance », « NoResultFound »)."""
+    yield
+    from app.routes import events
+    task = getattr(events, "_stats_flush_task", None)
+    if task is not None and not task.done():
+        task.cancel()
+    events._stats_flush_task = None
+    events._stats_pending = False
+
+
 @pytest.fixture(scope="function")
 async def client(async_engine, async_session) -> AsyncGenerator[AsyncClient, None]:
     """Client HTTP de test avec base de données en mémoire"""
