@@ -1488,24 +1488,25 @@ async def register_app(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Le service account ne peut pas réinscrire cette application",
             )
-        if existing_app.m2m_enforcement_mode == "enforced" and registration_sa is None:
-            # Self-healing enforced (incident transmission 16/11/2026, serveur
-            # distant) : exiger le token M2M uniquement si le SA owner de l'app
-            # existe ENCORE. S'il a été supprimé, la réinscription sans token
-            # depuis le réseau Docker (IP déjà vérifiée ci-dessus) est la seule
-            # voie de réparation — le flow T1 ci-dessous recrée le SA owner,
-            # retourne des credentials frais et audite m2m_sa_recreated.
-            # (Sinon : chicken-and-egg — register exige un token qu'aucun SA
-            # vivant ne peut minter.)
-            owner_sa_present = any(
-                is_owner_service_account(sa, app_data.slug, existing_app.name)
-                for sa in existing_app.service_accounts
+        owner_sa_present = any(
+            is_owner_service_account(sa, app_data.slug, existing_app.name)
+            for sa in existing_app.service_accounts
+        )
+        owner_authenticated = (
+            registration_sa is not None
+            and existing_app in registration_sa.applications
+            and is_owner_service_account(registration_sa, app_data.slug, existing_app.name)
+        )
+        if owner_sa_present and not owner_authenticated:
+            raison = "jeton absent" if registration_sa is None else "compte de service non propriétaire"
+            logger.warning(
+                f"🚫 Ré-inscription de '{app_data.slug}' refusée depuis {client_ip} ({raison}) : "
+                f"token M2M du propriétaire requis"
             )
-            if owner_sa_present:
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="Token M2M requis pour réinscrire cette application",
-                )
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Token M2M requis pour réinscrire cette application",
+            )
         # Application existante - vérifier si on doit la remplacer ou mettre à jour
         if settings.force_replace_app:
             logger.info(f"🔄 Remplacement automatique de l'application '{app_data.slug}' (FORCE_REPLACE_APP=true)")
