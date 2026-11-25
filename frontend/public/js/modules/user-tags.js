@@ -404,7 +404,7 @@ function renderPrefsPage(categories, myTags, primaryMap) {
     const cacheBanner = categories.some(cat => cat.source_flag === 'cache')
         ? `<div class="alert alert-info py-2 px-3 mb-3" role="status">
                <i class="bi bi-cloud-slash me-1" aria-hidden="true"></i>
-               Valeurs en cache — exemple-app injoignable, synchronisation dès son retour.
+               Valeurs en cache — API référentiels injoignable, synchronisation dès son retour.
            </div>`
         : '';
 
