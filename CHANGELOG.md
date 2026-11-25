@@ -1329,7 +1329,7 @@ Cause racine du diagnostic (« Ateliers: 1, badges ATELIER: 5, gestion des appli
 | Élément | Détail |
 |---------|--------|
 | **scripts/hooks/pre-commit-gitleaks.sh** | scan gitleaks des fichiers stagés — bloque le commit si secret détecté (`gitleaks:allow` pour exemption justifiée) |
-| **scripts/hooks/install-hooks.sh** | installe le hook dans `.git/hooks/pre-commit` en chaînant tout pre-commit existant (ne casse pas les hooks en place) |
+| **scripts/hooks/install-hooks.sh** | installe le hook dans `.git/hooks/pre-commit` : le crée s'il est absent, le chaîne à un pre-commit existant qui ne contient pas « gitleaks », mais le remplace dans le cas contraire — d'où son remplacement depuis par l'installateur du méta-repo, qui ne recopie jamais un script par-dessus un hook |
 | **CONTRIBUTING.md** | section « Hooks » : activation par `./scripts/hooks/install-hooks.sh` |
 | **Contexte** | préparation open source — prévention de la réintroduction de secrets (cf. purge 0.80.x) |
 
