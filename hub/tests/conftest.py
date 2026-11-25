@@ -234,6 +234,9 @@ def _no_orphan_stats_task():
         task.cancel()
     events._stats_flush_task = None
     events._stats_pending = False
+    # Fenêtre du limiteur refermée : le prochain test qui appelle la diffusion
+    # obtient une diffusion immédiate, comme sur un module fraîchement importé.
+    events._last_stats_broadcast = 0.0
 
 
 @pytest.fixture(scope="function")
