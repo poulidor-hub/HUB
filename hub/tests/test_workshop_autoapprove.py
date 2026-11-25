@@ -6,7 +6,7 @@
 L'auto-approbation d'un atelier (`-ws`) dans POST /api/apps/register ne
 matchait l'app de base QUE par slug dérivé (`<slug>-ws` → `<slug>`).
 Quand le slug de l'app principale diffère du préfixe de l'atelier (ex.
-atelier `exemple-app-ws` mais app de base `exemple-app`),
+atelier `exemple-app-5-ws` mais app de base `exemple-app-5-base`),
 l'atelier restait `pending`/`inactive` à vie : SA désactivé → 403 au
 mint → martèlement register/token (2019 réinscriptions legacy, 2523×403,
 257×429 pendant 2h35 cette nuit).
@@ -27,8 +27,8 @@ from tests.conftest import get_auth_header
 async def base_app(async_session):
     """App de base APPROUVÉE dont le slug ne préfixe PAS le slug atelier."""
     app = Application(
-        name="Transfert de fichiers",
-        slug="exemple-app",
+        name="Exemple App 5",
+        slug="exemple-app-5-base",
         description="App de base (slug différent du dossier atelier)",
         api_url="http://localhost:9109",
         frontend_url="http://localhost:9110",
@@ -58,12 +58,12 @@ class TestWorkshopAutoApproveByName:
         dont le NOM correspond à une app approuvée → auto-approuvé."""
         r = await client.post(
             "/api/apps/register",
-            json={"slug": "exemple-app-ws", "name": "Transfert de fichiers",
+            json={"slug": "exemple-app-5-ws", "name": "Exemple App 5",
                   "api_port": 19109},
         )
         assert r.status_code == 200, r.text
         app = r.json()["application"]
-        assert app["slug"] == "exemple-app-ws"
+        assert app["slug"] == "exemple-app-5-ws"
         assert app["approval_status"] == "approved", (
             "l'atelier doit être auto-approuvé par fallback nom "
             f"(status: {app['approval_status']})")
@@ -89,8 +89,8 @@ class TestWorkshopAutoApproveByName:
         """Ré-enregistrement : atelier PENDING créé avant le fix, dont le slug
         dérivé ne matche pas mais le nom si → auto-approuvé au register."""
         orphan = Application(
-            name="Transfert de fichiers",
-            slug="exemple-app-ws",
+            name="Exemple App 5",
+            slug="exemple-app-5-ws",
             description="Atelier créé avant le fix (pending à vie)",
             api_url="http://localhost:19109",
             frontend_url="http://localhost:19110",
@@ -105,7 +105,7 @@ class TestWorkshopAutoApproveByName:
 
         r = await client.post(
             "/api/apps/register",
-            json={"slug": "exemple-app-ws", "name": "Transfert de fichiers",
+            json={"slug": "exemple-app-5-ws", "name": "Exemple App 5",
                   "api_port": 19109},
         )
         assert r.status_code == 200, r.text
@@ -121,7 +121,7 @@ class TestWorkshopAutoApproveByName:
         """Invariant : le match par slug dérivé reste prioritaire."""
         r = await client.post(
             "/api/apps/register",
-            json={"slug": "exemple-app-ws", "name": "Autre nom possible",
+            json={"slug": "exemple-app-5-base-ws", "name": "Autre nom possible",
                   "api_port": 19129},
         )
         assert r.status_code == 200, r.text

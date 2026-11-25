@@ -46,11 +46,11 @@ def test_scrub_masks_beacon_token_in_query():
 
 def test_scrub_masks_token_after_other_params():
     f = _ScrubSecretsFilter()
-    rec = _make_record("/api/x?app=exemple-app&token=eyJSECRET")
+    rec = _make_record("/api/x?app=exemple-app-6&token=eyJSECRET")
     f.filter(rec)
     joined = str(rec.args)
     assert "eyJSECRET" not in joined
-    assert "app=exemple-app" in joined  # le reste de la query est intact
+    assert "app=exemple-app-6" in joined  # le reste de la query est intact
 
 
 def test_scrub_leaves_clean_path_untouched():

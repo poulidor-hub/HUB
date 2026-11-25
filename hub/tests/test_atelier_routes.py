@@ -19,7 +19,7 @@ POST /api/admin/atelier/reconcile — purge des fiches fantômes (is_workshop=
 True sans marqueur disque) : purged/skipped/errors, garde is_workshop=True,
 skip si le marqueur est (re)devenu présent.
 
-Shape de sortie du GET (contrat consommé par l'agent exemple-app et l'UI admin) :
+Shape de sortie du GET (contrat consommé par l'agent d'administration et l'UI admin) :
 {"ateliers": [{app, ws_slug, api_port, frontend_port, containers_state}],
  "ghosts":   [{slug, name, created_at ISO}],   # fiches DB sans marqueur
  "orphans":  [{project, containers, running}]} # projets compose sans marqueur

@@ -59,7 +59,7 @@ python app_tester.py --hub-url http://localhost:8000 --app-slug mon-app
 
 # Avec credentials personnalisés
 python app_tester.py --hub-url http://192.0.2.12:8000 \
-    --app-slug salarie \
+    --app-slug exemple-app \
     --username admin \
     --password admin123
 

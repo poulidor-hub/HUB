@@ -16,7 +16,7 @@ AN-2 (banc 2026-09-10) — Périmètre M2M des service accounts (Option B valid�
    aux SA ambigus (propriétaire non identifiable).
 
 Repro banc : le SA de `controle-socle` (prod) portait 13 apps dont
-l'atelier `exemple-app-ws` (rôle service) — compromission de l'atelier
+l'atelier `exemple-app-8-ws` (rôle service) — compromission de l'atelier
 en cas de fuite du secret prod.
 """
 import pytest
@@ -82,10 +82,10 @@ async def _make_shared_context(session: AsyncSession) -> tuple[Application, Appl
     """Une app partagée prod (approuvée, active) + une app partagée atelier
     (approuvée, active) — la situation du banc."""
     prod_shared = await _make_app(
-        session, "exemple-apps", "exemple-apps", is_shared=True
+        session, "exemple-app-4", "Exemple App 4", is_shared=True
     )
     ws_shared = await _make_app(
-        session, "exemple-app-ws", "exemple-app-7",
+        session, "exemple-app-8-ws", "Exemple App 8",
         is_shared=True, is_workshop=True,
     )
     return prod_shared, ws_shared
@@ -126,8 +126,8 @@ class TestApproveGrantsSameContextOnly:
 
         slugs = await _sa_app_ids(async_session, sa.id)
         assert "controle-socle" in slugs
-        assert "exemple-apps" in slugs, "le service partagé prod doit être accordé"
-        assert "exemple-app-ws" not in slugs, (
+        assert "exemple-app-4" in slugs, "le service partagé prod doit être accordé"
+        assert "exemple-app-8-ws" not in slugs, (
             "AN-2 : l'atelier ne doit PAS être accordé au SA d'une app prod"
         )
 
@@ -158,8 +158,8 @@ class TestAdminCreateGrantsSameContextOnly:
         sa = result.scalar_one()
         slugs = await _sa_app_ids(async_session, sa.id)
         assert "nouvelle-prod" in slugs
-        assert "exemple-apps" in slugs
-        assert "exemple-app-ws" not in slugs, (
+        assert "exemple-app-4" in slugs
+        assert "exemple-app-8-ws" not in slugs, (
             "AN-2 : création admin → pas d'atelier dans le SA d'une app prod"
         )
 
@@ -189,8 +189,8 @@ class TestAutoRegisterGrantsSameContextOnly:
         sa = result.scalar_one()
         slugs = await _sa_app_ids(async_session, sa.id)
         assert "auto-prod-an2" in slugs
-        assert "exemple-apps" in slugs
-        assert "exemple-app-ws" not in slugs, (
+        assert "exemple-app-4" in slugs
+        assert "exemple-app-8-ws" not in slugs, (
             "AN-2 : auto-register → pas d'atelier dans le SA d'une app prod"
         )
 
@@ -219,8 +219,8 @@ class TestManualSACreationParity:
         sa = result.scalar_one()
         slugs = await _sa_app_ids(async_session, sa.id)
         assert "manual-prod" in slugs
-        assert "exemple-apps" in slugs
-        assert "exemple-app-ws" not in slugs
+        assert "exemple-app-4" in slugs
+        assert "exemple-app-8-ws" not in slugs
 
 
 class TestRegenerateSecretSyncsSameContextOnly:
@@ -254,8 +254,8 @@ class TestRegenerateSecretSyncsSameContextOnly:
         assert response.status_code == 200, response.text
 
         slugs = await _sa_app_ids(async_session, sa.id)
-        assert "exemple-apps" in slugs, "resync prod attendu"
-        assert "exemple-app-ws" not in slugs, (
+        assert "exemple-app-4" in slugs, "resync prod attendu"
+        assert "exemple-app-8-ws" not in slugs, (
             "AN-2 : resync ne doit pas réintroduire l'atelier"
         )
 
@@ -313,12 +313,12 @@ class TestJWTAppsClaimFiltered:
         apps = await self._get_claim(client, async_session)
 
         assert apps.get("controle-socle") == "service", "l'app propriétaire doit y être"
-        assert apps.get("exemple-apps") == "service", "shared prod active/approuvée attendue"
+        assert apps.get("exemple-app-4") == "service", "shared prod active/approuvée attendue"
 
     @pytest.mark.asyncio
     async def test_claim_excludes_workshop_leak(self, client: AsyncClient, async_session: AsyncSession):
         apps = await self._get_claim(client, async_session)
-        assert "exemple-app-ws" not in apps, (
+        assert "exemple-app-8-ws" not in apps, (
             "AN-2 : l'atelier ne doit plus figurer dans le JWT d'un SA prod"
         )
 
@@ -372,14 +372,14 @@ class TestPurgeWorkshopLeaks:
         report = await self._purge(async_session)
 
         prod_slugs = await _sa_app_ids(async_session, sa_prod.id)
-        assert "exemple-app-ws" not in prod_slugs, "fuite atelier purgée du SA prod"
-        assert {"controle-socle", "exemple-apps"} <= prod_slugs, "liens prod intacts"
+        assert "exemple-app-8-ws" not in prod_slugs, "fuite atelier purgée du SA prod"
+        assert {"controle-socle", "exemple-app-4"} <= prod_slugs, "liens prod intacts"
 
         ws_slugs = await _sa_app_ids(async_session, sa_ws.id)
-        assert "exemple-apps" not in ws_slugs, "fuite prod purgée du SA atelier"
-        assert {"ghost-ws", "exemple-app-ws"} <= ws_slugs, "liens atelier intacts"
+        assert "exemple-app-4" not in ws_slugs, "fuite prod purgée du SA atelier"
+        assert {"ghost-ws", "exemple-app-8-ws"} <= ws_slugs, "liens atelier intacts"
 
-        assert any("exemple-app-ws" in s for s in report.get("removed", [])), report
+        assert any("exemple-app-8-ws" in s for s in report.get("removed", [])), report
 
     @pytest.mark.asyncio
     async def test_purge_skips_ambiguous_mixed_sa(self, async_session: AsyncSession):
@@ -402,7 +402,7 @@ class TestPurgeWorkshopLeaks:
         report = await self._purge(async_session)
 
         slugs = await _sa_app_ids(async_session, sa.id)
-        assert slugs == {"app-a", "ws-b", "exemple-apps", "exemple-app-ws"}, (
+        assert slugs == {"app-a", "ws-b", "exemple-app-4", "exemple-app-8-ws"}, (
             "SA ambigu : intouché (décision manuelle requise)"
         )
         assert "sa_purge_ambigu" in " ".join(report.get("skipped_ambiguous", [])), report
@@ -432,7 +432,7 @@ class TestGrantHelperUnit:
 
         added = await grant_shared_apps_to_sa(async_session, sa)
 
-        assert sorted(added) == ["exemple-app-ws", "canari-ws"], added
+        assert sorted(added) == ["canari-ws", "exemple-app-8-ws"], added
         slugs = await _sa_app_ids(async_session, sa.id)
-        assert "exemple-apps" not in slugs, "pas de shared prod dans un SA atelier"
-        assert {"mon-atelier-ws", "exemple-app-ws", "canari-ws"} <= slugs
+        assert "exemple-app-4" not in slugs, "pas de shared prod dans un SA atelier"
+        assert {"mon-atelier-ws", "exemple-app-8-ws", "canari-ws"} <= slugs

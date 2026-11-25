@@ -33,7 +33,7 @@ async def _seed_zone(db, zone="hub.example.lan"):
     await db.commit()
 
 
-async def _seed_app(db, slug="exemple-app", dns_name=None, active=True):
+async def _seed_app(db, slug="mon-app", dns_name=None, active=True):
     app = Application(name=slug, slug=slug, api_url="http://192.0.2.10:9001",
                       frontend_url="http://192.0.2.10:4201",
                       dns_name=dns_name or slug, is_active=active)
@@ -77,8 +77,8 @@ async def test_state_shows_app_with_fallback(client, admin_token, async_session,
     assert data["configured"] is True
     assert data["resolver"]["active"] is True
     assert data["resolver"]["count"] == 1
-    entry = next(a for a in data["apps"] if a["slug"] == "exemple-app")
-    assert entry["fqdn"] == "exemple-app.hub.example.lan"
+    entry = next(a for a in data["apps"] if a["slug"] == "mon-app")
+    assert entry["fqdn"] == "mon-app.hub.example.lan"
     assert entry["published"] is True
     assert entry["fallback"] == {"api": 9001, "front": 4201, "https": 4202}
     assert data["wildcard"] is None  # pas de cert émis en GET (état lecture seule)
@@ -112,11 +112,11 @@ async def test_put_zone_invalid_returns_422(client, admin_token, no_publish):
 async def test_put_app_dns_name(client, admin_token, async_session, no_publish):
     await _seed_zone(async_session)
     app = await _seed_app(async_session)
-    resp = await client.put(f"{BASE}/apps/exemple-app", json={"dns_name": "inventaire"},
+    resp = await client.put(f"{BASE}/apps/mon-app", json={"dns_name": "rh"},
                             headers=_auth(admin_token))
     assert resp.status_code == 200
     await async_session.refresh(app)
-    assert app.dns_name == "inventaire"
+    assert app.dns_name == "rh"
     assert no_publish["n"] == 1
 
 
@@ -125,10 +125,10 @@ async def test_put_app_dns_name_collision_with_service_returns_422(
         client, admin_token, async_session, no_publish):
     await _seed_zone(async_session)
     await _seed_app(async_session)
-    async_session.add(RoutedService(name="Pris", dns_name="inventaire.hub.example.lan",
+    async_session.add(RoutedService(name="Pris", dns_name="rh.hub.example.lan",
                                     target_url="http://x:80"))
     await async_session.commit()
-    resp = await client.put(f"{BASE}/apps/exemple-app", json={"dns_name": "inventaire"},
+    resp = await client.put(f"{BASE}/apps/mon-app", json={"dns_name": "rh"},
                             headers=_auth(admin_token))
     assert resp.status_code == 422
 
@@ -138,7 +138,7 @@ async def test_put_app_dns_name_reserved_returns_422(client, admin_token,
                                                      async_session, no_publish):
     await _seed_zone(async_session)
     await _seed_app(async_session)
-    resp = await client.put(f"{BASE}/apps/exemple-app", json={"dns_name": "hub"},
+    resp = await client.put(f"{BASE}/apps/mon-app", json={"dns_name": "hub"},
                             headers=_auth(admin_token))
     assert resp.status_code == 422
 
@@ -215,10 +215,10 @@ async def test_create_app_without_ports_allocates_and_publishes(
 @pytest.mark.asyncio
 async def test_test_resolve(client, admin_token, async_session, resolver_up):
     await _seed_zone(async_session)
-    resp = await client.get(f"{BASE}/test-resolve/exemple-app", headers=_auth(admin_token))
+    resp = await client.get(f"{BASE}/test-resolve/mon-app", headers=_auth(admin_token))
     assert resp.status_code == 200
     data = resp.json()
-    assert data["fqdn"] == "exemple-app.hub.example.lan"
+    assert data["fqdn"] == "mon-app.hub.example.lan"
     assert data["resolved"] is True
     assert data["ip"] == "192.0.2.10"
 

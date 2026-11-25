@@ -47,15 +47,15 @@ def test_script_exists():
 
 
 def test_orphan_when_not_referenced(mod):
-    files = {"exemple-app/backup_a.zip": (10, 100.0)}
+    files = {"mon-app/backup_a.zip": (10, 100.0)}
     assert mod.find_orphans(files, set(), cutoff_ts=200.0) == [
-        {"path": "exemple-app/backup_a.zip", "size": 10, "mtime": 100}]
+        {"path": "mon-app/backup_a.zip", "size": 10, "mtime": 100}]
 
 
 def test_referenced_file_is_kept(mod):
-    files = {"exemple-app/backup_a.zip": (10, 100.0),
-             "exemple-app/backup_a.encrypted": (12, 100.0)}
-    referenced = {"exemple-app/backup_a.zip", "exemple-app/backup_a.encrypted"}
+    files = {"mon-app/backup_a.zip": (10, 100.0),
+             "mon-app/backup_a.encrypted": (12, 100.0)}
+    referenced = {"mon-app/backup_a.zip", "mon-app/backup_a.encrypted"}
     assert mod.find_orphans(files, referenced, cutoff_ts=200.0) == []
 
 

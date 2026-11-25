@@ -38,7 +38,7 @@ class TestSlugifyRepo:
 class TestNormalizeGithubUrl:
     """normalize_github_url : URLs SSH converties en HTTPS (le PAT ne sert
     qu'en HTTPS ; le conteneur hub n'a pas de binaire ssh — bug 2026-10-03,
-    4 échecs de déploiement exemple-app à l'étape clone)."""
+    4 échecs de déploiement d'une application à l'étape clone)."""
 
     @pytest.mark.parametrize("url,expected", [
         # scp-like GitHub

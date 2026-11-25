@@ -62,8 +62,8 @@ def fake_docker(monkeypatch):
 
 async def _seed(session, zone: str = "hub.example.lan"):
     session.add(AppSetting(key="hub_dns_zone", value=zone))
-    session.add(Application(name="Inv", slug="exemple-app", api_url="http://192.0.2.10:9001",
-                            frontend_url="http://192.0.2.10:4201", dns_name="exemple-app"))
+    session.add(Application(name="Mon App", slug="mon-app", api_url="http://192.0.2.10:9001",
+                            frontend_url="http://192.0.2.10:4201", dns_name="mon-app"))
     await session.commit()
 
 
@@ -76,9 +76,9 @@ async def test_publish_writes_files_and_reloads(async_session, dirs, fake_docker
 
     import pathlib
     zone = pathlib.Path(dirs.routing_dns_dir, "hub.hosts").read_text()
-    assert "exemple-app.hub.example.lan" in zone
-    vhost = pathlib.Path(dirs.routing_gateway_dir, "exemple-app.conf").read_text()
-    assert "server_name exemple-app.hub.example.lan;" in vhost
+    assert "mon-app.hub.example.lan" in zone
+    vhost = pathlib.Path(dirs.routing_gateway_dir, "mon-app.conf").read_text()
+    assert "server_name mon-app.hub.example.lan;" in vhost
     # reloads : dnsmasq HUP + nginx reload
     assert ("hub-dns", "kill -HUP 1") in calls
     assert ("hub-frontend", "nginx -s reload") in calls
@@ -104,7 +104,7 @@ async def test_publish_rolls_back_on_failed_reload(async_session, dirs, fake_doc
 
     # rollback : le contenu précédent est de retour, pas de fichier du nouveau vhost
     assert (gw / "previous.conf").read_text() == "# ancien vhost"
-    assert not (gw / "exemple-app.conf").exists()
+    assert not (gw / "mon-app.conf").exists()
     # last_error persisté (lisible depuis une session fraîche)
     err = await async_session.get(AppSetting, "routing_last_error")
     assert err is not None and "nginx" in (err.value or "").lower() or err.value

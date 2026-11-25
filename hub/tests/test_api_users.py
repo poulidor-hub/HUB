@@ -768,7 +768,7 @@ class TestM2MSearchUsers:
 
 
 class TestM2MUsersList:
-    """Tests pour GET /api/users/m2m/list (spec exemple-app §5.5)"""
+    """Tests pour GET /api/users/m2m/list (spec de l'application de notifications §5.5)"""
 
     async def _get_service_account_token(self, client: AsyncClient, service_account) -> str:
         response = await client.post(

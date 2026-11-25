@@ -4,8 +4,8 @@
 """Tests des overrides compose par app (.workshop.overrides.env).
 
 Motivation (bug « ledger Task 0 ») : une app qui bind un port host métier
-via une var de son .env prod (ex. exemple-app :
-"${PHILIA_NG_PORT:-42690}:8080") retombait sur le port prod dans
+via une var de son .env prod (ex. exemple-app-6 :
+"${APP_METIER_PORT:-42690}:8080") retombait sur le port prod dans
 l'atelier → conflit de bind → restart loop. Contrat testé :
 
 1. allowlist docker (_compose_base_env) — le plus faible ;
