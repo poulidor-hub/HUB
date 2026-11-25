@@ -1476,7 +1476,9 @@ async def register_app(
     # seul ne suffit pas — il exige la PREUVE M2M (token valide, résolu dans
     # registration_sa ci-dessus) ET que ce token soit celui du SA owner de
     # l'app (vérifié au moment de la rotation, via is_owner_service_account).
-    # Sans marqueur ou sans preuve → rotation actuelle (compat vieux socles).
+    # Preuve sans marqueur (socle avant 2.40) → rotation, comme avant. Sans
+    # preuve du propriétaire → 401 si son compte existe encore (contrôle
+    # ci-dessous) ; sinon self-healing.
     idempotent = request.headers.get("X-Hub-Register-Idempotent") == "1"
 
     replaced = False
@@ -1488,6 +1490,16 @@ async def register_app(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Le service account ne peut pas réinscrire cette application",
             )
+        # Règle générale (25/11/2026, autrefois réservée au mode enforced) :
+        # modifier une application existante exige le jeton de son compte de
+        # service PROPRIÉTAIRE. Un jeton absent, invalide, ou celui d'un compte
+        # simplement lié vaut absence de jeton.
+        # Exception conservée — si le compte propriétaire a disparu, exiger un
+        # jeton est impossible (aucun compte vivant ne peut en minter) : la
+        # ré-inscription sans jeton, depuis un réseau autorisé (IP vérifiée plus
+        # haut), reste la seule voie de réparation. Le flow T1 plus bas recrée
+        # le compte, retourne des credentials frais et audite m2m_sa_recreated
+        # (incident transmission du 16/11/2026, serveur distant).
         owner_sa_present = any(
             is_owner_service_account(sa, app_data.slug, existing_app.name)
             for sa in existing_app.service_accounts
@@ -1716,11 +1728,9 @@ async def register_app(
                     target=app_data.slug,
                     request=request,
                     response_status=status.HTTP_200_OK,
-                    details=(
-                        "Réinscription legacy autorisée en mode compatibilité"
-                        if existing_app.m2m_enforcement_mode != "enforced"
-                        else "Réinscription sans token : SA owner absent (self-healing enforced)"
-                    ),
+                    # Sans jeton, on n'arrive ici que si le compte propriétaire a
+                    # disparu (sinon 401 plus haut) : l'audit en donne le motif.
+                    details="Réinscription sans token : SA owner absent (self-healing)",
                 )
                 await db.commit()
             else:
@@ -1760,11 +1770,11 @@ async def register_app(
                 None,
             )
             
-            # Régénérer le secret M2M : l'app qui se ré-enregistre provient du
-            # réseau Docker (trusted) et a probablement perdu ses credentials
-            # (nouveau conteneur, volume non persistant). Sans ce régénération,
-            # l'app est bloquée : register ne retourne pas le secret, et
-            # regenerate-secret exige un token M2M qu'elle n'a pas.
+            # Régénérer le secret M2M : l'app a prouvé qu'elle est le
+            # propriétaire (jeton valide) sans le marqueur idempotent — socle
+            # avant 2.40 : rotation, comme avant. Un jeton absent ou non
+            # propriétaire ne peut plus venir ici (401 plus haut, ou compte
+            # propriétaire absent → recréation T1 plus bas).
             if sa:
                 # Activer le SA si l'atelier vient d'être auto-approuvé au ré-enregistrement
                 if workshop_auto_approved and not sa.is_active:
@@ -1777,8 +1787,8 @@ async def register_app(
                 # rotation. Au boot simultané de N instances, les registers
                 # croisés ne s'invalident plus mutuellement : l'instance qui
                 # détient encore le bon secret le prouve via son token.
-                # Sinon (vieux socle sans marqueur, token absent ou non-owner)
-                # → rotation ci-dessous, comportement inchangé.
+                # Sinon (preuve du propriétaire sans marqueur : socle avant
+                # 2.40) → rotation ci-dessous, comportement inchangé.
                 if idempotent and registration_sa is not None and registration_sa.id == sa.id:
                     logger.info(f"register idempotent — secret conservé (slug={app_data.slug})")
                     return AppRegisterResponse(
