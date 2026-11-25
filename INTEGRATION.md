@@ -1635,7 +1635,7 @@ employees = await m2m.call_api(f"http://{settings.hub_ip}:18087/api/employees")
 
 ## 7. Services Partagés (APIs de données)
 
-> 🆕 **Nouveauté v2.1** : Les applications peuvent désormais accéder automatiquement aux APIs de données partagées (ex: API Salariés) sans configuration manuelle des droits d'accès.
+> 🆕 **Nouveauté v2.1** : Les applications peuvent désormais accéder automatiquement aux APIs de données partagées (ex: API d'exemple) sans configuration manuelle des droits d'accès.
 
 ### Concept
 
@@ -1659,7 +1659,7 @@ Certaines APIs fournissent des données communes à toutes les applications de l
         │ 4. Peut immédiatement appeler les APIs partagées !
         ▼
 ┌─────────────────┐     5. Appel M2M avec token       ┌─────────────┐
-│   Nouvelle App  │ ─────────────────────────────────►│ API Salariés│
+│   Nouvelle App  │ ─────────────────────────────────►│ API exemple │
 │                 │     Authorization: Bearer <token> │ (partagée)  │
 └─────────────────┘                                    └─────────────┘
 ```
@@ -1722,7 +1722,7 @@ session.commit()
 
 | Slug | Nom | Description |
 |------|-----|-------------|
-| `mon-api` | API Salariés | Données RH des employés |
+| `mon-api` | API d'exemple | Données d'exemple |
 
 > 💡 Pour ajouter une nouvelle API partagée, utilisez la commande SQL ci-dessus ou l'API d'administration.
 
@@ -1756,15 +1756,15 @@ curl -X GET "http://[HUB_IP]:8000/api/apps/discover" \
   "shared_services": [
     {
       "slug": "mon-api",
-      "name": "API Salariés",
-      "description": "Données RH des employés",
+      "name": "API d'exemple",
+      "description": "Données d'exemple",
       "api_url": "http://192.0.2.11:18087",
       "is_shared_service": true
     },
     {
       "slug": "referentiel",
-      "name": "API Référentiels",
-      "description": "Référentiels métier (communes, codes, etc.)",
+      "name": "API référentiels",
+      "description": "Référentiels d'exemple",
       "api_url": "http://192.0.2.11:18088",
       "is_shared_service": true
     }
@@ -1793,17 +1793,17 @@ async def discover_and_call_services():
         print(f"   - {service['name']} ({service['slug']}): {service['api_url']}")
     
     # 2. Appeler un service découvert dynamiquement
-    salarie_service = next(
+    exemple_service = next(
         (s for s in discovery['shared_services'] if s['slug'] == 'mon-api'),
         None
     )
     
-    if salarie_service:
+    if exemple_service:
         employees = await hub_client.call_api(
             "GET",
-            f"{salarie_service['api_url']}/api/employees"
+            f"{exemple_service['api_url']}/api/employees"
         )
-        print(f"✅ {len(employees.json())} employés récupérés")
+        print(f"✅ {len(employees.json())} enregistrements récupérés")
 \`\`\`
 
 ### Exemple d'utilisation
@@ -1816,7 +1816,7 @@ from hub_client import hub_client
 # Au démarrage de l'app
 await hub_client.register()
 
-# L'API Salariés est automatiquement accessible !
+# L'API d'exemple est automatiquement accessible !
 response = await hub_client.call_api(
     "GET",
     "http://192.0.2.11:18087/api/employees"
@@ -1834,7 +1834,7 @@ Cette section détaille comment vos applications peuvent communiquer entre elles
 
 ```
 ┌─────────────────┐         ┌─────────────────┐         ┌─────────────────┐
-│   API Salarié   │◄───────►│      HUB        │◄───────►│  Autre API      │
+│  API d'exemple  │◄───────►│      HUB        │◄───────►│  Autre API      │
 │  (client M2M)   │         │ (Auth centrale) │         │  (client M2M)   │
 └─────────────────┘         └─────────────────┘         └─────────────────┘
         │                           │                           │
@@ -1876,8 +1876,8 @@ curl -X POST "http://192.0.2.11:8000/api/service-accounts/" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
-    "name": "api_salarie",
-    "description": "Service account pour API Salarié",
+    "name": "api_exemple",
+    "description": "Service account pour l'API d'exemple",
     "app_ids": [1]
   }'
 ```
@@ -1891,7 +1891,7 @@ secrets/service_accounts/sa_<nom>.env
 
 Contenu du fichier :
 ```env
-# Service Account: api_salarie
+# Service Account: api_exemple
 # Généré automatiquement - NE PAS COMMITER CE FICHIER !
 
 CLIENT_ID=<VOTRE_CLIENT_ID>
@@ -1996,7 +1996,7 @@ HUB_HOST=192.0.2.11
 HUB_API_PORT=8000
 
 # === Credentials Service Account ===
-# Copiés depuis secrets/service_accounts/sa_api_salarie.env
+# Copiés depuis secrets/service_accounts/sa_api_exemple.env
 CLIENT_ID=<VOTRE_CLIENT_ID>
 CLIENT_SECRET=<VOTRE_CLIENT_SECRET>
 
@@ -2537,7 +2537,7 @@ echo $TOKEN | cut -d'.' -f2 | base64 -d | jq '.apps'
 
 #### Option A : Marquer l'API comme service partagé (recommandé pour APIs de données)
 
-Si l'API cible est une API de données commune (ex: API Salariés, API Référentiels), elle devrait être accessible à toutes les applications :
+Si l'API cible est une API de données commune (ex: API d'exemple, API référentiels), elle devrait être accessible à toutes les applications :
 
 ```sql
 -- Via SQL sur la base Hub

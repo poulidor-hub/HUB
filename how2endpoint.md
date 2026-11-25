@@ -252,9 +252,9 @@ Intégrez le push dans le `lifespan` de votre app pour que la spec soit toujours
 
 ---
 
-## Endpoint M2M exemple-app (bulk rôles Hub)
+## Endpoint M2M (bulk rôles Hub)
 
-Pour synchroniser les rôles Hub d'une liste d'employés suivis, utilisez l'endpoint bulk ci-dessous.
+Pour synchroniser en bloc les rôles Hub d'une liste d'utilisateurs, utilisez l'endpoint bulk ci-dessous.
 
 ### Endpoint
 
@@ -269,7 +269,7 @@ Pour synchroniser les rôles Hub d'une liste d'employés suivis, utilisez l'endp
 
 ```json
 {
-    "identifiers": ["nomad1", "nomad2", "nomad3"]
+    "identifiers": ["utilisateur1", "utilisateur2", "utilisateur3"]
 }
 ```
 
@@ -286,21 +286,21 @@ La réponse est un dictionnaire dont la clé est l'identifiant demandé (nomAD/u
 
 ```json
 {
-    "nomad1": {
-        "profile": {"id": 2, "name": "Profil Vision", "color": "#0d6efd"},
+    "utilisateur1": {
+        "profile": {"id": 2, "name": "Profil Exemple", "color": "#0d6efd"},
         "apps": [
-            {"app_slug": "salarie", "role": "manager"},
-            {"app_slug": "telecom", "role": "viewer"}
+            {"app_slug": "exemple-app", "role": "manager"},
+            {"app_slug": "mon-app", "role": "viewer"}
         ]
     },
-    "nomad2": {
+    "utilisateur2": {
         "profile": null,
         "apps": []
     },
-    "nomad3": {
+    "utilisateur3": {
         "profile": null,
         "apps": [
-            {"app_slug": "salarie", "role": "user"}
+            {"app_slug": "exemple-app", "role": "user"}
         ]
     }
 }
