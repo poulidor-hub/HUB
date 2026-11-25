@@ -21,19 +21,19 @@ def _sa_headers(service_account) -> dict:
 @pytest.mark.asyncio
 async def test_app_dependency_model_persists(async_session):
     dep = AppDependency(
-        source_slug="exemple-apps",
+        source_slug="exemple-app-19",
         target_slug="MON_APP",
-        note="Catalogue articles",
+        note="Catalogue d'exemple",
     )
     async_session.add(dep)
     await async_session.commit()
 
     result = await async_session.execute(
-        select(AppDependency).where(AppDependency.source_slug == "exemple-apps")
+        select(AppDependency).where(AppDependency.source_slug == "exemple-app-19")
     )
     row = result.scalar_one()
     assert row.target_slug == "MON_APP"
-    assert row.note == "Catalogue articles"
+    assert row.note == "Catalogue d'exemple"
     assert row.declared_at is not None
     assert row.last_sync_at is None
 
