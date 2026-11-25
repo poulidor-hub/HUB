@@ -12,6 +12,11 @@ publique, la garde par adresse voit l'adresse de nginx, qui appartient au
 réseau du Hub et donc à la liste blanche.
 
 Sans la marque, chaque route conserve sa garde par adresse et son comportement.
+
+Seconde entrée, close par la même garde : les frontaux des applications
+proxifient l'API du Hub sous `/hub/`. La requête arrive alors de la passerelle
+Docker (en liste blanche), sans la marque, mais avec les en-têtes de transfert
+posés par nginx — absents de tout appel direct légitime.
 """
 import re
 from pathlib import Path
