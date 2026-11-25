@@ -127,8 +127,8 @@ def _group_containers_for_slugs(containers: list, slugs: list) -> Dict[str, list
     Une app = 2-3 conteneurs (api, frontend, postgres) partageant le même env
     APP_SLUG (postgres n'a que le label com.docker.compose.project). Le groupe
     = conteneurs matchés (APP_SLUG / hub.slug) + TOUS les conteneurs de leurs
-    projets compose (le project ne suit pas le slug : GED -> feat-ged-v1,
-    exemple-app -> exemple-app — il faut donc le dériver des conteneurs).
+    projets compose (le project ne suit pas le slug : exemple-app-12 -> projet-v1,
+    exemple-app-11 -> exemple_app_11 — il faut donc le dériver des conteneurs).
     Le projet hub_base (le Hub lui-même) est exclu, même si matché directement.
     Déduplication par id docker-py, tri stable par nom.
     """

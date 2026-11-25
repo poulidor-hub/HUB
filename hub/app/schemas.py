@@ -797,7 +797,7 @@ class UserExport(BaseModel):
     must_change_password: bool = False
     can_change_password: bool = True
     created_at: Optional[datetime] = None
-    uuid: Optional[str] = None  # Identifiant stable inter-apps (exemple-app-16 user_uuid)
+    uuid: Optional[str] = None  # Identifiant stable inter-apps (user_uuid)
     oidc_sub: Optional[str] = None  # Identifiant OIDC immuable
     prenom: Optional[str] = None
     nom: Optional[str] = None
@@ -1631,7 +1631,7 @@ class M2MUserSearchResponse(BaseModel):
 
 
 class M2MUserListItem(BaseModel):
-    """Utilisateur retourné par le listing M2M (spec exemple-app §5.5)"""
+    """Utilisateur retourné par le listing M2M (spec de l'application de notifications §5.5)"""
     id: int
     username: str
     # Lecture tolérante (str, non EmailStr) : ne pas 500 sur un email legacy
@@ -1881,7 +1881,7 @@ class PaginatedMyMessages(BaseModel):
     unread_total: int
 
 
-# ===== Sync M2M Schemas (pour exemple-app) =====
+# ===== Sync M2M Schemas (pour l'application de notifications) =====
 
 class MessageSyncItem(BaseModel):
     """Message dans la réponse de synchronisation M2M."""
@@ -2227,7 +2227,7 @@ class GithubRepo(BaseModel):
     # Slug de l'app HUB liée à ce repo (par git_repo_url ou par slug dérivé).
     # Consommé par « Voir l'app » : la recherche côté onglet Applications doit
     # porter sur le slug de l'APP, pas sur celui dérivé du repo (bug 2026-10-03 :
-    # POULIDOR → app `hub`, exemple-app-2 → app `exemple-app`).
+    # POULIDOR → app `hub`, MON_APP → app `mon-app`).
     integrated_app_slug: Optional[str] = None
     # Certificat hub-app.yaml (spec 2026-11-16) : None = jamais vérifié ou
     # raw GitHub injoignable (inconnu ≠ non certifié).

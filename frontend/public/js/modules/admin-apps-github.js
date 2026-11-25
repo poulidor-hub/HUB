@@ -459,8 +459,8 @@ function viewAppForRepo(fullName) {
     // Bascule vers la vue Applications du hub cockpit, recherche préremplie
     // sur le slug de l'APP liée (integrated_app_slug renvoyé par /repos — bug
     // 2026-10-03 : chercher le slug dérivé du repo donnait 0 résultat quand
-    // les deux diffèrent, ex: repo POULIDOR → app `hub`, repo exemple-app-2 → app
-    // `exemple-app`).
+    // les deux diffèrent, ex: repo POULIDOR → app `hub`, repo MON_APP → app
+    // `mon-app`).
     if (typeof openHubTool === 'function') openHubTool('apps');
     var searchTerm = '';
     var repo = (_ghState.repos || []).find(function(r) { return r.full_name === fullName; });

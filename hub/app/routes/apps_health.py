@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/apps", tags=["apps-health"])
 
-# /api/health est le standard du parc (template + exemple-app) → testé en premier.
+# /api/health est le standard du parc (template + applications) → testé en premier.
 # On ne break que sur un 2xx (vrai health endpoint) ou un 5xx (degraded) ;
 # un 4xx (ex: 404 sur /health nu) indique juste que le serveur est joignable
 # et qu'on doit essayer le path suivant.

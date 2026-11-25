@@ -1981,7 +1981,7 @@ async def m2m_send_message(
 
 
 # =============================================================================
-# ENDPOINTS M2M — Synchronisation (pour exemple-app)
+# ENDPOINTS M2M — Synchronisation (pour l'application de notifications)
 # =============================================================================
 
 @router.get("/m2m/sync", response_model=MessageSyncResponse)

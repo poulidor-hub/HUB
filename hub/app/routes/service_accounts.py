@@ -431,7 +431,7 @@ async def update_service_account(
         await db.commit()
 
     # Audit activation/désactivation (incidents 09/11 et 16/11/2026 : SAs
-    # désactivés sans trace — SA - Impayé, transmission — non imputables).
+    # désactivés sans trace — non imputables).
     if "is_active" in update_data and bool(sa.is_active) != old_is_active:
         await log_action(
             db=db, user_id=admin.id,
@@ -465,7 +465,7 @@ async def delete_service_account(
         )
     
     sa_name = sa.name  # Sauvegarder avant suppression
-    # Audit AVANT la suppression (incident 16/11/2026 : SA transmission
+    # Audit AVANT la suppression (incident 16/11/2026 : SA d'une application
     # supprimé sans aucune trace — la FK audit_logs mettra la ref à NULL,
     # l'action reste imputable via target/details).
     await log_action(

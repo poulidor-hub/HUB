@@ -624,7 +624,7 @@ app.add_middleware(
 # =============================================================================
 
 # Routes éligibles à la limite de body élargie : uploads de sauvegarde/import
-# (backups potentiellement volumineux — cf. incident exemple-app > 150 Mo) :
+# (backups potentiellement volumineux — cf. incident > 150 Mo) :
 #   - /api/admin/restore                     : restauration depuis fichier uploadé
 #   - /api/apps/{slug}/backup/import         : import backup d'app
 #   - /api/apps/{slug}/backup/restore/upload : restore d'app depuis fichier

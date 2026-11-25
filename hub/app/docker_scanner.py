@@ -100,8 +100,8 @@ def generate_slug(name: str) -> str:
     - service-1 (format simple)
     
     Exemples:
-    - "exemple-app-frontend-1" -> "exemple-app-frontend"
-    - "exemple-app_api-api-1" -> "exemple-app-api"
+    - "exemple_app_13-frontend-1" -> "exemple-app-13-frontend"
+    - "exemple_app_10-api-1" -> "exemple-app-10-api"
     - "mon-app-backend-2" -> "mon-app-backend"
     """
     slug = name.lower()
@@ -122,7 +122,7 @@ def generate_slug(name: str) -> str:
     slug = slug.strip('-')
     
     # Essayer de détecter et supprimer la répétition du suffixe de service
-    # Ex: "exemple-app-api-api" -> "exemple-app-api"
+    # Ex: "exemple-app-10-api-api" -> "exemple-app-10-api"
     # Ex: "mon-app-frontend-frontend" -> "mon-app-frontend"
     parts = slug.split('-')
     if len(parts) >= 2 and parts[-1] == parts[-2]:
@@ -144,9 +144,9 @@ def generate_base_slug(slug: str) -> str:
     """Retire les suffixes de type (api, frontend, backend...) pour obtenir le slug applicatif.
     
     Exemples:
-    - "exemple-app" -> "exemple-app"
+    - "exemple-app-13-api" -> "exemple-app-13"
     - "mon-app-frontend" -> "mon-app"
-    - "salarie" -> "salarie" (pas de suffixe)
+    - "exemple-app-10" -> "exemple-app-10" (pas de suffixe)
     - "mon-app-api-frontend" -> "mon-app-api" (retire seulement le dernier)
     """
     for suffix in ('-api', '-backend', '-back', '-server', '-frontend', '-front', '-ui', '-web', '-client'):

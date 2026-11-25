@@ -381,7 +381,7 @@ def unregister_app_connection(user_id: int, app_slug: str, queue: asyncio.Queue)
 _last_seen: Dict[int, float] = {}
 _last_app_slug: Dict[int, str] = {}
 # Grâce > tout délai de reconnexion réaliste : retry client 5 s (sse.js) /
-# 10 s (AuthContext exemple-app), MAIS Firefox bride les timers des onglets
+# 10 s (client de contexte d'authentification), MAIS Firefox bride les timers des onglets
 # en arrière-plan à ≥ 60 s et le churn navigateur mesuré est erratique
 # (vies de 7 à 55 s). 5 min garantit que le churn n'atteint jamais la
 # fermeture ; un départ réel ferme la session ≤ 5 min après (le sweeper
