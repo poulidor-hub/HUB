@@ -501,18 +501,18 @@ class TestRepoAccessPreflight:
 class TestAlreadyIntegratedBySlug:
     """Bug 2026-10-03 : un repo dont le slug est pris par une app SANS
     git_repo_url apparaissait « Dispo » puis 409 au clic sur « + Ajouter »
-    (cas exemple-app). Le croisement doit aussi regarder le slug dérivé."""
+    (cas exemple-app-2). Le croisement doit aussi regarder le slug dérivé."""
 
     @pytest.mark.asyncio
     async def test_slug_pris_sans_git_repo_url_marque_integre(self, client, admin_user, async_session):
         async_session.add(GithubRepoCache(
-            repo_id=30, name="exemple-app", full_name="Poutchouli/exemple-app",
-            owner="Poutchouli", html_url="https://github.com/Poutchouli/exemple-app",
-            clone_url="https://github.com/Poutchouli/exemple-app.git",
+            repo_id=30, name="exemple-app-2", full_name="exemple-org/exemple-app-2",
+            owner="exemple-org", html_url="https://github.com/exemple-org/exemple-app-2",
+            clone_url="https://github.com/exemple-org/exemple-app-2.git",
         ))
         # App existante déployée manuellement : pas de git_repo_url
         async_session.add(Application(
-            name="exemple-app", slug="exemple-app", api_url="http://h:9001",
+            name="exemple-app-2", slug="exemple-app-2", api_url="http://h:9001",
             git_repo_url=None,
         ))
         await async_session.commit()
@@ -521,14 +521,14 @@ class TestAlreadyIntegratedBySlug:
         r = await client.get("/api/apps/github/repos", headers=get_auth_header(token))
         body = r.json()
         by_name = {x["name"]: x for x in body["repos"]}
-        assert by_name["exemple-app"]["already_integrated"] is True
+        assert by_name["exemple-app-2"]["already_integrated"] is True
 
     @pytest.mark.asyncio
     async def test_slug_libre_reste_dispo(self, client, admin_user, async_session):
         async_session.add(GithubRepoCache(
-            repo_id=31, name="NouvelOutil", full_name="Poutchouli/NouvelOutil",
-            owner="Poutchouli", html_url="https://github.com/Poutchouli/NouvelOutil",
-            clone_url="https://github.com/Poutchouli/NouvelOutil.git",
+            repo_id=31, name="NouvelOutil", full_name="exemple-org/NouvelOutil",
+            owner="exemple-org", html_url="https://github.com/exemple-org/NouvelOutil",
+            clone_url="https://github.com/exemple-org/NouvelOutil.git",
             manifest_valid=True,  # certifiée : doit rester visible (Task 5)
         ))
         await async_session.commit()
@@ -547,9 +547,9 @@ class TestGlobalFetchedAt:
     @pytest.mark.asyncio
     async def test_filtered_empty_result_keeps_global_fetched_at(self, client, admin_user, async_session):
         async_session.add(GithubRepoCache(
-            repo_id=40, name="exemple-app", full_name="Poutchouli/exemple-app",
-            owner="Poutchouli", html_url="https://github.com/Poutchouli/exemple-app",
-            clone_url="https://github.com/Poutchouli/exemple-app.git",
+            repo_id=40, name="exemple-app-2", full_name="exemple-org/exemple-app-2",
+            owner="exemple-org", html_url="https://github.com/exemple-org/exemple-app-2",
+            clone_url="https://github.com/exemple-org/exemple-app-2.git",
             fetched_at=datetime(2026, 10, 3, 16, 37, 7),
         ))
         await async_session.commit()
@@ -567,8 +567,8 @@ class TestGlobalFetchedAt:
 
 class TestIntegratedAppSlug:
     """Bug campagne de tests 2026-10-03 : « Voir l'app » cherchait le slug
-    dérivé du repo (poulidor / exemple-app) au lieu du slug de l'app liée
-    (hub / exemple-app) → 0 résultat dans l'onglet Applications."""
+    dérivé du repo (poulidor / mon_app) au lieu du slug de l'app liée
+    (hub / mon-app) → 0 résultat dans l'onglet Applications."""
 
     @pytest.mark.asyncio
     async def test_slug_via_git_repo_url(self, client, admin_user, async_session):
@@ -596,12 +596,12 @@ class TestIntegratedAppSlug:
     @pytest.mark.asyncio
     async def test_slug_via_app_slug(self, client, admin_user, async_session):
         async_session.add(GithubRepoCache(
-            repo_id=51, name="exemple-app", full_name="Poutchouli/exemple-app",
-            owner="Poutchouli", html_url="https://github.com/Poutchouli/exemple-app",
-            clone_url="https://github.com/Poutchouli/exemple-app.git",
+            repo_id=51, name="exemple-app-2", full_name="exemple-org/exemple-app-2",
+            owner="exemple-org", html_url="https://github.com/exemple-org/exemple-app-2",
+            clone_url="https://github.com/exemple-org/exemple-app-2.git",
         ))
         async_session.add(Application(
-            name="exemple-app", slug="exemple-app", api_url="http://h:9001",
+            name="exemple-app-2", slug="exemple-app-2", api_url="http://h:9001",
             git_repo_url=None,
         ))
         await async_session.commit()
@@ -609,14 +609,14 @@ class TestIntegratedAppSlug:
         token, _, _ = create_access_token(username=admin_user.username, apps={})
         r = await client.get("/api/apps/github/repos", headers=get_auth_header(token))
         by_name = {x["name"]: x for x in r.json()["repos"]}
-        assert by_name["exemple-app"]["integrated_app_slug"] == "exemple-app"
+        assert by_name["exemple-app-2"]["integrated_app_slug"] == "exemple-app-2"
 
     @pytest.mark.asyncio
     async def test_none_when_repo_free(self, client, admin_user, async_session):
         async_session.add(GithubRepoCache(
-            repo_id=52, name="NouvelOutil", full_name="Poutchouli/NouvelOutil",
-            owner="Poutchouli", html_url="https://github.com/Poutchouli/NouvelOutil",
-            clone_url="https://github.com/Poutchouli/NouvelOutil.git",
+            repo_id=52, name="NouvelOutil", full_name="exemple-org/NouvelOutil",
+            owner="exemple-org", html_url="https://github.com/exemple-org/NouvelOutil",
+            clone_url="https://github.com/exemple-org/NouvelOutil.git",
             manifest_valid=True,  # certifiée : doit rester visible (Task 5)
         ))
         await async_session.commit()

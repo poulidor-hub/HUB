@@ -9,9 +9,9 @@ de l'app (nommé en dur dans son compose, IPAM épinglé sur ${APP_SUBNET}).
 Quand l'allocation diverge du réseau vivant (ré-allocation après purge /
 re-création / host instable), `make up` tente de recréer le réseau :
 - refusé si des conteneurs tiers y sont attachés (lab) → exit 2
-  (exemple-app) ;
+  (exemple-app-3) ;
 - sinon réseau recréé et conteneurs existants cassés (« network not found »)
-  (exemple-app-test #9).
+  (exemple-app-2-test #9).
 
 Règle : le réseau Docker vivant gagne sur l'allocation Hub.
 """
@@ -53,12 +53,12 @@ def _net_attrs(labels, subnets):
 def test_get_project_network_subnets_filters_by_compose_label():
     """Seuls les réseaux labellisés com.docker.compose.project=<projet> comptent."""
     s = _scanner_with_networks([
-        _net_attrs({"com.docker.compose.project": "exemple-app"},
+        _net_attrs({"com.docker.compose.project": "exemple-app-3"},
                    ["10.50.2.0/24"]),
         _net_attrs({"com.docker.compose.project": "autre-app"}, ["10.50.3.0/24"]),
         _net_attrs({}, ["172.17.0.0/16"]),  # réseau système, sans label
     ])
-    assert s.get_project_network_subnets("exemple-app") == {"10.50.2.0/24"}
+    assert s.get_project_network_subnets("exemple-app-3") == {"10.50.2.0/24"}
 
 
 def test_get_project_network_subnets_empty_when_unavailable():
@@ -91,7 +91,7 @@ HUB_HOST = settings.get_hub_host()
 @pytest.fixture
 async def allocation(async_session):
     row = PortAllocation(
-        app_slug="exemple-app", host=HUB_HOST,
+        app_slug="exemple-app-3", host=HUB_HOST,
         api_port=9009, frontend_port=4220, frontend_https_port=4221,
         subnet="10.50.3.0/24",  # allocation Hub divergente
     )
@@ -108,14 +108,14 @@ async def test_reconcile_updates_allocation_to_docker_subnet(async_session, allo
         "app.port_allocator.docker_scanner.get_project_network_subnets",
         lambda project: {"10.50.2.0/24"},
     )
-    real = await reconcile_subnet_with_docker(async_session, "exemple-app", allocation, settings)
+    real = await reconcile_subnet_with_docker(async_session, "exemple-app-3", allocation, settings)
 
     assert real == "10.50.2.0/24"
     assert allocation.subnet == "10.50.2.0/24"
     # persisté en DB
     async_session.expire_all()
     row = (await async_session.execute(
-        select(PortAllocation).where(PortAllocation.app_slug == "exemple-app")
+        select(PortAllocation).where(PortAllocation.app_slug == "exemple-app-3")
     )).scalar_one()
     assert row.subnet == "10.50.2.0/24"
 
@@ -129,7 +129,7 @@ async def test_reconcile_noop_when_already_aligned(async_session, allocation, mo
         "app.port_allocator.docker_scanner.get_project_network_subnets",
         lambda project: {"10.50.2.0/24"},
     )
-    ret = await reconcile_subnet_with_docker(async_session, "exemple-app", allocation, settings)
+    ret = await reconcile_subnet_with_docker(async_session, "exemple-app-3", allocation, settings)
     assert ret is None
     assert allocation.subnet == "10.50.2.0/24"
 
@@ -141,7 +141,7 @@ async def test_reconcile_ignores_when_no_project_network(async_session, allocati
         "app.port_allocator.docker_scanner.get_project_network_subnets",
         lambda project: set(),
     )
-    ret = await reconcile_subnet_with_docker(async_session, "exemple-app", allocation, settings)
+    ret = await reconcile_subnet_with_docker(async_session, "exemple-app-3", allocation, settings)
     assert ret is None
     assert allocation.subnet == "10.50.3.0/24"
 
@@ -153,7 +153,7 @@ async def test_reconcile_ignores_multiple_networks(async_session, allocation, mo
         "app.port_allocator.docker_scanner.get_project_network_subnets",
         lambda project: {"10.50.2.0/24", "10.50.9.0/24"},
     )
-    ret = await reconcile_subnet_with_docker(async_session, "exemple-app", allocation, settings)
+    ret = await reconcile_subnet_with_docker(async_session, "exemple-app-3", allocation, settings)
     assert ret is None
     assert allocation.subnet == "10.50.3.0/24"
 
@@ -168,7 +168,7 @@ async def test_reconcile_skips_remote_host(async_session, allocation, monkeypatc
         "app.port_allocator.docker_scanner.get_project_network_subnets",
         lambda project: {"10.50.2.0/24"},
     )
-    ret = await reconcile_subnet_with_docker(async_session, "exemple-app", allocation, settings)
+    ret = await reconcile_subnet_with_docker(async_session, "exemple-app-3", allocation, settings)
     assert ret is None
     assert allocation.subnet == "10.50.3.0/24"
 
@@ -183,7 +183,7 @@ async def test_reconcile_graceful_on_scan_failure(async_session, allocation, mon
     monkeypatch.setattr(
         "app.port_allocator.docker_scanner.get_project_network_subnets", _boom,
     )
-    ret = await reconcile_subnet_with_docker(async_session, "exemple-app", allocation, settings)
+    ret = await reconcile_subnet_with_docker(async_session, "exemple-app-3", allocation, settings)
     assert ret is None
     assert allocation.subnet == "10.50.3.0/24"
 
@@ -196,7 +196,7 @@ async def test_reconcile_disabled_by_flag(async_session, allocation, monkeypatch
         "app.port_allocator.docker_scanner.get_project_network_subnets",
         lambda project: {"10.50.2.0/24"},
     )
-    ret = await reconcile_subnet_with_docker(async_session, "exemple-app", allocation, settings)
+    ret = await reconcile_subnet_with_docker(async_session, "exemple-app-3", allocation, settings)
     assert ret is None
     assert allocation.subnet == "10.50.3.0/24"
 

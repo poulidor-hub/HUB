@@ -104,7 +104,7 @@ def test_build_env_values_forces_hub_http():
 
 
 def test_apply_env_replaces_hub_https_enabled_true(tmp_path):
-    """Un .env avec HUB_HTTPS_ENABLED=true (ex: exemple-app) est corrigé à false."""
+    """Un .env avec HUB_HTTPS_ENABLED=true (ex: ExempleApp) est corrigé à false."""
     env = _write_env(tmp_path, "HUB_HTTPS_ENABLED=true\nAPP_SLUG=x\n")
     apply_env_values(env, build_env_values(slug="x", api_port=9000, frontend_port=4200, hub_host="h"))
     assert "HUB_HTTPS_ENABLED=false" in env.read_text()
@@ -198,7 +198,7 @@ async def _mk_deployment(async_session, slug="exemple-app", repo="https://github
     # deviennent dépendantes du HUB_HOST de l'environnement.
     from app.config import get_settings
     host = get_settings().get_hub_host()
-    app_row = Application(name="exemple-app", slug=slug, api_url=f"http://h:9002",
+    app_row = Application(name="ExempleApp", slug=slug, api_url=f"http://h:9002",
                           git_repo_url=repo)
     async_session.add(app_row)
     alloc = PortAllocation(app_slug=slug, host=host, api_port=9002,
@@ -438,8 +438,8 @@ from tests.conftest import get_auth_header
 @pytest.fixture
 async def app_with_repo(async_session):
     from app.models import Application as A
-    row = A(name="exemple-app", slug="exemple-app", api_url="http://h:9002",
-            git_repo_url="https://github.com/Poutchouli/exemple-app.git")
+    row = A(name="ExempleApp", slug="exemple-app", api_url="http://h:9002",
+            git_repo_url="https://github.com/exemple-org/ExempleApp.git")
     async_session.add(row)
     await async_session.commit()
     return row
@@ -569,7 +569,7 @@ async def test_apps_all_exposes_git_repo_and_last_deployment(client, admin_token
     r = await client.get("/api/apps/all", headers=get_auth_header(admin_token))
     assert r.status_code == 200
     mine = [a for a in r.json() if a["slug"] == "exemple-app"][0]
-    assert mine["git_repo_url"] == "https://github.com/Poutchouli/exemple-app.git"
+    assert mine["git_repo_url"] == "https://github.com/exemple-org/ExempleApp.git"
     assert mine["last_deployment"]["status"] == "failed"
 
 
@@ -651,7 +651,7 @@ async def test_run_deployment_normalize_ssh_url(async_session, monkeypatch, tmp_
     import app.deploy_service as ds
 
     dep_id = await _mk_deployment(async_session,
-                                  repo="git@github.com:Poutchouli/exemple-app.git")
+                                  repo="git@github.com:exemple-org/exemple-app-2.git")
     appdir = tmp_path / "exemple-app"
     appdir.mkdir()
     (appdir / "Makefile").write_text("build:\n\t@echo build\nup:\n\t@echo up\n")
@@ -667,5 +667,5 @@ async def test_run_deployment_normalize_ssh_url(async_session, monkeypatch, tmp_
     clone_cmds = [c["cmd"] for c in calls if "clone" in c["cmd"]]
     assert clone_cmds, "le clone doit avoir été invoqué"
     clone_cmd = " ".join(clone_cmds[0])
-    assert "https://github.com/Poutchouli/exemple-app.git" in clone_cmd
+    assert "https://github.com/exemple-org/exemple-app-2.git" in clone_cmd
     assert "git@github.com:" not in clone_cmd

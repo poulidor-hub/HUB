@@ -41,11 +41,11 @@ def _app(slug: str, dns_name: str | None = None, *, active=True, remote=False,
 
 
 def test_validate_dns_name_accepts_slug():
-    assert validate_dns_name("exemple-app") == "exemple-app"
+    assert validate_dns_name("mon-app") == "mon-app"
 
 
 def test_validate_dns_name_rejects_bad_inputs():
-    for bad in ("exemple-app", "-bad", "bad-", "hub", "www", "api", "", "a" * 64, "a b"):
+    for bad in ("Mon-App", "-bad", "bad-", "hub", "www", "api", "", "a" * 64, "a b"):
         with pytest.raises(ValueError):
             validate_dns_name(bad)
 
@@ -64,7 +64,7 @@ def test_validate_zone():
 @pytest.mark.asyncio
 async def test_collect_entries_seven_profiles(async_session):
     apps = [
-        _app("exemple-app"),                       # locale standard
+        _app("mon-app"),                       # locale standard
         _app("remote-app", remote=True,
              front_url="https://203.0.113.42:9443"),  # distante → host de frontend_url
         _app("exemple-app-ws", workshop=True),  # atelier
@@ -78,7 +78,7 @@ async def test_collect_entries_seven_profiles(async_session):
     async_session.add_all(apps)
     await async_session.flush()
     async_session.add_all([
-        PortAllocation(app_slug="exemple-app", host=HUB_HOST, api_port=9001,
+        PortAllocation(app_slug="mon-app", host=HUB_HOST, api_port=9001,
                        frontend_port=4201, frontend_https_port=4202),
         PortAllocation(app_slug="exemple-app-ws", host=HUB_HOST, api_port=9013,
                        frontend_port=5211, frontend_https_port=5212),
@@ -95,10 +95,10 @@ async def test_collect_entries_seven_profiles(async_session):
     by_dns = {e["dns_name"]: e for e in entries}
 
     # locales → proxy_pass = frontend_url du registre (scheme conservé)
-    assert by_dns["exemple-app"]["proxy_pass"] == "http://192.0.2.10:4200"
-    assert by_dns["exemple-app"]["ip"] == HUB_HOST
-    assert by_dns["exemple-app"]["fqdn"] == f"exemple-app.{ZONE}"
-    assert by_dns["exemple-app"]["in_zone"] is True
+    assert by_dns["mon-app"]["proxy_pass"] == "http://192.0.2.10:4200"
+    assert by_dns["mon-app"]["ip"] == HUB_HOST
+    assert by_dns["mon-app"]["fqdn"] == f"mon-app.{ZONE}"
+    assert by_dns["mon-app"]["in_zone"] is True
     # distante → ip = host de la cible, proxy_pass = frontend_url telle quelle
     assert by_dns["remote-app"]["ip"] == "203.0.113.42"
     assert by_dns["remote-app"]["proxy_pass"] == "https://203.0.113.42:9443"
@@ -143,7 +143,7 @@ async def test_collect_entries_excludes_pending_but_treats_absent_status_as_appr
 
 def _entries() -> list[dict]:
     return [
-        {"kind": "app", "dns_name": "exemple-app", "fqdn": f"exemple-app.{ZONE}",
+        {"kind": "app", "dns_name": "mon-app", "fqdn": f"mon-app.{ZONE}",
          "in_zone": True, "ip": HUB_HOST, "proxy_pass": f"http://{HUB_HOST}:4201",
          "is_workshop": False, "is_active": True, "enabled": True},
         {"kind": "app", "dns_name": "remote-app", "fqdn": f"remote-app.{ZONE}",
@@ -163,7 +163,7 @@ def test_render_zone_exact_content():
     zone_file = render_zone(_entries(), ZONE)
     assert zone_file == (
         "# Généré par hub-api (routing_service) — NE PAS ÉDITER\n"
-        "192.0.2.10 compta.hub.example.lan exemple-app.hub.example.lan exemple-app-ws.hub.example.lan\n"
+        "192.0.2.10 compta.hub.example.lan exemple-app-ws.hub.example.lan mon-app.hub.example.lan\n"
         "203.0.113.42 remote-app.hub.example.lan\n"
     )
 
@@ -183,10 +183,10 @@ def test_render_zone_excludes_out_of_zone_and_empty_zone():
 def test_render_vhosts_exact_content():
     vhosts = render_vhosts(_entries(), ZONE,
                            wildcard_dir="/etc/nginx/ssl/server/hub-dns-wildcard")
-    assert set(vhosts) == {"exemple-app.conf", "remote-app.conf",
+    assert set(vhosts) == {"mon-app.conf", "remote-app.conf",
                            "exemple-app-ws.conf", "compta.hub.example.lan.conf"}
-    vh = vhosts["exemple-app.conf"]
-    assert "server_name exemple-app.hub.example.lan;" in vh
+    vh = vhosts["mon-app.conf"]
+    assert "server_name mon-app.hub.example.lan;" in vh
     assert "ssl_certificate     /etc/nginx/ssl/server/hub-dns-wildcard/server.crt;" in vh
     assert f"proxy_pass http://{HUB_HOST}:4201;" in vh
     assert "proxy_set_header Host $host;" in vh
@@ -220,7 +220,7 @@ _GOLDEN_VHOST = (
     "# Généré par hub-api (routing_service) — NE PAS ÉDITER\n"
     "server {\n"
     "    listen 443 ssl;\n"
-    "    server_name exemple-app.hub.example.lan;\n"
+    "    server_name mon-app.hub.example.lan;\n"
     "    ssl_certificate     /etc/nginx/ssl/server/hub-dns-wildcard/server.crt;\n"
     "    ssl_certificate_key /etc/nginx/ssl/server/hub-dns-wildcard/server.key;\n"
     "    location / {\n"
@@ -244,7 +244,7 @@ def _warnings(caplog) -> list[str]:
 
 def test_render_vhosts_valid_entry_is_byte_identical():
     vhosts = render_vhosts(_entries()[:1], ZONE, WILDCARD_DIR)
-    assert vhosts == {"exemple-app.conf": _GOLDEN_VHOST}
+    assert vhosts == {"mon-app.conf": _GOLDEN_VHOST}
 
 
 @pytest.mark.asyncio
@@ -286,7 +286,7 @@ def test_render_vhosts_skips_service_with_injected_target_url(caplog):
     with caplog.at_level(logging.WARNING, logger="app.routing_service"):
         vhosts = render_vhosts(_entries() + [injected], ZONE, WILDCARD_DIR)
 
-    assert set(vhosts) == {"exemple-app.conf", "remote-app.conf",
+    assert set(vhosts) == {"mon-app.conf", "remote-app.conf",
                            "exemple-app-ws.conf", "compta.hub.example.lan.conf"}
     rendered = "".join(vhosts.values())
     assert "docker-socket-proxy" not in rendered
