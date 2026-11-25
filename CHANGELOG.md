@@ -2876,8 +2876,8 @@ build` → `make up` transitivement via le Makefile de l'app) :
   403. Audit : `oidc_self_client_create|regenerate|get`
   (service_account_id tracé).
 - Finalité : premier déploiement d'app 100 % automatique (SSO sans
-  HUB_ADMIN_PASSWORD côté app) — cf. spec exemple-app
-  `docs/superpowers/specs/2026-09-14-oidc-self-provisioning-design.md`.
+  HUB_ADMIN_PASSWORD côté app) — cf. spec de l'outil d'administration de
+  Vikunja : `docs/superpowers/specs/2026-09-14-oidc-self-provisioning-design.md`.
 - Tests : 10 nouveaux (`test_oidc_self_client.py`) ; suite complète
   1098 passed / 0 failed.
 
@@ -2972,7 +2972,7 @@ build` → `make up` transitivement via le Makefile de l'app) :
 - **Corrigé** : dans la vue Santé, l'atelier d'une application dont le dossier technique ne porte pas le même nom que son identifiant (ex. Philia Proxy) apparaissait comme inexistant — le bloc « Atelier : … » avec les actions Mettre à jour / Déployer ne s'affichait pas. Il est de nouveau visible et fonctionnel.
 
 ### ⚡ Résolution dossier app par slug (workshop) + nettoyage fiche atelier fantôme
-- `workshop_service` : nouveau résolveur `_app_dir(slug)` — cas canonique `APPS/<slug>/` (validé par `APP_SLUG` du `.env`), sinon **scan des `.env`** des apps, repli `APPS/<slug>/` (comportement historique). Corrige la vue Santé et toutes les opérations atelier pour les apps dont dossier ≠ slug (`exemple-app`→`philia-proxy`, `ExempleApp5`→`exemple-app-5-base`, …) : 8 sites d'appel branchés.
+- `workshop_service` : nouveau résolveur `_app_dir(slug)` — cas canonique `APPS/<slug>/` (validé par `APP_SLUG` du `.env`), sinon **scan des `.env`** des apps, repli `APPS/<slug>/` (comportement historique). Corrige la vue Santé et toutes les opérations atelier pour les apps dont dossier ≠ slug (`ExempleApp5`→`exemple-app-5-base`, …) : 8 sites d'appel branchés.
 - Tests : `test_workshop_state_dir_name_differs_from_slug`, `test_app_dir_resolver` (hub/tests/test_workshop_routes.py, 29 passed).
 
 ---
@@ -3975,15 +3975,16 @@ droits) à venir.
 
 ## [3.26.1] - 6 août 2026
 
-### ⚡ SLO v2 — Câblage M2M HUB→exemple-app + Known Bug
+### ⚡ SLO v2 — Câblage M2M HUB→outil d'administration de Vikunja + Known Bug
 
 #### Ajouté
 - **`slo_orchestrator.py`** : module qui appelle chaque traducteur (app M2M) pour
   révoquer les sessions distantes de l'ancien user via le SA interne `hub-internal`.
 - **SA `hub-internal`** : Service Account dédié (client_id=`hub-internal`), secret
   stocké dans `.env` (`HUB_INTERNAL_SA_CLIENT_ID`/`HUB_INTERNAL_SA_CLIENT_SECRET`),
-  associé à l'app `exemple-app`. Permet au HUB de s'appeler lui-même en
-  `grant_type=client_credentials` puis d'appeler les traducteurs en M2M.
+  associé à l'app de l'outil d'administration de Vikunja. Permet au HUB de
+  s'appeler lui-même en `grant_type=client_credentials` puis d'appeler les
+  traducteurs en M2M.
 - **Variables `hub_internal_sa_*`** dans `config.py` + `docker-compose.yml`.
 - **Intégration login** : `auth.py` appelle `propagate_remote_revoke()` au login
   quand un switch est détecté (best-effort, ne bloque pas le login).
@@ -4055,7 +4056,7 @@ purge pas plus, mais si le JWT est expiré entre-temps, le flow OIDC redémarre)
 - **Kill-switch** : nouvelle var `OIDC_SLO_ENABLED` (défaut **False** en 3.26.0 — activer
   via `.env` après validation e2e atelier) et `OIDC_SLO_IFRAME_TIMEOUT_MS` (défaut 1500).
 - **Helpers internes** : `slo_helpers.py` (`detect_user_switch_and_collect_logouts`,
-  `lookup_translator_slug`, mapping statique `APP_TRANSLATORS = {"vikunja": "exemple-app"}`).
+  `lookup_translator_slug`, mapping statique `APP_TRANSLATORS`, de l'app « vikunja » à l'outil d'administration de Vikunja).
 - **Frontend** : nouveau module `slo-purge.js` + intégration post-login dans
   `auth-navigation.js`. Best-effort (try/catch) — n'affiche jamais d'erreur visible.
 - **Spec** : `docs/superpowers/specs/2026-08-06-slo-shared-workstation-design.md`.
@@ -4068,8 +4069,8 @@ purge pas plus, mais si le JWT est expiré entre-temps, le flow OIDC redémarre)
 
 ### 🔒 Sécurité
 
-- Nouvel endpoint M2M côté `exemple-app` uniquement (cf. release exemple-app
-  séparée) — non câblé côté HUB en 3.26.0 (câblage reporté v2).
+- Nouvel endpoint M2M côté outil d'administration de Vikunja uniquement (cf.
+  release séparée de cet outil) — non câblé côté HUB en 3.26.0 (câblage reporté v2).
 
 ### ⚠️ Notes de déploiement
 
@@ -4258,7 +4259,7 @@ purge pas plus, mais si le JWT est expiré entre-temps, le flow OIDC redémarre)
 
 ### 📣 Pour les utilisateurs
 
-- **Ajouté** : nouvelle option « Non gérée (lien only) » dans les paramètres d'une application. Permet de déclarer qu'une app est pilotée par un proxy externe (ex. Vikunja piloté par exemple-app) — le HUB ne la sonde plus (santé, backup, sync) mais elle reste visible et cliquable dans le launcher.
+- **Ajouté** : nouvelle option « Non gérée (lien only) » dans les paramètres d'une application. Permet de déclarer qu'une app est pilotée par un proxy externe (ex. Vikunja piloté par l'outil d'administration de Vikunja) — le HUB ne la sonde plus (santé, backup, sync) mais elle reste visible et cliquable dans le launcher.
 - **Ajouté** : filtre « Gestion » (Toutes / Gérées / Non gérées) dans la vue admin des applications, pour distinguer les apps pilotées directement par le HUB de celles pilotées par un proxy.
 - **Amélioré** : badge visuel « Non gérée » sur les apps concernées, avec une icône dédiée.
 
@@ -4269,7 +4270,7 @@ purge pas plus, mais si le JWT est expiré entre-temps, le flow OIDC redémarre)
 - **Backup** : refus du backup manuel (HTTP 400) et exclusion du scheduler planifié et du snapshot global pour les apps non gérées.
 - **Sync Docker** : exclusion des apps non gérées du repositionnement automatique de `is_active`.
 - **Frontend admin** : toggle « Non gérée » dans le formulaire, badge « Non gérée » sur les lignes, filtre « Gestion » (Toutes/Gérées/Non gérées) dans la toolbar.
-- **Vikunja (id=6)** : flaggée `is_unmanaged=True, backup_mode=disabled` — l'app Docker Vikunja pilotée par `exemple-app` (id=5) n'est plus health-checkée ni backupée.
+- **Vikunja (id=6)** : flaggée `is_unmanaged=True, backup_mode=disabled` — l'app Docker Vikunja pilotée par l'outil d'administration de Vikunja (id=5) n'est plus health-checkée ni backupée.
 
 ---
 
