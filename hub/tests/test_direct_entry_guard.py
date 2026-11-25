@@ -75,3 +75,29 @@ def test_nginx_refuses_internal_only_routes_on_public_entry(conf):
     assert "proxy_set_header X-Hub-Entry public;" in text, f"{conf} : en-tête X-Hub-Entry absent"
     assert not re.search(r"location \^~ /api/apps/me/\s*\{", text), \
         f"{conf} : le préfixe /api/apps/me/ ne doit pas être bloqué (frontal : /api/apps/me/role/)"
+
+
+@pytest.mark.parametrize("en_tete", ["X-Forwarded-For", "X-Real-IP"])
+async def test_register_refused_when_forwarded_by_a_proxy(client, async_session, tmp_path, en_tete):
+    """Les frontaux des applications proxifient l'API du Hub sous /hub/ : la requête
+    arrive alors de la passerelle Docker (en liste blanche), porteuse des en-têtes
+    de transfert posés par nginx. Un appel légitime n'en porte aucun."""
+    with patch("app.routes.apps.is_docker_network_ip", return_value=True), \
+         patch("app.routes.service_accounts.SECRETS_DIR", tmp_path):
+        r = await client.post("/api/apps/register", json={"slug": "entry-fwd", "api_port": 19502},
+                              headers={en_tete: "203.0.113.5"})
+    assert r.status_code == 403
+    assert "réseau interne" in r.json()["detail"]
+    assert (await async_session.execute(
+        select(Application).where(Application.slug == "entry-fwd"))).scalar_one_or_none() is None
+
+
+@pytest.mark.parametrize("method,path", [("POST", "/api/apps/allocate-ports"),
+                                         ("GET", "/api/apps/me/credentials"),
+                                         ("PUT", "/api/apps/me/shared"),
+                                         ("POST", "/api/apps/me/openapi")])
+async def test_legacy_routes_refused_when_forwarded_by_a_proxy(client, method, path):
+    with patch("app.routes.apps.is_docker_network_ip", return_value=True):
+        r = await client.request(method, path, headers={"X-Forwarded-For": "203.0.113.5"})
+    assert r.status_code == 403
+    assert "réseau interne" in r.json()["detail"]
