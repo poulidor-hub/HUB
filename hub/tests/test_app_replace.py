@@ -85,6 +85,19 @@ class TestAppAutoReplace:
         old_sa_id = old_sa.id
         old_client_id = old_sa.client_id
         
+        # Le remplacement est une modification de l'app existante : il exige le
+        # jeton M2M de son compte de service propriétaire
+        mint = await client.post(
+            "/api/auth/token",
+            data={
+                "grant_type": "client_credentials",
+                "client_id": old_client_id,
+                "client_secret": "old_secret",
+            },
+        )
+        assert mint.status_code == 200, f"{mint.status_code}: {mint.text}"
+        owner_token = mint.json()["access_token"]
+        
         # Simuler une IP Docker et FORCE_REPLACE_APP=true
         with patch('app.routes.apps.is_docker_network_ip', return_value=True), \
              patch('app.routes.apps.settings.force_replace_app', True):
@@ -94,7 +107,8 @@ class TestAppAutoReplace:
                     "slug": "existing-app",  # Même slug
                     "api_port": 9999,
                     "frontend_port": 4000
-                }
+                },
+                headers={"Authorization": f"Bearer {owner_token}"},
             )
         
         assert response.status_code == 200
