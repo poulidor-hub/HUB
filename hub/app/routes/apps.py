@@ -22,6 +22,7 @@ from app.routes.events import notify_event, notify_stats_update
 from app.routes.app_backups import reassociate_orphan_backups
 
 from app.database import get_db
+from app.direct_entry import require_direct_entry
 from app.models import Application, User, ServiceAccount, UserAppRole, ApprovalStatus, service_account_app_access, DEFAULT_ROLES, UserFavorite, utcnow, AppDependency, AppGroup, AppDeployment, UserWorkshopAccess, get_apps_with_roles_and_workshops, GithubRepoCache
 from app.m2m_scope import grant_shared_apps_to_sa
 from app.routes.app_groups import group_to_brief
@@ -1309,6 +1310,7 @@ async def allocate_ports(
     request: Request,
     payload: AllocatePortsRequest,
     db: AsyncSession = Depends(get_db),
+    _direct: None = Depends(require_direct_entry),
 ):
     """Attribue dynamiquement les ports d'une application (pré-vol).
 
@@ -1426,6 +1428,7 @@ async def register_app(
     request: Request,
     db: AsyncSession = Depends(get_db),
     token: Optional[str] = Depends(optional_oauth2_scheme),
+    _direct: None = Depends(require_direct_entry),
 ):
     """
     Auto-enregistrement d'une application depuis le réseau Docker.
@@ -2583,6 +2586,7 @@ async def get_app_credentials(
     request: Request,
     db: AsyncSession = Depends(get_db),
     token: Optional[str] = Depends(optional_oauth2_scheme),
+    _direct: None = Depends(require_direct_entry),
 ):
     """
     Récupère les credentials M2M d'une application.
@@ -2831,6 +2835,7 @@ async def update_app_shared(
     is_shared: bool,
     db: AsyncSession = Depends(get_db),
     token: Optional[str] = Depends(optional_oauth2_scheme),
+    _direct: None = Depends(require_direct_entry),
 ):
     """
     Met à jour le flag is_shared_service d'une application.
@@ -3057,6 +3062,7 @@ async def push_openapi_spec(
     body: AppOpenApiPush,
     db: AsyncSession = Depends(get_db),
     token: Optional[str] = Depends(optional_oauth2_scheme),
+    _direct: None = Depends(require_direct_entry),
 ):
     """
     Permet à une application de pousser sa spécification OpenAPI au Hub.
