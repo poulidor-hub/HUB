@@ -632,8 +632,8 @@ Incident : `wg0.conf` a disparu du volume `vpn-config` en prod (18-20/11, suppre
 ### 📣 Pour les utilisateurs
 
 - **Ajouté** : dans les Préférences, vous choisissez désormais les secteurs que vous gérez (renfort / binôme inclus), puis désignez votre **secteur principal** parmi eux.
-- **Amélioré** : la fenêtre de bienvenue ne réapparaît plus à chaque connexion une fois vos choix enregistrés ; les secteurs proposés sont actualisés en direct depuis exemple-app (et restent modifiables même si elle est momentanément injoignable).
-- **Corrigé** : la sauvegarde des préférences ne bloque plus si un secteur a été renommé côté exemple-app — les valeurs devenues invalides sont retirées proprement avec un simple avertissement.
+- **Amélioré** : la fenêtre de bienvenue ne réapparaît plus à chaque connexion une fois vos choix enregistrés ; les secteurs proposés sont actualisés en direct depuis API référentiels (et restent modifiables même si elle est momentanément injoignable).
+- **Corrigé** : la sauvegarde des préférences ne bloque plus si un secteur a été renommé côté API référentiels — les valeurs devenues invalides sont retirées proprement avec un simple avertissement.
 
 ### ⚡ Refonte préférences : secteurs gérés + secteur principal
 
@@ -4022,7 +4022,7 @@ purge pas plus, mais si le JWT est expiré entre-temps, le flow OIDC redémarre)
 - **Fork Vikunja** pour ajouter un endpoint de révocation de JWT (jti blacklist) —
   lourd mais seule solution vraiment immédiate.
 - **Désactiver l'ancien user** (`users.status`) côté Vikunja via le traducteur —
-  l'API exemple-app le permet mais c'est sémantiquement un **offboarding**
+  l'API admin de Vikunja le permet mais c'est sémantiquement un **offboarding**
   (inadapté pour un simple switch de poste).
 - **`prompt=login`** dans le flow OIDC — standard, mais Vikunja ne le supporte pas
   côté RP (il ne le passe pas à l'IdP).
