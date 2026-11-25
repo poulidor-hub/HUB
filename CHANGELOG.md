@@ -5,6 +5,18 @@
 
 ---
 
+## [3.105.1] - 25 novembre 2026
+
+### ⚡ Filet de sécurité du dépôt — hook gitleaks bloquant, faux positifs de référence
+
+| Élément | Détail |
+|---------|--------|
+| **Hook de commit** | `scripts/hooks/pre-commit-gitleaks.sh` refuse désormais un commit quand `gitleaks` est absent du poste, au lieu de le laisser passer en silence (contournement explicite : `GITLEAKS_SKIP=1`). L'appel à gitleaks est corrigé pour la 8.30.1 : l'option `-q` n'existe plus et faisait croire à un secret. |
+| **Faux positifs de référence** | Nouveau `.gitleaksignore` : 15 empreintes de fixtures de tests et d'exemples de documentation, triées le 25/11/2026. `gitleaks git --log-opts="main --full-history"` rend 0 finding. Les empreintes contiennent le sha du commit : à régénérer après toute réécriture d'historique. |
+| **Périmètre** | Outils de développement seulement : ni l'API, ni le frontal, ni les conteneurs ne changent. |
+
+---
+
 ## [3.105.0] - 25 novembre 2026
 
 ### 📣 Pour les utilisateurs
