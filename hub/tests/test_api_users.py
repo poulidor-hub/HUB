@@ -90,7 +90,7 @@ class TestUsersEndpoints:
     ):
         """La liste des users ne doit pas 500 sur un email legacy invalide.
 
-        Régression : un robot M2M créé avec l'email 'exports-robot@hub.local'
+        Régression : un robot M2M créé avec l'email 'integration-robot@hub.local'
         (domaine spécial RFC 6761, rejeté par email-validator ≥ 2.x) faisait
         échouer TOUT GET /api/users en ValidationError (UserResponse.email est
         un EmailStr). La lecture d'une donnée existante doit être tolérante ;
@@ -442,7 +442,7 @@ class TestM2MBulkUserRoles:
         """Le endpoint M2M retourne uniquement les apps actives autorisées pour le SA"""
         from app.models import service_account_app_access
 
-        profile = Profile(name="Profil Hub Vision", description="Test", color="#123456")
+        profile = Profile(name="Profil Exemple", description="Test", color="#123456")
         async_session.add(profile)
         await async_session.commit()
         await async_session.refresh(profile)
@@ -518,7 +518,7 @@ class TestM2MBulkUserRoles:
 
         assert data[test_user.username]["profiles"] == [{
             "id": profile.id,
-            "name": "Profil Hub Vision",
+            "name": "Profil Exemple",
             "color": "#123456",
         }]
         assert data[test_user.username]["apps"] == [

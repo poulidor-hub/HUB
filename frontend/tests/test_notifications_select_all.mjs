@@ -90,7 +90,7 @@ if (typeof notifToggleSelectAll !== 'function') {
 function msg(i) {
     return {
         id: i, title: `Notif ${i}`, body: 'x', priority: 'info',
-        is_read: false, sender_app_slug: 'exemple-app', sender_type: 'app',
+        is_read: false, sender_app_slug: 'autre-app-am', sender_type: 'app',
         created_at: '2026-11-15T10:00:00Z', occurrences: 1,
     };
 }

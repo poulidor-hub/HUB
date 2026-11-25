@@ -3,7 +3,7 @@
 
 """Scanner des revendications (claims) APP_SUBNET/ports des .env de la flotte.
 
-Cause racine (bug 2026-11-13, intendance vs contrat-w-pr / exemple-app) :
+Cause racine (bug 2026-11-13, exemple-app-20 vs tiers-app-ws / exemple-app-9) :
 l'allocateur Hub ne consultait que son registre `port_allocations` et les
 réseaux/conteneurs Docker VIVANTS. Une app legacy (jamais passée par
 `allocate-ports`) ou simplement arrêtée au moment de l'allocation était
@@ -123,9 +123,9 @@ def _settings(apps_dir: Path, **over):
 @pytest.mark.asyncio
 async def test_allocate_avoids_fleet_env_claims(async_session, tmp_path):
     """App legacy arrêtée (claim .env, rien de vivant) : ni son subnet ni ses
-    ports ne sont ré-attribués (bug 2026-11-13 intendance vs contrat-w-pr /
-    exemple-app)."""
-    _make_app(tmp_path, "contrat-w-pr", """\
+    ports ne sont ré-attribués (bug 2026-11-13 exemple-app-20 vs tiers-app-ws /
+    exemple-app-9)."""
+    _make_app(tmp_path, "tiers-app-ws", """\
         APP_SUBNET=10.50.0.0/24
         API_PORT=9000
         FRONTEND_PORT=4200
@@ -133,7 +133,7 @@ async def test_allocate_avoids_fleet_env_claims(async_session, tmp_path):
     """)
     settings = _settings(tmp_path)
 
-    alloc, reused = await allocate_ports_for_app(async_session, "intendance", HUB_HOST, settings)
+    alloc, reused = await allocate_ports_for_app(async_session, "exemple-app-20", HUB_HOST, settings)
 
     assert reused is False
     assert alloc.subnet == "10.50.1.0/24"  # 10.50.0.0/24 revendiqué → sauté

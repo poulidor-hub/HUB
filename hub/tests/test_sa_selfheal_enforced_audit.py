@@ -6,7 +6,7 @@ T1. Self-healing enforced : une app en mode « enforced » dont le SA owner a
     réseau Docker — la branche T1 (m2m_sa_recreated) recrée alors le SA et
     retourne des credentials frais.
     Avant fix : 401 « Token M2M requis » (gate apps.py:1407) → app bloquée en
-    chicken-and-egg (incident transmission, serveur distant, 16/11/2026).
+    chicken-and-egg (incident du 16/11/2026, serveur distant).
 
 T2. Garde-fou : si le SA owner existe toujours, la réinscription sans token
     en enforced doit rester refusée (401) — on n'ouvre pas le gate plus large.
@@ -14,8 +14,8 @@ T2. Garde-fou : si le SA owner existe toujours, la réinscription sans token
 T3-T5. Audit des mutations de service accounts : PUT (bascule is_active),
     DELETE et regenerate-secret doivent produire une entrée AuditLog.
     Avant fix : seul can_admin_read était audité — désactivations et
-    suppressions de SA non imputables (SA - Impayé désactivé le 16/11 sans
-    trace ; SA transmission supprimé le 16/11 sans trace, serveur distant).
+    suppressions de SA non imputables (comptes de service désactivés et
+    supprimés le 16/11 sans trace, serveur distant).
 """
 import pytest
 from unittest.mock import patch
