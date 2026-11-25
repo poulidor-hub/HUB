@@ -5,6 +5,57 @@
 
 ---
 
+## [3.105.0] - 25 novembre 2026
+
+### 📣 Pour les utilisateurs
+- **Sécurité** : les routes d'inscription des applications ne sont plus accessibles depuis une entrée publique — ni celle du Hub, ni celle d'une application. Seuls les appels directs depuis le réseau interne du Hub restent possibles.
+- **Sécurité** : une application déjà inscrite ne peut plus être réinscrite sans son jeton d'accès machine (M2M). Son adresse de lancement ne peut plus être détournée, et son secret n'est plus renvoyé à un tiers. Modifier son partage ou sa spécification d'API exige désormais ce jeton.
+- **Sécurité** : renommer une application renomme son compte de service, qui reste ainsi reconnu comme le sien.
+- **À savoir** : si une application a perdu ses identifiants M2M, le Hub lui répond « Token M2M requis pour réinscrire cette application ». L'administrateur lui redonne un secret depuis **Administration → Comptes de service** (outil « Service Accounts »), place `M2M_CLIENT_ID` et `M2M_CLIENT_SECRET` dans son environnement, **supprime le cache d'identifiants** `backend/storage/.hub_credentials` de l'application, puis recrée son conteneur. Détail dans `GUIDE_INSTALLATION.md`.
+- **À savoir** : une application qui n'a pas encore été approuvée par un administrateur n'a plus de nom DNS tant qu'elle est en attente ; elle le retrouve dès son approbation. Une application approuvée mais désactivée reste joignable, comme avant.
+- **À savoir** : cette version requiert un socle d'application 2.36.0 ou plus récent, qui présente son jeton à l'inscription.
+- **Limite connue** : le compte de service d'une application est identifié par son nom. Un appelant du réseau interne qui inscrirait une application portant le même nom qu'un service partagé, une fois celle-ci approuvée, pourrait se faire passer pour elle. La correction prévue — un lien de propriété explicite — fait l'objet d'un chantier dédié.
+
+### ⚡ Sécurité — routes d'inscription fermées à toute entrée publique
+
+- Reproduction (stack Hub isolée, 25/11) : l'entrée publique nginx relaie toute l'API vers le Hub, dont la garde par adresse voit alors l'adresse de nginx — membre de la liste blanche. Une inscription d'application passait donc depuis l'entrée publique. Il en allait de même par l'entrée publique de **n'importe quelle application** : les frontaux du socle et du template proxifient `/hub/` vers le port publié du Hub, et la requête y arrive depuis la passerelle Docker.
+- `frontend/nginx.conf` et `frontend/nginx-ssl.conf` : cinq blocs `location ^~ … { return 403; }` avant `location ^~ /api/`, et en-tête `X-Hub-Entry public` posé dans ce bloc.
+- Nouveau `app/direct_entry.py` : dépendance `require_direct_entry` posée sur les cinq routes concernées (`register`, `allocate-ports`, `/me/credentials`, `/me/shared`, `/me/openapi`). Elle refuse (403) une requête qui porte la marque du frontal du Hub **ou** un en-tête de transfert non vide (`X-Forwarded-For`, `X-Real-IP`). Ces en-têtes ne peuvent que refuser : un appel direct qui les falsifie se refuse à lui-même. La garde ne dépend d'aucun fichier de configuration nginx et couvre le frontal du Hub comme ceux de toutes les applications.
+- `/api/apps/me/role/…` (interface d'administration) et `/api/apps/me/regenerate-secret` (jeton M2M) restent joignables par l'entrée publique ; le préfixe `/api/apps/me/` n'est volontairement pas bloqué.
+
+### ⚡ Sécurité — jeton du compte de service propriétaire requis pour réinscrire une application
+
+- Reproduction : une application approuvée en mode `compat` (le défaut) se réinscrivait sans jeton — ses adresses étaient réécrites depuis l'hôte fourni, et son secret M2M régénéré et renvoyé à l'appelant. Le tableau de bord envoyant les jetons de l'utilisateur à l'adresse de lancement, qui connaissait un slug et deux ports détournait l'application. Seules les applications restées en mode `compat` étaient exposées : toute ré-inscription avec un jeton valide les fait passer en mode `enforced`, déjà protégé.
+- `routes/apps.py`, `register_app` : le contrôle jusqu'ici réservé au mode `enforced` devient la règle pour toutes. Sans le jeton du compte de service **propriétaire** (jeton absent, invalide, ou jeton d'un compte simplement lié), une application existante dont le compte existe encore reçoit `401 Token M2M requis pour réinscrire cette application` ; une ligne `WARNING` en donne le motif (slug, adresse source, raison).
+- Conservé : l'inscription d'une nouvelle application ; la ré-inscription avec le jeton du propriétaire (avec rotation pour les socles antérieurs à 2.40, sans rotation avec le marqueur idempotent) ; l'auto-réparation quand le compte propriétaire a disparu (recréation, secret renvoyé, audit `m2m_sa_recreated`).
+- `FORCE_REPLACE_APP=true` : remplacer une application existante est une modification, le jeton du propriétaire est requis.
+- Motif d'audit `legacy_reregistration` aligné : « SA owner absent (self-healing) » au lieu de « autorisée en mode compatibilité ».
+- Cas limite documenté : un atelier en attente qui possède déjà un compte de service ne s'auto-approuve plus à sa ré-inscription sans jeton ; l'administrateur l'approuve, ou recrée l'atelier.
+
+### ⚡ Sécurité — le compte de service propriétaire suit le nom de son application
+
+- Le compte propriétaire est reconnu par une convention de nom (« SA - <nom de l'application> »). Renommer l'application sans renommer son compte la dépossédait : le compte n'était plus reconnu, la ré-inscription suivante le croyait disparu et « réparait » — nouveau compte actif, secret renvoyé à l'appelant, adresses réécrites. Un renommage rouvrait ainsi la prise de contrôle ci-dessus.
+- `rename_owner_service_accounts()` : après chaque changement de nom, sur les quatre chemins qui le permettent (ré-inscription par l'application, `PATCH` administrateur, auto-enregistrement administrateur, import par lot).
+- Effet de bord favorable : un propriétaire qui se renomme lui-même conserve son secret au lieu de se voir recréer un compte.
+
+### ⚡ Sécurité — partage et spécification OpenAPI : jeton M2M obligatoire
+
+- `PUT /api/apps/me/shared` et `POST /api/apps/me/openapi` acceptaient encore un appel sans jeton (adresse du réseau autorisée + en-tête `X-Slug`), un chemin déjà marqué obsolète : tout conteneur du réseau pouvait basculer le partage M2M d'une application, ou réécrire sa spécification.
+- Les deux routes rejoignent `/me/regenerate-secret` : sans jeton, `401`. Tous les appelants du parc (socles Python et Rust et leurs copies intégrées) présentent déjà le jeton de leur propre application.
+
+### ⚡ Routage — applications en attente, approbation et rejet
+
+- `routing_service.collect_entries` : une application dont `approval_status` n'est pas `approved` n'entre ni dans la zone DNS ni dans les hôtes virtuels. Une valeur absente est traitée comme approuvée. Les applications approuvées, actives ou non, restent publiées.
+- `POST /api/apps/{slug}/approve` : l'approbation et le rejet republient le routage (non bloquant), pour qu'une application approuvée soit joignable par son nom sans attendre un redémarrage du Hub.
+
+### ⚡ Suite de tests — la course est corrigée
+
+- La boucle d'événements de `conftest.py` est de session : la tâche différée du limiteur de statistiques SSE (`_flush_pending_stats`) et l'ouverture de sa fenêtre (`_last_stats_broadcast`) survivaient aux tests. Un test pris au hasard échouait alors (`Could not refresh instance`, `NoResultFound`, ou un 404 sur une ligne venant d'être créée).
+- Fixture autouse `_no_orphan_stats_task` : annule la tâche et remet à zéro l'état du limiteur après chaque test. Nouveau `test_orphan_stats_task_cleanup.py`.
+- Suite complète : 2092 réussites et 1 ignoré, sur deux passages consécutifs sans aucun échec.
+
+---
+
 ## [3.104.3] - 25 novembre 2026
 
 ### 📣 Pour les utilisateurs
