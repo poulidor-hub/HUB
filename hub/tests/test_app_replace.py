@@ -188,10 +188,11 @@ class TestAppAutoReplace:
             assert data["credentials"]["client_secret"]
 
     @pytest.mark.asyncio
-    async def test_legacy_reregistration_stays_compat_and_is_audited(
+    async def test_reregistration_without_token_selfheals_when_owner_sa_absent_and_is_audited(
         self, client: AsyncClient, async_session: AsyncSession, test_app
     ):
-        """Sans Bearer, la compatibilite est preservee avec audit sans secret."""
+        """Sans jeton, une app dont le compte propriétaire a disparu se répare
+        (self-healing), avec un audit qui en donne le motif — sans secret."""
         with patch('app.routes.apps.is_docker_network_ip', return_value=True), \
              patch('app.routes.apps.settings.force_replace_app', False):
             response = await client.post(
@@ -209,6 +210,10 @@ class TestAppAutoReplace:
             )
         )
         entry = audit.scalar_one()
+        assert "SA owner absent" in (entry.details or ""), (
+            "le motif d'audit doit dire pourquoi la ré-inscription sans jeton a été "
+            f"autorisée : {entry.details!r}"
+        )
         assert "secret" not in (entry.details or "").lower()
 
     @pytest.mark.asyncio
