@@ -338,6 +338,27 @@ def is_owner_service_account(sa, app_slug: str, app_name: str) -> bool:
     return _sa_matches_owner_name(sa.name, app_slug, app_name)
 
 
+async def rename_owner_service_accounts(db: AsyncSession, app: Application, old_name: str) -> int:
+    """Renomme les comptes propriétaires d'une application dont le nom vient de changer.
+
+    L'identité du compte propriétaire repose sur son nom (convention
+    « SA - <nom de l'application> », cf. is_owner_service_account) : renommer
+    l'application sans son compte le déposséderait — plus reconnu comme
+    propriétaire, il serait pris pour disparu, et la ré-inscription suivante
+    recréerait un compte (secret renvoyé à l'appelant, adresses réécrites).
+    À appeler APRÈS avoir changé `app.name`, avec le nom d'avant. Ne commit pas.
+    """
+    lies = await db.execute(
+        select(ServiceAccount).join(ServiceAccount.applications).where(Application.id == app.id)
+    )
+    renommes = 0
+    for sa in lies.scalars().all():
+        if is_owner_service_account(sa, app.slug, old_name):
+            sa.name = f"SA - {app.name}"
+            renommes += 1
+    return renommes
+
+
 async def delete_app_cascade(
     db: AsyncSession,
     app: Application,
@@ -1670,6 +1691,8 @@ async def register_app(
             if app_data.name and existing_app.name != app_data.name:
                 old_value = existing_app.name
                 existing_app.name = app_data.name
+                # Le compte propriétaire (reconnu par son nom) suit le renommage.
+                await rename_owner_service_accounts(db, existing_app, old_value)
                 updated_fields.append(f"name: {old_value} → {app_data.name}")
             
             # Mettre à jour la description si fournie et différente
@@ -2177,6 +2200,8 @@ async def admin_auto_register_app(
         if app_data.name and existing_app.name != app_data.name:
             old_value = existing_app.name
             existing_app.name = app_data.name
+            # Le compte propriétaire (reconnu par son nom) suit le renommage.
+            await rename_owner_service_accounts(db, existing_app, old_value)
             updated_fields.append(f"name: {old_value} → {app_data.name}")
         
         # Mettre à jour la description si fournie et différente
@@ -2391,7 +2416,10 @@ async def batch_import_apps(
                         updated_fields.append(f"frontend_url → {new_frontend_url}")
                 
                 if app_item.name and existing_app.name != app_item.name:
+                    ancien_nom = existing_app.name
                     existing_app.name = app_item.name
+                    # Le compte propriétaire (reconnu par son nom) suit le renommage.
+                    await rename_owner_service_accounts(db, existing_app, ancien_nom)
                     updated_fields.append(f"name → {app_item.name}")
                 
                 if updated_fields:
@@ -3551,9 +3579,14 @@ async def update_app(
     new_shared = update_data.get("is_shared_service")
     shared_changed = new_shared is not None and old_shared != new_shared
     
+    ancien_nom = app.name
     for field, value in update_data.items():
         setattr(app, field, value)
-    
+
+    # Le compte propriétaire (reconnu par son nom) suit le renommage.
+    if app.name != ancien_nom:
+        await rename_owner_service_accounts(db, app, ancien_nom)
+
     await db.commit()
     await db.refresh(app)
     
