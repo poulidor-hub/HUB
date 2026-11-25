@@ -17,7 +17,10 @@ POULIDOR](https://github.com/POULIDOR-Audit-Developpement/POULIDOR/blob/main/CON
    méta-repo POULIDOR — `bash scripts/hooks/install-hooks.sh` à sa racine,
    `--all` pour l'étendre aux sous-modules (gitleaks requis :
    https://github.com/gitleaks/gitleaks). Le script de ce dépôt est le même :
-   lancé hors du méta-repo, il refuse et n'écrit rien.
+   lancé hors du méta-repo, il refuse et n'écrit rien. Avec ce seul dépôt, lancez le scan avant
+   chaque commit : `gitleaks git --pre-commit --staged --no-banner --no-color
+   --log-level warn` (code 0 : rien ; 1 : secret détecté, ne commitez pas), ou
+   posez vous-même un hook `pre-commit` qui l'appelle.
 5. **Docs** : toute nouvelle route est documentée dans `INTEGRATION.md` et
    l'entrée CHANGELOG associée (bump de `VERSION` obligatoire).
 6. **CLA** : toute première contribution est accompagnée d'un CLA
