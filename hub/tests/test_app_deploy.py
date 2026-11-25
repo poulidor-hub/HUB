@@ -598,18 +598,20 @@ async def test_app_deployment_model_persists(async_session):
 
 
 @pytest.mark.asyncio
-async def test_apps_host_path_setting_default(settings):
+async def test_apps_host_path_setting_default(monkeypatch):
     """Le chemin APPS est configurable via APPS_HOST_PATH avec défaut utilisable.
 
     Non-régression (2026-10-12) : le défaut ne référence plus de chemin de
     machine de dev (/home/<user>/...) — les installations réelles reçoivent
     APPS_HOST_PATH via le .env (écrit par install.sh) injecté par compose.
+
+    Le défaut est lu hors de l'environnement : un `make test` lancé depuis un
+    worktree sans `.env` exporte APPS_HOST_PATH (valeur calculée par le
+    Makefile) et ne doit pas faire échouer ce test.
     """
-    from app.config import get_settings
-    st = get_settings()
-    assert hasattr(st, "apps_host_path")
-    assert st.apps_host_path  # non vide par défaut
-    assert not st.apps_host_path.startswith("/home/")
+    from app.config import Settings
+    monkeypatch.delenv("APPS_HOST_PATH", raising=False)
+    assert Settings().apps_host_path == "/data/apps"
 
 
 @pytest.mark.asyncio
