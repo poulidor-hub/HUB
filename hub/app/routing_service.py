@@ -174,12 +174,14 @@ async def collect_entries(session, hub_host: str, zone: str) -> list[dict]:
     """Construit les entrées de routage depuis le registre.
 
     Chaque entrée : {kind, ref, dns_name, fqdn, in_zone, ip, proxy_pass,
-    is_workshop, is_active, enabled}. Les apps inactives sont conservées
-    (statut visible, liens non cassés) ; les ateliers -ws inclus et marqués ;
-    les services tiers désactivés exclus ; dns_name inconnu → ignoré (défensif).
+    is_workshop, is_active, enabled}. Apps approuvées, actives ou non,
+    conservées (statut visible, liens non cassés) ; apps non approuvées
+    exclues (valeur absente = approuvée) ; les ateliers -ws inclus et
+    marqués ; les services tiers désactivés exclus ; dns_name inconnu →
+    ignoré (défensif).
     """
     from app.models import (  # import local : évite la circularité models<->database
-        Application, PortAllocation, RoutedService,
+        Application, ApprovalStatus, PortAllocation, RoutedService,
     )
 
     entries: list[dict] = []
@@ -195,6 +197,8 @@ async def collect_entries(session, hub_host: str, zone: str) -> list[dict]:
             continue  # défensif : le backfill/lifespan garantit la présence
         if getattr(app, "is_system_app", False):
             continue  # app système du Hub (ex. « hub ») : jamais routée par nom
+        if (app.approval_status or ApprovalStatus.approved) is not ApprovalStatus.approved:
+            continue  # en attente ou refusée : ni zone DNS ni vhost avant approbation
         alloc = allocations.get(app.slug)
         # proxy_pass : frontend_url du REGISTRE en priorité (scheme conservé —
         # http ou https selon le vrai listener de l'app) ; fallback : port HTTP
