@@ -4,6 +4,8 @@
 """
 Tests d'intégration pour les endpoints API des applications
 """
+import logging
+
 import pytest
 from pathlib import Path
 from unittest.mock import patch
@@ -12,7 +14,14 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import create_access_token, get_password_hash
-from app.models import User, Application, UserAppRole, ServiceAccount, AuditLog
+from app.models import (
+    User,
+    Application,
+    UserAppRole,
+    ServiceAccount,
+    AuditLog,
+    ApprovalStatus,
+)
 from tests.conftest import get_auth_header
 
 
@@ -727,8 +736,15 @@ class TestRegisterIdempotent:
     secret du SA owner et invalidait mutuellement les instances qui bootent
     ensemble. Avec le marqueur `X-Hub-Register-Idempotent: 1` ET un token M2M
     valide du SA owner, le Hub conserve le secret (`secret_rotated=false`,
-    sans `client_secret`). Sans marqueur ou sans token → rotation préservée
-    (compat ascendante bidirectionnelle avec les vieux socles).
+    sans `client_secret`). Sans marqueur, avec le token du SA owner → rotation
+    préservée (compat ascendante avec les vieux socles).
+
+    Tâche 3 (plan 2026-11-25-inscription-modele-confiance) : réinscrire une
+    application existante exige le jeton de son compte de service propriétaire.
+    Le réseau interne peut créer, seul le jeton du propriétaire peut modifier :
+    sans jeton, ou avec le jeton d'un compte lié non propriétaire → 401, aucune
+    rotation, aucune réécriture. Le compte propriétaire disparu reste le seul
+    cas d'auto-réparation (cf. test_register_recreates_missing_sa.py).
     """
 
     @staticmethod
@@ -833,52 +849,48 @@ class TestRegisterIdempotent:
         )
 
     @pytest.mark.asyncio
-    async def test_register_without_marker_rotates(
+    async def test_register_without_token_is_refused(
         self, client: AsyncClient, async_session: AsyncSession, tmp_path: Path
     ):
-        """Sans marqueur (vieux socle) → rotation préservée, ancien secret invalidé."""
+        """Sans jeton (vieux socle ou appelant quelconque) → 401, secret conservé."""
         creds = await self._register_and_approve(
-            client, async_session, tmp_path, "oldsocle-app", "Oldsocle App", 9415
+            client, async_session, tmp_path, "notoken-app", "Notoken App", 9415
         )
         old_secret = creds["client_secret"]
 
         mint = await self._mint(client, creds["client_id"], old_secret)
         assert mint.status_code == 200
 
-        # Re-register SANS header NI token (vieux socle : comportement actuel)
+        # Re-register SANS header NI token
         with patch("app.routes.apps.is_docker_network_ip", return_value=True), \
              patch("app.routes.service_accounts.SECRETS_DIR", tmp_path):
             response = await client.post(
                 "/api/apps/register",
                 json={
-                    "slug": "oldsocle-app",
-                    "name": "Oldsocle App",
+                    "slug": "notoken-app",
+                    "name": "Notoken App",
                     "api_port": 9415,
                     "frontend_port": 9416,
                 },
             )
 
-        assert response.status_code == 200, f"{response.status_code}: {response.text}"
-        data = response.json()
-        assert data["is_new"] is False
-        assert data["secret_rotated"] is True
-        assert data["credentials"]["client_id"] == creds["client_id"]
-        new_secret = data["credentials"]["client_secret"]
-        assert new_secret and new_secret != old_secret, "Le secret n'a pas été roté"
+        assert response.status_code == 401, (
+            f"Réinscrire sans jeton doit être refusé : {response.status_code} reçu, 401 attendu"
+        )
+        assert response.json()["detail"] == "Token M2M requis pour réinscrire cette application"
 
-        # L'ancien secret ne mint plus (invalidé par la rotation)
-        remint_old = await self._mint(client, creds["client_id"], old_secret)
-        assert remint_old.status_code == 401
-
-        # Le nouveau secret est utilisable
-        mint_new = await self._mint(client, creds["client_id"], new_secret)
-        assert mint_new.status_code == 200, f"{mint_new.status_code}: {mint_new.text}"
+        # Aucune rotation : l'ancien secret mint encore
+        remint = await self._mint(client, creds["client_id"], old_secret)
+        assert remint.status_code == 200, (
+            f"L'ancien secret ne mint plus ({remint.status_code}) — rotation "
+            f"indue malgré le refus"
+        )
 
     @pytest.mark.asyncio
-    async def test_register_with_marker_but_no_token_rotates(
+    async def test_register_with_marker_but_no_token_is_refused(
         self, client: AsyncClient, async_session: AsyncSession, tmp_path: Path
     ):
-        """Marqueur sans token M2M → rotation (pas de preuve d'identité)."""
+        """Marqueur sans token M2M → 401 (pas de preuve d'identité), secret conservé."""
         creds = await self._register_and_approve(
             client, async_session, tmp_path, "marker-app", "Marker App", 9425
         )
@@ -887,7 +899,7 @@ class TestRegisterIdempotent:
         mint = await self._mint(client, creds["client_id"], old_secret)
         assert mint.status_code == 200
 
-        # Header présent, MAIS pas de Bearer → pas de preuve → rotation
+        # Header présent, MAIS pas de Bearer → pas de preuve → refus
         with patch("app.routes.apps.is_docker_network_ip", return_value=True), \
              patch("app.routes.service_accounts.SECRETS_DIR", tmp_path):
             response = await client.post(
@@ -901,27 +913,29 @@ class TestRegisterIdempotent:
                 headers={"X-Hub-Register-Idempotent": "1"},
             )
 
-        assert response.status_code == 200, f"{response.status_code}: {response.text}"
-        data = response.json()
-        assert data["is_new"] is False
-        assert data["secret_rotated"] is True
-        new_secret = data["credentials"]["client_secret"]
-        assert new_secret and new_secret != old_secret, "Le secret n'a pas été roté"
+        assert response.status_code == 401, (
+            f"Réinscrire avec le marqueur mais sans jeton doit être refusé : "
+            f"{response.status_code} reçu, 401 attendu"
+        )
+        assert response.json()["detail"] == "Token M2M requis pour réinscrire cette application"
 
-        # L'ancien secret ne mint plus (invalidé par la rotation)
-        remint_old = await self._mint(client, creds["client_id"], old_secret)
-        assert remint_old.status_code == 401
+        # Aucune rotation : l'ancien secret mint encore
+        remint = await self._mint(client, creds["client_id"], old_secret)
+        assert remint.status_code == 200, (
+            f"L'ancien secret ne mint plus ({remint.status_code}) — rotation "
+            f"indue malgré le refus"
+        )
 
     @pytest.mark.asyncio
-    async def test_register_idempotent_with_non_owner_token_rotates(
+    async def test_register_with_non_owner_token_is_refused_and_owner_secret_kept(
         self, client: AsyncClient, async_session: AsyncSession, tmp_path: Path
     ):
-        """Token M2M valide MAIS d'un SA NON-owner → rotation obligatoire.
+        """Token M2M valide MAIS d'un SA NON-owner → 401, secret du owner intact.
 
         Garde-fou anti-appels croisés entre apps : un SA lié à l'app (accès
-        type partagé) qui re-register avec le marqueur ne doit PAS déclencher
-        le chemin « secret conservé » — seul le SA owner en fait la preuve.
-        Seul le secret du SA OWNER est roté ; celui du SA appelant est intact.
+        type partagé) ne peut pas réinscrire l'app — son jeton vaut absence de
+        jeton. Seul le jeton du SA owner est autorisé à réinscrire ; le secret
+        du SA owner comme celui du SA appelant restent intacts.
         """
         from app.models import service_account_app_access
 
@@ -956,7 +970,7 @@ class TestRegisterIdempotent:
         assert mint_deputy.status_code == 200, f"{mint_deputy.status_code}: {mint_deputy.text}"
         deputy_token = mint_deputy.json()["access_token"]
 
-        # Re-register idempotent avec le token du NON-owner → rotation
+        # Re-register avec le token du NON-owner → refus (vaut absence de jeton)
         with patch("app.routes.apps.is_docker_network_ip", return_value=True), \
              patch("app.routes.service_accounts.SECRETS_DIR", tmp_path):
             response = await client.post(
@@ -973,23 +987,18 @@ class TestRegisterIdempotent:
                 },
             )
 
-        assert response.status_code == 200, f"{response.status_code}: {response.text}"
-        data = response.json()
-        assert data["secret_rotated"] is True, (
-            "Un token NON-owner ne doit JAMAIS déclencher le chemin « secret conservé »"
+        assert response.status_code == 401, (
+            f"Réinscrire avec le jeton d'un compte non propriétaire doit être refusé : "
+            f"{response.status_code} reçu, 401 attendu"
         )
-        new_owner_secret = data["credentials"]["client_secret"]
-        assert new_owner_secret and new_owner_secret != old_owner_secret, (
-            "Le secret du SA owner n'a pas été roté malgré un token non-owner"
+        assert response.json()["detail"] == "Token M2M requis pour réinscrire cette application"
+
+        # Le secret du SA owner est INTACT : il mint toujours
+        mint_owner = await self._mint(client, creds["client_id"], old_owner_secret)
+        assert mint_owner.status_code == 200, (
+            f"{mint_owner.status_code}: le secret du SA owner ne mint plus — "
+            f"roté indûment malgré le refus"
         )
-
-        # L'ANCIEN secret owner ne mint plus (roté)
-        mint_old = await self._mint(client, creds["client_id"], old_owner_secret)
-        assert mint_old.status_code == 401
-
-        # Le nouveau secret owner est utilisable
-        mint_new = await self._mint(client, creds["client_id"], new_owner_secret)
-        assert mint_new.status_code == 200, f"{mint_new.status_code}: {mint_new.text}"
 
         # Le SA non-owner n'a PAS été touché : son secret mint toujours
         mint_deputy_after = await self._mint(client, "sa_deputy_cross", "deputy_secret")
@@ -1069,4 +1078,307 @@ class TestRegisterIdempotent:
         assert remint.status_code == 200, (
             f"{remint.status_code}: l'ancien secret ne mint plus alors que le "
             f"chemin idempotent ne doit pas roté — {remint.text}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_register_with_owner_token_without_marker_still_rotates(
+        self, client: AsyncClient, async_session: AsyncSession, tmp_path: Path
+    ):
+        """Jeton du propriétaire SANS marqueur (socles 2.36 à 2.39) → rotation
+        préservée, ancien secret invalidé."""
+        creds = await self._register_and_approve(
+            client, async_session, tmp_path, "oldsocle-app", "Oldsocle App", 9415
+        )
+        old_secret = creds["client_secret"]
+
+        mint = await self._mint(client, creds["client_id"], old_secret)
+        assert mint.status_code == 200
+        token = mint.json()["access_token"]
+
+        # Re-register SANS marqueur, AVEC le Bearer du SA owner
+        with patch("app.routes.apps.is_docker_network_ip", return_value=True), \
+             patch("app.routes.service_accounts.SECRETS_DIR", tmp_path):
+            response = await client.post(
+                "/api/apps/register",
+                json={
+                    "slug": "oldsocle-app",
+                    "name": "Oldsocle App",
+                    "api_port": 9415,
+                    "frontend_port": 9416,
+                },
+                headers={"Authorization": f"Bearer {token}"},
+            )
+
+        assert response.status_code == 200, f"{response.status_code}: {response.text}"
+        data = response.json()
+        assert data["is_new"] is False
+        assert data["secret_rotated"] is True
+        assert data["credentials"]["client_id"] == creds["client_id"]
+        new_secret = data["credentials"]["client_secret"]
+        assert new_secret and new_secret != old_secret, "Le secret n'a pas été roté"
+
+        # L'ancien secret ne mint plus (invalidé par la rotation)
+        remint_old = await self._mint(client, creds["client_id"], old_secret)
+        assert remint_old.status_code == 401
+
+        # Le nouveau secret est utilisable
+        mint_new = await self._mint(client, creds["client_id"], new_secret)
+        assert mint_new.status_code == 200, f"{mint_new.status_code}: {mint_new.text}"
+
+    @pytest.mark.asyncio
+    async def test_register_without_token_with_custom_host_does_not_rewrite_urls(
+        self, client: AsyncClient, async_session: AsyncSession, tmp_path: Path
+    ):
+        """Ré-inscription sans jeton avec un `custom_host` arbitraire → 401, et
+        les adresses de l'application ne sont pas réécrites vers cet hôte."""
+        await self._register_and_approve(
+            client, async_session, tmp_path, "host-app", "Host App", 9455
+        )
+
+        with patch("app.routes.apps.is_docker_network_ip", return_value=True), \
+             patch("app.routes.service_accounts.SECRETS_DIR", tmp_path):
+            response = await client.post(
+                "/api/apps/register",
+                json={
+                    "slug": "host-app",
+                    "name": "Host App",
+                    "api_port": 9455,
+                    "frontend_port": 9456,
+                    "custom_host": "192.0.2.99",
+                },
+            )
+
+        assert response.status_code == 401, (
+            f"Réinscrire sans jeton doit être refusé : {response.status_code} reçu, 401 attendu"
+        )
+
+        # Adresses relues en base (colonnes : pas de relais par le cache de session)
+        urls = (await async_session.execute(
+            select(
+                Application.api_url,
+                Application.frontend_url,
+                Application.callback_url,
+            ).where(Application.slug == "host-app")
+        )).one()
+        for field, value in zip(("api_url", "frontend_url", "callback_url"), urls):
+            assert "192.0.2.99" not in (value or ""), (
+                f"{field} a été réécrit vers l'hôte arbitraire malgré le refus"
+            )
+
+    @pytest.mark.asyncio
+    async def test_register_with_invalid_token_is_refused_and_secret_kept(
+        self, client: AsyncClient, async_session: AsyncSession, tmp_path: Path
+    ):
+        """`Authorization: Bearer not-a-jwt` → 401, l'ancien secret mint encore."""
+        creds = await self._register_and_approve(
+            client, async_session, tmp_path, "badtoken-app", "Badtoken App", 9465
+        )
+        old_secret = creds["client_secret"]
+
+        with patch("app.routes.apps.is_docker_network_ip", return_value=True), \
+             patch("app.routes.service_accounts.SECRETS_DIR", tmp_path):
+            response = await client.post(
+                "/api/apps/register",
+                json={
+                    "slug": "badtoken-app",
+                    "name": "Badtoken App",
+                    "api_port": 9465,
+                    "frontend_port": 9466,
+                },
+                headers={"Authorization": "Bearer not-a-jwt"},
+            )
+
+        assert response.status_code == 401, (
+            f"Réinscrire avec un jeton invalide doit être refusé : "
+            f"{response.status_code} reçu, 401 attendu"
+        )
+
+        remint = await self._mint(client, creds["client_id"], old_secret)
+        assert remint.status_code == 200, (
+            f"L'ancien secret ne mint plus ({remint.status_code}) — rotation "
+            f"indue malgré le refus"
+        )
+
+    @pytest.mark.asyncio
+    async def test_pending_app_reregistration_without_token_keeps_first_secret(
+        self, client: AsyncClient, async_session: AsyncSession, tmp_path: Path
+    ):
+        """Application en attente (compte de service inactif), réinscrite sans
+        jeton : refusée sans rotation — son PREMIER secret doit encore
+        fonctionner une fois l'application approuvée."""
+        payload = {
+            "slug": "pending-app",
+            "name": "Pending App",
+            "api_port": 9475,
+            "frontend_port": 9476,
+        }
+
+        # Inscription initiale, SANS approbation : app en attente, SA inactif
+        with patch("app.routes.apps.is_docker_network_ip", return_value=True), \
+             patch("app.routes.service_accounts.SECRETS_DIR", tmp_path):
+            response = await client.post("/api/apps/register", json=payload)
+        assert response.status_code == 200, f"{response.status_code}: {response.text}"
+        first_creds = response.json()["credentials"]
+        assert first_creds["client_secret"], "credentials incomplètes au register initial"
+
+        # Ré-inscription sans jeton → refus, aucune rotation
+        with patch("app.routes.apps.is_docker_network_ip", return_value=True), \
+             patch("app.routes.service_accounts.SECRETS_DIR", tmp_path):
+            response = await client.post("/api/apps/register", json=payload)
+        assert response.status_code == 401, (
+            f"Réinscrire une application en attente sans jeton doit être refusé : "
+            f"{response.status_code} reçu, 401 attendu"
+        )
+
+        # Approbation (même chemin que _register_and_approve)
+        result = await async_session.execute(
+            select(Application).where(Application.slug == "pending-app")
+        )
+        app = result.scalar_one()
+        app.approval_status = "approved"
+        app.is_active = True
+        result_sa = await async_session.execute(
+            select(ServiceAccount).where(ServiceAccount.client_id == first_creds["client_id"])
+        )
+        sa = result_sa.scalar_one()
+        sa.is_active = True
+        await async_session.commit()
+
+        # Le PREMIER secret mint : il n'a jamais été roté
+        mint = await self._mint(client, first_creds["client_id"], first_creds["client_secret"])
+        assert mint.status_code == 200, (
+            f"{mint.status_code}: le premier secret ne mint plus après approbation — "
+            f"roté indûment par une ré-inscription refusée"
+        )
+
+    @pytest.mark.asyncio
+    async def test_force_replace_without_token_is_refused_app_kept(
+        self, client: AsyncClient, async_session: AsyncSession, tmp_path: Path
+    ):
+        """`FORCE_REPLACE_APP=true` : le remplacement est une modification — sans
+        jeton du propriétaire il est refusé et l'application existe toujours."""
+        await self._register_and_approve(
+            client, async_session, tmp_path, "forced-app", "Forced App", 9485
+        )
+        result = await async_session.execute(
+            select(Application.id).where(Application.slug == "forced-app")
+        )
+        app_id_before = result.scalar_one()
+
+        with patch("app.routes.apps.is_docker_network_ip", return_value=True), \
+             patch("app.routes.service_accounts.SECRETS_DIR", tmp_path), \
+             patch("app.routes.apps.settings.force_replace_app", True):
+            response = await client.post(
+                "/api/apps/register",
+                json={
+                    "slug": "forced-app",
+                    "name": "Forced App",
+                    "api_port": 9485,
+                    "frontend_port": 9486,
+                },
+            )
+
+        assert response.status_code == 401, (
+            f"Le remplacement forcé sans jeton doit être refusé : "
+            f"{response.status_code} reçu, 401 attendu"
+        )
+
+        # L'application existe toujours, avec le même id (ni supprimée ni recréée)
+        app_ids = (await async_session.execute(
+            select(Application.id).where(Application.slug == "forced-app")
+        )).scalars().all()
+        assert app_ids == [app_id_before], (
+            f"l'application a été supprimée ou recréée (ids en base : {app_ids}, "
+            f"attendu : {[app_id_before]})"
+        )
+
+    @pytest.mark.asyncio
+    async def test_workshop_pending_with_owner_sa_is_not_auto_approved_on_reregistration(
+        self, client: AsyncClient, async_session: AsyncSession, tmp_path: Path
+    ):
+        """Atelier en attente QUI POSSÈDE un compte de service : sa ré-inscription
+        sans jeton est refusée, il n'est pas auto-approuvé pour autant (cas
+        limite documenté : l'administrateur l'approuve, ou recrée l'atelier)."""
+        payload = {
+            "slug": "wsinwait-ws",
+            "name": "Wsinwait App",
+            "api_port": 9495,
+            "frontend_port": 9496,
+        }
+
+        # Inscription sans app de base approuvée → atelier en attente, avec son SA
+        with patch("app.routes.apps.is_docker_network_ip", return_value=True), \
+             patch("app.routes.service_accounts.SECRETS_DIR", tmp_path):
+            response = await client.post("/api/apps/register", json=payload)
+        assert response.status_code == 200, f"{response.status_code}: {response.text}"
+        assert response.json()["application"]["approval_status"] == "pending", (
+            "l'atelier doit être en attente pour que le test porte sur le bon cas"
+        )
+
+        # L'app de base est approuvée ensuite
+        async_session.add(Application(
+            name="Wsinwait App",
+            slug="wsinwait",
+            api_url="http://localhost:9494",
+            is_active=True,
+            approval_status="approved",
+            requires_auth=True,
+        ))
+        await async_session.commit()
+
+        # Ré-inscription sans jeton : refusée AVANT l'auto-approbation
+        with patch("app.routes.apps.is_docker_network_ip", return_value=True), \
+             patch("app.routes.service_accounts.SECRETS_DIR", tmp_path):
+            response = await client.post("/api/apps/register", json=payload)
+        assert response.status_code == 401, (
+            f"Réinscrire l'atelier sans jeton doit être refusé : "
+            f"{response.status_code} reçu, 401 attendu"
+        )
+
+        approval = await async_session.execute(
+            select(Application.approval_status).where(Application.slug == "wsinwait-ws")
+        )
+        assert approval.scalar_one() is ApprovalStatus.pending, (
+            "l'atelier en attente a été auto-approuvé par une ré-inscription sans jeton"
+        )
+
+    @pytest.mark.asyncio
+    async def test_register_refusal_logs_warning(
+        self, client: AsyncClient, async_session: AsyncSession, tmp_path: Path, caplog
+    ):
+        """Chaque refus écrit une ligne WARNING portant le slug et la mention du
+        propriétaire."""
+        await self._register_and_approve(
+            client, async_session, tmp_path, "warned-app", "Warned App", 9505
+        )
+
+        caplog.clear()
+        with caplog.at_level(logging.WARNING, logger="app.routes.apps"), \
+             patch("app.routes.apps.is_docker_network_ip", return_value=True), \
+             patch("app.routes.service_accounts.SECRETS_DIR", tmp_path):
+            response = await client.post(
+                "/api/apps/register",
+                json={
+                    "slug": "warned-app",
+                    "name": "Warned App",
+                    "api_port": 9505,
+                    "frontend_port": 9506,
+                },
+            )
+
+        assert response.status_code == 401, (
+            f"Réinscrire sans jeton doit être refusé : {response.status_code} reçu, 401 attendu"
+        )
+
+        refusals = [
+            rec.getMessage() for rec in caplog.records
+            if rec.levelno == logging.WARNING
+            and rec.name == "app.routes.apps"
+            and "warned-app" in rec.getMessage()
+            and "propriétaire" in rec.getMessage()
+        ]
+        assert refusals, (
+            "le refus de ré-inscription doit écrire une ligne WARNING portant le slug "
+            f"et la mention « propriétaire » — WARNING capturés : "
+            f"{[rec.getMessage() for rec in caplog.records if rec.levelno == logging.WARNING]}"
         )
