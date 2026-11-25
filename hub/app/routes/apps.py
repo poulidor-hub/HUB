@@ -2881,12 +2881,10 @@ async def update_app_shared(
 
     Authentification (par priorité) :
     1. Token M2M valide (recommandé)
-    2. IP whitelist + X-Slug (déprécié)
 
     Si is_shared=True, l'application sera automatiquement accessible
     par tous les nouveaux service accounts créés.
     """
-    client_ip = request.client.host if request.client else None
     app_slug = request.headers.get("X-Slug")
 
     if token:
@@ -2925,22 +2923,10 @@ async def update_app_shared(
                 detail="Token M2M invalide ou expiré"
             )
     else:
-        if not is_docker_network_ip(client_ip):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Accès autorisé uniquement depuis le réseau Docker ou avec un token M2M (IP: {client_ip})"
-            )
-
-        if not app_slug:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Header X-Slug requis"
-            )
-
-        logger.warning(
-            "⏳ DEPRECATION: /me/shared appelé sans token M2M (IP=%s, X-Slug=%s). "
-            "Cette application doit migrer vers l'authentification par token M2M.",
-            client_ip, app_slug
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token M2M (Authorization: Bearer) requis pour modifier le partage d'une application. "
+                   "L'authentification par IP+header est supprimée."
         )
 
     if not app_slug:
@@ -2978,7 +2964,7 @@ async def update_app_shared(
         if shared_added_count > 0:
             await db.commit()
 
-    auth_method = "token M2M" if token else "IP whitelist (déprécié)"
+    auth_method = "token M2M"
     logger.info(f"Application '{app_slug}' is_shared_service={is_shared} ({auth_method})")
 
     message = f"Application '{app_slug}' mise à jour"
@@ -3108,7 +3094,6 @@ async def push_openapi_spec(
 
     Authentification (par priorité) :
     1. Token M2M valide (recommandé)
-    2. IP whitelist + X-Slug (déprécié)
 
     La spec est automatiquement filtrée pour ne conserver que les
     endpoints métier (les endpoints techniques comme /health, /docs,
@@ -3156,22 +3141,10 @@ async def push_openapi_spec(
                 detail="Token M2M invalide ou expiré"
             )
     else:
-        if not is_docker_network_ip(client_ip):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Accès autorisé uniquement depuis le réseau Docker ou avec un token M2M (IP: {client_ip})"
-            )
-
-        if not app_slug:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Header X-Slug requis"
-            )
-
-        logger.warning(
-            "⏳ DEPRECATION: /me/openapi appelé sans token M2M (IP=%s, X-Slug=%s). "
-            "Cette application doit migrer vers l'authentification par token M2M.",
-            client_ip, app_slug
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token M2M (Authorization: Bearer) requis pour pousser une spécification OpenAPI. "
+                   "L'authentification par IP+header est supprimée."
         )
 
     if not app_slug:
@@ -3200,7 +3173,7 @@ async def push_openapi_spec(
 
     await db.commit()
 
-    auth_method = "token M2M" if token else "IP whitelist (déprécié)"
+    auth_method = "token M2M"
     logger.info(
         f"Spec OpenAPI reçue pour '{app_slug}' ({auth_method}): "
         f"{business_count} endpoints métier, {filtered_count} techniques exclus"
