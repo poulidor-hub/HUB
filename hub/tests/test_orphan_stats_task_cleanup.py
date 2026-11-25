@@ -27,3 +27,17 @@ async def test_orphan_stats_task_is_gone_before_next_test():
     """Le test précédent a armé une tâche : la fixture de nettoyage l'a annulée."""
     assert events._stats_flush_task is None
     assert events._stats_pending is False
+
+
+async def test_stats_broadcast_is_immediate_in_a_fresh_test(monkeypatch):
+    """Le test d'amorce a ouvert la fenêtre du limiteur : le test suivant doit
+    néanmoins diffuser immédiatement (fenêtre refermée entre deux tests)."""
+    diffusés = []
+
+    async def fake_diffusion():
+        diffusés.append(True)
+
+    monkeypatch.setattr(events, "_do_broadcast_stats", fake_diffusion)
+    await events.broadcast_stats_update()
+    assert diffusés == [True]
+    assert events._stats_flush_task is None
