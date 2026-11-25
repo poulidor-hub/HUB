@@ -96,7 +96,7 @@ async def fleet_env_occupied(settings, host: str) -> tuple[set[str], set[int]]:
     Les scans Docker ne voient que le VIVANT : une app legacy (absente du
     registre Hub) ou arrêtée au moment de l'allocation — réseau pruné,
     conteneurs down — était invisible et se faisait ré-attribuer ports et
-    sous-réseau (bug 2026-11-13 : intendance vs contrat-w-pr / exemple-app).
+    sous-réseau (bug 2026-11-13 : exemple-app-20 vs tiers-app-ws / exemple-app-9).
     Les `.env` de la flotte (montage `apps_host_path`) sont la source de
     vérité durable : leurs `APP_SUBNET`/`API_PORT`/`FRONTEND_PORT`/
     `FRONTEND_HTTPS_PORT` comptent comme occupés même sans conteneur vivant.

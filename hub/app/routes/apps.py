@@ -1786,7 +1786,7 @@ async def register_app(
             # Ne sélectionner que le SA "propriétaire" de cette app. Pour une
             # app partagée, la relation N-N contient aussi les SA des autres
             # apps (accès shared) : rotationner leur secret casserait leur M2M
-            # (bug réel : SA de Philia Proxy livré à exemple-app-7).
+            # (bug réel : SA de Philia Proxy livré à Exemple App 8).
             sa = next(
                 (
                     sa

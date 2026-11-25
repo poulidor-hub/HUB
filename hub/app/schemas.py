@@ -204,7 +204,7 @@ class UserAppRoleResponse(BaseModel):
 class UserResponse(UserBase):
     # Lecture tolérante : str (et non EmailStr hérité) pour ne jamais 500 sur
     # des données legacy créées via des chemins non validés (import/export,
-    # bulk CSV, robots M2M — ex. 'exports-robot@hub.local', domaine spécial
+    # bulk CSV, robots M2M — ex. 'integration-robot@hub.local', domaine spécial
     # RFC 6761 rejeté par email-validator). La création/modif reste stricte
     # (UserCreate/UserUpdate héritent EmailStr).
     email: Optional[str] = None

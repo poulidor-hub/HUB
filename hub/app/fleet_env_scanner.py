@@ -9,7 +9,7 @@ contrairement aux scans Docker qui ne voient que le vivant. Une app legacy
 (jamais passée par `allocate-ports`, donc absente du registre) ou simplement
 arrêtée au moment d'une allocation doit néanmoins protéger ses ports et son
 sous-réseau (bug 2026-11-13 : `10.50.16.0/24` et le port 9019 ré-attribués
-alors que contrat-w-pr / exemple-app les revendiquaient dans leur .env).
+alors que tiers-app-ws / exemple-app-9 les revendiquaient dans leur .env).
 
 Symétrique de `docker_scanner.get_used_*` : best-effort, ne lève jamais —
 montage absent ou fichier illisible → ensembles vides + warning.
