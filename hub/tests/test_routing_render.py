@@ -11,9 +11,9 @@ d'apps + 3 services (interne zone, externe, désactivé).
 import logging
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import select, update
 
-from app.models import Application, PortAllocation, RoutedService
+from app.models import Application, ApprovalStatus, PortAllocation, RoutedService
 from app.routing_service import (
     collect_entries,
     render_vhosts,
@@ -118,6 +118,24 @@ async def test_collect_entries_seven_profiles(async_session):
     assert by_dns["service.example.org"]["kind"] == "service"
     assert by_dns["service.example.org"]["in_zone"] is False
     assert "old.example.org" not in by_dns
+
+
+async def test_collect_entries_excludes_pending_but_treats_absent_status_as_approved(async_session):
+    pending = _app("app-pending")
+    pending.approval_status = ApprovalStatus.pending
+    absent = _app("app-legacy")
+    async_session.add_all([pending, absent])
+    await async_session.commit()
+    # Ligne antérieure à l'approbation : NULL en base. Passe par un UPDATE brut :
+    # laissée à None à l'INSERT, la colonne reçoit son défaut Python (approved).
+    await async_session.execute(
+        update(Application).where(Application.slug == "app-legacy")
+        .values(approval_status=None)
+    )
+    await async_session.commit()
+    by_dns = {e["dns_name"]: e for e in await collect_entries(async_session, HUB_HOST, ZONE)}
+    assert "app-pending" not in by_dns
+    assert "app-legacy" in by_dns
 
 
 # ---------------------------------------------------------------- render zone
