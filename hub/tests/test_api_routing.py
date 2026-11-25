@@ -158,15 +158,15 @@ async def test_services_crud(client, admin_token, async_session, no_publish):
     await _seed_zone(async_session)
     headers = _auth(admin_token)
     resp = await client.post(f"{BASE}/services", json={
-        "name": "PhiliaNG", "dns_name": "service.example.org",
+        "name": "PhiliaNG", "dns_name": "proxy.example.lan",
         "target_url": "https://host.docker.internal:4443"}, headers=headers)
     assert resp.status_code in (200, 201)
     svc = (await async_session.execute(select(RoutedService))).scalars().one()
-    assert svc.dns_name == "service.example.org"
+    assert svc.dns_name == "proxy.example.lan"
     assert no_publish["n"] == 1
 
     resp = await client.put(f"{BASE}/services/{svc.id}", json={
-        "name": "PhiliaNG", "dns_name": "service.example.org",
+        "name": "PhiliaNG", "dns_name": "proxy.example.lan",
         "target_url": "https://host:4443", "is_enabled": False}, headers=headers)
     assert resp.status_code == 200
     await async_session.refresh(svc)

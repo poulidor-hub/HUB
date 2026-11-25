@@ -75,14 +75,14 @@ def test_cli_init_then_cert(certs, monkeypatch, capsys):
 
 
 def test_create_server_cert_custom_cn_san(certs):
-    """Cert PhiliaNG : CN et SAN surchargés (service.example.org).
+    """Cert PhiliaNG : CN et SAN surchargés (proxy.example.lan).
 
-    Le proxy transparent SNI service.example.org a besoin d'un cert dont le CN et le
+    Le proxy transparent SNI proxy.example.lan a besoin d'un cert dont le CN et le
     SAN portent ce domaine précis — sans fuiter les domaines hub (localhost,
     hub.local…) qui n'ont rien à faire dans un cert PhiliaNG.
     """
     pki.init_ca()
-    pki.create_server_cert("philia-ng", cn="service.example.org", san=["service.example.org"])
+    pki.create_server_cert("philia-ng", cn="proxy.example.lan", san=["proxy.example.lan"])
     srv_crt = certs / "server" / "philia-ng" / "server.crt"
     assert srv_crt.exists()
 
@@ -93,13 +93,13 @@ def test_create_server_cert_custom_cn_san(certs):
         srv.signature, srv.tbs_certificate_bytes,
         padding.PKCS1v15(), srv.signature_hash_algorithm,
     )
-    # CN = service.example.org
+    # CN = proxy.example.lan
     cn = srv.subject.get_attributes_for_oid(x509.NameOID.COMMON_NAME)[0].value
-    assert cn == "service.example.org"
-    # SAN = service.example.org uniquement (pas de fuite des domaines hub)
+    assert cn == "proxy.example.lan"
+    # SAN = proxy.example.lan uniquement (pas de fuite des domaines hub)
     san = srv.extensions.get_extension_for_class(x509.SubjectAlternativeName).value
     dns = san.get_values_for_type(x509.DNSName)
-    assert "service.example.org" in dns
+    assert "proxy.example.lan" in dns
     assert "localhost" not in dns
     assert "hub.local" not in dns
 
@@ -107,10 +107,10 @@ def test_create_server_cert_custom_cn_san(certs):
 def test_cli_cert_with_cn_san(certs):
     """CLI : `pki.py cert create philia-ng --cn ... --san ...`."""
     pki.main(["init"])
-    pki.main(["cert", "create", "philia-ng", "--cn", "service.example.org", "--san", "service.example.org"])
+    pki.main(["cert", "create", "philia-ng", "--cn", "proxy.example.lan", "--san", "proxy.example.lan"])
     srv_crt = certs / "server" / "philia-ng" / "server.crt"
     assert srv_crt.exists()
     srv = x509.load_pem_x509_certificate(srv_crt.read_bytes())
     cn = srv.subject.get_attributes_for_oid(x509.NameOID.COMMON_NAME)[0].value
-    assert cn == "service.example.org"
+    assert cn == "proxy.example.lan"
 

@@ -53,7 +53,7 @@ def test_validate_dns_name_rejects_bad_inputs():
 def test_validate_zone():
     assert validate_zone("hub.example.lan") == "hub.example.lan"
     assert validate_zone("") == ""  # vide = routage par nom désactivé (état valide)
-    for bad in ("priv", "hub..priv", "-hub.priv", "hub.example.lan/x"):
+    for bad in ("lan", "hub..lan", "-hub.lan", "hub.example.lan/x"):
         with pytest.raises(ValueError):
             validate_zone(bad)
 
@@ -82,7 +82,7 @@ async def test_collect_entries_seven_profiles(async_session):
                        frontend_port=4201, frontend_https_port=4202),
         PortAllocation(app_slug="exemple-app-ws", host=HUB_HOST, api_port=9013,
                        frontend_port=5211, frontend_https_port=5212),
-        RoutedService(name="PhiliaNG", dns_name="service.example.org",
+        RoutedService(name="PhiliaNG", dns_name="proxy.example.lan",
                       target_url="https://host.docker.internal:4443"),
         RoutedService(name="Compta interne", dns_name=f"compta.{ZONE}",
                       target_url="http://192.0.2.10:8080"),
@@ -115,8 +115,8 @@ async def test_collect_entries_seven_profiles(async_session):
     # services : interne actif in_zone, externe actif hors zone, désactivé absent
     assert by_dns[f"compta.{ZONE}"]["kind"] == "service"
     assert by_dns[f"compta.{ZONE}"]["in_zone"] is True
-    assert by_dns["service.example.org"]["kind"] == "service"
-    assert by_dns["service.example.org"]["in_zone"] is False
+    assert by_dns["proxy.example.lan"]["kind"] == "service"
+    assert by_dns["proxy.example.lan"]["in_zone"] is False
     assert "old.example.org" not in by_dns
 
 
@@ -170,12 +170,12 @@ def test_render_zone_exact_content():
 
 def test_render_zone_excludes_out_of_zone_and_empty_zone():
     entries = _entries() + [
-        {"kind": "service", "dns_name": "service.example.org", "fqdn": "service.example.org",
+        {"kind": "service", "dns_name": "proxy.example.lan", "fqdn": "proxy.example.lan",
          "in_zone": False, "ip": HUB_HOST, "proxy_pass": "https://h:4443",
          "is_workshop": False, "is_active": True, "enabled": True},
     ]
     zone_file = render_zone(entries, ZONE)
-    assert "pr177" not in zone_file
+    assert "proxy.example.lan" not in zone_file
     assert zone_file.count("\n") == 2 + 1  # header + 2 lignes hosts (2 IPs)
     assert render_zone(entries, "") == ""
 
