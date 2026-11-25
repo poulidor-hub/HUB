@@ -52,6 +52,19 @@ Si un conteneur Docker est arrêté, le Hub le détecte automatiquement (`DOCKER
 2. ⚠️ Supprime aussi le service account associé
 3. Les backups existants sont conservés
 
+### Régénérer le secret d'un compte de service
+
+Une application ne peut réinscrire ou modifier sa fiche qu'avec le jeton de son
+compte de service (M2M). Si elle a perdu ses identifiants, le Hub lui répond
+`401 — Token M2M requis pour réinscrire cette application` :
+
+1. **Administration → Comptes de service** (outil « Service Accounts ») → bouton **Régénérer le secret** sur la ligne du compte de l'application
+2. ⚠️ L'ancien secret est immédiatement invalidé ; le nouveau n'est affiché qu'une fois
+3. Placer `M2M_CLIENT_ID` et `M2M_CLIENT_SECRET` dans l'environnement de l'application, puis redémarrer celle-ci
+
+Parcours détaillé : « 401 — Token M2M requis pour réinscrire cette application »
+dans `GUIDE_INSTALLATION.md` (Résolution de problèmes).
+
 ### Pool de ports
 
 Le Hub alloue automatiquement les ports des nouvelles apps (frontend + API) depuis des plages définies :

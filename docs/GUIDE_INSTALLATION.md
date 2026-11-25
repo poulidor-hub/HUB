@@ -227,6 +227,18 @@ docker compose logs hub-api | tail -50
 2. Vérifier les logs de l'app : `docker compose logs api`
 3. Tester la connexion : `curl http://<IP_HUB>:8000/api/health` depuis le conteneur de l'app
 
+**401 — Token M2M requis pour réinscrire cette application**
+
+L'application est déjà inscrite et le Hub refuse de la réinscrire : elle a perdu
+ses identifiants M2M ou présente un jeton invalide. Seul le jeton du compte de
+service de l'application peut la modifier.
+
+1. Ouvrir **Administration → Comptes de service** (outil « Service Accounts »)
+2. Régénérer le secret du compte de l'application — le nouveau secret n'est affiché qu'une fois
+3. Placer `M2M_CLIENT_ID` et `M2M_CLIENT_SECRET` dans l'environnement de l'application
+4. Redémarrer l'application en recréant son conteneur (`docker compose up -d`) :
+   un `restart` ne recharge pas le `.env`
+
 ### Les pages du dashboard ne se chargent pas (CORS)
 
 Ajouter l'origine de l'application à `ALLOWED_ORIGINS` dans le `.env` du Hub :
