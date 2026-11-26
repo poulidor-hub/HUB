@@ -3,9 +3,9 @@
 
 """Déploiement automatique des apps du parc (spec 2026-08-18-auto-deploy-apps).
 
-Pipeline : git clone/pull --ff-only -> .env -> make build && make up
-(parité voie manuelle : make build/up incluent le sync-env de l'app) ->
-health check. Un déploiement à la fois (lock asyncio global).
+Pipeline : git clone/pull --ff-only -> .env -> précheck image socle ->
+make build && make up (parité voie manuelle : make build/up incluent le
+sync-env de l'app) -> health check. Un déploiement à la fois (lock asyncio global).
 App sans Makefile = échec explicite (jamais de `docker compose` nu sans
 sync-env ni overlay HTTPS).
 """
@@ -375,6 +375,22 @@ async def _run_deployment(deployment_id: int, slug: str, session_factory=None) -
                     "(make build / make up) ; déployez manuellement ou "
                     "réalignez l'app sur le template."
                 )
+            # --- Précheck image socle, dernier moment pour dire la vraie cause
+            #     avant `make build` : les Dockerfile et le .env lus ici sont
+            #     ceux du build (clone/pull et configuration faits). Sans lui,
+            #     une image `poulidor/socle-*` absente du Docker local meurt
+            #     plus loin sur un « pull access denied » buildkit sans remède
+            #     (constat VM 2026-11-26). Import local : deploy_precheck
+            #     importe deploy_service. ---
+            from app.deploy_precheck import check_socle_images
+            socle_status, socle_detail = await asyncio.to_thread(check_socle_images, app_dir)
+            if socle_status == "fail":
+                raise RuntimeError(socle_detail)
+            if socle_detail:    # images présentes, ou avertissement non bloquant
+                await _update_deployment(
+                    deployment_id, factory,
+                    logs=f"[{_now():%H:%M:%S}] {'⚠️' if socle_status == 'warn' else '✅'} "
+                         f"{socle_detail}\n")
             env_base = compose_base_env()  # jamais l'env du hub dans l'app (cf. COMPOSE_ENV_ALLOWLIST)
             out = await _run_cmd(["make", "build"], app_dir, TIMEOUT_BUILD,
                                  env_base=env_base)
