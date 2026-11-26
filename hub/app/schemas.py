@@ -1055,6 +1055,8 @@ class AllocatePortsRequest(BaseModel):
     """Requête d'allocation de ports (pré-vol, avant docker compose up)."""
     slug: str = Field(..., min_length=2, max_length=50, pattern=r'^[a-z0-9-]+$', description="Slug unique de l'application")
     host: Optional[str] = Field(None, description="Host/IP de l'app (collision scopée par host). Si absent, le host du Hub est utilisé.")
+    api_port: Optional[int] = Field(None, ge=1, le=65535, description="Port API souhaité (déjà figé localement par le profile.json). Si absent, choix automatique.")
+    frontend_port: Optional[int] = Field(None, ge=1, le=65535, description="Port frontend souhaité (pair, frontend+1 réservé au HTTPS). Si absent, choix automatique.")
 
     @field_validator("host")
     @classmethod

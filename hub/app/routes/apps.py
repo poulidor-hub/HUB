@@ -46,7 +46,7 @@ from app.auth import get_admin_or_admin_sa, get_current_admin, get_current_user,
 from app.routes.service_accounts import save_service_account_credentials, delete_service_account_credentials
 from app.routes.audit import log_action
 from app.docker_scanner import docker_scanner
-from app.port_allocator import allocate_ports_for_app, docker_occupied_ports, release_ports_for_app, PortPoolExhausted, SubnetPoolExhausted
+from app.port_allocator import allocate_ports_for_app, docker_occupied_ports, release_ports_for_app, PortAllocationConflict, PortPoolExhausted, SubnetPoolExhausted
 from app.m2m_catalog_export import build_m2m_catalog_export
 from app.repo_access import check_repo_access
 from app.github_client import load_db_token, normalize_github_url, parse_github_url, fetch_github_json
@@ -1348,7 +1348,14 @@ async def allocate_ports(
 
     host = payload.host or settings.get_hub_host()
     try:
-        alloc, reused = await allocate_ports_for_app(db, payload.slug, host, settings)
+        alloc, reused = await allocate_ports_for_app(
+            db, payload.slug, host, settings,
+            desired_api_port=payload.api_port,
+            desired_frontend_port=payload.frontend_port,
+        )
+    except PortAllocationConflict as e:
+        logger.warning(f"⚠️ allocate-ports : ports souhaités refusés pour '{payload.slug}': {e}")
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
     except PortPoolExhausted as e:
         logger.error(f"❌ Pool de ports saturé pour '{payload.slug}': {e}")
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
