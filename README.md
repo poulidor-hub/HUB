@@ -1,6 +1,6 @@
-# HUB_base — Hub central POULIDOR
+# HUB — Hub central POULIDOR
 
-![version](https://img.shields.io/badge/version-3.80.4-blue)
+![version](https://img.shields.io/badge/version-3.106.2-blue)
 
 Portail central du parc POULIDOR : **authentification SSO**, registre des applications,
 messagerie, sauvegardes et administration. Toutes les applications du parc s'y
@@ -50,11 +50,11 @@ flowchart LR
 
 - Les apps vérifient les tokens avec le JWKS public (`/api/auth/.well-known/jwks.json`)
   — zéro secret partagé, une app compromise ne peut pas forger de tokens.
-- Le parc se pilote via [`hubctl`](https://github.com/POULIDOR-Audit-Developpement/Hubctl)
+- Le parc se pilote via [`Hubctl`](https://github.com/poulidor-hub/hubctl)
   ; le design system servi aux apps vient de
-  [`HUBCSS`](https://github.com/POULIDOR-Audit-Developpement/HUBCSS).
-- Dépôts voisins : [HUBsocle](https://github.com/POULIDOR-Audit-Developpement/HUBsocle) ·
-  [HUBapp_TEMPLATE_base](https://github.com/POULIDOR-Audit-Developpement/HUBapp_TEMPLATE_base) ·
+  [`HUBCSS`](https://github.com/poulidor-hub/HUBCSS).
+- Dépôts voisins : [HUBsocle](https://github.com/poulidor-hub/HUBsocle) ·
+  [HUBapp-template](https://github.com/poulidor-hub/HUBapp-template) ·
   [hub-mcp](https://github.com/POULIDOR-Audit-Developpement/hub-mcp)
 
 ## Démarrage
@@ -126,9 +126,28 @@ HUB_base/
 | [`SECURITY_AUDIT.md`](SECURITY_AUDIT.md) | Audit de sécurité HUB + template |
 | [`how2endpoint.md`](how2endpoint.md) | Déclarer ses endpoints métier au Discovery Explorer |
 
+## Mise à jour
+
+Ce dépôt est publié en open source sur [poulidor-hub](https://github.com/poulidor-hub/HUB) ;
+l'organisation `POULIDOR-Audit-Developpement` (privée) reste la source de vérité du parc.
+
+Un déploiement client (clone du méta-repo
+[POULIDOR](https://github.com/poulidor-hub/POULIDOR) avec ses sous-modules) se met à
+jour à sa racine :
+
+```bash
+git fetch upstream
+git merge --ff-only upstream/main
+git submodule update --init --recursive
+```
+
+— et ne pousse jamais vers le public : il est en lecture seule pour les clients
+(GitHub le garantit). Un déploiement standalone de ce dépôt seul fait de même, avec
+`origin` renommé `upstream`.
+
 ## Versionnage
 
-`VERSION` fait foi (actuellement 3.80.4), synchronisée dans le frontend par
+`VERSION` fait foi (actuellement 3.106.1), synchronisée dans le frontend par
 `sync_version.py`. Historique : [`CHANGELOG.md`](CHANGELOG.md).
 
 ---
