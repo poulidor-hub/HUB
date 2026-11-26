@@ -5,6 +5,18 @@
 
 ---
 
+## [3.106.1] - 26 novembre 2026
+
+### ⚡ .gitleaksignore régénéré sur l'histoire réécrite
+
+| Élément | Détail |
+|---------|--------|
+| **Pourquoi** | Les empreintes gitleaks intègrent les sha de commits : après la réécriture d'historique (T6), les empreintes d'ignorance des fixtures ne correspondaient plus (15 faux positifs). |
+| **Régénération** | 15 empreintes écrites depuis le balayage de référence `--all --full-history` ; vérification : 0 finding. |
+| **Nature** | Les 15 sont les fixtures et exemples documentés (INTEGRATION.md, tests factices) — aucun secret réel. |
+
+---
+
 ## [3.106.0] - 25 novembre 2026
 
 ### ⚡ Neutralisation open source — valeurs d'exemple, vhost PhiliaNG paramétrable, garde-fous de dépôt
