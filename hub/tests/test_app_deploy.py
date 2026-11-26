@@ -417,6 +417,113 @@ async def test_run_deployment_fails_explicitly_without_makefile(async_session, m
     assert len(calls) == 1, "aucun build/up ne doit être tenté sans Makefile"
 
 
+# ---- Précheck image socle : entre le clone/.env et `make build` ----
+#
+# Le démon est remplacé au niveau du module de précheck (jamais de vrai docker).
+
+_SOCLE_COMPOSE = """\
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+      args:
+        - SOCLE_VERSION=${APP_SOCLE_VERSION:?APP_SOCLE_VERSION manquant}
+"""
+
+
+def _socle_appdir(tmp_path, dockerfile, env_example="APP_SLUG=old\n", compose=None):
+    appdir = tmp_path / "exemple-app"
+    appdir.mkdir()
+    (appdir / "Makefile").write_text("build:\nup:\n")
+    (appdir / ".env.example").write_text(env_example)
+    (appdir / "Dockerfile.backend").write_text(dockerfile)
+    if compose:
+        (appdir / "docker-compose.yml").write_text(compose)
+    return appdir
+
+
+@pytest.mark.asyncio
+async def test_run_deployment_fails_explicitly_when_socle_image_missing(async_session, monkeypatch, tmp_path):
+    """Image socle absente du Docker local (constat VM 2026-11-26) : le pipeline
+    dit la vraie cause — image nommée + remède — AVANT `make build`, au lieu de
+    mourir plus loin sur un « pull access denied » buildkit."""
+    import app.deploy_precheck as dp
+    import app.deploy_service as ds
+
+    dep_id = await _mk_deployment(async_session)
+    _socle_appdir(tmp_path, "FROM poulidor/socle-api:2.40.2\n")
+
+    calls = _install_fake_exec(monkeypatch, [(0, b"clone")])
+    monkeypatch.setattr(dp, "_docker_image_state", lambda ref: "absent")
+    monkeypatch.setattr(ds, "_wait_healthy", lambda *a, **k: asyncio.sleep(0, result=True))
+    monkeypatch.setattr(ds.get_settings(), "apps_host_path", str(tmp_path))
+
+    await ds._run_deployment(dep_id, "exemple-app", session_factory=lambda: _CtxSession(async_session))
+
+    dep = await async_session.get(AppDeployment, dep_id)
+    await async_session.refresh(dep)
+    assert dep.status == "failed"
+    logs = dep.logs or ""
+    assert "poulidor/socle-api:2.40.2" in logs
+    assert "./hubctl socle build" in logs
+    assert len(calls) == 1, "aucun build ne doit être tenté sans l'image socle"
+
+
+@pytest.mark.asyncio
+async def test_run_deployment_builds_when_socle_image_present(async_session, monkeypatch, tmp_path):
+    """Image socle présente (version portée par le .env via le compose) : le
+    pipeline continue normalement — build puis up."""
+    import app.deploy_precheck as dp
+    import app.deploy_service as ds
+
+    dep_id = await _mk_deployment(async_session)
+    _socle_appdir(tmp_path, "ARG SOCLE_VERSION\nFROM poulidor/socle-api:${SOCLE_VERSION}\n",
+                  env_example="APP_SLUG=old\nAPP_SOCLE_VERSION=2.40.2\n",
+                  compose=_SOCLE_COMPOSE)
+
+    inspected = []
+    calls = _install_fake_exec(monkeypatch, [(0, b"clone"), (0, b""), (0, b"")])
+    monkeypatch.setattr(dp, "_docker_image_state", lambda ref: inspected.append(ref) or "present")
+    monkeypatch.setattr(ds, "_wait_healthy", lambda *a, **k: asyncio.sleep(0, result=True))
+    monkeypatch.setattr(ds.get_settings(), "apps_host_path", str(tmp_path))
+
+    await ds._run_deployment(dep_id, "exemple-app", session_factory=lambda: _CtxSession(async_session))
+
+    dep = await async_session.get(AppDeployment, dep_id)
+    await async_session.refresh(dep)
+    assert dep.status == "success"
+    assert inspected == ["poulidor/socle-api:2.40.2"]
+    assert any("build" in c["cmd"] for c in calls)
+    assert any("up" == part for c in calls for part in c["cmd"])
+
+
+@pytest.mark.asyncio
+async def test_run_deployment_continues_when_socle_image_unverifiable(async_session, monkeypatch, tmp_path):
+    """Version non résoluble : avertissement journalisé, jamais bloquant — le
+    build suit son cours (dernier filet du pipeline)."""
+    import app.deploy_precheck as dp
+    import app.deploy_service as ds
+
+    dep_id = await _mk_deployment(async_session)
+    _socle_appdir(tmp_path, "ARG SOCLE_VERSION\nFROM poulidor/socle-api:${SOCLE_VERSION}\n")
+
+    inspected = []
+    calls = _install_fake_exec(monkeypatch, [(0, b"clone"), (0, b""), (0, b"")])
+    monkeypatch.setattr(dp, "_docker_image_state", lambda ref: inspected.append(ref) or "absent")
+    monkeypatch.setattr(ds, "_wait_healthy", lambda *a, **k: asyncio.sleep(0, result=True))
+    monkeypatch.setattr(ds.get_settings(), "apps_host_path", str(tmp_path))
+
+    await ds._run_deployment(dep_id, "exemple-app", session_factory=lambda: _CtxSession(async_session))
+
+    dep = await async_session.get(AppDeployment, dep_id)
+    await async_session.refresh(dep)
+    assert dep.status == "success"
+    assert inspected == []
+    assert "Image socle non vérifiée" in (dep.logs or "")
+    assert any("build" in c["cmd"] for c in calls)
+
+
 @pytest.mark.asyncio
 async def test_has_active_deployment_for(async_session):
     """Le conflit ne vise que la même app (pool de déploiements, spec 2026-09-17)."""
