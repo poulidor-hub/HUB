@@ -563,3 +563,156 @@ def test_is_in_daemon_default_pool():
     assert is_in_daemon_default_pool("10.50.3.0/24") is False    # pool app dédié
     assert is_in_daemon_default_pool("10.200.5.0/24") is False   # pool daemon élargi
     assert is_in_daemon_default_pool("garbage") is False
+
+
+# ===== Ports souhaités (sync-env : ports déjà figés localement) =====
+# Le profile.json d'INITIALISE peut imposer des ports déjà choisis localement :
+# POST /api/apps/allocate-ports doit les ENREGISTRER auprès du Hub plutôt que
+# d'allouer les siens. Idempotence conservée : souhaités == allocation
+# existante → réutilisation ; souhaités différents → conflit (409 via route).
+# Sans souhait → comportement historique inchangé (tests ci-dessus).
+
+from app.port_allocator import PortAllocationConflict
+
+DESIRED_HOST = "10.20.30.41"  # ≠ hub host : scans Docker ignorés, DB seule décide
+
+
+@pytest.mark.asyncio
+async def test_desired_ports_honored_on_fresh_allocation(async_session):
+    """Allocation fraîche : les ports souhaités sont enregistrés tels quels."""
+    alloc, reused = await allocate_ports_for_app(
+        async_session, "desired-app", DESIRED_HOST, settings,
+        desired_api_port=9100, desired_frontend_port=4300,
+    )
+    assert reused is False
+    assert alloc.api_port == 9100
+    assert alloc.frontend_port == 4300
+    assert alloc.frontend_https_port == 4301
+    assert alloc.subnet == "10.50.0.0/24"  # subnet du pool, logique inchangée
+
+
+@pytest.mark.asyncio
+async def test_desired_ports_matching_existing_allocation_reused(async_session):
+    """Souhaités == allocation existante : réutilisation idempotente."""
+    first, _ = await allocate_ports_for_app(async_session, "same-app", DESIRED_HOST, settings)
+    alloc, reused = await allocate_ports_for_app(
+        async_session, "same-app", DESIRED_HOST, settings,
+        desired_api_port=first.api_port, desired_frontend_port=first.frontend_port,
+    )
+    assert reused is True
+    assert alloc.id == first.id
+    assert (alloc.api_port, alloc.frontend_port, alloc.frontend_https_port) == (
+        first.api_port, first.frontend_port, first.frontend_https_port,
+    )
+
+
+@pytest.mark.asyncio
+async def test_desired_ports_differing_from_existing_raise_conflict(async_session):
+    """Souhaités != allocation existante : conflit, allocation inchangée."""
+    first, _ = await allocate_ports_for_app(async_session, "conflict-app", DESIRED_HOST, settings)
+    with pytest.raises(PortAllocationConflict) as exc:
+        await allocate_ports_for_app(
+            async_session, "conflict-app", DESIRED_HOST, settings,
+            desired_api_port=first.api_port + 1, desired_frontend_port=first.frontend_port,
+        )
+    assert "conflict-app" in str(exc.value)
+    rows = (await async_session.execute(
+        select(PortAllocation).where(PortAllocation.app_slug == "conflict-app")
+    )).scalars().all()
+    assert len(rows) == 1
+    assert rows[0].api_port == first.api_port  # aucun changement
+
+
+@pytest.mark.asyncio
+async def test_allocate_ports_desired_differing_returns_409(client: AsyncClient):
+    """Souhaités != allocation existante : la route renvoie 409."""
+    with patch('app.routes.apps.is_docker_network_ip', return_value=True):
+        r1 = await client.post("/api/apps/allocate-ports", json={"slug": "demo-app", "host": "192.0.2.12"})
+        assert r1.status_code == 200
+        r2 = await client.post("/api/apps/allocate-ports", json={
+            "slug": "demo-app", "host": "192.0.2.12",
+            "api_port": 9123, "frontend_port": r1.json()["frontend_port"],
+        })
+        assert r2.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_desired_ports_taken_by_other_allocation_raise_conflict(async_session):
+    """Souhaités déjà pris par une autre allocation : conflit."""
+    first, _ = await allocate_ports_for_app(async_session, "first-app", DESIRED_HOST, settings)
+    with pytest.raises(PortAllocationConflict):
+        await allocate_ports_for_app(
+            async_session, "second-app", DESIRED_HOST, settings,
+            desired_api_port=first.api_port, desired_frontend_port=first.frontend_port,
+        )
+
+
+@pytest.mark.asyncio
+async def test_allocate_ports_desired_taken_returns_409(client: AsyncClient):
+    """Souhaités déjà pris par une autre allocation : la route renvoie 409."""
+    with patch('app.routes.apps.is_docker_network_ip', return_value=True):
+        r1 = await client.post("/api/apps/allocate-ports", json={"slug": "app-one", "host": "10.0.0.1"})
+        taken = r1.json()
+        r2 = await client.post("/api/apps/allocate-ports", json={
+            "slug": "app-two", "host": "10.0.0.1",
+            "api_port": taken["api_port"], "frontend_port": taken["frontend_port"],
+        })
+        assert r2.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_desired_ports_out_of_range_or_odd_raise_conflict(async_session):
+    """Plages et parité : mêmes règles qu'un choix automatique."""
+    with pytest.raises(PortAllocationConflict):  # API hors plage
+        await allocate_ports_for_app(
+            async_session, "range-app", DESIRED_HOST, settings,
+            desired_api_port=9999, desired_frontend_port=4300,
+        )
+    with pytest.raises(PortAllocationConflict):  # frontend impair
+        await allocate_ports_for_app(
+            async_session, "range-app", DESIRED_HOST, settings,
+            desired_api_port=9100, desired_frontend_port=4301,
+        )
+
+
+@pytest.mark.asyncio
+async def test_desired_ports_blocked_by_docker_occupied(async_session):
+    """Mêmes sources que le choix auto : un port occupé sur l'hôte est refusé."""
+    hub_host = settings.get_hub_host()
+    with patch('app.port_allocator.docker_scanner.get_used_host_ports',
+               return_value={9100, 4300, 4301}):
+        with pytest.raises(PortAllocationConflict):
+            await allocate_ports_for_app(
+                async_session, "docker-blocked", hub_host, settings,
+                desired_api_port=9100, desired_frontend_port=4300,
+            )
+
+
+@pytest.mark.asyncio
+async def test_allocate_ports_desired_honored_via_route(client: AsyncClient):
+    """La route transmet les ports souhaités et reste idempotente dessus."""
+    with patch('app.routes.apps.is_docker_network_ip', return_value=True):
+        r1 = await client.post("/api/apps/allocate-ports", json={
+            "slug": "desired-route-app", "host": "192.0.2.12",
+            "api_port": 9100, "frontend_port": 4300,
+        })
+        assert r1.status_code == 200
+        body = r1.json()
+        assert (body["api_port"], body["frontend_port"], body["frontend_https_port"]) == (9100, 4300, 4301)
+        assert body["reused"] is False
+        r2 = await client.post("/api/apps/allocate-ports", json={
+            "slug": "desired-route-app", "host": "192.0.2.12",
+            "api_port": 9100, "frontend_port": 4300,
+        })
+        assert r2.status_code == 200
+        assert r2.json()["reused"] is True
+
+
+@pytest.mark.asyncio
+async def test_allocate_ports_desired_out_of_bounds_422(client: AsyncClient):
+    """Validation pydantic des bornes (1-65535) : 422."""
+    with patch('app.routes.apps.is_docker_network_ip', return_value=True):
+        r = await client.post("/api/apps/allocate-ports", json={
+            "slug": "bounds-app", "host": "192.0.2.12", "api_port": 0,
+        })
+        assert r.status_code == 422

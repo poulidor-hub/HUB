@@ -48,6 +48,12 @@ class SubnetPoolExhausted(Exception):
     """Levée quand plus aucun sous-réseau libre n'est disponible dans le pool."""
 
 
+class PortAllocationConflict(Exception):
+    """Levée quand des ports souhaités (sync-env : déjà figés localement)
+    sont indisponibles, hors plages, ou en désaccord avec l'allocation
+    existante du (slug, host)."""
+
+
 async def docker_occupied_ports(settings, host: str) -> set[int]:
     """Ports liés sur l'hôte LOCAL par des conteneurs Docker (best-effort).
 
@@ -385,16 +391,97 @@ def pick_free_subnet(
     raise SubnetPoolExhausted(f"Pool de sous-réseaux saturé : {pool}/{size}")
 
 
+def _ports_with_desired(
+    used_api: set[int],
+    used_frontend: set[int],
+    *,
+    api_range: tuple[int, int],
+    frontend_range: tuple[int, int],
+    desired_api_port: int | None,
+    desired_frontend_port: int | None,
+) -> tuple[int, int, int]:
+    """Ports imposés (sync-env : ports déjà figés dans le profile.json).
+
+    Chaque port souhaité est validé avec les MÊMES règles qu'un choix
+    automatique (`pick_free_ports`) mais IMPOSÉ au lieu d'être choisi :
+    plage respectée (api dans api_range ; frontend PAIR dans frontend_range
+    avec frontend+1 pour le HTTPS), disponibilité sur l'hôte (mêmes sources :
+    allocations, URLs d'apps, ports Docker occupés, claims flotte — déjà
+    fusionnés dans used_api/used_frontend par l'appelant).
+    Un souhait absent reste choisi librement. Lève PortAllocationConflict
+    si un port souhaité est indisponible ou hors plage.
+    """
+    if desired_api_port is not None:
+        if not (api_range[0] <= desired_api_port <= api_range[1]):
+            raise PortAllocationConflict(
+                f"Port API souhaité {desired_api_port} hors de la plage "
+                f"autorisée {api_range[0]}-{api_range[1]}"
+            )
+        if desired_api_port in used_api:
+            raise PortAllocationConflict(
+                f"Port API souhaité {desired_api_port} déjà utilisé sur cet hôte"
+            )
+    if desired_frontend_port is not None:
+        if desired_frontend_port % 2 != 0:
+            raise PortAllocationConflict(
+                f"Port frontend souhaité {desired_frontend_port} impair "
+                "(attribution par pas de 2, frontend+1 réservé au HTTPS)"
+            )
+        if not (
+            frontend_range[0] <= desired_frontend_port <= frontend_range[1]
+            and desired_frontend_port + 1 <= frontend_range[1]
+        ):
+            raise PortAllocationConflict(
+                f"Port frontend souhaité {desired_frontend_port} hors de la "
+                f"plage autorisée {frontend_range[0]}-{frontend_range[1]} "
+                "(frontend+1 réservé au HTTPS doit rester dedans)"
+            )
+        if desired_frontend_port in used_frontend or (desired_frontend_port + 1) in used_frontend:
+            raise PortAllocationConflict(
+                f"Port frontend souhaité {desired_frontend_port} (+1 HTTPS) "
+                "déjà utilisé sur cet hôte"
+            )
+    if desired_api_port is not None and desired_frontend_port is not None:
+        return desired_api_port, desired_frontend_port, desired_frontend_port + 1
+
+    # Souhait partiel : l'autre port est choisi librement, sans retomber sur
+    # le port imposé (ajouté aux ensembles d'utilisés).
+    api, fe, https = pick_free_ports(
+        used_api | ({desired_api_port} if desired_api_port is not None else set()),
+        used_frontend | (
+            {desired_frontend_port, desired_frontend_port + 1}
+            if desired_frontend_port is not None else set()
+        ),
+        api_range=api_range,
+        frontend_range=frontend_range,
+    )
+    return (
+        desired_api_port if desired_api_port is not None else api,
+        desired_frontend_port if desired_frontend_port is not None else fe,
+        desired_frontend_port + 1 if desired_frontend_port is not None else https,
+    )
+
+
 async def allocate_ports_for_app(
     db: AsyncSession,
     slug: str,
     host: str,
     settings,
+    desired_api_port: int | None = None,
+    desired_frontend_port: int | None = None,
 ) -> tuple[PortAllocation, bool]:
     """Idempotent : renvoie (allocation, reused).
 
     Si une allocation existe pour (slug, host) → la renvoyer (reused=True).
     Sinon calculer les ports libres, persister, renvoyer (reused=False).
+
+    Ports souhaités (desired_api_port / desired_frontend_port, sync-env) :
+    - identiques à l'allocation existante → réutilisation normale ;
+    - différents → PortAllocationConflict (l'app a déjà d'autres ports
+      localement : le Hub ne doit ni les contredire ni changer les siens) ;
+    - sur allocation fraîche → imposés après validation (plages, frontend
+      pair +1 HTTPS, disponibilité — mêmes sources que le choix auto).
+    Aucun souhait fourni → comportement historique inchangé.
 
     Purge d'abord les réservations expirées (allocations sans application
     associée, au-delà de port_reservation_ttl_minutes) : les ports et
@@ -412,6 +499,16 @@ async def allocate_ports_for_app(
         )
     ).scalar_one_or_none()
     if existing:
+        if (
+            (desired_api_port is not None and desired_api_port != existing.api_port)
+            or (desired_frontend_port is not None and desired_frontend_port != existing.frontend_port)
+        ):
+            raise PortAllocationConflict(
+                f"Allocation existante slug/host = {slug}/{host} : "
+                f"api={existing.api_port}, frontend={existing.frontend_port}, "
+                f"https={existing.frontend_https_port} ; ports souhaités = "
+                f"api={desired_api_port}, frontend={desired_frontend_port}"
+            )
         if not existing.subnet:
             # Allocation antérieure à l'introduction du pool : remplir
             # paresseusement le sous-réseau (idempotent à partir d'ici).
@@ -437,12 +534,22 @@ async def allocate_ports_for_app(
     used_api, used_frontend = await _used_ports_for_host(
         db, host, extra_used=extra_used, cutoff=cutoff
     )
-    api_port, frontend_port, https_port = pick_free_ports(
-        used_api,
-        used_frontend,
-        api_range=(settings.app_port_api_start, settings.app_port_api_end),
-        frontend_range=(settings.app_port_frontend_start, settings.app_port_frontend_end),
-    )
+    if desired_api_port is not None or desired_frontend_port is not None:
+        api_port, frontend_port, https_port = _ports_with_desired(
+            used_api,
+            used_frontend,
+            api_range=(settings.app_port_api_start, settings.app_port_api_end),
+            frontend_range=(settings.app_port_frontend_start, settings.app_port_frontend_end),
+            desired_api_port=desired_api_port,
+            desired_frontend_port=desired_frontend_port,
+        )
+    else:
+        api_port, frontend_port, https_port = pick_free_ports(
+            used_api,
+            used_frontend,
+            api_range=(settings.app_port_api_start, settings.app_port_api_end),
+            frontend_range=(settings.app_port_frontend_start, settings.app_port_frontend_end),
+        )
     used_subnets = await _used_subnets(db, cutoff=cutoff)
     used_subnets |= await docker_occupied_subnets(settings, host)
     used_subnets |= env_subnets
