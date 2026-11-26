@@ -48,6 +48,52 @@ def _parse_port(raw: str) -> int | None:
     return port if 1 <= port <= 65535 else None
 
 
+def read_env_claims_by_slug(apps_dir) -> dict[str, tuple[set[str], set[int]]]:
+    """Scanne `{apps_dir}/*/.env` → claims PAR app (slug = nom du dossier).
+
+    Mêmes règles que `read_env_claims` (un seul niveau, `.env` exact, valeurs
+    invalides ignorées) mais structurées par app : permet à l'appelant
+    d'exclure les revendications d'une app précise (ex. le slug demandeur
+    d'une allocation, dont le propre `.env` ne doit pas bloquer ses ports
+    souhaités — bug E2E 26/11/2026).
+    """
+    claims: dict[str, tuple[set[str], set[int]]] = {}
+
+    root = Path(apps_dir)
+    try:
+        entries = sorted(root.iterdir())
+    except OSError as e:
+        logger.warning("Scan des claims flotte impossible (%s) : %s", root, e)
+        return claims
+
+    for entry in entries:
+        env_path = entry / ".env"
+        if not entry.is_dir() or not env_path.is_file():
+            continue
+        values = _read_env_keys(
+            env_path, {"APP_SUBNET", "API_PORT", "FRONTEND_PORT", "FRONTEND_HTTPS_PORT"}
+        )
+
+        subnet = values.get("APP_SUBNET", "")
+        subnets: set[str] = set()
+        if subnet:
+            try:
+                ipaddress.ip_network(subnet, strict=False)
+                subnets.add(subnet)
+            except ValueError:
+                logger.warning("APP_SUBNET invalide ignoré (%s) : %s", env_path, subnet)
+
+        ports: set[int] = set()
+        for key in ("API_PORT", "FRONTEND_PORT", "FRONTEND_HTTPS_PORT"):
+            port = _parse_port(values.get(key, ""))
+            if port is not None:
+                ports.add(port)
+
+        claims[entry.name] = (subnets, ports)
+
+    return claims
+
+
 def read_env_claims(apps_dir) -> tuple[set[str], set[int]]:
     """Scanne `{apps_dir}/*/.env` → (sous-réseaux, ports) revendiqués.
 
@@ -61,32 +107,8 @@ def read_env_claims(apps_dir) -> tuple[set[str], set[int]]:
     subnets: set[str] = set()
     ports: set[int] = set()
 
-    root = Path(apps_dir)
-    try:
-        entries = sorted(root.iterdir())
-    except OSError as e:
-        logger.warning("Scan des claims flotte impossible (%s) : %s", root, e)
-        return subnets, ports
-
-    for entry in entries:
-        env_path = entry / ".env"
-        if not entry.is_dir() or not env_path.is_file():
-            continue
-        values = _read_env_keys(
-            env_path, {"APP_SUBNET", "API_PORT", "FRONTEND_PORT", "FRONTEND_HTTPS_PORT"}
-        )
-
-        subnet = values.get("APP_SUBNET", "")
-        if subnet:
-            try:
-                ipaddress.ip_network(subnet, strict=False)
-                subnets.add(subnet)
-            except ValueError:
-                logger.warning("APP_SUBNET invalide ignoré (%s) : %s", env_path, subnet)
-
-        for key in ("API_PORT", "FRONTEND_PORT", "FRONTEND_HTTPS_PORT"):
-            port = _parse_port(values.get(key, ""))
-            if port is not None:
-                ports.add(port)
+    for app_subnets, app_ports in read_env_claims_by_slug(apps_dir).values():
+        subnets |= app_subnets
+        ports |= app_ports
 
     return subnets, ports

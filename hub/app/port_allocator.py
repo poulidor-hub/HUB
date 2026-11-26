@@ -17,7 +17,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.docker_scanner import docker_scanner
-from app.fleet_env_scanner import read_env_claims
+from app.fleet_env_scanner import read_env_claims, read_env_claims_by_slug
 from app.models import Application, PortAllocation, utcnow
 
 logger = logging.getLogger(__name__)
@@ -96,7 +96,9 @@ async def docker_occupied_subnets(settings, host: str) -> set[str]:
         return set()
 
 
-async def fleet_env_occupied(settings, host: str) -> tuple[set[str], set[int]]:
+async def fleet_env_occupied(
+    settings, host: str, exclude_slug: str | None = None
+) -> tuple[set[str], set[int]]:
     """Revendications APP_SUBNET/ports des .env de la flotte locale (best-effort).
 
     Les scans Docker ne voient que le VIVANT : une app legacy (absente du
@@ -110,6 +112,11 @@ async def fleet_env_occupied(settings, host: str) -> tuple[set[str], set[int]]:
     - Désactivé si `fleet_env_scan_enabled` est faux.
     - Claims de la flotte LOCALE : ignorés pour un host distant (symétrique
       des scans Docker).
+    - `exclude_slug` : retire les revendications du `.env` de CETTE app —
+      le slug demandeur ne doit pas se bloquer lui-même quand il vient
+      enregistrer ses ports souhaités (bug E2E 26/11/2026 : testapp
+      refusait ses propres ports 9045/4250 déjà dans son .env). Les claims
+      des AUTRES apps restent comptés (le bug 2026-11-13 ne revient pas).
     - La lecture disque est exécutée dans un thread (comme les scans Docker).
     - Ne lève jamais : renvoie (set(), set()) en cas d'échec.
     """
@@ -118,6 +125,17 @@ async def fleet_env_occupied(settings, host: str) -> tuple[set[str], set[int]]:
     if host != settings.get_hub_host():
         return set(), set()
     try:
+        if exclude_slug:
+            by_slug = await asyncio.to_thread(
+                read_env_claims_by_slug, Path(settings.apps_host_path)
+            )
+            by_slug.pop(exclude_slug, None)
+            subnets: set[str] = set()
+            ports: set[int] = set()
+            for app_subnets, app_ports in by_slug.values():
+                subnets |= app_subnets
+                ports |= app_ports
+            return subnets, ports
         return await asyncio.to_thread(read_env_claims, Path(settings.apps_host_path))
     except Exception as e:
         logger.warning("Scan des claims flotte (.env) échoué (host=%s): %s", host, e)
@@ -529,7 +547,13 @@ async def allocate_ports_for_app(
             )
         return existing, True
 
-    env_subnets, env_ports = await fleet_env_occupied(settings, host)
+    env_subnets, env_ports = await fleet_env_occupied(
+        settings, host,
+        # Ports souhaités = enregistrement du .env de CETTE app : son propre
+        # claim ne doit pas bloquer ses propres ports (bug E2E 26/11/2026).
+        # Chemin historique (sans souhait) : comportement strictement inchangé.
+        exclude_slug=slug if (desired_api_port is not None or desired_frontend_port is not None) else None,
+    )
     extra_used = await docker_occupied_ports(settings, host) | env_ports
     used_api, used_frontend = await _used_ports_for_host(
         db, host, extra_used=extra_used, cutoff=cutoff
