@@ -5,6 +5,32 @@
 
 ---
 
+## [3.108.0] - 26 novembre 2026
+
+### ⚡ Déploiement d'app : le précheck « image socle » dit la vraie cause
+
+Quand une app est construite `FROM poulidor/socle-api:<V>` (ou `socle-web`) et que l'image
+n'existe pas encore dans le Docker local, le déploiement depuis l'UI Hub (« Apps GitHub →
+Ajouter au HUB », « Mettre à jour ») échouait plus loin dans le build, sans message
+actionnable. Nouveau précheck, exécuté après le clone et l'étape `.env`, juste avant
+`make build` :
+
+- **image absente** → déploiement arrêté AVANT tout build, problème nommé avec l'image
+  (`poulidor/socle-api:<V>`) et le remède : `./hubctl socle build` (HUBsocle <V>) puis relancer ;
+- **référence non résoluble, ou démon injoignable** → avertissement journalisé, le build continue ;
+- **app sans socle** → rien de signalé.
+
+Résolution de la référence : tag en dur, `ARG` du Dockerfile, puis — prioritairement sur le
+défaut de l'`ARG` — les args de build du compose et les clés `.env`/`.env.example` (c'est le
+cas réel de la flotte : `ARG SOCLE_VERSION` sans défaut + `build.args` → `APP_SOCLE_VERSION`).
+Seuls les Dockerfiles construits par les composes de déploiement sont lus (les overlays
+`.dev`/`.test` sont ignorés).
+
+Tests : `test_deploy_precheck.py` 46 (16 + 30), `test_app_deploy.py` 38 (35 + 3) ;
+suite complète 2169 verts.
+
+---
+
 ## [3.107.1] - 26 novembre 2026
 
 ### 🐛 allocate-ports : le propre .env d'une app ne bloque plus ses ports souhaités
