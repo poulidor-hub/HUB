@@ -5,6 +5,18 @@
 
 ---
 
+## [3.106.2] - 26 novembre 2026
+
+### 📄 README public mis à jour
+
+| Élément | Détail |
+|---------|--------|
+| **Version actuelle** | Badge du README et section « Versionnage » alignés sur la version réelle du parc (3.106.1 au moment de la correction, au lieu d'un 3.80.4 obsolète). |
+| **URLs des dépôts voisins** | Section « Place dans le parc » pointée vers l'organisation publique `poulidor-hub` : Hubctl, HUBCSS, HUBsocle, HUBapp-template. |
+| **Section « Mise à jour »** | Nouvelle section : mise à jour d'un déploiement client (clone du méta-repo POULIDOR + sous-modules, `git fetch upstream` / `merge --ff-only upstream/main` / `git submodule update --init --recursive`) ; le public est en lecture seule pour les clients — jamais de push. |
+
+---
+
 ## [3.106.1] - 26 novembre 2026
 
 ### ⚡ .gitleaksignore régénéré sur l'histoire réécrite

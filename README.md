@@ -1,6 +1,6 @@
 # HUB — Hub central POULIDOR
 
-![version](https://img.shields.io/badge/version-3.106.1-blue)
+![version](https://img.shields.io/badge/version-3.106.2-blue)
 
 Portail central du parc POULIDOR : **authentification SSO**, registre des applications,
 messagerie, sauvegardes et administration. Toutes les applications du parc s'y
