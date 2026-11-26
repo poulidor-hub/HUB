@@ -5,6 +5,10 @@ FROM python:3.12-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
+# Sans frontend non interactif, chaque `apt-get install` du build émet des lignes
+# « debconf: unable to initialize frontend » (18 au premier boot d'un serveur neuf,
+# verdict VM 26/11/2026) — l'ENV d'install.sh n'entre pas dans docker build.
+ENV DEBIAN_FRONTEND=noninteractive
 
 WORKDIR /code
 

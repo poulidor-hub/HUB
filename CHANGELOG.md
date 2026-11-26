@@ -5,6 +5,19 @@
 
 ---
 
+## [3.107.2] - 26 novembre 2026
+
+### 🐛 Image Hub : build sans bruit debconf
+
+- `hub/Dockerfile` : `ENV DEBIAN_FRONTEND=noninteractive`. Chaque `apt-get install` du build
+  émettait des lignes « debconf: unable to initialize frontend: Dialog » — 18 lignes de bruit
+  au premier boot d'un serveur neuf (verdict VM du 26/11/2026). L'export `DEBIAN_FRONTEND`
+  d'`install.sh` neutralise celui de l'hôte mais n'entre pas dans `docker build`.
+- Aucun changement fonctionnel ; comportement des paquets identique (déjà en
+  `--no-install-recommends`).
+
+---
+
 ## [3.107.1] - 26 novembre 2026
 
 ### 🐛 allocate-ports : le propre .env d'une app ne bloque plus ses ports souhaités
