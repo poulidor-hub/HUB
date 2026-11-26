@@ -5,6 +5,31 @@
 
 ---
 
+## [3.107.1] - 26 novembre 2026
+
+### 🐛 allocate-ports : le propre .env d'une app ne bloque plus ses ports souhaités
+
+Bug E2E VM du 26/11 (scénario fresh-install, porté par 3.107.0) : avec
+`fleet_env_scan_enabled=true` (défaut), le scan des claims flotte comptait les
+`API_PORT`/`FRONTEND_PORT` de **tous** les `APPS/*/.env` comme occupés — y compris
+celui de l'app demanderesse. Résultat : `POST /api/apps/allocate-ports` avec ports
+souhaités rejeté en **409 par le claim de l'app elle-même** (`port_allocations`
+vide au moment du refus), `make sync-env` en échec dur sur tout flux fresh-install.
+
+- `read_env_claims_by_slug()` : claims structurés par app (slug = nom du dossier
+  `APPS/<slug>/`) ; `read_env_claims()` agrège (signature et comportement inchangés).
+- `fleet_env_occupied(settings, host, exclude_slug=…)` : retire les revendications
+  du `.env` du slug demandeur.
+- `allocate_ports_for_app` : exclusion appliquée **uniquement dans le chemin desired**
+  — le chemin historique (sans souhait) est strictement inchangé ; les claims des
+  AUTRES apps bloquent toujours (le bug de ré-attribution du 13/11 ne revient pas,
+  test de régression ajouté).
+
+Tests : 48 verts dans `test_port_allocation.py` (rouge : 409 auto-bloquant reproduit
+en unitaire), 137 verts sur le scope élargi (flotte, deploy, route).
+
+---
+
 ## [3.107.0] - 26 novembre 2026
 
 ### ⚡ allocate-ports : ports souhaités optionnels (réconciliations sync-env)

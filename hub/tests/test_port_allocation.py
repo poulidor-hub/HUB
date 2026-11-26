@@ -577,6 +577,15 @@ from app.port_allocator import PortAllocationConflict
 DESIRED_HOST = "10.20.30.41"  # ≠ hub host : scans Docker ignorés, DB seule décide
 
 
+async def _empty_ports(settings, host):
+    """Scan Docker neutralisé : aucun port vivant (isole la logique flotte)."""
+    return set()
+
+
+async def _empty_subnets(settings, host):
+    return set()
+
+
 @pytest.mark.asyncio
 async def test_desired_ports_honored_on_fresh_allocation(async_session):
     """Allocation fraîche : les ports souhaités sont enregistrés tels quels."""
@@ -589,6 +598,53 @@ async def test_desired_ports_honored_on_fresh_allocation(async_session):
     assert alloc.frontend_port == 4300
     assert alloc.frontend_https_port == 4301
     assert alloc.subnet == "10.50.0.0/24"  # subnet du pool, logique inchangée
+
+
+@pytest.mark.asyncio
+async def test_desired_ports_not_blocked_by_own_env_claim(async_session, settings, tmp_path, monkeypatch):
+    """E2E 26/11 : le claim flotte du PROPRE .env de l'app (ports figés par
+    INITIALISE --profile) ne doit pas bloquer l'enregistrement de ses ports
+    souhaités — sinon 409 auto-bloquant sur tout flux fresh-install."""
+    apps_dir = tmp_path / "APPS"
+    (apps_dir / "testapp").mkdir(parents=True)
+    (apps_dir / "testapp" / ".env").write_text(
+        "APP_SLUG=testapp\nAPI_PORT=9045\nFRONTEND_PORT=4250\nFRONTEND_HTTPS_PORT=4251\n"
+    )
+    host = settings.get_hub_host()  # host LOCAL : le scan flotte est actif
+    monkeypatch.setattr(settings, "apps_host_path", str(apps_dir))
+    # Scans Docker neutralisés (machine de dev = zoo de conteneurs du parc) :
+    # ce test isole la logique CLAIM FLOTTE, pas le vivant Docker.
+    monkeypatch.setattr("app.port_allocator.docker_occupied_ports", _empty_ports)
+    monkeypatch.setattr("app.port_allocator.docker_occupied_subnets", _empty_subnets)
+
+    alloc, reused = await allocate_ports_for_app(
+        async_session, "testapp", host, settings,
+        desired_api_port=9045, desired_frontend_port=4250,
+    )
+    assert reused is False
+    assert (alloc.api_port, alloc.frontend_port, alloc.frontend_https_port) == (9045, 4250, 4251)
+    assert alloc.subnet == "10.50.0.0/24"  # subnet du pool, logique inchangée
+
+
+@pytest.mark.asyncio
+async def test_desired_ports_still_blocked_by_other_app_claim(async_session, settings, tmp_path, monkeypatch):
+    """Régression : le claim flotte d'une AUTRE app bloque toujours (bug
+    2026-11-13 de ré-attribution ne doit pas revenir par la porte desired)."""
+    apps_dir = tmp_path / "APPS"
+    (apps_dir / "autre-app").mkdir(parents=True)
+    (apps_dir / "autre-app" / ".env").write_text(
+        "API_PORT=9045\nFRONTEND_PORT=4250\nFRONTEND_HTTPS_PORT=4251\n"
+    )
+    host = settings.get_hub_host()
+    monkeypatch.setattr(settings, "apps_host_path", str(apps_dir))
+    monkeypatch.setattr("app.port_allocator.docker_occupied_ports", _empty_ports)
+    monkeypatch.setattr("app.port_allocator.docker_occupied_subnets", _empty_subnets)
+
+    with pytest.raises(PortAllocationConflict):
+        await allocate_ports_for_app(
+            async_session, "testapp", host, settings,
+            desired_api_port=9045, desired_frontend_port=4250,
+        )
 
 
 @pytest.mark.asyncio
