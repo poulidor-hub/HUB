@@ -5,6 +5,32 @@
 
 ---
 
+## [3.107.0] - 26 novembre 2026
+
+### ⚡ allocate-ports : ports souhaités optionnels (réconciliations sync-env)
+
+`POST /api/apps/allocate-ports` accepte deux champs optionnels `api_port` / `frontend_port`
+(ports déjà figés localement par le profile.json d'INITIALISE) :
+
+- **allocation existante** : souhaités identiques → réutilisation normale (`reused=true`) ;
+  différents → nouvelle exception `PortAllocationConflict` → HTTP 409 avec le détail
+  (slug/host, ports alloués vs souhaités). L'allocation existante n'est jamais modifiée.
+- **allocation fraîche** : souhaités imposés après validation avec les mêmes règles qu'un
+  choix automatique — plage api (`APP_PORT_API_START/END`), frontend PAIR dans
+  (`APP_PORT_FRONTEND_START/END`) avec frontend+1 HTTPS dedans, disponibilité sur l'hôte
+  (allocations, URLs d'apps, ports Docker occupés, claims flotte). Subnet : logique du pool
+  inchangée (`APP_SUBNET_POOL`).
+- **souhait absent** → comportement historique strictement inchangé (rétro-compatible) ;
+  souhait partiel accepté (le champ absent est choisi librement, le port imposé comptant
+  dans les utilisés).
+
+Motivation : le pré-vol `make sync-env` du gabarit consulte désormais le Hub même quand
+les ports sont figés — l'allocation est enregistrée côté Hub (table `port_allocations`)
+et le subnet vient du pool Hub au lieu de la plage legacy locale 10.220.0.0/16.
+Tests : `hub/tests/test_port_allocation.py` 46 verts (36 existants inchangés + 10 nouveaux).
+
+---
+
 ## [3.106.2] - 26 novembre 2026
 
 ### 📄 README public mis à jour
