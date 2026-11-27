@@ -13,7 +13,7 @@ Un composant socle déployé (HEAD détaché, épinglé à une release) peut avo
 `commits_behind > 0` sans qu'une mise à jour soit faisable depuis l'Hub : la
 release doit d'abord venir du méta-repo (`hubctl update`). Avec le champ
 `deployment` du statut (`/api/admin/system/update-status`, backend
-passthrough — cf. 3.108.x), `update_available` est désormais forcé à `false`
+passthrough — champ sérialisé par le service hôte, hubctl 0.23.1), `update_available` est désormais forcé à `false`
 dans ce cas, et l'onglet Mises à jour l'explique :
 
 - ligne du composant : badge **info** « N commit(s) d'avance — en attente de
