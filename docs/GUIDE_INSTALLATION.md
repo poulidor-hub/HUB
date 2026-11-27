@@ -118,9 +118,7 @@ clonée dans `APPS/<slug>/`. Pour chaque application, `hubctl` enchaîne :
 ### Options
 
 - `--no-deps` : ignore `depends.yaml` (l'application seule) ;
-- `--yes` : aucune confirmation interactive (scripts, CI) ;
-- **Seed YAML** : `./hubctl app install <fichier-seed.yaml>` déploie un lot
-  déclaratif d'applications en une seule passe.
+- `--yes` : aucune confirmation interactive (scripts, CI).
 
 ### Sans jeton admin : approbation manuelle
 
