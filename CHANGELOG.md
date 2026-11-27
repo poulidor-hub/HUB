@@ -5,6 +5,21 @@
 
 ---
 
+## [3.108.2] - 27 novembre 2026
+
+### 📚 GUIDE_INSTALLATION : retrait de l'option seed YAML
+
+Retrait de la puce « **Seed YAML** : `./hubctl app install
+<fichier-seed.yaml>` » des options d'`app install` : le système seed
+(`hubctl seed`, `seed export`, format seed YAML et variante
+`app install <seed.yaml>`) disparaît avec hubctl 0.24.0. Le déploiement
+d'un lot d'applications passe par `./hubctl app install <url1> <url2> …`
+(plusieurs URLs git en une commande) ; la suppression d'une app devient
+`./hubctl app remove <slug>`. Entrée documentation seule — aucun changement
+de code.
+
+---
+
 ## [3.108.1] - 27 novembre 2026
 
 ### 🎛️ Mises à jour : badge « en attente de release du méta » sur les composants déployés
