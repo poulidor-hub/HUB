@@ -5,6 +5,48 @@
 
 ---
 
+## [3.108.1] - 27 novembre 2026
+
+### 🎛️ Mises à jour : badge « en attente de release du méta » sur les composants déployés
+
+Un composant socle déployé (HEAD détaché, épinglé à une release) peut avoir
+`commits_behind > 0` sans qu'une mise à jour soit faisable depuis l'Hub : la
+release doit d'abord venir du méta-repo (`hubctl update`). Avec le champ
+`deployment` du statut (`/api/admin/system/update-status`, backend
+passthrough — champ sérialisé par le service hôte, hubctl 0.23.1), `update_available` est désormais forcé à `false`
+dans ce cas, et l'onglet Mises à jour l'explique :
+
+- ligne du composant : badge **info** « N commit(s) d'avance — en attente de
+  release du méta » au lieu du warning trompeur « X → Y » (ou d'un « à jour »
+  muet) ; la mention « de retard » est omise dans ce cas (contradictoire) ;
+- navbar, ligne Hub et cockpit inchangés : ils comptent `update_available`,
+  faux en déploiement — plus de fausse alerte « mise à jour disponible ».
+
+### 📚 GUIDE_INSTALLATION réécrit sur le parcours réel
+
+Le guide décrivait un parcours fantôme (compose nu + `.env` à la main, PKI
+manuelle `pki.py init`, `BOOTSTRAP_TOKEN`, ports figés 9000/4200,
+`create_app.sh` comme voie de déploiement client, Hub final en `http://`).
+Réécrit sur l'entrée réelle du méta-repo :
+
+- **Installation du Hub** : `sudo ./install.sh` à la racine du méta (idempotent,
+  `--force`, `--runner` opt-in ; Docker + gh + pools 172.16/12 et 10.200/14 ;
+  `./hubctl init` intégré : `.env` + secrets, clés JWT, build + health check,
+  **PKI automatique** au premier démarrage HTTPS, registre). Récap réel :
+  `https://<IP>` et `ADMIN_PASSWORD` dans `HUB_base/.env`. Note avancée :
+  `HUB_base/install.sh` (modes auto / `--interactive` / `--profile
+  client.json`) ; compose nu déconseillé.
+- **Installer une application** : `./hubctl app install <url-git>` et ses
+  étapes réelles (précheck, clone `APPS/<slug>`, `depends.yaml`, `.env` généré
+  ports alloués + secrets neutralisés + socle garanti, `make sync-env`/`build`,
+  pré-création **approuvée** au registre, `make up` + health, certificat signé
+  par la CA, rapport final) ; options `--no-deps`/`--yes` + seed YAML ; sans
+  jeton admin : app « En attente » → **Administration → Applications →
+  Approuver** ; CA racine : `GET /api/pki/ca.crt`.
+- Sections mise à jour, coexistence de deux hubs et résolution de problèmes
+  conservées telles quelles ; toute commande/endpoint cité vérifié dans le
+  code ; aucune IP réelle ni nom d'app cliente (dépôt publié).
+
 ## [3.108.0] - 26 novembre 2026
 
 ### ⚡ Déploiement d'app : le précheck « image socle » dit la vraie cause

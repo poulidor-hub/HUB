@@ -12,8 +12,10 @@
  *   {"service": "ok", checked_at, meta, components} ; service hôte
  *   down ⇒ 200 {"service": "unreachable", "hint"} ; non-admin ⇒ 403.
  *   meta / components[rel_path] : {name, path, version, version_target,
- *   branch, commits_behind, dirty, update_available, error} — drifted
- *   n'est renseigné que sur meta.
+ *   branch, commits_behind, deployment, dirty, update_available, error}
+ *   — deployment : true si HEAD détaché (composant épinglé à une
+ *   release ; update_available forcé à false côté hôte même si
+ *   commits_behind > 0) ; drifted n'est renseigné que sur meta.
  * - POST /api/admin/system/update — STRICT : 202 job lancé, 409 déjà
  *   en cours, 503 service injoignable / token absent (api.request jette
  *   avec le `detail` comme message, sans exposer le code HTTP).
@@ -30,9 +32,10 @@
  *   Clic ⇒ ouvre la page admin sur l'onglet Mises à jour.
  * - Onglet : carte récap parc (checked_at, « Vérifier maintenant »),
  *   une ligne par composant (version → cible, badges à jour / X → Y /
- *   arbre sale / erreur, remèdes textuels), bouton « Mettre à jour le
- *   Hub et le socle » (disabled si rien à mettre à jour ou job en
- *   cours, anti double-clic via btn.disabled).
+ *   en attente de release du méta / arbre sale / erreur, remèdes
+ *   textuels), bouton « Mettre à jour le Hub et le socle » (disabled si
+ *   rien à mettre à jour ou job en cours, anti double-clic via
+ *   btn.disabled).
  * - Suivi live : polling 2 s SANS plafond temporel tant que
  *   state == "running" — le Hub redémarre en cours de mise à jour :
  *   fetch KO ou réponse 200 sans état de job (ex.
@@ -292,13 +295,26 @@ function _renderSystemUpdateMetaCard(data, meta, metaAvailable) {
 /** Ligne d'un composant socle : nom, version locale → cible, badges + remèdes. */
 function _renderSystemUpdateRow(relPath, comp) {
     const name = comp.name || relPath;
-    const badges = [comp.update_available
-        ? `<span class="badge bg-warning text-dark">${escapeHtml(String(comp.version || '?'))} → ${escapeHtml(String(comp.version_target || '?'))}</span>`
-        : '<span class="badge bg-success">à jour</span>'];
+    // Déploiement (HEAD détaché = composant épinglé à une release) : le
+    // service hôte force update_available à false même si commits_behind
+    // > 0 — le badge warning « X → Y » laisserait croire à une mise à
+    // jour faisable depuis l'UI, alors qu'il faut attendre la release du
+    // méta-repo (hubctl update). Badge info explicite à la place.
+    const deploymentPending = !!comp.deployment &&
+        typeof comp.commits_behind === 'number' && comp.commits_behind > 0;
+    const badges = [deploymentPending
+        ? `<span class="badge bg-info text-dark">${escapeHtml(String(comp.commits_behind))} commit(s) d'avance — en attente de release du méta</span>`
+        : (comp.update_available
+            ? `<span class="badge bg-warning text-dark">${escapeHtml(String(comp.version || '?'))} → ${escapeHtml(String(comp.version_target || '?'))}</span>`
+            : '<span class="badge bg-success">à jour</span>')];
     if (comp.dirty) badges.push('<span class="badge bg-warning text-dark">arbre sale</span>');
     if (comp.error) badges.push('<span class="badge bg-danger">erreur</span>');
 
-    const behind = (typeof comp.commits_behind === 'number' && comp.commits_behind > 0)
+    // En attente de release méta : l'écart est déjà porté par le badge
+    // info (« d'avance », pas « de retard ») — pas de doublon dans la
+    // colonne Version.
+    const behind = (!deploymentPending &&
+        typeof comp.commits_behind === 'number' && comp.commits_behind > 0)
         ? ` · ${escapeHtml(String(comp.commits_behind))} commit(s) de retard` : '';
 
     return `

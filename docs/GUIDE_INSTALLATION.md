@@ -1,6 +1,9 @@
 # POULIDOR Hub — Guide d'installation
 
-Installation complète du Hub POULIDOR + déploiement d'applications sur un serveur client.
+Installation du Hub POULIDOR (Hub + socle applicatif) sur un serveur client, puis
+déploiement des applications. Le point d'entrée est **le méta-repo POULIDOR** : son
+script `install.sh` pilote l'ensemble (prérequis système, initialisation du Hub,
+registre). Toutes les commandes de ce guide se lancent depuis sa racine.
 
 ---
 
@@ -8,14 +11,16 @@ Installation complète du Hub POULIDOR + déploiement d'applications sur un serv
 
 | Composant | Minimum |
 |---|---|
-| OS | Linux (Debian/Ubuntu recommandé) |
+| OS | Linux Debian/Ubuntu (requis : `apt-get`) |
 | RAM | 2 Go (4 Go avec applications) |
 | Disque | 20 Go libres |
-| Docker Engine | ≥ 24 |
-| Docker Compose | plugin `docker compose` (v2) |
+| Docker Engine | ≥ 24, plugin `docker compose` (v2) |
 | Réseau | IP fixe sur le LAN, ports 80/443 disponibles |
 
-### Installation rapide des prérequis (Debian/Ubuntu)
+`sudo ./install.sh` installe lui-même les paquets manquants (Docker, GitHub CLI,
+git, make, openssl…) — le tableau ci-dessus sert surtout à dimensionner la machine.
+
+Pour préparer la machine à la main (Debian/Ubuntu) :
 
 ```bash
 sudo apt update && sudo apt install -y docker.io docker-compose-v2 python3-openssl
@@ -28,139 +33,127 @@ newgrp docker
 
 ## Installation du Hub
 
-### Méthode 1 : Script interactif (recommandé)
+### Parcours standard : `sudo ./install.sh` à la racine du méta-repo
 
 ```bash
-chmod +x install.sh
-./install.sh
+sudo ./install.sh
 ```
 
-Le script vous guide pas à pas :
-1. Adresse IP du serveur
-2. Ports (HTTP / HTTPS / API)
-3. Identifiants administrateur
-4. Réseaux autorisés (CIDR)
-5. Origines CORS
-6. Génération automatique des secrets (Fernet, JWT)
-7. Démarrage Docker Compose
+Le script est **idempotent** : relançable sans risque à tout moment (reprise après
+un timeout de build, Hub arrêté, etc.).
 
-À la fin, il affiche l'URL d'accès et les identifiants.
+Ce qu'il fait, dans l'ordre :
 
-### Méthode 2 : Manuelle
+1. **Prérequis système** : Docker (daemon + groupe utilisateur), GitHub CLI (`gh`),
+   git, make, openssl ;
+2. **Pools d'adresses Docker** : `172.16.0.0/12` et `10.200.0.0/14` (en /24 —
+   ~5 100 réseaux pour les applications) ;
+3. **`./hubctl init`**, le wizard d'initialisation du Hub :
+   - génération du `.env` du Hub (`HUB_base/.env`) avec secrets aléatoires
+     (Fernet, JWT, mot de passe admin) ;
+   - génération des clés JWT (RSA) ;
+   - build + démarrage des conteneurs, puis attente du health check ;
+   - **PKI automatique** : au premier démarrage HTTPS, la CA interne et le
+     certificat serveur du Hub sont générés dans `certs/` par le conteneur —
+     aucune commande de certificat à lancer à la main ;
+   - registre des applications prêt (approbations, allocations de ports).
 
-```bash
-cp .env.example .env
-nano .env   # adapter toutes les valeurs
-docker compose up -d
-```
+Options : `--force` (régénère le `.env` du Hub — le fichier existant est réécrit),
+`--runner` (opt-in : installe aussi le runner CI GitHub self-hosted).
 
-Vérifiez que la santé du Hub :
+### Récapitulatif de fin d'installation
 
-```bash
-curl -s http://localhost:8000/api/health | python3 -m json.tool
-```
+Le script affiche à la fin :
+
+- l'URL du Hub : **`https://<IP_DU_SERVEUR>`** (HTTPS, certificat signé par la CA
+  interne — pour supprimer l'avertissement navigateur, importez la CA racine, voir
+  [Confiance navigateur](#confiance-navigateur--la-ca-racine)) ;
+- le mot de passe admin initial : variable `ADMIN_PASSWORD` dans `HUB_base/.env`.
+  Le Hub force son changement au premier login.
+
+### Note avancée : installer le Hub seul (`HUB_base/install.sh`)
+
+Le sous-module `HUB_base` embarque son propre `install.sh` pour poser un Hub sans
+le reste du parc (c'est d'ailleurs la voie utilisée en interne par `./hubctl init`) :
+
+- mode **auto** par défaut : full automatique, auto-détecte tout, zéro question ;
+- `--interactive` : guide l'utilisateur pas à pas ;
+- `--profile client.json` : non-interactif via un fichier de profil JSON
+  (`--force` autorise l'écrasement d'un `.env` existant).
+
+Lancer les conteneurs à la main (`cp .env.example .env` + `docker compose up -d`)
+est **déconseillé** : vous passez à côté de la génération des secrets, de la PKI
+automatique et du registre.
 
 ---
 
-## Première connexion
+## Installer une application
 
-1. Ouvrez `http://<IP_DU_SERVEUR>` dans un navigateur
-2. Connectez-vous avec l'identifiant/mot de passe admin
-3. Le Hub force le changement du mot de passe admin au premier login
-
-### Accès HTTPS
-
-Si `HUB_HTTPS_ENABLED=true` et que les certificats existent dans `certs/server/hub/` :
-```
-https://<IP_DU_SERVEUR>
-```
-
-Pour générer les certificats auto-signés (PKI intégrée) :
+Une application s'installe depuis la racine du méta-repo :
 
 ```bash
-docker compose exec hub-api python pki.py init
-docker compose exec hub-api python pki.py cert create hub
-docker compose restart hub-frontend
+./hubctl app install <url-git> [url-git…] [--no-deps] [--yes]
 ```
+
+Le slug de l'application est dérivé du nom du dépôt git (normalisé) ; elle est
+clonée dans `APPS/<slug>/`. Pour chaque application, `hubctl` enchaîne :
+
+1. **Précheck** : Docker joignable, Hub en santé, pools d'adresses disponibles ;
+2. **Clone** dans `APPS/<slug>/` (dossier déjà présent ⇒ convergence, `.env`
+   préservé) ;
+3. **Dépendances d'abord** : le `depends.yaml` de l'application est résolu au
+   registre (ignorable avec `--no-deps`) ;
+4. **`.env` généré** : ports **alloués automatiquement** depuis les pools
+   (API + frontend), secrets par défaut **neutralisés**, images du socle
+   garanties ;
+5. **`make sync-env`** puis **`make build`** (images de l'application) ;
+6. **Pré-création approuvée** : l'application est enregistrée d'avance au registre
+   du Hub avec un jeton admin, statut **approuvé** — elle naît inscrite, pas « en
+   attente » ;
+7. **`make up`** puis **health check** ;
+8. **Certificat HTTPS signé par la CA du Hub** — le port HTTPS de l'application
+   répond immédiatement ;
+9. **Rapport final** : URL de chaque application installée.
+
+### Options
+
+- `--no-deps` : ignore `depends.yaml` (l'application seule) ;
+- `--yes` : aucune confirmation interactive (scripts, CI) ;
+- **Seed YAML** : `./hubctl app install <fichier-seed.yaml>` déploie un lot
+  déclaratif d'applications en une seule passe.
+
+### Sans jeton admin : approbation manuelle
+
+Sans mot de passe admin disponible (mode scripté, `--yes` sans
+`HUBCTL_ADMIN_PASSWORD`), la pré-création approuvée est sautée : l'application
+reste **« En attente »** dans le Hub (elle tourne, mais non approuvée). Pour
+l'approuver :
+
+1. Ouvrez **Administration → Applications** ;
+2. Filtrez le statut « En attente » ;
+3. Cliquez sur **Approuver** sur la ligne de l'application.
+
+### Confiance navigateur : la CA racine
+
+Les certificats (Hub et applications) sont signés par la CA interne du Hub. Pour
+supprimer les avertissements navigateur des postes clients, importez la CA racine :
+
+```
+GET https://<IP_DU_SERVEUR>/api/pki/ca.crt
+```
+
+> Créer une **nouvelle** application depuis le template est un travail de
+> développement (outils du méta-repo, cf. `scripts/create_app.sh` et la
+> documentation développeur) — ce n'est pas une étape d'installation chez un
+> client, qui ne fait que déployer des dépôts existants.
 
 ---
 
-## Déploiement d'une application
+## Mise à jour
 
-### Étape 1 : Créer l'application depuis le template
-
-Chaque application POULIDOR est un projet Docker Compose indépendant.
-
-```bash
-# Depuis le méta-repo POULIDOR :
-cd APPS/
-../scripts/create_app.sh mon-app
-cd mon-app
-```
-
-L'application est prête à être configurée et lancée.
-
-### Étape 2 : Configurer l'application
-
-```bash
-cp .env.example .env
-nano .env
-```
-
-**Valeurs minimales :**
-```env
-APP_NAME=Mon Application
-APP_SLUG=mon-app
-APP_HOST=<IP_DU_SERVEUR>
-HUB_HOST=<IP_DU_SERVEUR>
-HUB_URL=http://<IP_DU_SERVEUR>:8000
-APP_PORT=9000
-FRONTEND_PORT=4200
-BOOTSTRAP_TOKEN=<token_généré_par_le_Hub>
-```
-
-### Étape 3 : Démarrer l'application
-
-```bash
-docker compose up -d
-```
-
-### Étape 4 : Enregistrer dans le Hub
-
-L'application s'auto-enregistre auprès du Hub au premier démarrage via la variable `BOOTSTRAP_TOKEN`.
-
-Pour générer un bootstrap token :
-1. Dans le Hub → Administration → Applications → Ajouter
-2. Créer l'application avec le slug correspondant
-3. Copier le token de bootstrap généré
-
-**Alternative — sans token bootstrap (auto-détection) :**
-L'application détecte automatiquement le Hub et s'enregistre si son IP fait partie du `APP_WHITELIST_NETWORKS`. L'admin du Hub doit ensuite approuver manuellement l'application (statut `pending → active`).
-
-### Étape 5 : Vérifier
-
-Dans le Hub → Dashboard → l'application doit apparaître.
-
-```bash
-curl -s http://localhost:9000/api/health | python3 -m json.tool
-```
-
----
-
-## Structure des fichiers
-
-```
-HUB_base/
-├── install.sh              # Script d'installation interactif
-├── .env                    # Configuration (généré à l'installation)
-├── docker-compose.yml      # Services Docker (Hub API + DB + Frontend)
-├── secrets/
-│   └── jwt/                # Clés RSA (générées à l'installation)
-├── certs/                  # Certificats TLS (générés via PKI)
-└── docs/
-    ├── GUIDE_INSTALLATION.md  # Ce document
-    └── GUIDE_ADMIN.md        # Guide d'administration
-```
+> ⚠️ Ne jamais faire `git pull` / `docker compose` directement dans ce sous-module :
+> la mise à jour passe par la routine officielle du méta-repo — voir
+> `docs/ops/mise-a-jour.md` à la racine du dépôt POULIDOR (`./hubctl update hub`).
 
 ---
 
@@ -279,11 +272,3 @@ une IP hors liste (message : *« autorisé uniquement depuis le réseau Docker �
 Le port HTTPS d'une app (ex: 4201) ne répond que si un certificat existe
 pour elle dans la PKI du Hub. Sans certificat, seul le port HTTP est servi —
 voir la documentation PKI pour en générer un.
-
----
-
-## Mise à jour
-
-> ⚠️ Ne jamais faire `git pull` / `docker compose` directement dans ce sous-module :
-> la mise à jour passe par la routine officielle du méta-repo — voir
-> `docs/ops/mise-a-jour.md` à la racine du dépôt POULIDOR (`./hubctl update hub`).
